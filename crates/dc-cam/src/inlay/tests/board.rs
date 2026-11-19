@@ -123,7 +123,7 @@ fn cut_out_tabs(project: &Project, op: &InlayOp) -> (Vec<Polyline>, Vec<Point>) 
         .find(|t| t.id == cut.tool)
         .expect("the cut-out's tool")
         .diameter_mm;
-    let paths = cut_out_paths(
+    let outlines = cut_out_paths(
         &side.band_edge,
         &band,
         diameter_mm,
@@ -131,35 +131,33 @@ fn cut_out_tabs(project: &Project, op: &InlayOp) -> (Vec<Polyline>, Vec<Point>) 
         project.flatten_tolerance_mm,
     );
     let thickness_mm = project.stock.thickness_mm.expect("a thickness");
-    let (copy, profile) = cut_out_profile(project, op, cut, &paths, thickness_mm);
-    let tabs = cut.tabs.as_ref().expect("tabs");
-    let placed = crate::placed_tabs::place(&copy, &profile.id, tabs).expect("placed");
-    let points = placed
+    let (copy, profile, _) =
+        cut_out_profile(project, op, cut, &outlines, thickness_mm).expect("the tabs are placed");
+    assert_eq!(profile.tabs, None, "the request is placed, not carried");
+    let points = copy
         .tabs
         .iter()
+        .filter(|t| profile.targets.contains(&t.instance))
         .map(|t| Point::new(t.x_mm, t.y_mm))
         .collect();
-    (paths, points)
+    (outlines.into_iter().flatten().collect(), points)
 }
 
-/// Where a Profile that carries `op`'s cut-out's tab request, On line on
-/// the closed `paths`, has its tabs placed ([`crate::placed_tabs::place`],
-/// a count for each path): what a cut-out placed before #710.
-fn requested_tabs(project: &Project, op: &InlayOp, paths: &[Polyline]) -> Vec<Point> {
+/// The cut-out of `op` as it was cut before #710: the On line Profile on
+/// the closed `paths` that carries the cut-out's tab request itself, a
+/// count for each path, in the copy of the male board's project that
+/// holds it, with no tab placed.
+fn requesting_profile(project: &Project, op: &InlayOp, paths: &[Polyline]) -> (Project, ProfileOp) {
     let project = &on_board(project, op, Board::Male);
     let cut = op.cut_out.as_ref().expect("a cut-out");
     let thickness_mm = project.stock.thickness_mm.expect("a thickness");
-    let (mut copy, mut profile) = cut_out_profile(project, op, cut, paths, thickness_mm);
+    let outlines: Vec<Vec<Polyline>> = paths.iter().map(|p| vec![p.clone()]).collect();
+    let (mut copy, mut profile, _) =
+        cut_out_profile(project, op, cut, &outlines, thickness_mm).expect("the tabs are placed");
     copy.tabs.clear();
     profile.tabs.clone_from(&cut.tabs);
     copy.operations = vec![Operation::Profile(profile.clone())];
-    let tabs = cut.tabs.as_ref().expect("tabs");
-    crate::placed_tabs::place(&copy, &profile.id, tabs)
-        .expect("placed")
-        .tabs
-        .iter()
-        .map(|t| Point::new(t.x_mm, t.y_mm))
-        .collect()
+    (copy, profile)
 }
 
 /// How many of `tabs` sit on each of `paths`: each tab counts for the
@@ -352,13 +350,16 @@ fn cut_out_runs_edge_to_edge_when_clipped() {
         male_band(&with_op(&project, Operation::Inlay(op.clone())), &op).expect("a male band");
     assert!(band.is_open());
     let side = side(&project, &op, board_of(&op), &mut Vec::new()).expect("the side resolves");
-    let paths = cut_out_paths(
+    let paths: Vec<Polyline> = cut_out_paths(
         &side.band_edge,
         &band,
         SMALL_END_MILL_MM,
         band.board(&project.stock),
         tolerance_mm,
-    );
+    )
+    .into_iter()
+    .flatten()
+    .collect();
     assert!(!paths.is_empty());
     for path in &paths {
         assert!(
@@ -395,16 +396,11 @@ fn cut_out_runs_edge_to_edge_when_clipped() {
         );
     }
 
-    let thickness_mm = project.stock.thickness_mm.expect("a thickness");
-    let cut = op.cut_out.as_ref().expect("a cut-out");
-    let (copy, profile) = cut_out_profile(&project, &op, cut, &paths, thickness_mm);
-    let tabs = cut.tabs.as_ref().expect("tabs");
-    let placed = crate::placed_tabs::place(&copy, &profile.id, tabs).expect("placed");
     // #710: the request's four, on the one piece the left edge leaves.
+    let (_, tabs) = cut_out_tabs(&project, &op);
     assert_eq!(paths.len(), 1, "one edge clips the band into one piece");
-    assert_eq!(placed.tabs.len(), 4, "the four tabs asked for");
-    for tab in &placed.tabs {
-        let at = Point::new(tab.x_mm, tab.y_mm);
+    assert_eq!(tabs.len(), 4, "the four tabs asked for");
+    for at in tabs {
         let gap = distance_to(&paths, at);
         assert!(
             gap <= TAB_WIDTH_MM,
@@ -498,10 +494,54 @@ fn clipped_cut_out_places_tabs_at_distances_once() {
     assert_eq!(tab_lifts(&runs, TAB_TOP_MM).len(), 2);
 }
 
+/// #710: the rules of one path still hold on each piece. Thirty tabs are
+/// more than the three pieces hold between them (a 6 mm tab keeps 7.5 mm
+/// of path raised under the 1.5 mm bit, and tabs may cover half a piece):
+/// every piece is cut down to what it holds and says so,
+/// `tabs_cover_most_of_contour` for a request cut down, once for each
+/// piece and never as placed tabs; the counts asked add up to thirty, and
+/// the run lifts over the tabs cut and no more.
+#[test]
+fn clipped_cut_out_too_short_for_its_tabs_warns() {
+    let project = small_bits_star((30.0 + NEAR_MM, 30.0 + NEAR_MM), 100.0, 64.0);
+    let op = small_cut_out_male_with(dc_project::TabPlacement::Count { count: 30 });
+    let (paths, tabs) = cut_out_tabs(&project, &op);
+    let (runs, warnings) = inlay_runs(&project, &op);
+    let cover: Vec<(usize, usize, bool)> = warnings
+        .iter()
+        .filter_map(|w| match w {
+            Warning::TabsCoverMostOfContour {
+                tab_count,
+                cut_count,
+                placed,
+                ..
+            } => Some((*tab_count, *cut_count, *placed)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cover.len(), paths.len(), "one for each piece: {cover:?}");
+    assert!(cover.iter().all(|(_, _, placed)| !placed), "{cover:?}");
+    assert!(cover.iter().all(|(asked, cut, _)| cut < asked), "{cover:?}");
+    assert_eq!(cover.iter().map(|c| c.0).sum::<usize>(), 30, "{cover:?}");
+    let cut: usize = cover.iter().map(|c| c.1).sum();
+    assert_eq!(tabs.len(), cut, "{cover:?}");
+    assert_eq!(tab_lifts(&runs, TAB_TOP_MM).len(), cut);
+    let span_mm = TAB_WIDTH_MM + SMALL_END_MILL_MM;
+    for (path, count) in paths.iter().zip(tabs_per_path(&paths, &tabs)) {
+        let length_mm = path.length_mm();
+        assert!(
+            f64::from(u8::try_from(count).expect("a few tabs")) * span_mm <= length_mm / 2.0,
+            "{count} tabs cover more than half of a {length_mm} mm piece"
+        );
+        assert!(count > 0, "a {length_mm} mm piece holds a tab");
+    }
+}
+
 /// #710: a cut-out the board does not clip places what it placed before:
 /// the tabs `placed_tabs::place` lays for its request on its closed
-/// path, the same count at the same points. The star's (V wall and open
-/// edge) and the tutorial's "DC".
+/// path, the same count at the same points, and its run is move for move
+/// the one the Profile that carried the request cut, with the same
+/// warnings. The star's (V wall and open edge) and the tutorial's "DC".
 #[test]
 fn unclipped_cut_out_tabs_are_unchanged() {
     let (dc, dc_op) = fixture(include_str!("../../../../../tests/fixtures/dc.dcv"));
@@ -518,7 +558,14 @@ fn unclipped_cut_out_tabs_are_unchanged() {
     for (name, project, op) in cases {
         let (paths, tabs) = cut_out_tabs(&project, &op);
         assert!(paths.iter().all(Polyline::is_closed), "{name}");
-        let before = requested_tabs(&project, &op, &paths);
+        let (copy, profile) = requesting_profile(&project, &op, &paths);
+        let spec = profile.tabs.as_ref().expect("the request");
+        let before: Vec<Point> = crate::placed_tabs::place(&copy, &profile.id, spec)
+            .expect("placed")
+            .tabs
+            .iter()
+            .map(|t| Point::new(t.x_mm, t.y_mm))
+            .collect();
         assert_eq!(tabs.len(), before.len(), "{name}: {tabs:?} for {before:?}");
         assert_eq!(tabs.len(), 4 * paths.len(), "{name}: four on each outline");
         for (tab, was) in tabs.iter().zip(&before) {
@@ -527,6 +574,46 @@ fn unclipped_cut_out_tabs_are_unchanged() {
                 "{name}: a tab at {tab:?} was at {was:?}"
             );
         }
+
+        let floor_mm = op.engagement_mm(Board::Male).expect("the floor's depth");
+        let (was, was_warnings) =
+            generate_profile_below(&copy, &profile, floor_mm).expect("the Profile generates");
+        let (runs, warnings) = inlay_runs(&project, &op);
+        let run = runs
+            .iter()
+            .find(|r| matches!(r.label, RunLabel::CutOut(_)))
+            .expect("a cut-out run");
+        assert_eq!(run.toolpath.moves.len(), was.moves.len(), "{name}");
+        for (i, (mv, old)) in run.toolpath.moves.iter().zip(&was.moves).enumerate() {
+            assert!(
+                std::mem::discriminant(&mv.kind) == std::mem::discriminant(&old.kind)
+                    && mv.feed_mm_min == old.feed_mm_min
+                    && mv.to.xy().distance_to(old.to.xy()) <= 1e-9
+                    && (mv.to.z - old.to.z).abs() <= 1e-9,
+                "{name}: move {i} is {mv:?}, was {old:?}"
+            );
+        }
+        for warning in &was_warnings {
+            assert!(warnings.contains(warning), "{name}: {warning:?} is gone");
+        }
+        let tab_warnings = |all: &[Warning]| {
+            all.iter()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        Warning::TabsCoverMostOfContour { .. }
+                            | Warning::TabsOverlap { .. }
+                            | Warning::TabOnCorner { .. }
+                            | Warning::TabsOutsideCutRange { .. }
+                    )
+                })
+                .count()
+        };
+        assert_eq!(
+            tab_warnings(&warnings),
+            tab_warnings(&was_warnings),
+            "{name}: {warnings:?}"
+        );
     }
 }
 

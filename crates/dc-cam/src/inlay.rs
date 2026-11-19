@@ -63,8 +63,10 @@
 mod tests;
 
 use std::borrow::Cow;
+use std::ops::Range;
 
 use crate::error::{CamError, ShapeRef};
+use crate::placed_tabs;
 use crate::profile::{generate_profile_below, rates_of};
 use crate::run::{RunLabel, ToolRun};
 use crate::stock::StockEdge;
@@ -1083,17 +1085,25 @@ fn generate_on(
     if let (Some((cut_out, band, diameter_mm)), Some(thickness_mm)) =
         (cut_out, project.stock.thickness_mm)
     {
-        let paths = cut_out_paths(
+        let outlines = cut_out_paths(
             &band_edge,
             &band,
             diameter_mm,
             band.board(&project.stock),
             project.flatten_tolerance_mm,
         );
-        let (cut_project, profile) = cut_out_profile(project, op, cut_out, &paths, thickness_mm);
+        let (cut_project, profile, tab_warnings) =
+            cut_out_profile(project, op, cut_out, &outlines, thickness_mm)?;
         let (toolpath, cut_warnings) =
             generate_profile_below(&cut_project, &profile, values.engagement_mm())?;
-        warnings.extend(cut_warnings);
+        warnings.extend(tab_warnings);
+        // Every tab the Profile crosses is one its request placed, and
+        // placing has said which outlines got fewer than asked.
+        warnings.extend(
+            cut_warnings
+                .into_iter()
+                .filter(|w| !matches!(w, Warning::TabsCoverMostOfContour { placed: true, .. })),
+        );
         runs.push(ToolRun {
             label: RunLabel::CutOut(cut_out.tool.clone()),
             tool: cut_out.tool.clone(),
@@ -1188,6 +1198,12 @@ fn checked_cut_out<'o>(
 /// it, are dropped ([`dc_geometry::without_rect_sides`]): the rest are
 /// open paths from the board's edge to the board's edge, their ends the
 /// radius inside it. Every other path is closed.
+///
+/// The paths come back by outline (#710): for each outline the one closed
+/// path it is, or the open pieces the board's edge leaves of it, in its
+/// order. An outline that runs only along the board's edge gives none.
+/// The pieces of one outline are one cut to the user, and share its tabs
+/// ([`cut_out_profile`]).
 #[must_use]
 pub fn cut_out_paths(
     edge: &[Region],
@@ -1195,10 +1211,13 @@ pub fn cut_out_paths(
     diameter_mm: f64,
     board: Rect,
     tolerance_mm: f64,
-) -> Vec<Polyline> {
+) -> Vec<Vec<Polyline>> {
     let inset_mm = band.cut_out_inset_mm(diameter_mm);
-    let closed = |outlines: Vec<Contour>| -> Vec<Polyline> {
-        outlines.into_iter().map(Contour::into_polyline).collect()
+    let closed = |outlines: Vec<Contour>| -> Vec<Vec<Polyline>> {
+        outlines
+            .into_iter()
+            .map(|outline| vec![outline.into_polyline()])
+            .collect()
     };
     let Some(clipped) = band_on_board(edge, board, tolerance_mm) else {
         return closed(inset_outers(edge, inset_mm, tolerance_mm));
@@ -1211,28 +1230,51 @@ pub fn cut_out_paths(
         min: Point::new(board.min.x + inset_mm, board.min.y + inset_mm),
         max: Point::new(board.max.x - inset_mm, board.max.y - inset_mm),
     };
-    without_rect_sides(&outlines, within, tolerance_mm)
+    outlines
+        .iter()
+        .map(|outline| without_rect_sides(std::slice::from_ref(outline), within, tolerance_mm))
+        .filter(|pieces| !pieces.is_empty())
+        .collect()
 }
 
 /// The On line Profile a male Inlay's cut-out is (#443), and a copy of
-/// `project` that holds it: `paths` (project space; closed, or open from
-/// the board's edge to the board's edge where the band is clipped, #495)
-/// as the
+/// `project` that holds it: the paths of `outlines` ([`cut_out_paths`]:
+/// project space, by outline; closed, or open from the board's edge to
+/// the board's edge where the band is clipped, #495) as the
 /// profiles of one definition placed in place, which the Profile targets
-/// with the cut-out's tool, tabs and through-cut allowance, through the
+/// with the cut-out's tool and through-cut allowance, through the
 /// stock `thickness_mm` thick, climb, plunging, with the Inlay's id,
 /// name, machining order and safe Z. The Profile is the copy's only
-/// operation, so its tab request is placed as `dreamcarve tabs place`
-/// places it ([`crate::placed_tabs::place`]); the safety pass builds the
-/// same Profile itself, on paths it derives itself, to place its tabs.
-#[must_use]
+/// operation.
+///
+/// The cut-out's tab request is placed here, before anything is cut
+/// (#710, ADR-0005): the copy holds its tabs as placed tabs on that one
+/// instance, and the Profile carries no request. Each outline takes the
+/// request, as `dreamcarve tabs place` places a Profile's
+/// ([`crate::placed_tabs::place`]); the pieces the board's edge leaves of
+/// one outline take it between them ([`crate::placed_tabs::place_shared`]),
+/// so a cut-out asked for four tabs gets four, however many pieces it is
+/// cut in. The safety pass builds the same Profile itself, on paths it
+/// derives itself, and places its tabs by the same rule.
+///
+/// The warnings are what placing found that the Profile cannot find again
+/// from placed tabs: an outline or piece that got fewer tabs than its
+/// share ([`Warning::TabsCoverMostOfContour`]) and a tab left on a corner
+/// ([`Warning::TabOnCorner`]). Tabs that overlap are the Profile's to
+/// report.
+///
+/// # Errors
+///
+/// As [`crate::placed_tabs::place`] when the request cannot be placed: a
+/// tab size that is not a positive number, or a tool or path the Profile
+/// cannot cut.
 pub fn cut_out_profile(
     project: &Project,
     op: &InlayOp,
     cut_out: &InlayCutOut,
-    paths: &[Polyline],
+    outlines: &[Vec<Polyline>],
     thickness_mm: f64,
-) -> (Project, ProfileOp) {
+) -> Result<(Project, ProfileOp, Vec<Warning>), CamError> {
     let mut copy = project.clone();
     let mut stem = format!("{}-cut-out", op.id);
     while copy.instances.iter().any(|i| i.id.as_str() == stem)
@@ -1247,7 +1289,7 @@ pub fn cut_out_profile(
         FeatureDefinition {
             id: definition.clone(),
             name: format!("{} cut-out", op.name),
-            profiles: paths.to_vec(),
+            profiles: outlines.iter().flatten().cloned().collect(),
         },
     );
     copy.instances.push(FeatureInstance {
@@ -1272,7 +1314,7 @@ pub fn cut_out_profile(
         direction: CutDirection::Climb,
         through_cut_allowance_mm: cut_out.through_cut_allowance_mm,
         safe_z_mm: op.safe_z_mm,
-        tabs: cut_out.tabs.clone(),
+        tabs: None,
         machining_order: op.machining_order,
         entry: Entry::Plunge,
         lead: None,
@@ -1281,5 +1323,26 @@ pub fn cut_out_profile(
         start: StartAt::Auto,
     };
     copy.operations = vec![Operation::Profile(profile.clone())];
-    (copy, profile)
+    let mut warnings = Vec::new();
+    if let Some(spec) = &cut_out.tabs {
+        // Each outline's paths, as the definition's profiles number them.
+        let mut next = 0;
+        let pieces: Vec<Range<usize>> = outlines
+            .iter()
+            .map(|paths| {
+                let from = next;
+                next += paths.len();
+                from..next
+            })
+            .collect();
+        let placement = placed_tabs::place_shared(&copy, &profile.id, spec, &pieces)?;
+        copy.tabs.extend(placement.tabs);
+        warnings.extend(
+            placement
+                .warnings
+                .into_iter()
+                .filter(|w| !matches!(w, Warning::TabsOverlap { .. })),
+        );
+    }
+    Ok((copy, profile, warnings))
 }

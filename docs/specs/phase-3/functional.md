@@ -400,7 +400,14 @@ is no GUI in this phase.
      dropped, as the board's own edge frees the plug there: the rest are
      open paths from the board's edge to the board's edge, their ends the
      radius inside it, so the kerf reaches the edge and the tool never
-     leaves the board, and the tabs go only on them. A floor narrower than the tool is `inlay_cut_out_no_room`,
+     leaves the board, and the tabs go only on them. The tab request is
+     for the cut-out of one plug, however many paths it is cut in (#710):
+     the open paths of one outline share a `count` by length, the largest
+     remainders rounded up, so a request for 4 tabs places 4 whenever the
+     paths can hold them (a path too short for its share takes fewer, with
+     `tabs_cover_most_of_contour`), and `at_distances` count along them
+     end to end. An unclipped cut-out is laid as a Profile's outline is.
+     A floor narrower than the tool is `inlay_cut_out_no_room`,
      naming the margin needed. Freed, the piece is the plug on its
      backing with a rim of floor round it, `plug_depth_mm` below the start
      plane, which clears the female's surface. With `cut_out: null` the

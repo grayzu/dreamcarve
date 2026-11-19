@@ -3088,8 +3088,9 @@ values, so they cannot drift apart: until format 25 an `InlayOp` cut one
    P·s` is the condition. Design holes are not cut out. The paths are
    cut by the Profile code as an On
    line Profile (`inlay::cut_out_profile`: the paths as one definition
-   placed in place, climb, plunge entry, the cut-out's tool, tabs and
-   allowance, depth `thickness + allowance`), with its passes starting at
+   placed in place, climb, plunge entry, the cut-out's tool and
+   allowance, depth `thickness + allowance`, its tabs placed on that
+   instance as below, #710), with its passes starting at
    the floor, `D − G + P` below the stock top
    (`profile::generate_profile_below`): no pass cuts the air the carve
    removed. Tab heights count from the male board's bottom. The run is
@@ -3118,6 +3119,43 @@ values, so they cannot drift apart: until format 25 an `InlayOp` cut one
    band is clipped `R_v` inside the board and the board stands beyond
    it, so the path stays closed and frees the plug from it. Room as
    step 4.
+
+   **The cut-out's tabs** (#710). The tab request is placed before the
+   Profile is generated (ADR-0005): `inlay::cut_out_profile` writes the
+   tabs as placed tabs on the copy's one instance and gives the Profile
+   no request, so the generator and the safety pass cut by the same
+   placed tabs. The request is for each outline of the path (each
+   plug's cut-out), as a Profile's is for each outline it cuts (phase 2
+   capability 26): a closed outline is laid by
+   `placed_tabs::place`, tab for tab what the Profile's own request laid
+   before. The open paths the board's edge leaves of one outline
+   (`inlay::cut_out_paths` returns the paths by outline) are one cut and
+   take the request between them (`placed_tabs::place_shared`,
+   `tabs::Request::shared`). Before, each piece took the whole request,
+   so a cut-out asked for 4 tabs and clipped into three pieces was cut
+   with up to 12.
+   - `count` is shared by length with the largest remainder method
+     (`tabs::shares`): piece `i` of length `Lᵢ` takes `⌊n·Lᵢ / ΣL⌋`, and
+     the tabs left go one each to the largest fractions, the earlier
+     piece first where two are equal to `10⁻⁶`. A piece holds at most
+     the tabs whose spans (`width + d` each) cover half of it, the rule
+     `Request::fit` cuts a count down by; one whose share is more takes
+     what it holds and the others share the rest the same way, so the
+     whole count is placed whenever the pieces can hold it. When they
+     cannot, the tabs left over are asked of all the pieces by length
+     and each cuts its own down, with `tabs_cover_most_of_contour`.
+   - `at_distances` count along the pieces laid end to end in the
+     outline's order, each distance modulo their whole length, and on
+     its piece from that piece's first vertex: one tab for each
+     distance.
+   - Each piece lays its share as any open path does: evenly spaced,
+     `L/(2n)` from its ends, off corners with `avoid_corners`.
+
+   The warnings of placing that the Profile cannot find again from
+   placed tabs (`tabs_cover_most_of_contour` for a request cut down,
+   `tab_on_corner`) are the run's; `tabs_overlap` is the Profile's, and
+   its own `tabs_cover_most_of_contour` for placed tabs is dropped, as
+   placing has said it.
 
 ### Image prep (dc-import::prep, dc-geometry::{fill, width, simplify})
 
@@ -4104,8 +4142,16 @@ against the male board.
   whose tool passes the board's edge is still refused
   (`safety::cut_out_off_the_stock_still_fails`). Its tabs are held as a
   Profile's (#337): the pass builds the On line Profile itself on that
-  path and places its tab request by `dc_cam::placed_tabs::place`, the
-  documented layout rule. It never calls a generator
+  path, with no tab request, and places the cut-out's request on it as
+  placed tabs by `dc_cam::placed_tabs::place_shared`, the documented
+  layout rule, which the generator places it by before it cuts (#710,
+  step 6): each outline takes the request, and the open paths the
+  board's edge leaves of one outline, which the pass finds itself, take
+  it between them. So both hold a clipped cut-out to the tabs asked
+  for, not to that many on every piece
+  (`safety::clipped_cut_out_with_tabs_passes_safety`). S9 builds a tab's
+  spine on a closed outline only, as for a Profile, so it does not hold
+  a plunge off a tab on an open piece. It never calls a generator
   (`s17_uses_no_generator`).
 - **S18, countersink.** For a Drill whose cycle is a countersink: every
   cut (`G1` with Z motion) in its span is vertical, at a target circle's
@@ -4397,6 +4443,7 @@ for V operations.
 - The open, rounded band (#448): `carve::rounding_zero_is_the_plain_surround`, `carve::rounded_band_contains_the_plain_band`, `carve::rounding_fills_a_gap_narrower_than_twice_the_radius`, `carve::rounding_keeps_design_holes_as_regions`, `carve::open_floor_keeps_the_band_edge`, `carve::inset_outers_rounds_across_a_gap` (dc-geometry); `migrate::v23_to_v24_adds_null_outline_rounding`, `migrate::version_23_fixture_loads`, `serialize::inlay_outline_rounding_round_trips`, `validate::outline_rounding_must_be_positive`, `validate::cut_out_room_follows_the_open_edge`, `inlay::edge_pass_is_the_first_clearing_pass_that_fits`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (dc-project); `inlay::male_with_clearing_has_no_v_wall_at_the_band_edge` (no V-bit point within its cone's radius at the stock top of `B`, nor nearer than `M − P·s`; without clearing, the V wall's foot is cut), `inlay::edge_pass_sweeps_the_band_to_its_outer_edge` (every vertex of `B` is `r` from the floor path within the tolerance), `inlay::male_without_clearing_keeps_the_v_wall`, `inlay::clearing_that_does_not_fit_keeps_the_v_wall_and_warns`, `inlay::female_and_male_walls_mate` (also with `R` 12 and an open edge), `inlay::cut_out_no_room`.
 - The cut-out along the floor's outer edge (#461): `inlay::cut_out_hugs_the_band_edge` (open edge, plain and `R` 6: every cut point `r` from `B` within the tolerance and inside it; above the floor the swept disc inside `B`), `inlay::cut_out_hugs_the_slope_foot_with_a_v_wall` (every point `P·s + r` from `B`), `inlay::cut_out_no_room`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (`MaleBand::cut_out_inset_mm`), `carve::inset_outers_runs_inside_the_band_edge` (dc-geometry); `safety::cut_out_off_the_floor_ring_fails` and `safety::cut_out_off_the_open_edge_ring_fails` (on the path passes; in the ring off it, where the cut-out ran before, fails), `safety::cut_out_plunge_into_a_tab_fails`, `safety::generated_cut_outs_pass`; `cli::lettered_inlay_fits_its_board` (the tutorial's cut-out `r` from `B`, inside it); `inlay::plug_seats_flush` unchanged.
 - The band and the cut-out clipped to the stock (#495): `inlay::band_is_clipped_to_the_stock` (a star 2 mm from the left edge, `M` 8, a 3.175 mm 60° V-bit and a 1.5 mm end mill: no run's tool past the stock, the clearing floor out to the board's edge, `inlay_band_clipped` naming the left edge and 2 mm), `inlay::v_wall_band_is_clipped_inside_the_board` (clipped `R_v` inside it), `inlay::cut_out_runs_edge_to_edge_when_clipped` (open paths, their ends `r` inside the edge, every cut on them and on the stock, the tabs on them), `inlay::clipped_male_still_seats` (`plug_seats_flush`'s 0.05 mm), `inlay::design_too_near_the_edge_is_explained` (the bench's bits: `InlayTooNearEdge`, 4.330 mm needed), `inlay::unclipped_band_is_unchanged` (the tutorial's "DC" and the star: the surround and `B` as before, the same runs on stock ten times the size), `carve::band_on_board_clips_only_what_runs_past`, `carve::without_rect_sides_opens_outlines_along_the_board` (dc-geometry), `inlay::band_is_clipped_to_the_board` (dc-project); `safety::clipped_band_is_derived_from_the_project` (S17 and S9 refuse past the clipped band on 60 mm stock and pass on 100 mm), `safety::cut_out_off_the_stock_still_fails` (the unclipped cut-out on the narrow stock fails S7; a cut along the dropped stretch fails S9).
+- A clipped cut-out's tabs (#710): `inlay::clipped_cut_out_places_the_tabs_it_was_asked_for` (the star 2 mm from three edges of 100 × 64 mm stock: three open pieces, a count of 4, exactly 4 placed tabs, each on a path and on the stock, and the run lifts at those four places only), `inlay::clipped_cut_out_shares_its_tabs_by_length` (two pieces, one more than twice the other: the longer holds more, 4 in all), `inlay::clipped_cut_out_places_tabs_at_distances_once` (two distances, two tabs), `inlay::clipped_cut_out_too_short_for_its_tabs_warns` (a count of 30: every piece cut down to what covers half of it, one `tabs_cover_most_of_contour` each, none as placed tabs), `inlay::unclipped_cut_out_tabs_are_unchanged` (the star's and the "DC" cut-outs: the tabs `placed_tabs::place` lays for the request, the run move for move the request-carrying Profile's, the same tab warnings), `inlay::cut_out_runs_edge_to_edge_when_clipped` (now also: one piece, four tabs); `tabs::shares_split_a_count_by_length`, `tabs::shares_keep_to_what_each_piece_holds`, `tabs::request_is_shared_among_the_pieces_of_an_outline`; `safety::clipped_cut_out_with_tabs_passes_safety` (the three-piece star exported: the cut-out's last pass rises to the tabs' top four times, and the four tabs the pass places are where it rises).
 - Near parts merged (#479): `inlay::near::male_of_parts_closer_than_the_written_precision_seats` (squares 0.001 mm apart), `inlay::near::male_of_a_pinch_seats` (a circle 0.005 mm from a square, 60° and 90°), `inlay::near::male_of_a_merged_pinch_seats_at_every_gap` (0.01, 0.012, 0.02 and 0.04 mm, 60°), `inlay::near::male_of_a_corner_beside_a_curve_seats` (0.016 and 0.03 mm), `inlay::near::male_of_parts_a_hair_apart_seats` (0.003 mm), `inlay::near::parts_closer_than_the_merge_distance_merge_and_warn` (one region a side, one `inlay_parts_merged` a side, the female's pocket across the gap), `inlay::near::parts_a_tenth_apart_are_not_merged` (0.1 mm: two regions, no warning, the female's ridge stands to the stock top, the pair seats); `merge::squares_a_hair_apart_merge`, `merge::circle_at_a_pinch_merges`, `merge::merging_ends_a_gap_in_a_corner`, `merge::island_near_its_hole_merges_and_a_thin_web_does_not`, `merge::touching_parts_and_no_distance_merge_nothing`, `merge::merging_keeps_inward_corners_away_from_the_gap` (dc-geometry); `safety::female_holds_merged_parts_as_one_shape` (a cut over the 0.001 mm gap passes, over a 0.1 mm gap fails S17), `safety::generated_near_parts_pass_the_safety_pass`; the stress tests' `known_issue` no longer excuses near touches.
 - One-file Inlay (#498): `migrate::v24_to_v25_female_gets_an_unset_male_board`, `migrate::v24_to_v25_male_gets_the_stock_as_its_male_board`, `migrate::version_24_fixture_loads`, `serialize::inlay_male_board_round_trips`, `serialize::photo_v_carve_is_format_26` (pins the chain; the 3.4 boundary slice renames it `…_format_27`); `validate::male_board_size_must_be_positive`, `validate::male_board_thickness_must_be_positive`, `validate::cut_out_no_longer_needs_a_side`, `validate::inlays_share_one_male_board`; `inlay::both_boards_from_one_operation` (the female's runs, then the male's, each tagged), `inlay::male_runs_wait_for_the_board_thickness` (unset: no male runs, `inlay_male_board_unset` at `operations[i].male_board.thickness_mm`), `inlay::male_board_defaults_to_the_stock_in_xy`, `inlay::plug_base_thin_reads_the_male_board` (stock 18 mm, male board 8 mm with `D 4, G 1, P 2`: warns); `inlay::female_and_male_walls_mate` and `inlay::plug_seats_flush` unchanged in meaning, now from one project; `safety::male_program_is_held_to_the_male_boards_bottom` (male board 8 mm: a cut-out through 8.2 mm passes, through 12 mm fails S1), `safety::male_program_stays_on_the_male_board` (S7 against the male board's XY), `safety::generated_inlays_pass_on_both_boards`, `safety::origin_preset_applies_to_the_male_board` (centre origin: the male programs' XY are about the male board's centre); `cli::v24_male_project_exports_the_same_male_programs` (the old `star-male.dcv` and `dc-male.dcv`, migrated, export the committed male programs byte for byte under the new names), `cli::v24_female_project_exports_the_same_female_programs`, `cli::export::programs_are_grouped_by_board` (names, order, `k` restarting per board), `cli::export::board_flag_exports_one_board`, `cli::export::two_inlays_share_one_male_board`, `cli::export::no_inlay_keeps_todays_names`, `cli::preview::male_board_drawn_beside_the_stock`, `cli::lettered_inlay_exports_both_boards`, `quick_start::inlay_pair_chapter_runs` (one file). The stress harness (`crates/dc-gcode/tests/stress`) builds one-project Inlays: the female case with an unset male board, each male case cutting both boards from its one Inlay on a male board the stock's size, its thickness drawn from 10–14 mm on a separate RNG stream, and seating its own two boards.
 

@@ -775,7 +775,8 @@ fn generated_v_carves_pass_s17() {
 /// entry constants, and no other path into `dc_cam` appears there but
 /// phase 2's two documented rules (`last_pass_step_reach_mm`, the
 /// last-pass step's length, and `placed_tabs::place`, the tab layout
-/// rule). A V-Carve's regions, floor and engagement, and a countersink's
+/// rule, with `placed_tabs::place_shared`, the same rule for a cut-out
+/// the board's edge leaves in pieces, #710). A V-Carve's regions, floor and engagement, and a countersink's
 /// holes, depth and engagement (S18, #427), come from
 /// `dc_geometry` and `dc_project`.
 #[test]
@@ -792,9 +793,10 @@ fn s17_uses_no_generator() {
         "entry::CLEARED_POINT_TOLERANCE_MM",
         "entry::ENTRY_CLEARANCE_MM",
     ];
-    const RULES: [&str; 2] = [
+    const RULES: [&str; 3] = [
         "dc_cam::last_pass_step_reach_mm",
         "dc_cam::placed_tabs::place",
+        "dc_cam::placed_tabs::place_shared",
     ];
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     // Every source file, in submodules too (`material/cone.rs`,

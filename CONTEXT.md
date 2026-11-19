@@ -288,7 +288,9 @@ _Avoid_: Plug height
 An Inlay's last tool run on the male board (format 23), `cut_out`: a flat
 end mill that frees the plug from its board, On line half `margin_mm` out
 from the mirrored design, in the band's flat floor, from the floor through
-the board, with tabs.
+the board, with tabs. Its tab request is for the cut-out of one plug as a
+whole: where the board's edge frees the plug and leaves the cut-out as
+several open paths, they share the request (#710).
 _Avoid_: Plug cutout, profile (it is part of the Inlay, not an operation)
 
 **Boundary**:

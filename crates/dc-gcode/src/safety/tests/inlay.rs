@@ -712,21 +712,24 @@ fn cut_out_plunge_into_a_tab_fails() {
     // foot plus the end mill's radius.
     let tolerance_mm = project.flatten_tolerance_mm;
     let band = dc_geometry::rounded_band(&design, 6.0, 0.0, tolerance_mm);
-    let paths: Vec<Polyline> = dc_geometry::floor_regions(&band, 1.0 + 3.175 / 2.0, tolerance_mm)
-        .iter()
-        .map(|r| r.outer().polyline().clone())
-        .collect();
-    let (copy, profile) = dc_cam::inlay::cut_out_profile(
+    let outlines: Vec<Vec<Polyline>> =
+        dc_geometry::floor_regions(&band, 1.0 + 3.175 / 2.0, tolerance_mm)
+            .iter()
+            .map(|r| vec![r.outer().polyline().clone()])
+            .collect();
+    // #710: the copy holds the request's tabs as placed tabs.
+    let (copy, profile, _) = dc_cam::inlay::cut_out_profile(
         &project,
         &op,
         op.cut_out.as_ref().expect("a cut-out"),
-        &paths,
+        &outlines,
         12.0,
-    );
-    let placed = dc_cam::placed_tabs::place(&copy, &profile.id, &four_tabs()).expect("placed");
-    let tab = placed
+    )
+    .expect("the tabs are placed");
+    let tab = copy
         .tabs
         .iter()
+        .filter(|t| profile.targets.contains(&t.instance))
         .find(|t| t.y_mm < 20.0 && t.x_mm > 46.0)
         .expect("a tab under the rectangle");
     let plunge = |x: f64, z: f64| program_at(x, tab.y_mm, &format!("G1 Z{z} F300\n"));
@@ -965,25 +968,29 @@ fn star_near_three_edges() -> Project {
     ))
 }
 
-/// How often `program` rises from `from_z` straight to `to_z` (machine
-/// Z as written, three decimals): on a cut-out's last pass, once for each
-/// rect tab it lifts over.
-fn rises(program: &str, from_z: &str, to_z: &str) -> usize {
-    let mut at: Option<&str> = None;
-    let mut count = 0;
+/// Where `program` rises from `from_z` straight to `to_z` (machine Z as
+/// written, three decimals), in XY as written, which with the stock-top
+/// origin is the project's: on a cut-out's last pass, once for each rect
+/// tab it lifts over, where the tab's stretch starts.
+fn rises(program: &str, from_z: &str, to_z: &str) -> Vec<Point> {
+    let mut z_at: Option<&str> = None;
+    let mut at = Point::new(0.0, 0.0);
+    let mut places = Vec::new();
     for line in program.lines() {
-        let Some(z) = line
-            .split_whitespace()
-            .find_map(|word| word.strip_prefix('Z'))
-        else {
-            continue;
-        };
-        if at == Some(from_z) && z == to_z {
-            count += 1;
+        for word in line.split_whitespace() {
+            if let Some(x) = word.strip_prefix('X').and_then(|v| v.parse().ok()) {
+                at.x = x;
+            } else if let Some(y) = word.strip_prefix('Y').and_then(|v| v.parse().ok()) {
+                at.y = y;
+            } else if let Some(z) = word.strip_prefix('Z') {
+                if z_at == Some(from_z) && z == to_z {
+                    places.push(at);
+                }
+                z_at = Some(z);
+            }
         }
-        at = Some(z);
     }
-    count
+    places
 }
 
 /// #710: a clipped cut-out's tabs are counted for the cut-out, not for
@@ -1001,7 +1008,37 @@ fn clipped_cut_out_with_tabs_passes_safety() {
     let programs = export_inlay(&project, &op).expect("the clipped male exports");
     let cut_out = programs.last().expect("a cut-out program");
     assert!(cut_out.contains("cut-out t7"), "{cut_out}");
-    assert_eq!(rises(cut_out, "-12.200", "-10.000"), 4, "{cut_out}");
+    let rises = rises(cut_out, "-12.200", "-10.000");
+    assert_eq!(rises.len(), 4, "{rises:?}\n{cut_out}");
+
+    let mut with_op = project.clone();
+    with_op.operations = vec![Operation::Inlay(op.clone())];
+    let tool = with_op
+        .tools
+        .iter()
+        .find(|t| t.id.as_str() == "t7")
+        .expect("the end mill");
+    let held = material::cut_out_placed(&with_op, &op, tool, Board::Male).expect("the cut-out");
+    let Some(Operation::Profile(profile)) = held.operations.first() else {
+        panic!("the cut-out is held as a Profile");
+    };
+    assert_eq!(profile.tabs, None, "the request is placed, not carried");
+    let tabs: Vec<Point> = held
+        .tabs
+        .iter()
+        .filter(|t| profile.targets.contains(&t.instance))
+        .map(|t| Point::new(t.x_mm, t.y_mm))
+        .collect();
+    assert_eq!(tabs.len(), 4, "{tabs:?}");
+    // Each tab the safety pass places is one the program rises over: the
+    // rise is where its stretch starts, half the tab's width (4 mm) and
+    // the bit's radius (0.75 mm) from its centre along the path.
+    for tab in &tabs {
+        assert!(
+            rises.iter().any(|p| p.distance_to(*tab) <= 2.75 + 0.01),
+            "the program does not rise over the tab at {tab:?}: {rises:?}"
+        );
+    }
 }
 
 // #479: an Inlay's parts closer than the merge distance are one shape.
