@@ -36,7 +36,13 @@ fn new_project() -> Harness {
     Harness::from_project(App::new_project().unwrap())
 }
 
-/// The plaque with tool `id`'s feed deleted.
+/// The tool the project's first operation cuts with: one an enabled
+/// operation uses.
+fn used_tool(harness: &Harness) -> String {
+    harness.app.project().operations[0].tool().to_string()
+}
+
+/// Deletes tool `id`'s feed.
 fn without_feed(harness: &mut Harness, id: &str) {
     let mut tool = harness
         .app
@@ -156,7 +162,8 @@ fn tools_is_empty_without_a_tool() {
 fn tools_needs_attention_when_a_used_tool_lacks_a_rate() {
     let mut harness = Harness::from_project(plaque());
     assert_eq!(states(&harness).of(Step::Tools), State::Complete);
-    without_feed(&mut harness, "t1");
+    let used = used_tool(&harness);
+    without_feed(&mut harness, &used);
     assert_eq!(
         states(&harness).of(Step::Tools),
         State::Attention(Severity::Error)
@@ -234,7 +241,8 @@ fn operations_needs_attention_when_an_operation_has_a_warning() {
 fn export_needs_attention_when_an_error_blocks_it() {
     let mut harness = Harness::from_project(plaque());
     assert_eq!(states(&harness).of(Step::Export), State::Empty);
-    without_feed(&mut harness, "t1");
+    let used = used_tool(&harness);
+    without_feed(&mut harness, &used);
     assert_eq!(
         states(&harness).of(Step::Export),
         State::Attention(Severity::Error)
@@ -319,7 +327,8 @@ fn continue_wraps_to_an_earlier_step_and_ends_on_export() {
     assert_eq!(steps::next(&all, Step::Export), Step::Export);
     // Exported, then a tool loses its feed: Export is the first after
     // Operations that is not complete; from Export it wraps to Tools.
-    without_feed(&mut harness, "t1");
+    let used = used_tool(&harness);
+    without_feed(&mut harness, &used);
     let all = steps::states(&harness.app, &session);
     assert_eq!(steps::next(&all, Step::Operations), Step::Export);
     assert_eq!(steps::next(&all, Step::Export), Step::Tools);
@@ -430,7 +439,8 @@ fn each_step_has_a_one_line_summary() {
         line(&harness, &exported, Step::Export),
         "Exported. Nothing has changed since."
     );
-    without_feed(&mut harness, "t1");
+    let used = used_tool(&harness);
+    without_feed(&mut harness, &used);
     assert_eq!(
         line(&harness, &fresh(), Step::Export),
         "1 error blocks export."
