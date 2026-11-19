@@ -630,8 +630,9 @@ The audit covered every `unwrap_or_default()`, `unwrap_or(..)`,
 open (a row that groups several says how many). "Open" means a miss made the check pass; "closed" that it failed
 or made the rule stricter; "not a miss" that the `None` is a value of
 the domain (no last pass, arc fitting off), not a failed lookup. None of
-the open sites was reachable from a project: each range, index and
-option is built by the code that reads it. No program that passed
+the open sites was reachable from a project but one, a tab on an open
+outline: each range, index and option is built by the code that reads
+it. No program that passed
 before fails now, bar a cut outside every operation (1.10).
 
 S6 and the modal rules (`safety.rs`):
@@ -682,7 +683,7 @@ S9 and its rules (`material.rs`, `material/*.rs`):
 | `trench_rule`, no stock thickness | Open: the trench rule left out | `Unresolved` |
 | `tab_spines`, the tool, or the depth or thickness, missing (2) | Open: no tabs | `None`: `Unresolved` |
 | `tab_spines`, `place(..).ok()..unwrap_or_default()` | Open: no tabs of a request that cannot be placed | `None` |
-| `tab_spines`, a tab's instance, definition, profile, transform or contour (5 `?` in a `filter_map`) | Open: the tab dropped | `None`; a tab on an open outline still has no spine (`docs/specs/phase-3/design.md`, "S9, an Inlay cut-out") |
+| `tab_spines`, a tab's instance, definition, profile, transform or contour (5 `?` in a `filter_map`) | Open: the tab dropped | `None`; a tab on an open outline an On line Profile cuts has a spine along it (`docs/specs/phase-3/design.md`, "S9, an Inlay cut-out"), which is the one site a project could reach: a clipped cut-out's tabs. Still open: a tab on an open path of a Left or Right Profile, which that section says is not held yet |
 | `run_tab_spines`, `.unwrap_or_default()` | Open in itself; `cut_out_material` was `Unresolved` for the same cause | `None` |
 | `cut_out_placed`, `place_shared(..).ok()` | Open: no tab placed | `None` |
 | `TabSpine::cuts_into`, `nearest_point` `else false`; the stock path's `is_some_and` (2) | Open: not on that path | The cut goes below the tab |
