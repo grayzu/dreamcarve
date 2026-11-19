@@ -5,7 +5,7 @@
 //! `13-export-result.svg`; `experience.md`, section 15, "Export result"):
 //! the export sheet's content once the programs are written, in three
 //! parts. **Status**, one 15-px SemiBold line with `circle-check` and the
-//! CLI's own lines under it; **Files**, a table of 28-px rows (number,
+//! CLI's own lines under it; **Files**, a table of 34-px rows (number,
 //! file name in the monospace face, tool, time right-aligned) grouped by
 //! board with an Inlay, the totals, then the folder as one mono line with
 //! *Show in folder* and a `copy` button; **Run instructions**, a
@@ -162,7 +162,7 @@ fn files(ui: &mut Ui, strings: &Strings, result: &ExportResult, out: &mut Vec<Ac
     });
 }
 
-/// One 28-px row of the Files table: number, file name in mono, tool,
+/// One 34-px row of the Files table: number, file name in mono, tool,
 /// and the time right-aligned; the header row in secondary text.
 fn table_row(ui: &mut Ui, cells: [&str; 4], fill: Option<egui::Color32>, header: bool) {
     let palette = Palette::current(ui);

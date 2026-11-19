@@ -3,7 +3,7 @@
 
 //! The Design Tree (functional spec, capability 57; `experience.md`,
 //! sections 6 to 8; mock-up `01-workspace.svg`, left): the Shapes
-//! section, one 26-px row per instance in file order with its eye, its
+//! section, one 30-px row per instance in file order with its eye, its
 //! padlock (shown on hover unless locked; its tooltip says what a lock
 //! does), the shape glyph (`square`, `circle` or `spline`: never the word
 //! "open"), its name, the `component` badge of a linked copy and the count

@@ -5,7 +5,8 @@
 //! shell"; functional spec, capabilities 50, 51 and 79): one [`Shell`]
 //! implementing `eframe::App`, which owns the `dc_app::App` and every
 //! file, dialog and preference write, and never holds project data of its
-//! own. Each frame it follows the OS appearance, answers the window's
+//! own. Each frame it shows the appearance the preference names (dark
+//! unless chosen otherwise), answers the window's
 //! close button and dropped files, reads the keyboard shortcuts, draws the
 //! menu bar, toolbar, status bar, side panels and Viewport, and then runs
 //! what the widgets asked for.

@@ -3,7 +3,7 @@
 
 //! The CAM panel's Tools tab (functional spec, capability 63; mock-ups
 //! `01-workspace.svg` and `16-tools-tab.svg`; `experience.md`, section 7):
-//! *New tool* and *Add from library…* over the project's tools, one 40-px
+//! *New tool* and *Add from library…* over the project's tools, one 52-px
 //! row each with its type glyph, name, diameter (and angle for a V-bit)
 //! and number, a red dot when it lacks a feed, plunge rate or RPM and the
 //! `unused_tool` hint when no operation uses it; *Duplicate* and *Delete*

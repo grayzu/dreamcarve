@@ -764,7 +764,7 @@ fn table(
         });
 }
 
-/// A vendor group's 28-px band (section 7, "Vendor group header"): the
+/// A vendor group's 32-px header (section 7, "Vendor group header"): the
 /// chevron, the vendor in 13-px SemiBold and its count in text.secondary.
 /// Returns whether it was clicked, which opens or closes the group.
 fn group_header(

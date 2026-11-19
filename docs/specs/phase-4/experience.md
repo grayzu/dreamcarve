@@ -1037,8 +1037,8 @@ A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
    outside `theme.rs` and the painter-glyph module.
 2. Both appearances were captured; nothing is white-on-white or
    dark-on-dark in either.
-3. Control heights are 26 px (28 in sheet footers); row heights are 26,
-   40 or 28 as the table says.
+3. Control heights are 32 px (34 for the toolbar's primary button); row
+   heights are 30, 52 or 34 as the table says.
 4. All horizontal and vertical gaps are on the 4-pt scale.
 5. Text is Inter at 12, 13, 15 or 18 px, or JetBrains Mono at 12; no other
    size, no system font.
@@ -1056,8 +1056,8 @@ A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
 10. No sheet opens above a sheet; the tool picker is a popover.
 11. Icons are Lucide at 16 or 20 px, or the operation glyphs; none at 24
     or 12 in the chrome.
-12. Section headers are 28 px with the chevron on the left and a located
-    warning's glyph on the right when closed.
+12. Section headers are 32 px with no band, the chevron on the left and a
+    located warning's glyph on the right when closed.
 13. The focus ring is visible on the keyboard-focused control in the
     screenshot taken after Tab, and absent after a click.
 14. Disabled controls show their reason on hover where the spec names one.
@@ -1111,14 +1111,14 @@ A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
 
 | Dated | Replace with |
 | --- | --- |
-| Bevelled, gradient or glossy buttons | Flat fill or outline, one wash on hover, 4-px radius |
+| Bevelled, gradient or glossy buttons | Flat fill or outline, one wash on hover, an 8-px radius or a pill |
 | OK / Cancel / Apply rows under a property page | Edit in place; Undo from Edit; the one sheet with buttons is unsaved changes |
 | A modal over a modal | A popover inside the sheet, or the sheet's content replaced with a *Back* |
 | Tabbed property sheets (General / Advanced / Tabs…) | Disclosure sections in one scrolling editor |
 | A "?" button beside every field | Help on label hover, with the field name in mono |
 | 16-px pixel icons on a grey toolbar strip | 20-px Lucide icons with labels, quiet buttons, one primary |
-| Status bar text at 11 px in sunken cells | 12 px on a flat bar with 1-px rules |
-| Raised 3-D frames around panels and the canvas | No frames; 4-px gutters and one rule under headers |
+| Status bar text at 11 px in sunken cells | 12 px in quiet pills on the backdrop |
+| Raised 3-D frames around panels and the canvas | Borderless cards on the backdrop, 8 px apart, no rule under a title |
 | Grid over the whole canvas, black background, crosshair cursor | Grid on the stock only, paper-coloured stage, arrow cursor, coordinates in the status bar |
 | Lines that scale with zoom until the picture is a blob | Screen-constant stroke widths |
 | Red text as the only sign of an error | Outline + filled glyph + message |
