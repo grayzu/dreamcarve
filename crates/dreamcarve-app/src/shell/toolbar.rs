@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The toolbar (functional spec, capability 50; `experience.md`, section
-//! 2, "Menu bar and toolbar"): 40 px on `surface.panel`, quiet buttons with
-//! a 20-px icon and a label in groups 16 px apart, and Export as the one
-//! primary button at the right end, which opens the export sheet (#547).
+//! 2, "Menu bar and toolbar"): 48 px on the `surface.window` backdrop,
+//! quiet 32-px buttons with a 20-px icon and a label in groups 16 px
+//! apart, and Export as the one primary button, a 34-px accent pill at
+//! the right end, which opens the export sheet (#547).
 //! No file name: the project's name is the OS window title (#615). The
 //! Tab tool arms the Viewport's tab adding (#546). *Add picture*, which a
 //! later slice brings, is shown disabled with the reason.
@@ -27,9 +28,9 @@ use crate::widgets::icon::Icon;
 use crate::widgets::unit_field::{UnitField, field as unit_field, row};
 
 /// The toolbar's height, px.
-const HEIGHT_PX: f32 = 40.0;
+pub(crate) const HEIGHT_PX: f32 = 48.0;
 /// A toolbar button's height, px.
-const BUTTON_PX: f32 = 28.0;
+const BUTTON_PX: f32 = theme::CONTROL_PX;
 /// The gap between groups, px.
 const GROUP_GAP_PX: f32 = 16.0;
 /// The split button's chevron segment, px wide.
@@ -144,14 +145,7 @@ fn rotate_popover(
         .gap(4.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(POPOVER_PX)
-        .frame(
-            egui::Frame::NONE
-                .fill(palette.surface_raised)
-                .stroke(Stroke::new(1.0, palette.border_default))
-                .corner_radius(8)
-                .shadow(ui.visuals().popup_shadow)
-                .inner_margin(POPOVER_MARGIN_PX),
-        );
+        .frame(theme::popover(palette, POPOVER_MARGIN_PX));
     let mut apply = None;
     popup.show(|ui| {
         ui.set_width(POPOVER_PX - 2.0 * f32::from(POPOVER_MARGIN_PX));
@@ -201,8 +195,8 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         .show_separator_line(false)
         .frame(
             egui::Frame::NONE
-                .fill(palette.surface_panel)
-                .inner_margin(egui::Margin::symmetric(8, 6))
+                .fill(palette.surface_window)
+                .inner_margin(egui::Margin::symmetric(8, 7))
                 .stroke(egui::Stroke::NONE),
         )
         .show(ui, |ui| {
@@ -274,7 +268,7 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     let mut export =
                         ButtonSpec::new(Kind::Primary, strings.get(StrKey::AppToolbarExport))
                             .icon(Icon::Download, theme::ICON_LARGE_PX)
-                            .height(BUTTON_PX);
+                            .height(theme::HEADER_PRIMARY_PX);
                     if let Some(refusal) = dc_app::project::export_refusal(state.app) {
                         export = export.tooltip(refusal.message.as_str());
                     }

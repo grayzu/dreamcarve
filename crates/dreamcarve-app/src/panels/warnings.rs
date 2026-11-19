@@ -4,8 +4,8 @@
 //! The Warnings drawer (functional spec, capability 76; mock-up
 //! `10-warnings-panel.svg`; `experience.md`, section 2, "Warnings
 //! drawer"): above the status bar over the Viewport's bottom 240 px,
-//! resizable down to 120, on `surface.panel` under a rule; never a
-//! window. Its rows are `dc_app::warnings::panel`'s, `check` on the
+//! resizable down to 120, a card of its own under the Viewport's; never
+//! a window. Its rows are `dc_app::warnings::panel`'s, `check` on the
 //! project as it stands: grouped by operation with the project's rows
 //! first, each with its tier glyph and word, its code in mono linking to
 //! the code's entry in the Warnings chapter, the message, and the field
@@ -27,14 +27,20 @@ use eframe::egui::{self, Rangef, Sense, TextStyle, Ui};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
+use crate::widgets::card::card;
+use crate::widgets::chip::{Tone, chip};
 use crate::widgets::icon::Icon;
+use crate::widgets::row::INSET_PX;
 
-/// The drawer's header band, px.
-const HEADER_PX: f32 = 32.0;
+/// The drawer's header, px: a control between the card's padding above
+/// it and the gap under it.
+const HEADER_PX: f32 = 52.0;
 /// A group's header, px.
-const GROUP_PX: f32 = 28.0;
+const GROUP_PX: f32 = theme::SECTION_HEADER_PX;
 /// A row, px (`experience.md`, section 7, "Table rows").
-const ROW_PX: f32 = 28.0;
+const ROW_PX: f32 = theme::TABLE_ROW_PX;
+/// A row's content margin, px.
+const MARGIN_PX: f32 = theme::CARD_PADDING_PX;
 /// A line of a carve note, px (the mock-up's 22-px fact lines).
 const NOTE_LINE_PX: f32 = 22.0;
 /// Where a carve note's facts start, from the row's left edge, px: past
@@ -146,51 +152,60 @@ pub(crate) fn drawer(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>)
         .show_separator_line(false)
         .default_size(DEFAULT_PX)
         .size_range(Rangef::new(MIN_PX, f32::INFINITY))
-        .frame(egui::Frame::NONE.fill(palette.surface_panel))
+        // The backdrop: the Viewport's card ends 6 px above, so 2 px
+        // more make the gap between the two cards.
+        .frame(
+            egui::Frame::NONE
+                .fill(palette.surface_window)
+                .inner_margin(egui::Margin {
+                    left: 8,
+                    right: 8,
+                    top: 2,
+                    bottom: 6,
+                }),
+        )
         .show(ui, |ui| {
-            if state.inert() {
-                ui.disable();
-            }
-            let full = ui.max_rect();
-            ui.painter().hline(
-                full.x_range(),
-                full.top(),
-                egui::Stroke::new(1.0, palette.border_default),
-            );
-            header(ui, state, counts, out);
-            egui::ScrollArea::vertical()
-                .auto_shrink(false)
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    if groups.is_empty() {
-                        ui.add_space(24.0);
-                        ui.vertical_centered(|ui| {
-                            text(
-                                ui,
-                                state.app.strings().get(StrKey::AppWarningsNone),
-                                TextStyle::Body,
-                                palette.text_secondary,
-                            );
-                        });
-                    }
-                    let mut stripe = false;
-                    for group in &groups {
-                        if group.heading {
-                            group_header(ui, &group_title(state, group));
+            card(ui, |ui| {
+                if state.inert() {
+                    ui.disable();
+                }
+                ui.spacing_mut().item_spacing.y = 0.0;
+                header(ui, state, counts, out);
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        if groups.is_empty() {
+                            ui.add_space(24.0);
+                            ui.vertical_centered(|ui| {
+                                text(
+                                    ui,
+                                    state.app.strings().get(StrKey::AppWarningsNone),
+                                    TextStyle::Body,
+                                    palette.text_secondary,
+                                );
+                            });
                         }
-                        for row in &group.rows {
-                            match &row.note {
-                                Some(note) => draw_note(ui, state, row, note, stripe, out),
-                                None => draw_row(ui, state, row, stripe, out),
+                        let mut stripe = false;
+                        for group in &groups {
+                            if group.heading {
+                                group_header(ui, &group_title(state, group));
                             }
-                            stripe = !stripe;
+                            for row in &group.rows {
+                                match &row.note {
+                                    Some(note) => draw_note(ui, state, row, note, stripe, out),
+                                    None => draw_row(ui, state, row, stripe, out),
+                                }
+                                stripe = !stripe;
+                            }
                         }
-                    }
-                });
+                        ui.add_space(INSET_PX);
+                    });
+            });
         });
 }
 
-/// The 32-px header: the title left; *Copy* and the close button right.
+/// The header: the title left; *Copy* and the close button right. No
+/// band and no rule under it.
 fn header(ui: &mut Ui, state: &FrameState<'_>, counts: Counts, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
@@ -198,7 +213,7 @@ fn header(ui: &mut Ui, state: &FrameState<'_>, counts: Counts, out: &mut Vec<Act
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER_PX), Sense::hover());
     let mut band = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(12.0, 0.0)))
+            .max_rect(rect.shrink2(egui::vec2(MARGIN_PX, 0.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     text(
@@ -228,24 +243,38 @@ fn header(ui: &mut Ui, state: &FrameState<'_>, counts: Counts, out: &mut Vec<Act
             out.push(Action::CopyWarnings);
         }
     });
-    ui.painter().hline(
-        rect.x_range(),
-        rect.bottom() - 0.5,
-        egui::Stroke::new(1.0, palette.border_default),
-    );
 }
 
-/// A group's 28-px header band.
+/// A group's 32-px header.
 fn group_header(ui: &mut Ui, title: &str) {
     let palette = Palette::current(ui);
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), GROUP_PX), Sense::hover());
     ui.painter().text(
-        egui::pos2(rect.left() + 12.0, rect.center().y),
+        egui::pos2(rect.left() + MARGIN_PX, rect.center().y),
         egui::Align2::LEFT_CENTER,
         title,
         TextStyle::Name(theme::TITLE.into()).resolve(ui.style()),
         palette.text_primary,
+    );
+}
+
+/// A row's surface in the `slot` the list gave it: inset from the card's
+/// edges at the control radius, `surface.hover` under the pointer, else
+/// `surface.stripe` on every other row.
+fn row_surface(ui: &Ui, slot: egui::Rect, hovered: bool, stripe: bool) {
+    let palette = Palette::current(ui);
+    let fill = if hovered {
+        palette.surface_hover
+    } else if stripe {
+        palette.surface_stripe
+    } else {
+        return;
+    };
+    ui.painter().rect_filled(
+        slot.shrink2(egui::vec2(INSET_PX, 0.0)),
+        theme::CONTROL_RADIUS_PX,
+        fill,
     );
 }
 
@@ -274,11 +303,7 @@ fn draw_note(
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
-    if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-    } else if stripe {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_stripe);
-    }
+    row_surface(ui, rect, response.hovered(), stripe);
     if state.note_target.is_some() && state.note_target == row.op.as_ref() {
         response.scroll_to_me(Some(egui::Align::Center));
     }
@@ -290,7 +315,7 @@ fn draw_note(
 
     let (icon, colour, word) = tier(row.level, palette);
     let painter = ui.painter_at(rect);
-    let left = rect.left() + 12.0;
+    let left = rect.left() + MARGIN_PX;
     let first_y = rect.top() + 6.0 + NOTE_LINE_PX / 2.0;
     let glyph = icon.galley(ui, theme::ICON_SMALL_PX, colour);
     painter.galley(
@@ -342,19 +367,15 @@ fn draw_note(
     }
 }
 
-/// One row: tier glyph and word, the code as a link, the message, the
-/// field; clicking it selects what it names.
+/// One row: the tier as a status chip (glyph and word), the code as a
+/// link, the message, the field; clicking it selects what it names.
 fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
-    if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-    } else if stripe {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_stripe);
-    }
+    row_surface(ui, rect, response.hovered(), stripe);
     if response.clicked()
         && let Some(selection) = row.selection()
     {
@@ -371,15 +392,19 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
 
     let mut cells = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(12.0, 0.0)))
+            .max_rect(rect.shrink2(egui::vec2(MARGIN_PX, 0.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     cells.spacing_mut().item_spacing.x = 8.0;
-    let (icon, colour, word) = tier(row.level, palette);
-    let glyph = icon.galley(&cells, theme::ICON_SMALL_PX, colour);
-    let (at, _) = cells.allocate_exact_size(glyph.size(), Sense::hover());
-    cells.painter().galley(at.min, glyph, colour);
-    text(&mut cells, strings.get(word), TextStyle::Small, colour);
+    // The tier: a status chip, its glyph and word on its tint.
+    let (icon, _, word) = tier(row.level, palette);
+    let tone = match row.level {
+        Level::Error => Tone::Status(palette.status_error, icon),
+        Level::Warning => Tone::Status(palette.status_warning, icon),
+        Level::Hint => Tone::Status(palette.status_info, icon),
+        Level::Note => Tone::Neutral,
+    };
+    chip(&mut cells, strings.get(word), tone);
     if let (Some(code), Some(url)) = (&row.code, row.chapter_url()) {
         let link = cells
             .add(

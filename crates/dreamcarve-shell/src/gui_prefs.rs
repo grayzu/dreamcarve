@@ -29,7 +29,7 @@ use crate::staged::StagedFile;
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuiPrefs {
-    /// Light or dark, or the system's choice.
+    /// Dark, light, or the system's choice; dark when the key is missing.
     pub theme: Theme,
     /// The window's last size and place, when it has been shown.
     pub window: Option<WindowGeometry>,
@@ -97,16 +97,17 @@ pub enum TabShape {
     Smooth,
 }
 
-/// The app's appearance.
+/// The app's appearance. Dark while `gui.toml` has no `theme` key (the
+/// redesign, `docs/specs/phase-4/redesign.md`, principle 5: dark first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
     /// Follow the operating system.
-    #[default]
     System,
     /// The light palette.
     Light,
-    /// The dark palette.
+    /// The dark palette, the default.
+    #[default]
     Dark,
 }
 
@@ -418,7 +419,7 @@ mod tests {
         let loaded = load(&paths);
         assert_eq!(loaded.prefs, GuiPrefs::default());
         assert!(loaded.notes.is_empty(), "{:?}", loaded.notes);
-        assert_eq!(loaded.prefs.theme, Theme::System);
+        assert_eq!(loaded.prefs.theme, Theme::Dark);
         assert!(loaded.prefs.visibility.cuts && !loaded.prefs.visibility.arrows);
         std::fs::remove_dir_all(&dir).unwrap();
     }

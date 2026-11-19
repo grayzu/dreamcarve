@@ -64,53 +64,47 @@ pub(crate) fn card(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Ve
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     let ui = &mut card_ui;
-    egui::Frame::NONE
-        .fill(palette.surface_raised)
-        .stroke(Stroke::new(1.0, palette.border_default))
-        .corner_radius(8)
-        .shadow(ui.visuals().window_shadow)
-        .inner_margin(PADDING_PX)
-        .show(ui, |ui| {
-            ui.set_width(rect.width() - 2.0 * PADDING_PX);
-            ui.horizontal(|ui| {
-                text(
-                    ui,
-                    strings.get(StrKey::AppEmptyHeading),
-                    TextStyle::Name(theme::DISPLAY.into()),
-                    palette.text_primary,
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    let close = ButtonSpec::new(Kind::Quiet, "")
-                        .icon(Icon::X, theme::ICON_SMALL_PX)
-                        .tooltip(strings.get(StrKey::AppEmptyClose));
-                    if button(ui, close).clicked() {
-                        out.push(Action::DismissEmpty);
-                    }
-                });
-            });
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(strings.get(StrKey::AppEmptyIntro))
-                        .color(palette.text_secondary),
-                )
-                .wrap()
-                .selectable(false),
+    theme::sheet(palette).show(ui, |ui| {
+        ui.set_width(rect.width() - 2.0 * PADDING_PX);
+        ui.horizontal(|ui| {
+            text(
+                ui,
+                strings.get(StrKey::AppEmptyHeading),
+                TextStyle::Name(theme::DISPLAY.into()),
+                palette.text_primary,
             );
-            ui.add_space(BLOCK_GAP_PX);
-            let well_width = (ui.available_width() - WELL_GAP_PX) / 2.0;
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = WELL_GAP_PX;
-                well(ui, palette, well_width, |ui| your_drawing(ui, state, out));
-                well(ui, palette, well_width, |ui| examples(ui, state, out));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                let close = ButtonSpec::new(Kind::Quiet, "")
+                    .icon(Icon::X, theme::ICON_SMALL_PX)
+                    .tooltip(strings.get(StrKey::AppEmptyClose));
+                if button(ui, close).clicked() {
+                    out.push(Action::DismissEmpty);
+                }
             });
         });
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(strings.get(StrKey::AppEmptyIntro))
+                    .color(palette.text_secondary),
+            )
+            .wrap()
+            .selectable(false),
+        );
+        ui.add_space(BLOCK_GAP_PX);
+        let well_width = (ui.available_width() - WELL_GAP_PX) / 2.0;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = WELL_GAP_PX;
+            well(ui, palette, well_width, |ui| your_drawing(ui, state, out));
+            well(ui, palette, well_width, |ui| examples(ui, state, out));
+        });
+    });
 }
 
 /// One of the card's two paths: a `surface.panel` well `width` wide.
 fn well(ui: &mut Ui, palette: &Palette, width: f32, contents: impl FnOnce(&mut Ui)) {
     egui::Frame::NONE
         .fill(palette.surface_panel)
-        .corner_radius(6)
+        .corner_radius(theme::INNER_CARD_RADIUS_PX)
         .inner_margin(WELL_PADDING_PX)
         .show(ui, |ui| {
             ui.set_width(width - 2.0 * WELL_PADDING_PX);
@@ -158,6 +152,7 @@ fn your_drawing(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             .icon(icon, theme::ICON_SMALL_PX)
             .height(SECONDARY_PX)
             .width(width)
+            .leading()
     };
     button(
         ui,
@@ -260,15 +255,20 @@ fn example_card(
         };
         let border = Stroke::new(1.0, palette.border_default);
         let fill = egui::Shape::Vec(vec![
-            egui::Shape::rect_filled(rect, 6.0, palette.surface_raised),
-            egui::Shape::rect_filled(rect, 6.0, wash),
-            egui::Shape::rect_stroke(rect, 6.0, border, StrokeKind::Inside),
+            egui::Shape::rect_filled(rect, theme::INNER_CARD_RADIUS_PX, palette.surface_raised),
+            egui::Shape::rect_filled(rect, theme::INNER_CARD_RADIUS_PX, wash),
+            egui::Shape::rect_stroke(
+                rect,
+                theme::INNER_CARD_RADIUS_PX,
+                border,
+                StrokeKind::Inside,
+            ),
         ]);
         ui.painter().set(background, fill);
         let painter = ui.painter_at(rect);
         painter.rect(
             picture,
-            3.0,
+            theme::MARK_RADIUS_PX,
             palette.viewport_stock_fill,
             border,
             StrokeKind::Inside,

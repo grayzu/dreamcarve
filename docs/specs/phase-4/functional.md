@@ -106,8 +106,9 @@ folder are app preferences, kept outside the project.
     dragging their dividers and collapse
     to a strip; the layout is remembered between sessions in the app's
     preferences file, `gui.toml` beside `config.toml` in the user config
-    directory (open question 11). The window follows the OS light or dark
-    appearance, so both palettes ship (open question 9). Minimum usable
+    directory (open question 11). The window is dark until the user
+    chooses Light or System (following the OS) from View ▸ Appearance,
+    so both palettes ship (open question 9). Minimum usable
     window: 1280 × 768 with both side panels open at their minimum; below
     that the side panels collapse to strips rather than the window
     refusing (open question 12).
@@ -857,7 +858,7 @@ folder are app preferences, kept outside the project.
     Delete, Rename | Select All. **Arrange** (58a).
     **View**: the two side panels, Toolpaths…, Warnings, Fit, Zoom to
     Selection, and **Appearance ▸** with three checked choices, *System*
-    (the default, following the OS), *Light* and *Dark*, kept in
+    (following the OS), *Light* and *Dark* (the default), kept in
     `gui.toml`. **Project**: Project Settings…, Tool Library…, Fit Stock
     to Shapes. **Help** (79). A choice of three is a submenu with a check,
     not a checkbox, since a checkbox cannot say "follow the system".

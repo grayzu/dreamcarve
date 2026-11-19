@@ -2,19 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The design tokens and their egui realisation
-//! (`docs/specs/phase-4/experience.md`, sections 3, 4, 5 and 12): the
-//! light and dark palettes, the `Visuals` and `Style` built from them, the
-//! bundled fonts, and [`apply`], which installs both themes and follows
-//! the OS appearance unless the preference overrides it.
+//! (`docs/specs/phase-4/redesign.md`, "Tokens" and "Shape, size and type";
+//! `docs/specs/phase-4/experience.md`, sections 3, 4, 5 and 12): the dark
+//! and light palettes, the shape and size constants, the `Visuals` and
+//! `Style` built from them, the bundled fonts, and [`apply`], which
+//! installs both themes and shows the one the preference names: dark
+//! unless the user chose otherwise.
 //!
 //! The one place a colour is written: every widget takes its colours from
 //! a [`Palette`] (section 13, item 1; `tests/theme.rs` scans for literals
 //! elsewhere). The operation colours and the depth ramp (slice 16) are
-//! here too: the light operation set is `dc_job::preview::PALETTE`, the
-//! CLI's preview colours, read at compile time, so the light Viewport and
-//! `--preview` share one table (design open question 5); the dark set is
-//! the app's alone. The Viewport's renderer takes its line colours from
-//! here, as a style table (`viewport::renderer`).
+//! here too. Both operation sets are the app's own since the redesign
+//! moved green, orange and cyan off the accent's hue; the CLI's
+//! `dc_job::preview::PALETTE` keeps the same eight names in the same
+//! order, so `--preview` still matches the light Viewport by eye
+//! (`tests/theme.rs` holds the two tables to that). The Viewport's
+//! renderer takes its line colours from here, as a style table
+//! (`viewport::renderer`).
 
 use std::sync::Arc;
 
@@ -34,44 +38,6 @@ const fn rgb(hex: u32) -> Color32 {
 const fn rgba(hex: u32) -> Color32 {
     let [r, g, b, a] = hex.to_be_bytes();
     Color32::from_rgba_unmultiplied_const(r, g, b, a)
-}
-
-/// One hex digit's value; anything else is 0.
-const fn hex_digit(digit: u8) -> u8 {
-    match digit {
-        b'0'..=b'9' => digit - b'0',
-        b'a'..=b'f' => digit - b'a' + 10,
-        b'A'..=b'F' => digit - b'A' + 10,
-        _ => 0,
-    }
-}
-
-/// `#rrggbb` as written in `dc_job::preview::PALETTE`, opaque; anything
-/// else is transparent, which `tests/theme.rs` would catch.
-const fn hex(text: &str) -> Color32 {
-    match *text.as_bytes() {
-        [b'#', r1, r0, g1, g0, b1, b0] => Color32::from_rgb(
-            hex_digit(r1) * 16 + hex_digit(r0),
-            hex_digit(g1) * 16 + hex_digit(g0),
-            hex_digit(b1) * 16 + hex_digit(b0),
-        ),
-        _ => Color32::TRANSPARENT,
-    }
-}
-
-/// The light operation set: the preview's palette, one table.
-const fn preview_palette() -> [Color32; 8] {
-    let p = dc_job::preview::PALETTE;
-    [
-        hex(p[0]),
-        hex(p[1]),
-        hex(p[2]),
-        hex(p[3]),
-        hex(p[4]),
-        hex(p[5]),
-        hex(p[6]),
-        hex(p[7]),
-    ]
 }
 
 /// No colour: an unwashed button, a cleared fill.
@@ -98,11 +64,12 @@ pub struct StatusColours {
 pub struct Palette {
     /// Whether this is the dark appearance.
     pub dark: bool,
-    /// The window behind the regions: the gutters and dividers.
+    /// The backdrop: the window behind the cards, showing as the gaps
+    /// between them and the margin round them.
     pub surface_window: Color32,
-    /// Side panels, the toolbar and the status bar.
+    /// Cards: the side panels, the Warnings drawer.
     pub surface_panel: Color32,
-    /// Popovers, menus, cards and sheets.
+    /// Menus, popovers, sheets, and a card inside a card.
     pub surface_raised: Color32,
     /// Fields and lists.
     pub surface_sunken: Color32,
@@ -112,9 +79,9 @@ pub struct Palette {
     pub surface_hover: Color32,
     /// The pressed wash.
     pub surface_active: Color32,
-    /// Rules and quiet outlines.
+    /// Field outlines at rest, and the rules inside a card.
     pub border_default: Color32,
-    /// Field and secondary-button outlines.
+    /// A field's outline under the pointer.
     pub border_strong: Color32,
     /// Body text.
     pub text_primary: Color32,
@@ -128,6 +95,8 @@ pub struct Palette {
     pub accent: Color32,
     /// The primary button's fill.
     pub accent_fill: Color32,
+    /// The primary button's fill under the pointer.
+    pub accent_hover: Color32,
     /// Selected rows and text selection.
     pub accent_soft: Color32,
     /// The keyboard focus ring.
@@ -174,6 +143,8 @@ pub struct Palette {
     pub viewport_extents_centre: Color32,
     /// The program extents' bit-edge box, dashed, outside it.
     pub viewport_extents_edge: Color32,
+    /// A transform handle's fill; its stroke is the accent.
+    pub viewport_handle_fill: Color32,
     /// The pill behind a caption on the Viewport.
     pub viewport_label_bg: Color32,
     /// The depth ramp's five stops, stock top first (section 5, "Depth
@@ -181,30 +152,32 @@ pub struct Palette {
     pub depth_ramp: [Color32; 5],
     /// The scrim under a sheet (section 8, "Sheets").
     pub scrim: Color32,
-    /// Raised surfaces' shadow (section 12, "Visuals").
+    /// The one shadow, under a menu, popover or sheet (section 12,
+    /// "Visuals"): black at 14 % in light and 35 % in dark.
     pub shadow: Color32,
 }
 
 /// The light appearance.
 pub const LIGHT: Palette = Palette {
     dark: false,
-    surface_window: rgb(0xECEEF1),
-    surface_panel: rgb(0xF7F8FA),
+    surface_window: rgb(0xECEFF1),
+    surface_panel: rgb(0xFFFFFF),
     surface_raised: rgb(0xFFFFFF),
-    surface_sunken: rgb(0xFFFFFF),
-    surface_stripe: rgb(0xF2F3F6),
-    surface_hover: rgba(0x1C21_2814),
-    surface_active: rgba(0x1C21_2820),
-    border_default: rgb(0xD7DBE2),
-    border_strong: rgb(0xB9C0CA),
-    text_primary: rgb(0x1C2128),
-    text_secondary: rgb(0x5B6472),
-    text_disabled: rgb(0x9AA3AF),
+    surface_sunken: rgb(0xF3F5F6),
+    surface_stripe: rgb(0xF7F8F9),
+    surface_hover: rgba(0x141A_1D10),
+    surface_active: rgba(0x141A_1D1A),
+    border_default: rgb(0xDCE2E5),
+    border_strong: rgb(0xB8C2C8),
+    text_primary: rgb(0x141A1D),
+    text_secondary: rgb(0x52606A),
+    text_disabled: rgb(0x97A2A9),
     text_on_accent: rgb(0xFFFFFF),
-    accent: rgb(0x2563D0),
-    accent_fill: rgb(0x2563D0),
-    accent_soft: rgba(0x2563_D01F),
-    focus_ring: rgb(0x2563D0),
+    accent: rgb(0x08795E),
+    accent_fill: rgb(0x08795E),
+    accent_hover: rgb(0x0A8A6C),
+    accent_soft: rgba(0x0879_5E1F),
+    focus_ring: rgb(0x08795E),
     status_error: StatusColours {
         text: rgb(0xC62E27),
         stroke: rgb(0xC62E27),
@@ -225,23 +198,24 @@ pub const LIGHT: Palette = Palette {
         stroke: rgb(0x1F7F43),
         tint: Color32::TRANSPARENT,
     },
-    viewport_bg: rgb(0xFAFAF8),
-    viewport_grid_minor: rgb(0xECEEF1),
-    viewport_grid_major: rgb(0xD9DCE2),
-    viewport_axis: rgb(0x6B7380),
-    viewport_stock: rgb(0x6B7380),
+    viewport_bg: rgb(0xF6F7F7),
+    viewport_grid_minor: rgb(0xECEFF0),
+    viewport_grid_major: rgb(0xDDE2E5),
+    viewport_axis: rgb(0x6B7780),
+    viewport_stock: rgb(0x6B7780),
     viewport_stock_fill: rgb(0xFFFFFF),
     viewport_male_board: rgb(0x8A929E),
-    viewport_shape: rgb(0x23272E),
-    viewport_shape_hover: rgb(0x5B8DE8),
-    viewport_shape_selected: rgb(0x2563D0),
+    viewport_shape: rgb(0x1E2529),
+    viewport_shape_hover: rgb(0x0A8A6C),
+    viewport_shape_selected: rgb(0x08795E),
     viewport_shape_locked: rgb(0x8A929E),
     viewport_park: rgb(0x5B6472),
-    viewport_rapid: rgb(0x8A929E),
+    viewport_rapid: rgb(0x8A959D),
     viewport_plunge: rgb(0xC62E27),
     viewport_tab: rgb(0x1C2128),
     viewport_extents_centre: rgb(0x5B6472),
     viewport_extents_edge: rgb(0x8A929E),
+    viewport_handle_fill: rgb(0xFFFFFF),
     viewport_label_bg: rgba(0xFFFF_FFE0),
     depth_ramp: [
         rgb(0xAFC2EE),
@@ -250,30 +224,31 @@ pub const LIGHT: Palette = Palette {
         rgb(0x2A44A6),
         rgb(0x1A2E8C),
     ],
-    scrim: rgba(0x0000_0066),
-    shadow: rgba(0x0000_001F),
+    scrim: rgba(0x0000_0080),
+    shadow: rgba(0x0000_0024),
 };
 
-/// The dark appearance.
+/// The dark appearance, the default.
 pub const DARK: Palette = Palette {
     dark: true,
-    surface_window: rgb(0x15181D),
-    surface_panel: rgb(0x1E2229),
-    surface_raised: rgb(0x262B33),
-    surface_sunken: rgb(0x121519),
-    surface_stripe: rgb(0x22262E),
-    surface_hover: rgba(0xE8EB_F014),
-    surface_active: rgba(0xE8EB_F020),
-    border_default: rgb(0x333A44),
-    border_strong: rgb(0x48515D),
-    text_primary: rgb(0xE8EBF0),
-    text_secondary: rgb(0xA3ABB7),
-    text_disabled: rgb(0x6B7380),
-    text_on_accent: rgb(0xFFFFFF),
-    accent: rgb(0x6AA3F2),
-    accent_fill: rgb(0x2F6FD6),
-    accent_soft: rgba(0x6AA3_F229),
-    focus_ring: rgb(0x6AA3F2),
+    surface_window: rgb(0x0C0F11),
+    surface_panel: rgb(0x14181B),
+    surface_raised: rgb(0x1B2024),
+    surface_sunken: rgb(0x0F1315),
+    surface_stripe: rgb(0x181D20),
+    surface_hover: rgba(0xE8ED_EF10),
+    surface_active: rgba(0xE8ED_EF1A),
+    border_default: rgb(0x252B30),
+    border_strong: rgb(0x3A434A),
+    text_primary: rgb(0xE8EDEF),
+    text_secondary: rgb(0x9AA6AD),
+    text_disabled: rgb(0x66727A),
+    text_on_accent: rgb(0x04261B),
+    accent: rgb(0x2AD79A),
+    accent_fill: rgb(0x22C78C),
+    accent_hover: rgb(0x3FE0A8),
+    accent_soft: rgba(0x2AD7_9A29),
+    focus_ring: rgb(0x2AD79A),
     status_error: StatusColours {
         text: rgb(0xF2726A),
         stroke: rgb(0xF2726A),
@@ -290,28 +265,29 @@ pub const DARK: Palette = Palette {
         tint: rgba(0x78B0_F51F),
     },
     status_success: StatusColours {
-        text: rgb(0x5FC67F),
-        stroke: rgb(0x5FC67F),
+        text: rgb(0x5FD08A),
+        stroke: rgb(0x5FD08A),
         tint: Color32::TRANSPARENT,
     },
-    viewport_bg: rgb(0x1B1F26),
-    viewport_grid_minor: rgb(0x232830),
-    viewport_grid_major: rgb(0x2C323B),
-    viewport_axis: rgb(0x9AA3AF),
-    viewport_stock: rgb(0x9AA3AF),
-    viewport_stock_fill: rgb(0x1F242C),
+    viewport_bg: rgb(0x0F1214),
+    viewport_grid_minor: rgb(0x15191C),
+    viewport_grid_major: rgb(0x1D2226),
+    viewport_axis: rgb(0x9AA6AD),
+    viewport_stock: rgb(0x9AA6AD),
+    viewport_stock_fill: rgb(0x161B1E),
     viewport_male_board: rgb(0x7B8491),
-    viewport_shape: rgb(0xE6E9EE),
-    viewport_shape_hover: rgb(0x8FBAF7),
-    viewport_shape_selected: rgb(0x6AA3F2),
+    viewport_shape: rgb(0xE6EAEC),
+    viewport_shape_hover: rgb(0x3FE0A8),
+    viewport_shape_selected: rgb(0x2AD79A),
     viewport_shape_locked: rgb(0x7B8491),
     viewport_park: rgb(0xA3ABB7),
-    viewport_rapid: rgb(0x6E7786),
+    viewport_rapid: rgb(0x6F7A82),
     viewport_plunge: rgb(0xF2726A),
     viewport_tab: rgb(0xF5F7FA),
     viewport_extents_centre: rgb(0xA3ABB7),
     viewport_extents_edge: rgb(0x7B8491),
-    viewport_label_bg: rgba(0x262B_33E6),
+    viewport_handle_fill: rgb(0x0F1214),
+    viewport_label_bg: rgba(0x1B20_24E6),
     depth_ramp: [
         rgb(0xE4ECFF),
         rgb(0xBCCBF8),
@@ -319,8 +295,8 @@ pub const DARK: Palette = Palette {
         rgb(0x6E86EE),
         rgb(0x4A66E8),
     ],
-    scrim: rgba(0x0000_0066),
-    shadow: rgba(0x0000_004D),
+    scrim: rgba(0x0000_0080),
+    shadow: rgba(0x0000_0059),
 };
 
 impl Palette {
@@ -363,6 +339,7 @@ impl Palette {
             ("text.on-accent", self.text_on_accent),
             ("accent", self.accent),
             ("accent.fill", self.accent_fill),
+            ("accent.hover", self.accent_hover),
             ("accent.soft", self.accent_soft),
             ("focus.ring", self.focus_ring),
             ("viewport.bg", self.viewport_bg),
@@ -453,20 +430,30 @@ impl Palette {
 }
 
 /// The operation colours on the light Viewport (`experience.md`, section
-/// 5, "Operation colours", the light set the maintainer accepted with
-/// design open question 5): `dc_job::preview::PALETTE`, read at compile
-/// time, so the light Viewport and `--preview` share one table.
-pub const OPERATION_LIGHT: [Color32; 8] = preview_palette();
+/// 5, "Operation colours"): blue, red, green, purple, orange, cyan, brown,
+/// pink. The CLI's `dc_job::preview::PALETTE` with green gone yellower and
+/// cyan bluer, off the accent's hue, and orange a shade deeper for the new
+/// background.
+pub const OPERATION_LIGHT: [Color32; 8] = [
+    rgb(0x1F77B4),
+    rgb(0xD62728),
+    rgb(0x4A930D),
+    rgb(0x8E5FB8),
+    rgb(0xD36500),
+    rgb(0x0B90B1),
+    rgb(0x8C564B),
+    rgb(0xC94FA8),
+];
 
 /// The operation colours on the dark Viewport: section 5's dark set, the
 /// same hues in the same order.
 pub const OPERATION_DARK: [Color32; 8] = [
     rgb(0x5BA6EA),
     rgb(0xF0605A),
-    rgb(0x5FC95F),
+    rgb(0x9AD64B),
     rgb(0xB48FE0),
     rgb(0xFFA046),
-    rgb(0x4FD4E4),
+    rgb(0x4FC3F0),
     rgb(0xC8907F),
     rgb(0xF08FD2),
 ];
@@ -507,6 +494,89 @@ pub const DISPLAY: &str = "Display";
 pub const ICON_SMALL_PX: f32 = 16.0;
 /// The toolbar's icon size.
 pub const ICON_LARGE_PX: f32 = 20.0;
+
+/// Shape and size (`redesign.md`, "Shape, size and type"; `experience.md`,
+/// section 3), px at 1×. A card's corner radius.
+pub const CARD_RADIUS_PX: f32 = 14.0;
+/// A sheet's corner radius.
+pub const SHEET_RADIUS_PX: f32 = 16.0;
+/// A menu's or popover's corner radius: a row's radius plus the menu's
+/// margin, so the two curves are concentric.
+pub const POPOVER_RADIUS_PX: f32 = 12.0;
+/// The corner radius of a card inside a card.
+pub const INNER_CARD_RADIUS_PX: f32 = 10.0;
+/// The corner radius of a control: a field, a dropdown, a secondary
+/// button, a list row.
+pub const CONTROL_RADIUS_PX: f32 = 8.0;
+/// The corner radius of a small mark: a checkbox, a swatch.
+pub const MARK_RADIUS_PX: f32 = 4.0;
+/// The gap between cards and the margin round them; also the gap between
+/// a label and its field and between adjacent buttons.
+pub const GAP_PX: f32 = 8.0;
+/// A card's padding.
+pub const CARD_PADDING_PX: f32 = 16.0;
+/// A sheet's padding.
+pub const SHEET_PADDING_PX: f32 = 24.0;
+/// The gap above a section header inside a card.
+pub const SECTION_GAP_PX: f32 = 20.0;
+/// A control's height: a field, a dropdown, a button, a segmented control.
+pub const CONTROL_PX: f32 = 32.0;
+/// The primary button of the toolbar (the header, once there is one).
+pub const HEADER_PRIMARY_PX: f32 = 34.0;
+/// A section header's height.
+pub const SECTION_HEADER_PX: f32 = 32.0;
+/// A Design Tree row's height.
+pub const TREE_ROW_PX: f32 = 30.0;
+/// A Tools or Operations row's height: two lines.
+pub const LIST_ROW_PX: f32 = 52.0;
+/// A table row's height.
+pub const TABLE_ROW_PX: f32 = 34.0;
+/// A chip's or badge's height.
+pub const CHIP_PX: f32 = 24.0;
+/// The status bar's height.
+pub const STATUS_BAR_PX: f32 = 28.0;
+/// The accent bar at a selected row's left edge, px wide.
+pub const SELECTED_BAR_PX: f32 = 3.0;
+
+/// The radius that makes a `height_px`-tall control a pill: half its
+/// height.
+#[must_use]
+pub const fn pill(height_px: f32) -> f32 {
+    height_px / 2.0
+}
+
+/// The one shadow (`redesign.md`, "Shape, size and type"): under a menu, a
+/// popover or a sheet, never under a card.
+#[must_use]
+pub const fn shadow(palette: &Palette) -> Shadow {
+    Shadow {
+        offset: [0, 8],
+        blur: 24,
+        spread: 0,
+        color: palette.shadow,
+    }
+}
+
+/// A popover's frame: `surface.raised`, the popover radius, a hairline and
+/// the one shadow, with `margin_px` of padding.
+pub fn popover(palette: &Palette, margin_px: i8) -> egui::Frame {
+    egui::Frame::NONE
+        .fill(palette.surface_raised)
+        .stroke(Stroke::new(1.0, palette.border_default))
+        .corner_radius(POPOVER_RADIUS_PX)
+        .shadow(shadow(palette))
+        .inner_margin(margin_px)
+}
+
+/// A sheet's frame: `surface.raised`, the sheet radius and the one shadow,
+/// with the sheet padding. It sits over [`Palette::scrim`].
+pub fn sheet(palette: &Palette) -> egui::Frame {
+    egui::Frame::NONE
+        .fill(palette.surface_raised)
+        .corner_radius(SHEET_RADIUS_PX)
+        .shadow(shadow(palette))
+        .inner_margin(SHEET_PADDING_PX)
+}
 
 /// `FontFamily::Name(name)`.
 fn family(name: &str) -> FontFamily {
@@ -601,7 +671,7 @@ fn text_styles() -> std::collections::BTreeMap<TextStyle, FontId> {
 }
 
 /// A widget state's look (section 12, "Visuals"): no expansion, so hover
-/// never grows a control, and a 4-px radius.
+/// never grows a control, and the control radius.
 fn widget(
     bg_fill: Color32,
     weak_bg_fill: Color32,
@@ -612,7 +682,7 @@ fn widget(
         bg_fill,
         weak_bg_fill,
         bg_stroke,
-        corner_radius: CornerRadius::same(4),
+        corner_radius: CornerRadius::same(8),
         fg_stroke: Stroke::new(1.0, fg),
         expansion: 0.0,
     }
@@ -626,15 +696,10 @@ pub fn visuals(palette: &Palette) -> Visuals {
     } else {
         Visuals::light()
     };
-    let shadow = |blur: u8| Shadow {
-        offset: [0, 4],
-        blur,
-        spread: 0,
-        color: palette.shadow,
-    };
     Visuals {
         dark_mode: palette.dark,
         override_text_color: None,
+        weak_text_color: Some(palette.text_disabled),
         widgets: Widgets {
             noninteractive: widget(
                 palette.surface_panel,
@@ -642,28 +707,30 @@ pub fn visuals(palette: &Palette) -> Visuals {
                 Stroke::new(1.0, palette.border_default),
                 palette.text_primary,
             ),
+            // A stock dropdown is a field: sunken, with the quiet outline.
+            // Menu rows clear both (`egui::containers::menu::menu_style`).
             inactive: widget(
                 palette.surface_sunken,
-                Color32::TRANSPARENT,
-                Stroke::new(1.0, palette.border_strong),
+                palette.surface_sunken,
+                Stroke::new(1.0, palette.border_default),
                 palette.text_primary,
             ),
             hovered: widget(
                 palette.surface_sunken,
                 palette.surface_hover,
-                Stroke::new(1.0, palette.text_secondary),
+                Stroke::new(1.0, palette.border_strong),
                 palette.text_primary,
             ),
             active: widget(
                 palette.surface_sunken,
                 palette.surface_active,
-                Stroke::new(1.0, palette.accent),
+                Stroke::new(1.0, palette.focus_ring),
                 palette.text_primary,
             ),
             open: widget(
                 palette.surface_raised,
                 palette.surface_active,
-                Stroke::new(1.0, palette.border_strong),
+                Stroke::new(1.0, palette.focus_ring),
                 palette.text_primary,
             ),
         },
@@ -678,13 +745,13 @@ pub fn visuals(palette: &Palette) -> Visuals {
         code_bg_color: palette.surface_stripe,
         warn_fg_color: palette.status_warning.text,
         error_fg_color: palette.status_error.text,
-        window_corner_radius: CornerRadius::same(8),
-        window_shadow: shadow(16),
+        window_corner_radius: CornerRadius::same(16),
+        window_shadow: shadow(palette),
         window_fill: palette.surface_raised,
         window_stroke: Stroke::new(1.0, palette.border_default),
-        menu_corner_radius: CornerRadius::same(6),
+        menu_corner_radius: CornerRadius::same(12),
         panel_fill: palette.surface_panel,
-        popup_shadow: shadow(12),
+        popup_shadow: shadow(palette),
         text_cursor: TextCursorStyle {
             stroke: Stroke::new(1.5, palette.accent),
             ..base.text_cursor.clone()
@@ -710,11 +777,11 @@ pub fn style(palette: &Palette) -> Style {
     };
     let spacing = &mut style.spacing;
     spacing.item_spacing = egui::vec2(8.0, 4.0);
-    spacing.button_padding = egui::vec2(8.0, 4.0);
+    spacing.button_padding = egui::vec2(10.0, 6.0);
     spacing.window_margin = Margin::same(12);
     spacing.menu_margin = Margin::same(4);
     spacing.indent = 16.0;
-    spacing.interact_size = egui::vec2(24.0, 26.0);
+    spacing.interact_size = egui::vec2(24.0, CONTROL_PX);
     spacing.icon_width = 16.0;
     spacing.icon_width_inner = 10.0;
     spacing.icon_spacing = 8.0;
@@ -755,8 +822,9 @@ pub fn apply(ctx: &egui::Context, theme: dc_app::Theme) {
 }
 
 /// Makes `theme` the appearance preference: the OS's choice for
-/// [`dc_app::Theme::System`], else the one named. A no-op when it already
-/// is, so it can run every frame.
+/// [`dc_app::Theme::System`], else the one named; a user who has chosen
+/// nothing has [`dc_app::Theme::Dark`], the preference's default. A no-op
+/// when it already is, so it can run every frame.
 pub fn follow(ctx: &egui::Context, theme: dc_app::Theme) {
     let wanted = preference(theme);
     if ctx.options(|o| o.theme_preference) != wanted {
@@ -775,7 +843,9 @@ mod tests {
     fn light_and_dark_differ_where_the_spec_differs() {
         assert_ne!(LIGHT.surface_panel, DARK.surface_panel);
         assert_ne!(LIGHT.viewport_bg, DARK.viewport_bg);
-        assert_eq!(LIGHT.text_on_accent, DARK.text_on_accent);
+        // Dark text on the bright fill in dark mode, white on the deep
+        // fill in light.
+        assert_ne!(LIGHT.text_on_accent, DARK.text_on_accent);
         const { assert!(!LIGHT.dark && DARK.dark) };
     }
 

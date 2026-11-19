@@ -32,13 +32,16 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::checkbox::{BOX_PX, paint_box};
 use crate::widgets::icon::Icon;
+use crate::widgets::row::{surface, surface_rect};
 
 /// A tree row's height, px (`experience.md`, section 3).
-const ROW_PX: f32 = 26.0;
+const ROW_PX: f32 = theme::TREE_ROW_PX;
 /// A section header's height, px.
-const SECTION_PX: f32 = 28.0;
+const SECTION_PX: f32 = theme::SECTION_HEADER_PX;
 /// The panel's content margin, px.
-const MARGIN_PX: f32 = 12.0;
+const MARGIN_PX: f32 = theme::CARD_PADDING_PX;
+/// The space between a row's surface and its content at each end, px.
+const ROW_PADDING_PX: f32 = 8.0;
 /// An icon's hit square, px.
 const ICON_BOX_PX: f32 = 20.0;
 /// The bar on a target row's left edge, px (`experience.md`, section 7,
@@ -123,7 +126,8 @@ fn tipped_button(
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
     let palette = Palette::current(ui);
     if enabled && response.hovered() {
-        ui.painter().rect_filled(rect, 4.0, palette.surface_hover);
+        ui.painter()
+            .rect_filled(rect, theme::pill(rect.height()), palette.surface_hover);
     }
     glyph(ui, rect, icon, colour);
     if enabled {
@@ -341,29 +345,26 @@ fn shape_row(
     // Target editing (capability 67): the row toggles the shape in the
     // draft, its eye is a checkbox, and nothing else of it answers.
     let editing = state.app.target_editing();
-    let (rect, response) =
+    let (slot, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
     let name = row.name.clone();
     response
         .widget_info(|| egui::WidgetInfo::selected(egui::Role::TreeItem, true, selected, &name));
 
     let painter = ui.painter().clone();
-    if selected {
-        painter.rect_filled(rect, 0.0, palette.accent_soft);
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
-            0.0,
-            palette.accent,
-        );
-    } else if response.hovered() {
-        painter.rect_filled(rect, 0.0, palette.surface_hover);
-    }
+    // The row's own surface, inset from the card's edges.
+    let rect = surface_rect(slot);
+    surface(ui, rect, selected, response.hovered());
     // A target of the marked operation: a 3-px bar in its colour on the
-    // left edge.
+    // surface's left edge, where a selected row's accent bar is.
     if let Some(colour) = row.target {
+        let inset = rect.height() / 4.0;
         painter.rect_filled(
-            Rect::from_min_size(rect.min, egui::vec2(TARGET_BAR_PX, rect.height())),
-            0.0,
+            Rect::from_min_max(
+                egui::pos2(rect.left(), rect.top() + inset),
+                egui::pos2(rect.left() + TARGET_BAR_PX, rect.bottom() - inset),
+            ),
+            theme::pill(TARGET_BAR_PX),
             palette.operation(colour),
         );
     }
@@ -476,10 +477,10 @@ fn shape_row(
             .layout_no_wrap(count, small.resolve(ui.style()), palette.text_secondary);
     let count_rect = Rect::from_min_max(
         egui::pos2(
-            rect.right() - MARGIN_PX - count_galley.size().x.max(ICON_BOX_PX),
+            rect.right() - ROW_PADDING_PX - count_galley.size().x.max(ICON_BOX_PX),
             rect.top(),
         ),
-        egui::pos2(rect.right() - MARGIN_PX, rect.bottom()),
+        egui::pos2(rect.right() - ROW_PADDING_PX, rect.bottom()),
     );
     painter.galley(
         egui::pos2(
@@ -552,13 +553,18 @@ fn shape_row(
     match renaming {
         Some((id, mut text, fresh)) if id == row.id => {
             let field_id = ui.make_persistent_id(("tree_rename", row.id.as_str()));
+            // The field fits the row: a stock field is a control tall.
+            let spacing = ui.spacing().clone();
+            ui.spacing_mut().interact_size.y = name_rect.height() - 4.0;
+            ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
             let edit = ui.put(
-                name_rect.shrink2(egui::vec2(0.0, 3.0)),
+                name_rect.shrink2(egui::vec2(0.0, 2.0)),
                 egui::TextEdit::singleline(&mut text)
                     .id(field_id)
                     .font(TextStyle::Body)
                     .desired_width(name_rect.width()),
             );
+            *ui.spacing_mut() = spacing;
             let edit =
                 edit.accessible_name(strings.fmt(StrKey::TreeRename, &[("name", &row.name)]));
             if fresh {
@@ -710,8 +716,9 @@ fn tab_row(ui: &mut Ui, state: &FrameState<'_>, row: &TabRow, out: &mut Vec<Acti
         Selection::Tabs(ids) => !ids.is_empty() && row.tabs.iter().all(|t| ids.contains(t)),
         _ => false,
     };
-    let (rect, response) =
+    let (slot, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
+    let rect = surface_rect(slot);
     let label = if row.tabs.len() == 1 {
         strings.fmt(StrKey::TreeTabRowOne, &[("name", &row.name)])
     } else {
@@ -722,17 +729,13 @@ fn tab_row(ui: &mut Ui, state: &FrameState<'_>, row: &TabRow, out: &mut Vec<Acti
     };
     response
         .widget_info(|| egui::WidgetInfo::selected(egui::Role::TreeItem, true, selected, &label));
-    if selected {
-        ui.painter().rect_filled(rect, 0.0, palette.accent_soft);
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-    }
+    surface(ui, rect, selected, response.hovered());
     let icon_rect = Rect::from_center_size(
         egui::pos2(rect.left() + 8.0 + ICON_BOX_PX / 2.0, rect.center().y),
         egui::vec2(ICON_BOX_PX, ICON_BOX_PX),
     );
     glyph(ui, icon_rect, Icon::Bookmark, palette.text_secondary);
-    let width = rect.right() - MARGIN_PX - icon_rect.right() - 8.0;
+    let width = rect.right() - ROW_PADDING_PX - icon_rect.right() - 8.0;
     let galley = truncated(ui, &label, &TextStyle::Body, palette.text_primary, width);
     ui.painter().galley(
         egui::pos2(
@@ -774,22 +777,19 @@ fn tab_item(ui: &mut Ui, state: &FrameState<'_>, id: &dc_project::TabId, out: &m
         StrKey::TreeTabItem,
         &[("name", id.as_str()), ("x", &x), ("y", &y)],
     );
-    let (rect, _) =
+    let (slot, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
     let response = ui.interact(
-        rect,
+        slot,
         Id::unique(("dc.tree.tab", id.as_str())),
         Sense::click(),
     );
     response
         .widget_info(|| egui::WidgetInfo::selected(egui::Role::TreeItem, true, selected, &label));
-    if selected {
-        ui.painter().rect_filled(rect, 0.0, palette.accent_soft);
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-    }
+    let rect = surface_rect(slot);
+    surface(ui, rect, selected, response.hovered());
     let left = rect.left() + 8.0 + ICON_BOX_PX + 8.0;
-    let width = rect.right() - MARGIN_PX - left;
+    let width = rect.right() - ROW_PADDING_PX - left;
     let galley = truncated(ui, &label, &TextStyle::Body, palette.text_secondary, width);
     ui.painter().galley(
         egui::pos2(left, rect.center().y - galley.size().y / 2.0),

@@ -28,9 +28,9 @@ use crate::widgets::icon::Icon;
 use crate::widgets::section::section;
 
 /// A Files row, px.
-const ROW_PX: f32 = 28.0;
+const ROW_PX: f32 = theme::TABLE_ROW_PX;
 /// A sheet footer button, px.
-const FOOTER_PX: f32 = 28.0;
+const FOOTER_PX: f32 = theme::CONTROL_PX;
 
 /// Shows `result`; `instructions` is whether *Run instructions* is open.
 /// Returns whether its header was clicked, to flip it.
@@ -174,7 +174,7 @@ fn table_row(ui: &mut Ui, cells: [&str; 4], fill: Option<egui::Color32>, header:
     let [number, name, tool, time] = cells;
     egui::Frame::NONE
         .fill(fill.unwrap_or(theme::NONE))
-        .corner_radius(4)
+        .corner_radius(theme::CONTROL_RADIUS_PX)
         .inner_margin(egui::Margin::symmetric(8, 0))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -260,12 +260,12 @@ fn run_instructions(ui: &mut Ui, result: &ExportResult) {
 }
 
 /// A controller note: the `info` glyph and the text on a stripe-filled
-/// panel with a 6-px radius.
+/// panel at the inner-card radius.
 fn callout(ui: &mut Ui, note: &str) {
     let palette = Palette::current(ui);
     egui::Frame::NONE
         .fill(palette.surface_stripe)
-        .corner_radius(6)
+        .corner_radius(theme::INNER_CARD_RADIUS_PX)
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());

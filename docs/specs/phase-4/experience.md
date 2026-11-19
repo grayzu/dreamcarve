@@ -3,7 +3,11 @@
 Status: draft, written 2026-11-02 for the phase 4 design spec; the design
 spec's "Visual design" section points here. Amended 2026-11-10 by the
 screenshot review of #549 (functional spec, "Review redesign"); section
-15 collects what the review added. It designs how the app in
+15 collects what the review added. Amended 2026-11-18 by slice D2 of the
+redesign (`redesign.md`): the tokens of section 5, the sizes of section
+3, the controls of section 7, their egui realisation in section 12, and
+the cards of section 2 are the redesign's; the layout of section 2 is
+still the old one, which slice D3 replaces. It designs how the app in
 `functional.md` looks and behaves, inside that spec's capabilities (50–80);
 it adds no feature and renames none. The wireframes in `mockups/` fix layout,
 labels and field names; this document fixes everything they leave grey.
@@ -49,50 +53,59 @@ The window is three regions and a status bar, read as one surface with the
 Viewport sunk into it. Chrome is quiet so the stock and its toolpaths are
 the brightest thing on screen.
 
-- **Surfaces.** The window background (`surface.window`) shows only as the
-  4-px gaps between regions and as the dividers. Side panels sit on
-  `surface.panel`. The Viewport is `viewport.bg`, which in both modes is
-  slightly *lighter* than the panels in light mode and slightly *darker*
-  than them in dark mode, so it reads as the stage. Popovers, menus, the
-  toolpath view popover and sheets are `surface.raised` with a 1-px
-  `border.default` and a soft shadow. Fields and lists are
-  `surface.sunken`.
+- **Surfaces.** Every region is a **card** on the window backdrop
+  (`surface.window`): `surface.panel`, a 14-px radius, no border and no
+  shadow. The backdrop shows as the 8-px gaps between the cards and the
+  8-px margin round them, and under the menu bar, the toolbar and the
+  status bar, which sit on it. The cards are the Design Tree, the panels
+  under it, the Viewport, the CAM panel's list, its editor, and the
+  Warnings drawer. The Viewport's card is `viewport.bg`: darker than the
+  cards in dark mode, a shade off white in light, so it reads as the
+  stage. Popovers, menus, the toolpath view popover and sheets are
+  `surface.raised` with the one soft shadow (popovers and menus also a
+  1-px `border.default`, since in light mode they are the card's own
+  white). Fields and lists are `surface.sunken`. Dark is the default
+  appearance; light is the same design.
 - **Hierarchy.** Three levels only: panel title (Design Tree, Project
   Settings, Properties, CAM), section header (Shapes, Stock, Setup,
   Depth, Strategy), row. No fourth. The CAM panel's tabs and the
   operation editor's header sit at the panel-title level.
-  Titles are 13-px SemiBold; section headers are 13-px SemiBold on a
-  `surface.panel` band with a chevron; rows are 13-px Regular.
-- **Panel chrome.** No panel has a border on its own. A panel is its header
-  band (32 px) plus content; the 1-px `border.default` line under the
-  header is the only rule. Every panel has a title, the CAM panel
-  included. Left column: the Design Tree over a scrolling area that holds
+  Titles are 13-px SemiBold; section headers are 13-px SemiBold with a
+  chevron and no band; rows are 13-px Regular.
+- **Panel chrome.** No panel has a border, a title band or a rule under
+  its title. A panel is a card: its title (40 px) and its content, 16 px
+  in from the card's edges. Every panel has a title, the CAM panel
+  included. Left column: the Design Tree's card over a card that holds
   two **collapsible panels**, *Project Settings* (always there, on top)
   and *Properties* (only while something is selected), split from the
-  tree by a draggable horizontal divider. A collapsible panel's title
-  band has a `chevron-right`/`chevron-down` at its left, like a section
-  header but at panel-title weight on `surface.panel`; collapsed, it is
-  its 32-px band. When a selection appears, Properties opens and its
-  band scrolls to the top of the area, so it is never below the fold
-  under an open Project Settings. Right column: the CAM panel, its
-  32-px title band (*CAM*) over a 32-px tab strip with its two tabs in
-  workflow order (**Tools**, **Operations**), each tab a list over an
-  editor, split by a draggable divider.
-- **Dividers.** 4-px wide, `surface.window`; on hover the central 2 px turn
-  `accent` after 150 ms; cursor is the platform's resize cursor. Panels
-  collapse to a 32-px strip (icon + vertical title) when dragged below
-  their minimum or from the panel menu, and reopen from the strip.
-- **Menu bar and toolbar.** A 28-px menu bar (egui's own; on macOS the
+  tree's card by the gap between them, which drags. A collapsible
+  panel's title row has a `chevron-right`/`chevron-down` at its left,
+  like a section header but at panel-title weight; collapsed, it is
+  its 32-px row. When a selection appears, Properties opens and its
+  row scrolls to the top of the area, so it is never below the fold
+  under an open Project Settings. Right column: the CAM panel's card,
+  its title (*CAM*) over pill tabs (section 7) in workflow order
+  (**Tools**, **Operations**) and the tab's list; under it the editor
+  of what the list has selected, a card of its own.
+- **Dividers.** The 8-px gap between two cards is the divider: it drags,
+  and the cursor is the platform's resize cursor. Panels
+  collapse to a strip (a 32-px card: icon + vertical title) when dragged
+  below their minimum or from the panel menu, and reopen from the strip.
+- **Menu bar and toolbar.** A 32-px menu bar (egui's own; on macOS the
   design spec may move it to the native bar later: nothing here depends on
-  it). Below it a 40-px toolbar on `surface.panel`: quiet buttons with a
+  it). Below it a 48-px toolbar, both on the backdrop: quiet 32-px
+  buttons with a
   20-px icon and a 13-px label in groups, *Open, Save* | *Undo, Redo* |
   *Add drawing, Add picture* | the **Arrange** group, icon-only (Rotate
   as a split button, Flip horizontal, Flip vertical) | *Fit, Tab tool*,
-  a 16-px gap between the groups, and Export as the one primary button at
+  a 16-px gap between the groups, and Export as the one primary button, a
+  34-px accent pill at
   the right end. The toolbar shows no file name: the project's name is the
   OS window title (`plaque — DreamCarve`, `plaque* — DreamCarve` when
   unsaved), set with `ViewportCommand::Title`.
-- **Status bar.** 24 px, `surface.panel`, top rule `border.default`. Cells
+- **Status bar.** 28 px on the backdrop, with a 6-px margin under it;
+  each cell a quiet 24-px pill (`surface.panel`, a 1-px `border.default`
+  outline). Cells
   left to right (functional 50b): units (a quiet button, `mm` with a
   `chevron-down`, opening a two-row menu), cursor X Y (tabular, a fixed
   120-px cell that is blank, not dashed, off the Viewport), **Toolpaths**
@@ -104,12 +117,13 @@ the brightest thing on screen.
   `circle-check` + *No problems* in text.secondary when all are zero),
   estimated time, Z range when extents are on, then the message, which
   takes the remaining width and truncates at the end. A cell with
-  nothing to show is not drawn and takes no rule. Cells are separated by
-  1-px `border.default` rules with 12-px padding; cell text is 12 px.
+  nothing to show is not drawn. Cells are 6 px apart with 10-px padding
+  and no rules between them; cell text is 12 px. A cell that is a button
+  takes `surface.hover` on its pill.
   No stock size: Project Settings shows it.
 - **Warnings drawer.** Slides up from the status bar over the Viewport's
-  bottom 240 px (resizable, min 120), `surface.panel`, top rule; never a
-  window.
+  bottom 240 px (resizable, min 120), a card of its own under the
+  Viewport's; never a window.
 - **Persistent vs transient.** Persistent: the four regions, the status
   bar, the depth legend while By depth is on (section 9), the
   target-editing bar while target editing is on (section 8).
@@ -126,42 +140,66 @@ the brightest thing on screen.
 
 ## 3. Layout grid and spacing
 
-A 4-pt scale. Everything snaps to it; the only 2-px uses are hairline gaps.
+A 4-pt scale. Everything snaps to it; the only 2-px uses are hairline
+gaps, and the one off-scale step is the 6-px margin under the cards and
+the status bar, which with a pill's 2-px inset makes the 8-px gap.
+(`redesign.md`, "Shape, size and type", is where these numbers come
+from.)
 
 | Step | px | Used for |
 | --- | --- | --- |
-| 0.5 | 2 | Gap between a glyph and its count; focus-ring offset |
-| 1 | 4 | Region gutters, divider width, gap between icon and label inside a row, vertical gap between stacked controls |
-| 2 | 8 | Control inner padding (horizontal), gap between a label and its field, list row horizontal padding, gap between adjacent buttons |
-| 3 | 12 | Panel content margin, status-bar cell padding, gap between a field and its validation line's bottom |
-| 4 | 16 | Gap between toolbar groups, gap between sections inside a sheet, card padding |
-| 6 | 24 | Sheet margin, empty-state card padding (inner) |
-| 8 | 32 | Header heights, empty-state card gap between blocks |
+| 0.5 | 2 | Gap between a glyph and its count; focus-ring offset; gap between a row's two lines |
+| 1 | 4 | Gap between icon and label inside a row, vertical gap between stacked controls |
+| 2 | 8 | Gap between cards and the margin round them, gap between a label and its field, a list row's inset from its card's edge and its own padding, gap between adjacent buttons |
+| 2.5 | 10 | Field and chip inner padding (horizontal), status-bar cell padding |
+| 3 | 12 | Secondary-button padding (horizontal), popover margin |
+| 4 | 16 | Card padding, primary-button padding (horizontal), gap between toolbar groups, gap between sections inside a sheet |
+| 5 | 20 | Gap between sections in a card: under an open section's body |
+| 6 | 24 | Sheet padding, empty-state card padding (inner) |
+| 8 | 32 | Control and header heights, empty-state card gap between blocks |
+
+Corner radii:
+
+| Thing | Radius |
+| --- | --- |
+| Card | 14 |
+| Sheet | 16 |
+| Menu, popover | 12 |
+| Card inside a card (example card, clearing pass, callout, import preview) | 10 |
+| Control (field, dropdown, secondary and quiet button, list row, menu row) | 8 |
+| Checkbox, thumbnail | 4 |
+| Pill (primary button, pill tab, segmented control, chip, status-bar cell, switch, Viewport caption) | Half its height |
 
 Heights (all at 1× scale; egui multiplies by `pixels_per_point`):
 
 | Element | Height | Notes |
 | --- | --- | --- |
-| Menu bar | 28 | |
-| Toolbar | 40 | Buttons 28 tall inside |
-| Panel header / tab strip | 32 | Also a collapsible panel's band, the editor header, the target-editing bar |
-| Section header | 28 | Full-width hit area |
-| Control (field, dropdown, button, segmented) | 26 | Text baseline centred |
-| Primary button in a sheet footer | 28 | The one taller control |
-| Checkbox / radio glyph | 16 | Inside a 26-px row |
-| Design Tree row | 26 | One line |
-| Operations and Tools list row | 40 | Two lines: name, then tool or size |
-| Table row (Tool Library, export programs, Warnings) | 28 | One line |
-| Status bar | 24 | |
-| Toolpath popover row | 24 | |
-| Collapsed panel strip | 32 wide | |
-| Vendor group header (Tool Library) | 28 | Same as a section header, inside the table |
+| Menu bar | 32 | On the backdrop |
+| Toolbar | 48 | On the backdrop; buttons 32 tall inside, the primary one 34 |
+| Panel title | 40 | No band; also the Warnings drawer's header at 52 with its buttons |
+| Editor header | 48 | No band and no rule |
+| Collapsible panel's row, target-editing bar | 32 | |
+| Section header | 32 | Full-width hit area, no band |
+| Control (field, dropdown, button, segmented, pill tabs) | 32 | Text baseline centred |
+| Primary button in the toolbar | 34 | The one taller control |
+| Checkbox glyph | 16 | Inside a 32-px row |
+| Switch | 20 | 36 wide, inside a 32-px row |
+| Chip | 24 | 12-px text |
+| Design Tree row | 30 | One line, on its own 28-px surface |
+| Operations and Tools list row | 52 | Two lines: name, then tool or size; on its own 50-px surface |
+| Table row (Tool Library, export programs, Warnings) | 34 | One line |
+| Menu row, dropdown row | 32 | |
+| Status bar | 28 | Cells 24, and a 6-px margin under it |
+| Toolpath popover row | 24 | The key; its checkbox rows are 32 |
+| Collapsed panel strip | 32 wide | A card |
+| Vendor group header (Tool Library) | 32 | Same as a section header, inside the table |
 | Example card (empty state) | 72 | 96 × 56 thumbnail, name, one line |
-| Toolpath view popover | auto | 240 wide, 24-px rows |
+| Toolpath view popover | auto | 240 wide |
 
-Widths: left column default 280, min 240; right column default 340, min
-300; Viewport min 560 (so 1280 × 768 holds both panels at minimum, spec
-50). Labels in editors take a 112-px column; the field fills the rest;
+Widths are the cards': left column default 280, min 240; right column
+default 320, min 300; Viewport min 560 (so 1280 × 768 holds both panels
+at minimum with the four 8-px gaps, spec 50). Labels in editors take a
+112-px column; the field fills the rest;
 the unit occupies the last 32 px inside the field. Tool-Library sheet
 960 × 640 default, min 800 × 520, its right (editing) pane 320 wide;
 Import and Export sheets 560 wide, the export result the same sheet;
@@ -222,36 +260,34 @@ the same field: `6 mm`, `0.25 in`, `1200 mm/min`, `18000 rpm`, `45°`,
 
 All values sRGB hex. Contrast ratios are WCAG 2 against the surface named
 and were computed, not estimated. "Visuals" names the egui field the token
-sets (section 12).
+sets (section 12). The values are the redesign's (`redesign.md`,
+"Tokens"); dark is the default appearance.
 
 ### Surfaces, borders, text, accent
 
 | Token | Light | Dark | Visuals field |
 | --- | --- | --- | --- |
-| surface.window | `#ECEEF1` | `#15181D` | `window_fill` of the root, `Frame::none().fill` of the central area |
-| surface.panel | `#F7F8FA` | `#1E2229` | `panel_fill` |
-| surface.raised | `#FFFFFF` | `#262B33` | `window_fill` (popups, sheets), `widgets.open.bg_fill` |
-| surface.sunken | `#FFFFFF` | `#121519` | `extreme_bg_color` (text edits, lists) |
-| surface.stripe | `#F2F3F6` | `#22262E` | `faint_bg_color` |
-| surface.hover | `#1C212814` (8 % of text.primary) | `#E8EBF014` | `widgets.hovered.weak_bg_fill` |
-| surface.active | `#1C212820` | `#E8EBF020` | `widgets.active.weak_bg_fill` |
-| border.default | `#D7DBE2` | `#333A44` | `widgets.noninteractive.bg_stroke`, `window_stroke` |
-| border.strong | `#B9C0CA` | `#48515D` | `widgets.inactive.bg_stroke` (field outline) |
-| text.primary | `#1C2128` (15.2:1 on panel) | `#E8EBF0` (13.4:1) | `widgets.*.fg_stroke.color`, `override_text_color` unset |
-| text.secondary | `#5B6472` (5.6:1) | `#A3ABB7` (6.9:1) | `widgets.noninteractive.fg_stroke` for labels (set per widget) |
-| text.disabled | `#9AA3AF` | `#6B7380` | `widgets.noninteractive` when `!enabled` |
-| text.on-accent | `#FFFFFF` | `#FFFFFF` | set per widget |
-| accent | `#2563D0` (5.2:1 on panel; 5.6:1 with white text) | `#6AA3F2` (6.2:1) | `hyperlink_color`, `selection.stroke` |
-| accent.fill | `#2563D0` | `#2F6FD6` (4.8:1 with white text) | primary button fill |
-| accent.soft | `#2563D01F` | `#6AA3F229` | `selection.bg_fill` (selected rows, text selection) |
-| focus.ring | `#2563D0` | `#6AA3F2` | custom (12) |
+| surface.window | `#ECEFF1` | `#0C0F11` | the backdrop: the fill of every panel's own frame, and the clear colour |
+| surface.panel | `#FFFFFF` | `#14181B` | `panel_fill` (cards) |
+| surface.raised | `#FFFFFF` | `#1B2024` | `window_fill` (menus, popovers, sheets, a card inside a card), `widgets.open.bg_fill` |
+| surface.sunken | `#F3F5F6` | `#0F1315` | `extreme_bg_color` (text edits, lists), `widgets.inactive.weak_bg_fill` (dropdowns) |
+| surface.stripe | `#F7F8F9` | `#181D20` | `faint_bg_color` |
+| surface.hover | `#141A1D10` (6 % of text.primary) | `#E8EDEF10` | `widgets.hovered.weak_bg_fill` |
+| surface.active | `#141A1D1A` (10 %) | `#E8EDEF1A` | `widgets.active.weak_bg_fill` |
+| border.default | `#DCE2E5` | `#252B30` | `widgets.noninteractive.bg_stroke`, `widgets.inactive.bg_stroke` (field outline at rest), `window_stroke`; rules inside a card |
+| border.strong | `#B8C2C8` | `#3A434A` | `widgets.hovered.bg_stroke` (field outline on hover) |
+| text.primary | `#141A1D` (17.6:1 on panel) | `#E8EDEF` (15.1:1) | `widgets.*.fg_stroke.color`, `override_text_color` unset |
+| text.secondary | `#52606A` (6.5:1) | `#9AA6AD` (7.2:1) | `widgets.noninteractive.fg_stroke` for labels (set per widget) |
+| text.disabled | `#97A2A9` | `#66727A` | `weak_text_color` (placeholders), `widgets.noninteractive` when `!enabled` |
+| text.on-accent | `#FFFFFF` (5.4:1 on accent.fill) | `#04261B` (7.4:1) | set per widget; dark text on the bright fill in dark mode |
+| accent | `#08795E` (5.4:1 on panel) | `#2AD79A` (9.6:1) | `hyperlink_color`, `selection.stroke`; icons, links, the selected row's bar |
+| accent.fill | `#08795E` | `#22C78C` | primary button fill, a checked box, a switch that is on |
+| accent.hover | `#0A8A6C` (4.3:1 with white text) | `#3FE0A8` (9.6:1 with text.on-accent) | primary button on hover |
+| accent.soft | `#08795E1F` | `#2AD79A29` | `selection.bg_fill` (selected rows, text selection) |
+| focus.ring | `#08795E` | `#2AD79A` | custom (12); `widgets.active.bg_stroke` (a focused field's outline) |
 
-Rationale for the blue accent: the operation palette's first colour is also
-blue (`#1F77B4`), but the accent appears only on chrome (rows, rings,
-handles), never as a toolpath, and the Viewport's selection colour is the
-accent at 2 px while toolpath 1 draws at 1.5 px in a different, darker
-blue. The two never meet on the same element: a selected shape is the
-*shape* turning accent, not a toolpath.
+The accent is a green/teal (hue 159°), and operation colours 3 (green)
+and 6 (cyan) moved away from its hue so no toolpath reads as chrome.
 
 ### Status
 
@@ -264,68 +300,76 @@ field backgrounds. Never used without a glyph or a word.
 | status.error | `#C62E27` / `#C62E27` / `#C62E2714` | `#F2726A` / `#F2726A` / `#F2726A1F` | `circle-x` filled | `error_fg_color` |
 | status.warning | `#A3580A` / `#D98A1E` / `#D98A1E1A` | `#F0B347` / `#F0B347` / `#F0B3471F` | `triangle-alert` outline | `warn_fg_color` |
 | status.info (hint) | `#2A6CC4` / `#2A6CC4` / `#2A6CC414` | `#78B0F5` / `#78B0F5` / `#78B0F51F` | `info` outline, or a 6-px dot in a count | custom |
-| status.success | `#1F7F43` / `#1F7F43` / none | `#5FC67F` / `#5FC67F` / none | `circle-check` | custom |
+| status.success | `#1F7F43` / `#1F7F43` / none | `#5FD08A` / `#5FD08A` / none | `circle-check` | custom |
 
 The light warning *text* is darker than its stroke so the message under a
 field passes 4.5:1 while the outline and triangle keep the amber the eye
-expects (`#D98A1E` is 2.6:1 on panel, so it is never used for text).
+expects (`#D98A1E` is 2.8:1 on panel, so it is never used for text). The
+dark success green is yellower than the accent (`#5FD08A` against
+`#2AD79A`), so *done* does not read as *selected*.
 
 ### Viewport
 
+The Viewport's card is the stage: darker than the cards in dark mode, a
+shade off white in light.
+
 | Token | Light | Dark | Contrast on viewport.bg |
 | --- | --- | --- | --- |
-| viewport.bg | `#FAFAF8` | `#1B1F26` | — |
-| viewport.grid.minor | `#ECEEF1` | `#232830` | 1.1:1 (deliberately faint) |
-| viewport.grid.major | `#D9DCE2` | `#2C323B` | 1.3:1 |
-| viewport.axis (origin crosshair, X/Y axis lines through it) | `#6B7380` | `#9AA3AF` | 4.6 / 6.5 |
-| viewport.stock (outline, dashed) | `#6B7380` | `#9AA3AF` | 4.6 / 6.5 |
-| viewport.stock.fill | `#FFFFFF` | `#1F242C` | the stock is a shade off the background so its extent reads without the dashes |
-| viewport.male-board (outline, origin mark, mirrored shapes) | `#8A929E` | `#7B8491` | 3.0 / 4.4 |
-| viewport.shape (closed, solid) | `#23272E` | `#E6E9EE` | 14.3 / 13.6 |
+| viewport.bg | `#F6F7F7` | `#0F1214` | — |
+| viewport.grid.minor | `#ECEFF0` | `#15191C` | 1.1:1 (deliberately faint) |
+| viewport.grid.major | `#DDE2E5` | `#1D2226` | 1.2:1 |
+| viewport.axis (origin crosshair, X/Y axis lines through it) | `#6B7780` | `#9AA6AD` | 4.3 / 7.5 |
+| viewport.stock (outline, dashed) | `#6B7780` | `#9AA6AD` | 4.3 / 7.5 |
+| viewport.stock.fill | `#FFFFFF` | `#161B1E` | the stock is a shade off the background so its extent reads without the dashes |
+| viewport.male-board (outline, origin mark, mirrored shapes) | `#8A929E` | `#7B8491` | 2.9 / 5.0 |
+| viewport.shape (closed, solid) | `#1E2529` | `#E6EAEC` | 14.5 / 15.5 |
 | viewport.shape.open (dashed, same colour) | as shape | as shape | |
-| viewport.shape.hover | `#5B8DE8` | `#8FBAF7` | 3.1 / 8.3 |
-| viewport.shape.selected | `#2563D0` | `#6AA3F2` | 5.3 / 6.4 |
-| viewport.shape.locked | `#8A929E` + padlock glyph | `#7B8491` + padlock | 3.0 / 4.4 |
+| viewport.shape.hover | `#0A8A6C` (accent.hover) | `#3FE0A8` (accent.hover) | 4.0 / 11.1 |
+| viewport.shape.selected | `#08795E` (accent) | `#2AD79A` (accent) | 5.0 / 10.1 |
+| viewport.shape.locked | `#8A929E` + padlock glyph | `#7B8491` + padlock | 2.9 / 5.0 |
 | viewport.shape.hidden | not drawn | not drawn | |
 | viewport.picture | the bitmap at 100 %, 60 % when any shape is selected | same | |
-| viewport.rapid (thin dashed) | `#8A929E` | `#6E7786` | 3.0 / 3.7 |
-| viewport.plunge (mark at a descent) | `#C62E27` | `#F2726A` | 5.3 / 5.8 |
-| viewport.tab (heavy mark) | `#1C2128` | `#F5F7FA` | 15.5 / 15.4; a hollow (uncrossed) tab is the same stroke at 1.5 px with no fill |
+| viewport.rapid (thin dashed) | `#8A959D` | `#6F7A82` | 2.8 / 4.3 |
+| viewport.plunge (mark at a descent) | `#C62E27` | `#F2726A` | 5.1 / 6.6 |
+| viewport.tab (heavy mark) | `#1C2128` | `#F5F7FA` | 15.1 / 17.5; a hollow (uncrossed) tab is the same stroke at 1.5 px with no fill |
 | viewport.start (circle + tick) | the operation's colour | same | |
 | viewport.drill (bit-sized circle) | the operation's colour | same | |
 | viewport.direction-arrow | the operation's colour | same | |
-| viewport.extents.centre (solid) | `#5B6472` | `#A3ABB7` | 5.7 / 7.1 |
-| viewport.extents.edge (dashed, outside) | `#8A929E` | `#7B8491` | 3.0 / 4.4 |
+| viewport.extents.centre (solid) | `#5B6472` | `#A3ABB7` | 5.6 / 8.1 |
+| viewport.extents.edge (dashed, outside) | `#8A929E` | `#7B8491` | 2.9 / 5.0 |
 | viewport.park (crossed circle) | `#5B6472` | `#A3ABB7` | |
 | viewport.marquee | accent at 1 px, accent.soft fill | same | |
-| viewport.handle (fill / stroke) | `#FFFFFF` / `#2563D0` | `#1B1F26` / `#6AA3F2` | |
-| viewport.label.bg (cursor readouts, extents caption) | `#FFFFFFE0` | `#262B33E6` | |
+| viewport.handle (fill / stroke) | `#FFFFFF` / accent | `#0F1214` / accent | |
+| viewport.label.bg (cursor readouts, extents caption) | `#FFFFFFE0` | `#1B2024E6` | |
+
+The light Viewport's background is a shade darker than it was, which
+leaves the male board, a locked shape, the extents' edge box and rapids a
+hair under 3:1 (2.8 to 2.9) there; each is dashed or carries a glyph, so
+none depends on its colour alone.
 
 ### Operation colours
 
-The CLI's `PALETTE` (`crates/dreamcarve/src/preview.rs`) is Matplotlib's
-tab10, chosen on white. Three of its eight (orange, cyan, pink) sit at
-2.2–2.6:1 on the light Viewport, under the 3:1 floor for a 1.5-px line,
-and brown drops to 2.8:1 on the dark one. **Proposal:** keep the eight
-hues and their order (so the quick-start pictures and the CLI's SVG still
-match the screen by eye), tune four light values up to ≥3.3:1, and give
-dark mode its own set. The light set is the one the CLI should adopt too
-if the maintainer accepts the change (one constant table in one crate;
-acceptance test 79 compares the SVG dump to `--preview`, so the dump must
-use whichever table the CLI uses). If the maintainer keeps the CLI's
-values, the light Viewport draws the CLI's hexes unchanged and only the
-dark set is new; nothing else in this document moves.
+The CLI's `PALETTE` (`crates/dc-job/src/preview.rs`) is Matplotlib's
+tab10 hues in their order, darkened for the light Viewport (design open
+question 5, accepted). The redesign moves three of the eight on screen:
+green goes yellower and cyan bluer, so no toolpath sits near the accent's
+hue (159°), and orange a shade deeper for the new background. The order
+and the names stay, so the CLI's preview and the quick-start pictures
+still match the screen by eye; dark mode has its own set, as before. The
+CLI column is `dc_job::preview::PALETTE` as it stands; if the CLI adopts
+the light column, the two are one table again (`tests/theme.rs` holds the
+two columns to exactly this difference).
 
-| # | Name | CLI (light today) | Light (proposed) | on `#FAFAF8` | Dark | on `#1B1F26` |
+| # | Name | CLI | Light | on `#F6F7F7` | Dark | on `#0F1214` |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Blue | `#1F77B4` | `#1F77B4` | 4.6 | `#5BA6EA` | 6.4 |
-| 2 | Red | `#D62728` | `#D62728` | 4.8 | `#F0605A` | 5.1 |
-| 3 | Green | `#2CA02C` | `#2A8F2A` | 4.0 | `#5FC95F` | 7.9 |
-| 4 | Purple | `#9467BD` | `#8E5FB8` | 4.5 | `#B48FE0` | 6.3 |
-| 5 | Orange | `#FF7F0E` | `#D96A00` | 3.3 | `#FFA046` | 8.2 |
-| 6 | Cyan | `#17BECF` | `#0E98A8` | 3.3 | `#4FD4E4` | 9.3 |
-| 7 | Brown | `#8C564B` | `#8C564B` | 5.7 | `#C8907F` | 6.1 |
-| 8 | Pink | `#E377C2` | `#C94FA8` | 3.9 | `#F08FD2` | 7.5 |
+| 1 | Blue | `#1F77B4` | `#1F77B4` | 4.5 | `#5BA6EA` | 7.2 |
+| 2 | Red | `#D62728` | `#D62728` | 4.7 | `#F0605A` | 5.8 |
+| 3 | Green | `#2A8F2A` | `#4A930D` | 3.6 | `#9AD64B` | 10.8 |
+| 4 | Purple | `#8E5FB8` | `#8E5FB8` | 4.4 | `#B48FE0` | 7.1 |
+| 5 | Orange | `#D96A00` | `#D36500` | 3.5 | `#FFA046` | 9.3 |
+| 6 | Cyan | `#0E98A8` | `#0B90B1` | 3.5 | `#4FC3F0` | 9.3 |
+| 7 | Brown | `#8C564B` | `#8C564B` | 5.5 | `#C8907F` | 6.9 |
+| 8 | Pink | `#C94FA8` | `#C94FA8` | 3.8 | `#F08FD2` | 8.6 |
 
 Operation 2 is red in both modes because the CLI's is, and the Warnings
 ladder depends on red meaning *error*. The rule that keeps them apart:
@@ -343,11 +387,11 @@ family is the same, so the legend reads the same in both modes.
 
 | Stop | Light | Dark |
 | --- | --- | --- |
-| 0 (stock top) | `#AFC2EE` (1.7:1; pale by intent, the ramp's top is rarely cut) | `#E4ECFF` (14:1) |
+| 0 (stock top) | `#AFC2EE` (1.7:1; pale by intent, the ramp's top is rarely cut) | `#E4ECFF` (15.9:1) |
 | 0.25 | `#7C98E0` | `#BCCBF8` |
-| 0.5 | `#4A68C9` (3.7:1) | `#93A8F2` (6.3:1) |
+| 0.5 | `#4A68C9` (4.8:1) | `#93A8F2` (8.2:1) |
 | 0.75 | `#2A44A6` | `#6E86EE` |
-| 1 (deepest) | `#1A2E8C` (11:1) | `#4A66E8` (3.4:1) |
+| 1 (deepest) | `#1A2E8C` (10.8:1) | `#4A66E8` (3.9:1) |
 
 The legend bar (section 9) is the same ramp drawn vertically, 12 px wide.
 
@@ -422,9 +466,9 @@ Shared state language (applies to every control below):
 
 | State | Look |
 | --- | --- |
-| default | `surface.sunken` fill, 1-px `border.strong` outline, 4-px radius, text.primary |
-| hover | outline → text.secondary; buttons: `surface.hover` wash |
-| focus | 2-px `focus.ring` outline outside the control, 2 px offset, no change to the inner outline; fields also show the caret |
+| default | `surface.sunken` fill, 1-px `border.default` outline, 8-px radius, text.primary |
+| hover | outline → `border.strong`; buttons: `surface.hover` wash |
+| focus | 2-px `focus.ring` outline outside the control, 2 px offset, following its shape (a pill's ring is a pill); a field being typed in turns its own outline `focus.ring` and shows the caret |
 | active (pressed / open) | `surface.active` wash; dropdown chevron rotates |
 | disabled | fill unchanged, outline → `border.default`, text → text.disabled, no hover; a tooltip gives the reason when the spec names one (tool-change Z on a post without `G53`) |
 | error | outline → status.error stroke; a 12-px message under the field with `circle-x`; the unit suffix stays grey |
@@ -434,7 +478,8 @@ Shared state language (applies to every control below):
 
 Controls:
 
-- **Text field with trailing unit.** 26 px tall, 8-px padding, value left
+- **Text field with trailing unit.** 32 px tall, `surface.sunken`, 8-px
+  radius, 10-px padding, value left
   in tabular figures, the unit right-aligned in text.secondary inside the
   outline. Typing `0.5 in` in a mm project converts on leave and the field
   shows `12.7 mm`; the unit never changes with the input. Validation on
@@ -450,90 +495,117 @@ Controls:
   `1 1/4 in`, `6.35`, `6,35` is rejected with *Use a dot*), degrees and
   percentages with their suffix. Arrow up/down step by 1 (Shift 10, Alt
   0.1) in display units and commit on leave.
-- **Dropdown.** 26 px, chevron `chevron-down` right, opens a `surface.raised`
-  list with 26-px rows, the current row ticked with `check`; keyboard:
+- **Dropdown.** 32 px, a field's fill and outline, chevron `chevron-down`
+  right, opens a `surface.raised` menu (12-px radius, the one shadow)
+  with 32-px rows on 8-px-radius surfaces, the current row ticked with
+  `check`; keyboard:
   Space opens, type to jump, Enter commits. The tool dropdown shows the
   tool-type glyph, name, size and `(T2)`; its last row is *Add from
   library…*.
-- **Checkbox.** 16-px box, 3-px radius, `border.strong`; checked fills
-  `accent` with a white `check`; label 8 px right; the whole row is the
-  hit target. No tri-state in this phase.
+- **Checkbox.** 16-px box, 4-px radius, `surface.sunken` with a
+  `border.strong` outline; checked fills `accent.fill` (`accent.hover`
+  under the pointer) with a `check` in text.on-accent; label 8 px right;
+  the whole 32-px row is the hit target. No tri-state in this phase.
 - **Segmented control.** For 2–4 mutually exclusive options whose labels
   fit in 56 px each: Direction (Climb / Conventional), Z zero (Top /
   Bottom), colour mode (By operation / By depth), Strategy (Offset /
   Raster), Wall pass (Last / First / None), Mirror (two icon segments),
-  Machining order. 26 px, segments share one `border.strong` outline; the
-  selected segment is `surface.raised` with text.primary Medium and a 1-px
-  `border.strong` around it; the rest text.secondary. Longer sets (Side:
+  Machining order. 32 px: a `surface.sunken` track with fully rounded
+  ends and no outline; the selected segment is a `surface.raised` pill,
+  3 px in from the track, with text.primary Medium and a 1-px
+  `border.default` around it; the rest text.secondary, `surface.hover`
+  under the pointer. Longer sets (Side:
   five values; Entry; Start point; Corner relief) use a dropdown. Radio
   buttons do not appear in the app.
 - **Toggle.** Only for on/off *features* with sub-fields (Lead, Last pass,
-  Cut-out, arc-fit tolerance "off"): a 28 × 16 switch, `border.strong`
-  track, `accent` when on; the sub-fields indent 16 px below it and dim
-  when off. Elsewhere a checkbox.
-- **Disclosure section header.** 28 px, full width, `surface.panel`,
+  Cut-out, arc-fit tolerance "off"): a 36 × 20 pill, `surface.sunken`
+  with a `border.strong` outline and a text.secondary knob when off,
+  `accent.fill` with a text.on-accent knob when on; the sub-fields indent
+  16 px below it and dim when off. Elsewhere a checkbox.
+- **Disclosure section header.** 32 px, full width, no band (the pointer
+  gives it a `surface.hover` wash on its own 8-px-radius surface),
   13-px SemiBold, `chevron-right` 16 px left; open state remembered per
-  group. A located warning or error inside a *closed* section shows its
+  group. An open section leaves 20 px under its body before the next
+  header. A located warning or error inside a *closed* section shows its
   glyph + count at the header's right end so nothing hides. In the
   operation editor a **closed** header also shows a summary of its
   values after the title: 12-px text.secondary, 8 px after the title,
   truncated at the end (`Strategy  Raster 0°, climb, wall last`); the
   summary is not shown when the section is open.
-- **Editor header** (functional 66). 32 px, the panel-title band of the
-  editor: kind glyph 16 px in the operation's colour, the name 13-px
+- **Editor header** (functional 66). 48 px, the title of the editor's
+  card, with no band and no rule: kind glyph 16 px in the operation's
+  colour, the name 13-px
   SemiBold as an inline-editable label (hover shows the text cursor and
-  a 1-px `border.default` outline; click, F2 or a double-click on the
+  a 1-px `border.strong` outline; click, F2 or a double-click on the
   row makes it a field with the name selected), then `· Pocket` in
   text.secondary, then the operation's status glyph right-aligned. No
   enabled checkbox: that is the list row's.
 - **Setup block** (functional 66a). The first section of every editor,
   titled *Setup*, with no chevron (it does not collapse) and the same
-  28-px band. Its rows are ordinary rows; the label column is the same
+  32-px header. Its rows are ordinary rows; the label column is the same
   112 px. Below it the other sections start closed.
-- **Targets row.** A 26-px row in Setup: label *Targets*, then, in the
+- **Targets row.** A 32-px row in Setup: label *Targets*, then, in the
   field column, `target` + `2 shapes · pocket, island` (truncated; the
   full list in the tooltip), a `triangle-alert` when a target carries a
-  warning, and two 26 × 26 quiet icon buttons at the right end: `pencil`
+  warning, and two 32 × 32 quiet icon buttons at the right end: `pencil`
   (Edit targets) and `ellipsis` (Use selection, Add selection). No list
   of names with ✕ buttons.
-- **Proportion link.** A 26-px-wide column to the right of the W and H
+- **Proportion link.** A 28-px-wide column to the right of the W and H
   fields: a 1-px `border.strong` bracket from the middle of W's row to
-  the middle of H's, with a 26 × 26 quiet toggle on it holding `link`
+  the middle of H's, with a 28 × 28 quiet toggle on it holding `link`
   (linked, text.primary) or `unlink` (broken, text.secondary). Tooltip
   *Keep proportions*. Nothing sits between W and H.
-- **Split button** (toolbar Rotate). One 28-px quiet button, icon
+- **Split button** (toolbar Rotate). One 32-px quiet button, icon
   `rotate-cw-square`, and a 16-px chevron segment divided by a 1-px
   `border.default` rule; the chevron opens a 240-px popover with an
   *Angle* unit field and a secondary *Rotate* button.
-- **List row (operations, tools).** 40 px: `grip-vertical` in
+- **List row (operations, tools).** 52 px, on its own surface with an
+  8-px radius, 8 px in from the card's edges, and no rule between rows:
+  `grip-vertical` in
   text.disabled (text.secondary on row hover), enable checkbox, kind glyph
   in the operation's colour (a 10-px colour swatch is drawn in the glyph's
   stroke), name 13 px, second line 12 px text.secondary (`Pocket · 6.35 mm
   end mill`), then `eye`, then a 24-px status cell. Hover: `surface.hover`.
-  Selected: `accent.soft` fill and a 2-px `accent` bar on the left edge.
+  Selected: `accent.soft` fill and a 3-px `accent` bar at its left edge,
+  short of the surface's rounded corners.
   Disabled operation: name in text.secondary, strike nothing.
 - **Status cell.** One of: nothing; spinner; `triangle-alert` + count in
   status.warning; `circle-x` filled in status.error; `info` in status.info
   for an unused tool or the tool's red dot (spec 63: a 8-px filled
   status.error dot when a feed is missing). Hover lists the messages.
-- **Design Tree row.** 26 px: `eye`, `lock` (hover-revealed unless
+- **Design Tree row.** 30 px, on its own 8-px-radius surface like a list
+  row (hover `surface.hover`; selected `accent.soft` with the 3-px
+  `accent` bar): `eye`, `lock` (hover-revealed unless
   locked), the 16-px shape glyph (`square`, `circle` or `spline`) in
   text.secondary, name, then the `component` badge for a linked copy,
   then the target count right-aligned in text.secondary (hover lists the
   operations). While an operation is selected, its targets' rows carry a
-  3-px bar in the operation's colour on the left edge and a `target`
-  glyph before the count. In target editing the `eye` column becomes a
+  3-px bar in the operation's colour at the surface's left edge and a
+  `target` glyph before the count. In target editing the `eye` column
+  becomes a
   checkbox. Section headers (Shapes, Tabs, Pictures) carry their own
   `eye` and `lock` acting on all rows; an empty section is its header
   alone, with no *None* row.
-- **Buttons.** Primary: `accent.fill`, white text, 26 px (28 in sheet
-  footers), used once per surface (Export, Add to project, Import in a
-  sheet). Secondary: `surface.raised`, `border.strong`, text.primary
+- **Buttons.** 32 px. Primary: an `accent.fill` pill with text.on-accent
+  and 16-px padding, `accent.hover` under the pointer (34 px in the
+  toolbar), used once per view (Export, Add to project, Import in a
+  sheet); disabled, a `surface.sunken` pill with a `border.default`
+  outline and text.disabled. Secondary: `surface.raised`, a 1-px
+  `border.default` outline (`border.strong` and a `surface.hover` wash
+  under the pointer), 8-px radius, 12-px padding, text.primary
   (Duplicate, Place tabs, Add from library…). Quiet: no outline, text or
   icon only, `surface.hover` on hover (toolbar, row actions, Show all /
-  Hide all). Destructive: secondary styling with status.error text and
-  outline on hover only (Delete); never red at rest. Icon-only
-  buttons are 26 × 26 with a tooltip after 500 ms.
+  Hide all). Destructive: a secondary button whose label and icon are
+  status.error text, at rest too, and whose outline turns status.error
+  under the pointer (Delete). Icon-only
+  buttons are 32 × 32 with a tooltip after 500 ms.
+- **Chip.** A 24-px pill with 12-px text: `surface.raised` with a 1-px
+  `border.default` outline and text.secondary. A status chip takes its
+  status tint as fill and adds its glyph (a Warnings row's tier).
+- **Card.** `surface.panel`, 14-px radius, no border, no shadow; its
+  content keeps 16 px from its edges and its list rows 8. A card inside a
+  card is `surface.raised` with a 1-px `border.default` outline at a
+  10-px radius.
 - **Inline validation message.** 12 px, under the field, 4 px gap, glyph
   then text, in the status's text colour; the file's message verbatim
   (`inlay_male_board_unset`'s message, not its code). The code appears in
@@ -545,23 +617,24 @@ Controls:
   the label's underline (1 px dotted, text.disabled) appears on hover to
   say it has help. `circle-help` is kept only in sheet headers as a link to
   the chapter.
-- **Tabs (CAM panel).** 32-px strip under the *CAM* title band, two
+- **Tabs (CAM panel).** Pill tabs: the segmented control's track and
+  raised pill, 32 px, under the *CAM* title, two
   equal segments in workflow order, **Tools** then **Operations**, label
-  13 px; active: text.primary SemiBold and a 2-px `accent` underline;
-  inactive: text.secondary; a count badge (`Tools · 3`) in
-  text.secondary.
+  13 px; active: text.primary Medium on the raised pill;
+  inactive: text.secondary; a count (`Tools · 3`) in the label.
 - **Search field.** A text field with a leading `search` glyph and a
   trailing `x` clear when non-empty; filters as typed, 150 ms debounce.
-- **Table rows (Tool Library, export programs, Warnings).** 28 px, striped
-  with `surface.stripe`, header row 28 px text.secondary 12 px with
-  `border.default` under it, columns resizable, numbers right-aligned
+- **Table rows (Tool Library, export programs, Warnings).** 34 px, striped
+  with `surface.stripe` on 8-px-radius surfaces, header row text.secondary
+  12 px with `border.default` under it, columns resizable, numbers
+  right-aligned
   tabular, the tick column 32 px. "Already in project" rows show a `check`
   in text.secondary and the row in text.secondary.
-- **Vendor group header** (Tool Library). A 28-px band inside the table,
-  `surface.panel`, chevron left, the vendor in 13-px SemiBold and the
+- **Vendor group header** (Tool Library). A 32-px header inside the
+  table, with no band, chevron left, the vendor in 13-px SemiBold and the
   count after it in text.secondary (`Amana · 4`); *No vendor* last.
 - **Example card** (empty state). 72 px tall, `surface.raised`, 1-px
-  `border.default`, 6-px radius; a 96 × 56 thumbnail on
+  `border.default`, 10-px radius; a 96 × 56 thumbnail on
   `viewport.stock.fill` with the example's shapes drawn in
   `viewport.shape` at 1 px, fitted with 4-px inset; then the name 13-px
   Medium and one 12-px text.secondary line. Hover: `surface.hover`;
@@ -660,7 +733,8 @@ Controls:
   a project tool in use is refused inline: the button disables and its
   tooltip names the operations.
 - **Sheets (import, export, Tool Library, unsaved changes).** A
-  `surface.raised` panel centred over a `#00000066` scrim, 8-px radius,
+  `surface.raised` panel centred over a scrim of black at 50 %, 16-px
+  radius, 24-px padding, the one soft shadow and no border,
   32-px header with title and `x`, the same sections, fields and
   validation as the panels, and a footer with the one primary action on
   the right and secondary actions on the left. Never a second sheet above
@@ -780,7 +854,7 @@ Controls:
   outlines, handles, toolpaths and marks ≥ 3:1 (all meet it except grid
   lines and the pale end of the depth ramp, which are intentionally
   faint and never carry information on their own).
-- Focus is always visible: the 2-px ring at 5.2:1 (light) / 6.2:1 (dark)
+- Focus is always visible: the 2-px ring at 5.4:1 (light) / 9.6:1 (dark)
   against panels, outside the control so no control shrinks.
 - Every action has a keyboard path: menus list every shortcut (spec 54);
   lists take arrow keys; sheets trap Tab; Escape closes the innermost
@@ -808,11 +882,25 @@ change; no widget sets a colour literal (the one rule a reviewer greps
 for: `Color32::from_rgb` outside `theme.rs` and the painter-glyph module
 is a bug).
 
-- **Following the OS.** `ctx.options_mut(|o| o.theme_preference =
-  ThemePreference::System)`; egui reports `ctx.theme()` from the window
-  backend (eframe/winit). Build both `Visuals` and install with
-  `ctx.set_visuals_of(Theme::Light, light)` and
-  `ctx.set_visuals_of(Theme::Dark, dark)`.
+- **Appearance.** Dark is the default: `Prefs::theme` starts at Dark and
+  `theme::follow` sets `o.theme_preference` from it each frame, so the OS
+  appearance matters only once the user chooses *System*
+  (`ThemePreference::System`; egui reports `ctx.theme()` from the window
+  backend, eframe/winit). Build both `Visuals` and install with
+  `ctx.set_style_of(Theme::Light, light)` and
+  `ctx.set_style_of(Theme::Dark, dark)`.
+- **Cards.** A side panel's own `Frame` is filled with `surface.window`
+  and carries the 8-px margin at the window's edge; the card is painted
+  inside it (`widgets::card`), so the backdrop shows in the gaps. A pane
+  under another card in a column (the panels under the Design Tree, the
+  operation editor) is a nested bottom panel whose frame has the 8-px gap
+  as its top margin, which makes the gap the resize handle. egui clips to
+  rectangles, so after a card's content is drawn its four corners are
+  painted back in `surface.window` (`card::mask_corners`): this is what
+  rounds the Viewport's wgpu callback, a list row's wash and a scroll
+  area at a card's edge. Each mask is one path that starts at the corner
+  and winds clockwise, so the tessellator's fan fills it though it is not
+  convex, with its usual feathering along the arc.
 - **Fonts.** `FontDefinitions::default()` minus egui's built-ins; insert
   `Inter-Regular`, `Inter-Medium`, `Inter-SemiBold`, `JetBrainsMono-Regular`,
   `lucide` as `FontData::from_static`. Families: `Proportional` →
@@ -830,9 +918,11 @@ is a bug).
   selection, so the bundled Inter is feature-frozen with `tnum`. No
   ligatures are applied either, which is right for G-code in the mono
   face. Kerning is applied by epaint.
-- **Spacing.** `item_spacing (8, 4)`, `button_padding (8, 4)` (gives 26-px
-  controls with the 13-px font plus the 1-px stroke), `window_margin 12`,
-  `menu_margin 4`, `indent 16`, `interact_size (24, 26)`, `icon_width 16`,
+- **Spacing.** `item_spacing (8, 4)`, `button_padding (10, 6)`,
+  `window_margin 12`,
+  `menu_margin 4`, `indent 16`, `interact_size (24, 32)` (egui's stock
+  buttons, dropdowns, text edits and menu rows take their 32-px height
+  from it), `icon_width 16`,
   `icon_width_inner 10`, `icon_spacing 8`, `combo_width 160`,
   `text_edit_width 160`, `tooltip_width 320`, `scroll: ScrollStyle::thin()`
   with `bar_width 6`, `floating true`, `dormant_background_opacity 0`,
@@ -841,9 +931,12 @@ is a bug).
 - **Visuals.** `dark_mode`, `window_fill` = surface.raised, `panel_fill` =
   surface.panel, `extreme_bg_color` = surface.sunken, `faint_bg_color` =
   surface.stripe, `window_stroke` = `(1, border.default)`,
-  `window_corner_radius 8`, `menu_corner_radius 6`, `window_shadow` =
-  `Shadow { offset (0, 4), blur 16, spread 0, color #0000001F light /
-  #0000004D dark }`, `popup_shadow` the same at blur 12,
+  `window_corner_radius 16`, `menu_corner_radius 12` (a row's 8 plus the
+  menu's 4-px margin, so the curves are concentric), `window_shadow` and
+  `popup_shadow` = the one shadow, `Shadow { offset (0, 8), blur 24,
+  spread 0, color #00000024 light / #00000059 dark }` (black at 14 % and
+  35 %; `theme::popover` and `theme::sheet` build the frames that carry
+  it), `weak_text_color` = text.disabled (placeholders),
   `selection.bg_fill` = accent.soft, `selection.stroke` = `(1, accent)`,
   `hyperlink_color` = accent, `error_fg_color` = status.error text,
   `warn_fg_color` = status.warning text, `striped true`,
@@ -853,13 +946,15 @@ is a bug).
   `(1.5, accent)`, `interact_cursor Some(PointingHand)` for buttons only.
   `widgets.noninteractive` = `{ bg_fill panel, weak_bg_fill panel,
   bg_stroke (1, border.default), fg_stroke (1, text.primary),
-  corner_radius 4, expansion 0 }`; `inactive` = `{ bg_fill sunken,
-  weak_bg_fill transparent, bg_stroke (1, border.strong), fg_stroke
-  text.primary }`; `hovered` = `{ bg_fill sunken, weak_bg_fill
-  surface.hover, bg_stroke (1, text.secondary), fg_stroke text.primary,
+  corner_radius 8, expansion 0 }`; `inactive` = `{ bg_fill sunken,
+  weak_bg_fill sunken, bg_stroke (1, border.default), fg_stroke
+  text.primary }` (a stock dropdown is a field; egui's menus clear both
+  for their rows); `hovered` = `{ bg_fill sunken, weak_bg_fill
+  surface.hover, bg_stroke (1, border.strong), fg_stroke text.primary,
   expansion 0 }`; `active` = `{ weak_bg_fill surface.active, bg_stroke
-  (1, accent) }`; `open` = `{ bg_fill raised, bg_stroke (1,
-  border.strong) }`. Set `expansion 0` everywhere so hover never grows a
+  (1, focus.ring) }`; `open` = `{ bg_fill raised, weak_bg_fill
+  surface.active, bg_stroke (1, focus.ring) }`. Set `expansion 0`
+  everywhere so hover never grows a
   control. Disabled text: egui derives it by fading `fg_stroke`; override
   with `text.disabled` via `Visuals::gray_out` → set
   `widgets.noninteractive.fg_stroke` and use `ui.add_enabled` so egui
@@ -870,23 +965,28 @@ is a bug).
   response.has_focus() && ctx.memory(|m| m.focused_via_keyboard())`
   (0.31 exposes whether focus came from Tab; if the running version does
   not, keep a frame-level flag set on Tab and cleared on click) then
-  `painter.rect_stroke(rect.expand(3.0), 6.0, (2.0, focus.ring))`. One
-  helper, `focus_ring(ui, &response)`, called by every custom widget and
+  `painter.rect_stroke(rect.expand(3.0), radius + 3.0, (2.0,
+  focus.ring))`, the control's own radius, so a pill's ring is a pill.
+  One helper, `focus_ring(ui, &response)` (`focus_ring_at` for a pill),
+  called by every custom widget and
   wrapped around egui's built-ins in `widgets::button` and
   `widgets::field`.
 - **Custom widgets** (one module each under `gui/widgets/`):
+  `card` (the card, the card inside a card, and the corner masks),
+  `button` (primary pill, secondary, quiet, destructive), `chip`,
   `unit_field` (TextEdit with a trailing unit label and the reset button
   drawn inside the same frame, parse on `lost_focus`),
-  `segmented` (a `Frame` with `n` selectable labels sharing one stroke),
+  `segmented` (a pill track with `n` segments, also the pill tabs),
+  `row` (a list row's surface: hover wash, selected fill and accent bar),
   `section_header` (`CollapsingState::show_header` with a custom header
   closure for the chevron, the title style and the trailing status
   glyphs), `tree_row`, `list_row` (grip, checkbox, glyph, two-line label,
   eye, status cell, with `dnd_drag_source` / `dnd_drop_zone` for reorder),
-  `status_glyph`, `toggle` (egui has no switch; 28 × 16 painter widget),
+  `status_glyph`, `toggle` (egui has no switch; 36 × 20 painter widget),
   `toast`, `spinner` (egui's `Spinner` with `size 14` and the accent
   colour is enough), `op_glyph` (painter-drawn operation-kind icons).
   Tables use `egui_extras::TableBuilder` (MIT/Apache-2.0) with
-  `striped(true)`, `resizable(true)`, row height 28.
+  `striped(true)`, `resizable(true)`, row height 34.
 - **Dropdowns.** `ComboBox` with `width` set and `icon` replaced by the
   Lucide chevron via `ComboBox::icon`; rows are `selectable_value` with a
   leading `check` glyph drawn by a custom row closure. The tool dropdown

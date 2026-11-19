@@ -68,9 +68,9 @@ const GAP_PX: f32 = 16.0;
 /// A header, a table row, a vendor group's band and a sheet footer
 /// button, px.
 const HEADER_PX: f32 = 32.0;
-const ROW_PX: f32 = 28.0;
-const GROUP_PX: f32 = 28.0;
-const FOOTER_PX: f32 = 28.0;
+const ROW_PX: f32 = theme::TABLE_ROW_PX;
+const GROUP_PX: f32 = theme::SECTION_HEADER_PX;
+const FOOTER_PX: f32 = theme::CONTROL_PX;
 /// The tick column, px.
 const TICK_PX: f32 = 32.0;
 /// The units control's width, px.
@@ -285,11 +285,7 @@ pub(crate) fn show(
     };
     let screen = ctx.content_rect().size();
     let size = egui::vec2(SIZE.x.min(screen.x - 48.0), SIZE.y.min(screen.y - 48.0));
-    let frame = egui::Frame::popup(&style)
-        .fill(palette.surface_raised)
-        .stroke(Stroke::new(1.0, palette.border_default))
-        .corner_radius(8)
-        .inner_margin(MARGIN_PX);
+    let frame = theme::sheet(palette);
     let response = egui::Modal::new(Id::unique("tool_library"))
         .backdrop_color(palette.scrim)
         .frame(frame)
@@ -582,16 +578,24 @@ fn toolbar(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet, out: &mut Vec<Acti
 /// typed.
 fn search_field(ui: &mut Ui, strings: &Strings, search: &mut String, width: f32) {
     let palette = Palette::current(ui);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 26.0), Sense::hover());
+    let (rect, hover) =
+        ui.allocate_exact_size(egui::vec2(width, theme::CONTROL_PX), Sense::hover());
+    // The field's surface, under its glyph and text; outlined below.
+    ui.painter()
+        .rect_filled(rect, theme::CONTROL_RADIUS_PX, palette.surface_sunken);
     let glyph = Icon::Search.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
     ui.painter().galley(
-        egui::pos2(rect.left() + 8.0, rect.center().y - glyph.size().y / 2.0),
+        egui::pos2(rect.left() + 10.0, rect.center().y - glyph.size().y / 2.0),
         glyph,
         palette.text_secondary,
     );
-    let clear_w = if search.is_empty() { 0.0 } else { 26.0 };
+    let clear_w = if search.is_empty() {
+        0.0
+    } else {
+        theme::CONTROL_PX
+    };
     let edit_rect = Rect::from_min_max(
-        rect.min + egui::vec2(8.0 + theme::ICON_SMALL_PX + 8.0, 0.0),
+        rect.min + egui::vec2(10.0 + theme::ICON_SMALL_PX + 8.0, 0.0),
         rect.max - egui::vec2(4.0 + clear_w, 0.0),
     );
     let response = ui.put(
@@ -608,16 +612,22 @@ fn search_field(ui: &mut Ui, strings: &Strings, search: &mut String, width: f32)
             .desired_width(edit_rect.width()),
     );
     let stroke = if response.has_focus() {
-        palette.accent
-    } else {
+        palette.focus_ring
+    } else if hover.hovered() || response.hovered() {
         palette.border_strong
+    } else {
+        palette.border_default
     };
-    ui.painter()
-        .rect_stroke(rect, 4.0, Stroke::new(1.0, stroke), StrokeKind::Inside);
+    ui.painter().rect_stroke(
+        rect,
+        theme::CONTROL_RADIUS_PX,
+        Stroke::new(1.0, stroke),
+        StrokeKind::Inside,
+    );
     if !search.is_empty() {
         let clear_rect = Rect::from_min_size(
-            egui::pos2(rect.right() - 26.0, rect.top()),
-            egui::vec2(26.0, 26.0),
+            egui::pos2(rect.right() - theme::CONTROL_PX, rect.top()),
+            egui::vec2(theme::CONTROL_PX, theme::CONTROL_PX),
         );
         let clear = ButtonSpec::new(Kind::Quiet, "")
             .icon(Icon::X, theme::ICON_SMALL_PX)
@@ -780,7 +790,7 @@ fn group_header(
     let fill = if response.hovered() {
         palette.surface_hover
     } else {
-        palette.surface_panel
+        theme::NONE
     };
     paint_group_band(ui, rect, fill, vendor, group.rows.len(), TICK_PX);
     let chevron = if open {
@@ -812,7 +822,8 @@ fn paint_group_band(
     indent: f32,
 ) {
     let palette = Palette::current(ui);
-    ui.painter().rect_filled(rect, 0.0, fill);
+    ui.painter()
+        .rect_filled(rect, theme::CONTROL_RADIUS_PX, fill);
     let name = ui.painter().layout_no_wrap(
         vendor.to_owned(),
         TextStyle::Name(theme::TITLE.into()).resolve(ui.style()),
@@ -882,23 +893,11 @@ fn table_row(
     }
     let on = sheet.ticked.contains(&entry.id);
     let chosen = sheet.selected.as_ref() == Some(&entry.id);
-    let fill = if chosen {
-        palette.accent_soft
-    } else if row.hovered() || tick.hovered() {
-        palette.surface_hover
-    } else if n % 2 == 1 {
-        palette.surface_stripe
-    } else {
-        theme::NONE
-    };
-    ui.painter().rect_filled(rect, 0.0, fill);
-    if chosen {
-        ui.painter().rect_filled(
-            Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
-            0.0,
-            palette.accent,
-        );
+    if n % 2 == 1 && !chosen {
+        ui.painter()
+            .rect_filled(rect, theme::CONTROL_RADIUS_PX, palette.surface_stripe);
     }
+    crate::widgets::row::surface(ui, rect, chosen, row.hovered() || tick.hovered());
 
     // The 16-px tick box.
     let tick_box = Rect::from_center_size(tick_rect.center(), egui::vec2(16.0, 16.0));
@@ -1151,7 +1150,7 @@ fn banner(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet) {
     let palette = Palette::current(ui);
     egui::Frame::new()
         .fill(palette.surface_stripe)
-        .corner_radius(6)
+        .corner_radius(theme::INNER_CARD_RADIUS_PX)
         .inner_margin(egui::Margin::symmetric(12, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -1329,7 +1328,8 @@ fn count_tile(ui: &mut Ui, strings: &Strings, key: StrKey, count: usize) {
     let palette = Palette::current(ui);
     let label = strings.get(key);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(150.0, 56.0), Sense::hover());
-    ui.painter().rect_filled(rect, 6.0, palette.surface_stripe);
+    ui.painter()
+        .rect_filled(rect, theme::INNER_CARD_RADIUS_PX, palette.surface_stripe);
     let number = ui.painter().layout_no_wrap(
         count.to_string(),
         TextStyle::Name(theme::DISPLAY.into()).resolve(ui.style()),
@@ -1439,7 +1439,8 @@ fn review_row(
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Row, true, &label));
     if n % 2 == 1 {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_stripe);
+        ui.painter()
+            .rect_filled(rect, theme::CONTROL_RADIUS_PX, palette.surface_stripe);
     }
     let colour = match item.status {
         Status::Present | Status::Skipped => palette.text_secondary,

@@ -4,8 +4,10 @@
 //! The text field with a trailing unit (`docs/specs/phase-4/experience.md`,
 //! section 7, "Text field with trailing unit", "Tool-derived placeholder",
 //! "Numeric entry", "Inline validation message"; section 12,
-//! `unit_field`): 26 px, the value left in tabular figures, the unit
-//! right-aligned in text.secondary inside the outline. The text the user
+//! `unit_field`): `surface.sunken`, 32 px, the control radius, the value
+//! left in tabular figures, the unit right-aligned in text.secondary
+//! inside the outline, which is `border.default` at rest, `border.strong`
+//! under the pointer and `focus.ring` while typing. The text the user
 //! types lives in egui's memory while the field has focus; it commits on
 //! leaving the field (Tab, Enter, a click elsewhere) and Escape restores
 //! the value, so an edit is one undo step. The outline takes the
@@ -34,13 +36,13 @@ use crate::shell::theme::{self, Palette};
 use crate::widgets::icon::Icon;
 
 /// A control's height, px (section 3).
-pub(crate) const HEIGHT_PX: f32 = 26.0;
+pub(crate) const HEIGHT_PX: f32 = theme::CONTROL_PX;
 /// The unit's share of the field's right end, px (section 3).
 const UNIT_PX: f32 = 32.0;
 /// The reset button's square, px.
-const RESET_PX: f32 = 20.0;
+const RESET_PX: f32 = 22.0;
 /// Inner padding, px.
-const PADDING_PX: f32 = 8.0;
+const PADDING_PX: f32 = 10.0;
 /// The label column of an editor row, px (section 3).
 pub const LABEL_PX: f32 = 112.0;
 
@@ -153,7 +155,7 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     };
     let tier = spec.required.map_or(spec.tier, |_| Some(Tier::Error));
     let placeholder_text = spec.required.map_or(spec.placeholder, |r| r.placeholder);
-    // One line of text, centred in the 26-px control.
+    // One line of text, centred in the control.
     let line_px = ui.text_style_height(&TextStyle::Body);
     let text_rect = Rect::from_min_max(
         egui::pos2(rect.left() + PADDING_PX, rect.center().y - line_px / 2.0),
@@ -207,7 +209,8 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
         let button = ui.interact(at, spec.id.with("reset"), Sense::click());
         button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tooltip));
         if button.hovered() {
-            ui.painter().rect_filled(at, 3.0, palette.surface_hover);
+            ui.painter()
+                .rect_filled(at, theme::pill(RESET_PX), palette.surface_hover);
         }
         let glyph = Icon::RotateCcw.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
         ui.painter().galley(
@@ -224,16 +227,16 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
             Some(Tier::Error) => palette.status_error.stroke,
             Some(Tier::Warning) => palette.status_warning.stroke,
             _ if !spec.enabled => palette.border_default,
-            _ if response.has_focus() => palette.accent,
-            _ if hovered => palette.text_secondary,
-            _ => palette.border_strong,
+            _ if response.has_focus() => palette.focus_ring,
+            _ if hovered => palette.border_strong,
+            _ => palette.border_default,
         };
         let painter = ui.painter();
         painter.set(
             background,
             egui::epaint::RectShape::new(
                 rect,
-                4.0,
+                theme::CONTROL_RADIUS_PX,
                 palette.surface_sunken,
                 Stroke::new(1.0, outline),
                 StrokeKind::Inside,

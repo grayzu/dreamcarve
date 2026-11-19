@@ -72,11 +72,15 @@ use crate::shell::focus;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState, shortcut_action};
 use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
+use crate::widgets::card::mask_corners;
 use crate::widgets::icon::Icon;
 use renderer::{Frame, Layer, LayerData, StyleId, StyleTable, ToolpathData};
 
-/// The gutter between the Viewport and its neighbours, px.
-const GUTTER_PX: i8 = 4;
+/// The gap between the Viewport's card and its neighbours, px.
+const GUTTER_PX: i8 = 8;
+/// The margin under the card, px: the status bar's pills stand 2 px in
+/// from its top, which makes the gap.
+const BOTTOM_PX: i8 = 6;
 /// How far the pointer may move between press and release and still
 /// click rather than drag, px (`experience.md`, section 8: a drag starts
 /// at 4 px).
@@ -1240,12 +1244,12 @@ fn transform_handles(
         painter.rect(
             Rect::from_center_size(corner, egui::vec2(HANDLE_PX, HANDLE_PX)),
             0.0,
-            palette.surface_raised,
+            palette.viewport_handle_fill,
             stroke,
             egui::StrokeKind::Middle,
         );
     }
-    painter.circle(knob, HANDLE_PX / 2.0, palette.surface_raised, stroke);
+    painter.circle(knob, HANDLE_PX / 2.0, palette.viewport_handle_fill, stroke);
 }
 
 /// The overlay over the GPU layers: the origin crosshair and its label,
@@ -1370,11 +1374,11 @@ fn male_board_marks(
     );
     let rect = Rect::from_min_size(
         corner + egui::vec2(0.0, -galley.size().y - 8.0),
-        galley.size() + egui::vec2(12.0, 4.0),
+        galley.size() + egui::vec2(16.0, 4.0),
     );
-    painter.rect_filled(rect, 6.0, palette.viewport_label_bg);
+    painter.rect_filled(rect, theme::pill(rect.height()), palette.viewport_label_bg);
     painter.galley(
-        rect.min + egui::vec2(6.0, 2.0),
+        rect.min + egui::vec2(8.0, 2.0),
         galley,
         palette.viewport_male_board,
     );
@@ -1479,7 +1483,12 @@ pub(crate) fn show(
         .frame(
             egui::Frame::NONE
                 .fill(palette.surface_window)
-                .inner_margin(GUTTER_PX),
+                .inner_margin(egui::Margin {
+                    left: GUTTER_PX,
+                    right: GUTTER_PX,
+                    top: 0,
+                    bottom: BOTTOM_PX,
+                }),
         )
         .show(ui, |ui| {
             let (pane, response) =
@@ -1631,6 +1640,9 @@ pub(crate) fn show(
                 );
                 legend::extents_caption(ui, &painter, app, &extents, edge, &covers);
             }
+            // The Viewport is a card: its corners, which the wgpu callback
+            // and the overlay fill square, go back to the backdrop.
+            mask_corners(&painter, pane, theme::CARD_RADIUS_PX, palette);
             pane
         })
         .inner

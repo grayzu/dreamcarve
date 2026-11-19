@@ -151,6 +151,7 @@ fn tokens_match_experience_md() {
         "text.on-accent",
         "accent",
         "accent.fill",
+        "accent.hover",
         "accent.soft",
         "focus.ring",
         "viewport.bg",
@@ -167,7 +168,7 @@ fn tokens_match_experience_md() {
             "the theme has no token {required}"
         );
     }
-    assert!(checked >= 21, "{checked} tokens checked");
+    assert!(checked >= 22, "{checked} tokens checked");
 
     // The status rows: `text / stroke / tint` in each mode.
     let text =
@@ -236,24 +237,34 @@ fn hex_in(cell: &str) -> Color32 {
 }
 
 /// Section 5, "Operation colours" and "Depth ramp" (design open question
-/// 5, accepted; #545): the light set is the proposed column and is the
-/// CLI's `dc_job::preview::PALETTE` (one table, so `--preview` and the
-/// light Viewport agree), the dark set is the app's own, and the ramp's
-/// five stops are the spec's in both modes.
+/// 5, accepted; #545; the redesign, `redesign.md`, "Operation colours"):
+/// the light and dark sets are the table's, the table's CLI column is
+/// `dc_job::preview::PALETTE`, and the light set is the CLI's but for the
+/// three the redesign moved (green and cyan off the accent's hue, orange
+/// for the new background), so `--preview` matches the light Viewport by
+/// eye: the same eight names in the same order. The ramp's five stops are
+/// the spec's in both modes.
 #[test]
 fn operation_colours_and_depth_ramp_match_experience_md() {
     let operations = numbered_rows("### Operation colours");
     assert_eq!(operations.len(), 8, "{operations:?}");
+    let mut moved = Vec::new();
     for (k, row) in operations.iter().enumerate() {
         assert_eq!(theme::LIGHT.operation(k), hex_in(&row[4]), "light {k}");
         assert_eq!(theme::DARK.operation(k), hex_in(&row[6]), "dark {k}");
-        assert_eq!(
-            theme::LIGHT.operation(k),
-            parse_hex(dc_job::preview::PALETTE[k]),
-            "light {k} is the preview's"
-        );
+        let cli = parse_hex(dc_job::preview::PALETTE[k]);
+        assert_eq!(hex_in(&row[3]), cli, "the CLI column is the preview's {k}");
+        if theme::LIGHT.operation(k) != cli {
+            moved.push(row[2].clone());
+        }
         assert_eq!(theme::LIGHT.operation(k + 8), theme::LIGHT.operation(k));
+        assert_eq!(theme::DARK.operation(k + 8), theme::DARK.operation(k));
     }
+    assert_eq!(
+        moved,
+        ["Green", "Orange", "Cyan"],
+        "the light set is the preview's but for the three the redesign moved"
+    );
     let ramp = numbered_rows("### Depth ramp");
     assert_eq!(ramp.len(), 5, "{ramp:?}");
     for (k, row) in ramp.iter().enumerate() {

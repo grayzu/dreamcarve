@@ -37,9 +37,9 @@ use crate::widgets::unit_field::{UnitField, field as unit_field, row};
 
 /// The proportion link's column right of the fields, px
 /// (`experience.md`, section 7, "Proportion link").
-const LINK_COLUMN_PX: f32 = 26.0;
+const LINK_COLUMN_PX: f32 = 28.0;
 /// The link's toggle, px square.
-const LINK_TOGGLE_PX: f32 = 26.0;
+const LINK_TOGGLE_PX: f32 = 28.0;
 /// The gap between a field and the link's column, px.
 const LINK_GAP_PX: f32 = 4.0;
 /// The bracket's ticks toward the fields, px.
@@ -157,7 +157,11 @@ fn proportion_link(ui: &mut Ui, state: &FrameState<'_>, (w_y, h_y): (f32, f32), 
         egui::pos2(x, column.center().y),
         egui::vec2(LINK_TOGGLE_PX, LINK_TOGGLE_PX),
     );
-    painter.rect_filled(toggle.shrink(2.0), 4.0, palette.surface_panel);
+    painter.rect_filled(
+        toggle.shrink(2.0),
+        theme::CONTROL_RADIUS_PX,
+        palette.surface_panel,
+    );
     let (icon, colour) = match (free, enabled) {
         (_, false) => (
             if free { Icon::Unlink } else { Icon::Link },
@@ -170,6 +174,7 @@ fn proportion_link(ui: &mut Ui, state: &FrameState<'_>, (w_y, h_y): (f32, f32), 
     // button gives the hover, the hit area and the name.
     let spec = ButtonSpec::new(Kind::Quiet, "")
         .width(LINK_TOGGLE_PX)
+        .height(LINK_TOGGLE_PX)
         .tooltip(strings.get(StrKey::PlacementKeepProportions))
         .enabled(enabled);
     let clicked = ui
@@ -229,7 +234,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out:
         return;
     };
     egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .inner_margin(egui::Margin::symmetric(16, 8))
         .show(ui, |ui| {
             let mut middles = [0.0; 4];
             for (field, middle) in properties::fields(&placement).iter().zip(&mut middles) {
@@ -332,7 +337,7 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
         return;
     };
     egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .inner_margin(egui::Margin::symmetric(16, 8))
         .show(ui, |ui| {
             tab_length_row(
                 ui,

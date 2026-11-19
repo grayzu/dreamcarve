@@ -46,7 +46,7 @@ const WIDTH_PX: f32 = 560.0;
 const MARGIN_PX: i8 = 24;
 /// The header and a sheet footer button, px.
 const HEADER_PX: f32 = 32.0;
-const FOOTER_PX: f32 = 28.0;
+const FOOTER_PX: f32 = theme::CONTROL_PX;
 /// The preview thumbnail's height, px.
 const PREVIEW_PX: f32 = 160.0;
 /// The space left round the drawing in the thumbnail, px.
@@ -116,11 +116,7 @@ pub(crate) fn show(
     };
     let screen = ctx.content_rect().size();
     let width = WIDTH_PX.min(screen.x - 48.0);
-    let frame = egui::Frame::popup(&style)
-        .fill(palette.surface_raised)
-        .stroke(Stroke::new(1.0, palette.border_default))
-        .corner_radius(8)
-        .inner_margin(MARGIN_PX);
+    let frame = theme::sheet(palette);
     let response = egui::Modal::new(egui::Id::unique("import_drawing"))
         .backdrop_color(palette.scrim)
         .frame(frame)
@@ -336,7 +332,7 @@ fn options(ui: &mut Ui, strings: &Strings, display_units: Units, sheet: &mut She
             let palette = Palette::current(ui);
             ui.painter().rect_stroke(
                 dropdown.rect,
-                4.0,
+                theme::CONTROL_RADIUS_PX,
                 Stroke::new(1.0, palette.status_error.stroke),
                 StrokeKind::Inside,
             );
@@ -468,10 +464,10 @@ fn preview(ui: &mut Ui, model: &DrawingImport) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), PREVIEW_PX), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, palette.viewport_bg);
+    painter.rect_filled(rect, theme::INNER_CARD_RADIUS_PX, palette.viewport_bg);
     painter.rect_stroke(
         rect,
-        4.0,
+        theme::INNER_CARD_RADIUS_PX,
         Stroke::new(1.0, palette.border_default),
         StrokeKind::Inside,
     );

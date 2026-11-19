@@ -26,23 +26,26 @@
 use dc_app::tools::{self, KindChoice, KindSwitch, ToolField};
 use dc_app::{Command, CommandError, StrKey, Strings};
 use dc_project::{Project, Tool, ToolId, ToolKind, Units};
-use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
+use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
 
 use crate::panels::library::kind_label;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
+use crate::widgets::card::{card, fitted};
 use crate::widgets::icon::Icon;
+use crate::widgets::row::{surface, surface_rect};
 use crate::widgets::unit_field::{Required, UnitField, field as unit_field, row, validation_line};
 
 /// A list row's height, px (section 3).
-const ROW_PX: f32 = 40.0;
+const ROW_PX: f32 = theme::LIST_ROW_PX;
 /// The status cell's width, px.
 const STATUS_PX: f32 = 24.0;
-/// The editor footer's height, px: a 26-px button between 8-px gaps.
-const FOOTER_PX: f32 = 42.0;
+/// The editor footer's height, px: a control between the gap above it
+/// and the card's padding under it.
+const FOOTER_PX: f32 = theme::GAP_PX + theme::CONTROL_PX + theme::CARD_PADDING_PX;
 /// The panel's content margin, px.
-const MARGIN_PX: f32 = 12.0;
+const MARGIN_PX: f32 = theme::CARD_PADDING_PX;
 
 /// The selected row, and how many tools there were, between frames.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -109,8 +112,15 @@ fn set_pending_v_bit(ui: &Ui, tool: Option<&ToolId>) {
     });
 }
 
-/// Draws the tab under the CAM panel's tab strip.
-pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+/// Draws the tab: a card that holds `head` (the CAM panel's title and
+/// tabs), the buttons that add a tool and the list, and under it the
+/// card of the selected tool's editor.
+pub(crate) fn show(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    head: impl FnOnce(&mut Ui),
+    out: &mut Vec<Action>,
+) {
     let app = state.app;
     let strings = app.strings();
     let project = app.project();
@@ -120,57 +130,61 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         set_pending_v_bit(ui, None);
     }
     if project.tools.is_empty() {
-        empty(ui, strings, project, out);
+        card(ui, |ui| {
+            head(ui);
+            empty(ui, strings, project, out);
+        });
         return;
     }
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.add_space(MARGIN_PX - 8.0);
-        add_buttons(ui, strings, project, out);
-    });
-    ui.add_space(8.0);
-    // Six rows show before the list scrolls.
-    let rows = u8::try_from(project.tools.len().min(6)).unwrap_or(6);
-    let list_h = ROW_PX * f32::from(rows);
-    egui::ScrollArea::vertical()
-        .id_salt("tools_list")
-        .max_height(list_h)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for tool in &project.tools {
-                list_row(ui, state, tool, current.as_ref() == Some(&tool.id));
-            }
+    let gap = ui.spacing().item_spacing.y;
+    fitted(ui, |ui| {
+        head(ui);
+        ui.horizontal(|ui| {
+            ui.add_space(MARGIN_PX);
+            add_buttons(ui, strings, project, out);
         });
-    ui.add_space(8.0);
-    list_actions(ui, strings, project, current.as_ref(), out);
-    let palette = Palette::current(ui);
-    let (line, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 9.0), Sense::hover());
-    ui.painter().hline(
-        line.x_range(),
-        line.center().y,
-        Stroke::new(1.0, palette.border_default),
-    );
+        ui.add_space(8.0 - gap);
+        // Four rows show before the list scrolls.
+        let rows = u8::try_from(project.tools.len().min(4)).unwrap_or(4);
+        let list_h = ROW_PX * f32::from(rows);
+        egui::ScrollArea::vertical()
+            .id_salt("tools_list")
+            .max_height(list_h)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for tool in &project.tools {
+                    list_row(ui, state, tool, current.as_ref() == Some(&tool.id));
+                }
+            });
+        ui.add_space(8.0 - gap);
+        list_actions(ui, strings, project, current.as_ref(), out);
+        ui.add_space(MARGIN_PX - gap);
+    });
+    // The gap between the two cards.
+    ui.add_space(theme::GAP_PX - gap);
     if let Some(tool) = current
         .as_ref()
         .and_then(|id| project.tools.iter().find(|t| t.id == *id))
     {
-        // The editor scrolls above its footer, which stays in view.
-
-        egui::ScrollArea::vertical()
-            .id_salt("tool_editor")
-            .auto_shrink(false)
-            .max_height((ui.available_height() - FOOTER_PX).max(0.0))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(MARGIN_PX);
-                    ui.vertical(|ui| {
-                        ui.set_width(ui.available_width() - MARGIN_PX);
-                        editor(ui, strings, project.display_units, tool, out);
+        card(ui, |ui| {
+            // The editor scrolls above its footer, which stays in view.
+            egui::ScrollArea::vertical()
+                .id_salt("tool_editor")
+                .auto_shrink(false)
+                .max_height((ui.available_height() - FOOTER_PX).max(0.0))
+                .show(ui, |ui| {
+                    ui.add_space(MARGIN_PX - gap);
+                    ui.horizontal(|ui| {
+                        ui.add_space(MARGIN_PX);
+                        ui.vertical(|ui| {
+                            ui.set_width(ui.available_width() - MARGIN_PX);
+                            editor(ui, strings, project.display_units, tool, out);
+                        });
                     });
                 });
-            });
-        footer(ui, strings, tool, out);
+            footer(ui, strings, tool, out);
+        });
     }
 }
 
@@ -203,14 +217,7 @@ fn add_buttons(ui: &mut Ui, strings: &Strings, project: &Project, out: &mut Vec<
 /// The editor's footer: *Save to library*, which copies the project tool
 /// into the library (capability 63).
 fn footer(ui: &mut Ui, strings: &Strings, tool: &Tool, out: &mut Vec<Action>) {
-    let palette = Palette::current(ui);
-    let (line, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().hline(
-        line.x_range(),
-        line.center().y,
-        Stroke::new(1.0, palette.border_default),
-    );
-    ui.add_space(7.0);
+    ui.add_space(theme::GAP_PX - ui.spacing().item_spacing.y);
     ui.horizontal(|ui| {
         ui.add_space(MARGIN_PX);
         let save = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppToolsSaveToLibrary))
@@ -231,7 +238,7 @@ fn list_actions(
     out: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
-        ui.add_space(MARGIN_PX - 8.0);
+        ui.add_space(MARGIN_PX);
         let duplicate = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppToolsDuplicate))
             .enabled(current.is_some());
         if button(ui, duplicate).clicked()
@@ -318,36 +325,28 @@ fn detail(strings: &Strings, tool: &Tool, units: Units) -> String {
     parts.join(" · ")
 }
 
-/// One 40-px row (section 7, "List row"): the type glyph, the name over
-/// its detail, and the status cell.
+/// One 52-px row on its own rounded surface (section 7, "List row"): the
+/// type glyph, the name over its detail, and the status cell.
 fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
     let palette = Palette::current(ui);
     let app = state.app;
     let strings = app.strings();
     let project = app.project();
-    let (rect, response) =
+    let (slot, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
     response
         .widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, true, chosen, &tool.name));
     if response.clicked() {
         select(ui, &tool.id, project.tools.len());
     }
-    if chosen {
-        ui.painter().rect_filled(rect, 0.0, palette.accent_soft);
-        ui.painter().rect_filled(
-            Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
-            0.0,
-            palette.accent,
-        );
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-    }
+    let rect = surface_rect(slot);
+    surface(ui, rect, chosen, response.hovered());
     let glyph = Rect::from_center_size(
-        egui::pos2(rect.left() + MARGIN_PX + 8.0, rect.center().y),
+        egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
         egui::vec2(16.0, 16.0),
     );
     super::editor::paint_tool_icon(ui, glyph.center(), &tool.cutter, palette.text_secondary);
-    let text_left = glyph.right() + 8.0;
+    let text_left = glyph.right() + 10.0;
     let text_w = rect.right() - STATUS_PX - 8.0 - text_left;
     let line = |s: &str, style: TextStyle, colour, y: f32| {
         let mut job = egui::text::LayoutJob::simple_singleline(
@@ -372,13 +371,13 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
         &tool.name,
         TextStyle::Body,
         palette.text_primary,
-        rect.top() + 13.0,
+        rect.center().y - 9.0,
     );
     line(
         &detail(strings, tool, project.display_units),
         TextStyle::Small,
         palette.text_secondary,
-        rect.top() + 28.0,
+        rect.center().y + 9.0,
     );
 
     // The status cell: the red dot for a missing rate, else the hint.

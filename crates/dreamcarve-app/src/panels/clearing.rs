@@ -98,11 +98,8 @@ fn card(
     let palette = Palette::current(ui);
     let n = (index + 1).to_string();
     let tools = clearing::tools(cx.project);
-    egui::Frame::NONE
-        .fill(palette.surface_raised)
-        .stroke(Stroke::new(1.0, palette.border_default))
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(8, 4))
+    crate::widgets::card::inner(palette)
+        .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 4.0;
@@ -241,8 +238,12 @@ fn lifted(ui: &Ui, cx: &Cx<'_>, at: egui::Pos2, index: usize) {
         egui::pos2(ui.max_rect().left(), at.y - LIFTED_PX / 2.0),
         egui::vec2(ui.max_rect().width(), LIFTED_PX),
     );
-    painter.rect_filled(rect.translate(egui::vec2(0.0, 2.0)), 4.0, palette.shadow);
-    painter.rect_filled(rect, 4.0, palette.surface_raised.gamma_multiply(0.96));
+    painter.add(theme::shadow(palette).as_shape(rect, theme::CONTROL_RADIUS_PX));
+    painter.rect_filled(
+        rect,
+        theme::CONTROL_RADIUS_PX,
+        palette.surface_raised.gamma_multiply(0.96),
+    );
     let title = cx.strings.fmt(
         StrKey::EditorClearingPass,
         &[("n", &(index + 1).to_string())],

@@ -380,7 +380,7 @@ pub(crate) fn finish(ui: &Ui, regions: Vec<(Region, Rect)>) -> Shown {
             .with_clip_rect(clip)
             .rect_stroke(
                 at,
-                6.0,
+                crate::shell::theme::CONTROL_RADIUS_PX + 3.0,
                 Stroke::new(2.0, palette.focus_ring),
                 StrokeKind::Middle,
             );

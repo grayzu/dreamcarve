@@ -4,7 +4,8 @@
 //! The menu bar (functional spec, capability 50: File, Edit, Arrange,
 //! View, Project, Help; `experience.md`, section 2, "Menu bar and
 //! toolbar"): egui's own on every platform (design open question 6),
-//! 28 px, every shortcut shown in its row (capability 54). The Arrange
+//! 32 px on the backdrop, every shortcut shown in its row (capability
+//! 54). The Arrange
 //! menu (capability 58a, mock-up 14) holds the toolbar's Arrange commands
 //! with their shortcuts, *Rotate…* (the toolbar's angle popover) and
 //! *Centre on Stock* (61). The File, Edit, View and Project menus are
@@ -21,8 +22,8 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState, shortcut_action, shortcut_text};
 use crate::widgets::icon::Icon;
 
-/// The menu bar's height, px.
-const HEIGHT_PX: f32 = 28.0;
+/// The menu bar's height, px: a control's, so a menu's title is one.
+pub(crate) const HEIGHT_PX: f32 = theme::CONTROL_PX;
 
 /// A menu row reading `key` with `shortcut`, pushing `action` when chosen.
 fn item(
@@ -64,8 +65,8 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         .show_separator_line(false)
         .frame(
             egui::Frame::NONE
-                .fill(palette.surface_panel)
-                .inner_margin(egui::Margin::symmetric(4, 0)),
+                .fill(palette.surface_window)
+                .inner_margin(egui::Margin::symmetric(8, 0)),
         )
         .show(ui, |ui| {
             if state.inert() {

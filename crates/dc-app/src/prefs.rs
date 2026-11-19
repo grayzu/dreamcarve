@@ -33,7 +33,7 @@ pub struct Prefs {
     /// Where each project (by its path) last exported, so the next export
     /// starts there.
     pub export_dirs: BTreeMap<PathBuf, PathBuf>,
-    /// Light or dark, or the system's choice.
+    /// Dark, light, or the system's choice; dark until chosen.
     pub theme: Theme,
     /// The last-used tab size, which the Tab tool adds tabs with
     /// (functional spec, capability 69).
@@ -79,15 +79,16 @@ impl Prefs {
     }
 }
 
-/// The app's appearance.
+/// The app's appearance. Dark until the user chooses (the redesign,
+/// `docs/specs/phase-4/redesign.md`, principle 5: dark first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Theme {
     /// Follow the operating system.
-    #[default]
     System,
     /// The light palette.
     Light,
-    /// The dark palette.
+    /// The dark palette, the default.
+    #[default]
     Dark,
 }
 

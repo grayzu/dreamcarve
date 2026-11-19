@@ -37,7 +37,7 @@ use crate::widgets::toggle::toggle;
 use crate::widgets::unit_field::{Required, UnitField, field as unit_field};
 
 /// The panel's content margin, px (`experience.md`, section 3).
-const MARGIN_PX: i8 = 12;
+const MARGIN_PX: i8 = 16;
 
 /// The sections, by their `gui.toml` name, and whether each starts open.
 const SECTIONS: [(&str, bool); 5] = [
@@ -92,7 +92,12 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         sections: &state.prefs.sections,
     };
     egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(MARGIN_PX, 4))
+        .inner_margin(egui::Margin {
+            left: MARGIN_PX,
+            right: MARGIN_PX,
+            top: 4,
+            bottom: 12,
+        })
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
             units_row(ui, &cx, out);

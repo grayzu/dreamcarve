@@ -14,7 +14,7 @@
 
 use dc_app::view::{ColourMode, Visibility, operation_key};
 use dc_app::{App, StrKey};
-use eframe::egui::{self, Id, Response, Sense, Stroke, TextStyle, Ui};
+use eframe::egui::{self, Id, Response, Sense, TextStyle, Ui};
 
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
@@ -52,14 +52,7 @@ pub(crate) fn popover(ui: &Ui, button: &Response, app: &App, out: &mut Vec<Actio
         .gap(8.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(WIDTH_PX)
-        .frame(
-            egui::Frame::NONE
-                .fill(palette.surface_raised)
-                .stroke(Stroke::new(1.0, palette.border_default))
-                .corner_radius(8)
-                .shadow(ui.visuals().popup_shadow)
-                .inner_margin(MARGIN_PX),
-        )
+        .frame(theme::popover(palette, MARGIN_PX))
         .show(|ui| body(ui, app, out));
 }
 
@@ -148,7 +141,7 @@ fn operation_rows(ui: &mut Ui, app: &App) {
             egui::vec2(SWATCH_PX, SWATCH_PX),
         );
         ui.painter()
-            .rect_filled(swatch, 2.0, palette.operation(entry.colour));
+            .rect_filled(swatch, 3.0, palette.operation(entry.colour));
         let mut row = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt(("toolpaths.key", entry.id.as_str()))

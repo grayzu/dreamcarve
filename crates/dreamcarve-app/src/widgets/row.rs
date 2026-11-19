@@ -1,7 +1,11 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! An editor row's parts (`docs/specs/phase-4/experience.md`, sections 3
+//! A list row's surface (`docs/specs/phase-4/redesign.md`, "Components",
+//! "List row"): no rule between rows; `surface.hover` under the pointer,
+//! `accent.soft` with a 3-px `accent` bar at its left edge when selected,
+//! on its own 8-radius surface. And an editor row's parts
+//! (`docs/specs/phase-4/experience.md`, sections 3
 //! and 7): the 112-px label column whose hover shows the field's help
 //! with its `.dcv` field name in JetBrains Mono ("Help affordance"), and
 //! the inline validation message under the field: glyph then the file's
@@ -10,7 +14,7 @@
 //! colour alone (section 13, item 7).
 
 use dc_job::Tier;
-use eframe::egui::{self, Response, RichText, Sense, Stroke, TextStyle, Ui};
+use eframe::egui::{self, Rect, Response, RichText, Sense, Stroke, TextStyle, Ui};
 
 use crate::shell::theme::{self, Palette};
 use crate::widgets::icon::Icon;
@@ -20,6 +24,37 @@ use crate::widgets::unit_field::HEIGHT_PX;
 pub(crate) const LABEL_PX: f32 = 112.0;
 /// The gap between a label and its field, px.
 pub(crate) const GAP_PX: f32 = 8.0;
+/// How far a list row's surface sits in from its card's edges, px: with
+/// the row's own 8 px of padding, its content starts at the card padding.
+pub(crate) const INSET_PX: f32 = 8.0;
+
+/// The rectangle of a list row's surface in the `slot` the list gave it:
+/// inset from the card's edges, a hairline off the rows above and below.
+pub(crate) fn surface_rect(slot: Rect) -> Rect {
+    slot.shrink2(egui::vec2(INSET_PX, 1.0))
+}
+
+/// Paints a list row's surface in `rect` ([`surface_rect`]): `accent.soft`
+/// and the accent bar when `selected`, else `surface.hover` when
+/// `hovered`, else nothing.
+pub(crate) fn surface(ui: &Ui, rect: Rect, selected: bool, hovered: bool) {
+    let palette = Palette::current(ui);
+    if selected {
+        ui.painter()
+            .rect_filled(rect, theme::CONTROL_RADIUS_PX, palette.accent_soft);
+        // The bar clears the surface's rounded corners.
+        let inset = (theme::CONTROL_RADIUS_PX - 1.0).min(rect.height() / 4.0);
+        let bar = Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top() + inset),
+            egui::pos2(rect.left() + theme::SELECTED_BAR_PX, rect.bottom() - inset),
+        );
+        ui.painter()
+            .rect_filled(bar, theme::pill(theme::SELECTED_BAR_PX), palette.accent);
+    } else if hovered {
+        ui.painter()
+            .rect_filled(rect, theme::CONTROL_RADIUS_PX, palette.surface_hover);
+    }
+}
 
 /// A field's label, `text`, 112 px wide and a control tall; hovering it
 /// shows `help` and, on a second line in the mono face, `path`, the
