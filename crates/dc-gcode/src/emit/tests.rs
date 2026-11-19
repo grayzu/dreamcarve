@@ -182,9 +182,9 @@ fn missing_feed_is_error_naming_tool_and_field() {
     assert!(err.to_string().contains("plunge_mm_min"));
 }
 
-/// #64: safe Z is the thickness plus the operation's safe Z, so an
-/// unset thickness fails emission, whichever Z origin is in use; it is
-/// never defaulted.
+/// Safe Z is the thickness plus the operation's safe Z, so an unset
+/// thickness fails emission, whichever Z origin is in use; it is never
+/// defaulted.
 #[test]
 fn missing_thickness_is_error() {
     for z in [OriginZ::StockTop, OriginZ::StockBottom] {
@@ -214,7 +214,7 @@ fn missing_rpm_is_error() {
     }
 }
 
-/// #71: two tools may share a name, so an error about a tool's rates
+/// Two tools may share a name, so an error about a tool's rates
 /// carries its id as well as the name it prints.
 #[test]
 fn tool_errors_carry_the_tool_id() {
@@ -349,8 +349,7 @@ fn separate_feeds(text: &str) -> (Vec<String>, Vec<bool>) {
 
 /// A definition that writes the feed on a line of its own
 /// (`inline_with_motion: false`) and keeps it modal writes an `F` line
-/// only when the rate changes, never the same rate twice running
-/// (#71).
+/// only when the rate changes, never the same rate twice running.
 #[test]
 fn separate_feed_line_is_not_repeated_when_modal() {
     let project = project_with("grblhal");
@@ -365,8 +364,8 @@ fn separate_feed_line_is_not_repeated_when_modal() {
 }
 
 /// With `modal_feed_speed: false` the feed is written before every
-/// feed move, on a line of its own when the definition says so (#71).
-/// It used to be repeated only when written inline.
+/// feed move, on a line of its own when the definition says so. It
+/// used to be repeated only when written inline.
 #[test]
 fn separate_feed_line_is_repeated_when_not_modal() {
     let project = project_with("grblhal");
@@ -529,11 +528,11 @@ fn ramp_sweep(feed_mm_min: f64, plunge_mm_min: f64) -> Toolpath {
     Toolpath { moves }
 }
 
-/// #325: every falling cut the program makes, read from its text
-/// alone, falls no faster than the plunge rate: the ramp sweep's
-/// derived feeds and its straight plunges, in mm and in inches, on
-/// every bundled post-processor's number format, for a whole plunge
-/// rate and one the written places cannot hold.
+/// Every falling cut the program makes, read from its text alone,
+/// falls no faster than the plunge rate: the ramp sweep's derived
+/// feeds and its straight plunges, in mm and in inches, on every
+/// bundled post-processor's number format, for a whole plunge rate
+/// and one the written places cannot hold.
 #[test]
 fn derived_ramp_feed_never_exceeds_plunge() {
     let mut checked = 0;
@@ -616,11 +615,11 @@ fn helix_arcs(angles_deg: &[f64], plunge_mm_min: f64) -> Toolpath {
     Toolpath { moves }
 }
 
-/// #325: a falling arc held to the plunge rate exports on every bundled
-/// post-processor, in mm and inches, whether written with I and J,
-/// with R, or flattened, so S10, which allows nothing above the plunge
-/// rate, passes each arc or chord as written; and where it is
-/// flattened, every chord falls no faster, read from the text.
+/// A falling arc held to the plunge rate exports on every bundled
+/// post-processor, in mm and inches, whether written with I and J, with
+/// R, or flattened, so S10, which allows nothing above the plunge rate,
+/// passes each arc or chord as written; and where it is flattened,
+/// every chord falls no faster, read from the text.
 #[test]
 fn derived_helix_arc_feed_never_exceeds_plunge() {
     let angles_deg = [2.0, 6.5, 11.0, 17.457_603_123_722_1, 19.0, 27.0, 33.0, 41.0];
@@ -671,13 +670,13 @@ const SUB_QUANTUM_DROPS_MM: [f64; 4] = [0.0002, 0.0004, 0.0006, 0.0008];
 /// Runs, mm, of [`sub_quantum_steps`]' first steps.
 const SUB_QUANTUM_RUNS_MM: [f64; 3] = [0.0001, 0.0003, 0.0007];
 
-/// #467: per fall and run, in the waste right of the sample part, a
-/// V-Carve chain's start as `dc_cam`'s medial generator cuts it: a
-/// rapid over it at safe Z, a straight plunge to 0.1 µm under the
-/// stock top at `plunge_mm_min`, a step falling that little over that
-/// run, then one falling 0.3 mm over 0.5 mm, each at the feed scaled to
-/// the plunge rate (`min(feed, plunge × length / drop)`, from the
-/// unrounded ends), a level cut at the feed, and a rapid out.
+/// Per fall and run, in the waste right of the sample part, a V-Carve
+/// chain's start as `dc_cam`'s medial generator cuts it: a rapid over
+/// it at safe Z, a straight plunge to 0.1 µm under the stock top at
+/// `plunge_mm_min`, a step falling that little over that run, then one
+/// falling 0.3 mm over 0.5 mm, each at the feed scaled to the plunge
+/// rate (`min(feed, plunge × length / drop)`, from the unrounded ends),
+/// a level cut at the feed, and a rapid out.
 fn sub_quantum_steps(feed_mm_min: f64, plunge_mm_min: f64) -> Toolpath {
     let scaled = |from: Point3, to: Point3| {
         let (run_mm, drop_mm) = (from.xy().distance_to(to.xy()), from.z - to.z);
@@ -709,8 +708,8 @@ fn sub_quantum_steps(feed_mm_min: f64, plunge_mm_min: f64) -> Toolpath {
     Toolpath { moves }
 }
 
-/// #467: a cut that falls less than a unit in the last written place
-/// at a feed scaled to the plunge rate exports on every bundled
+/// A cut that falls less than a unit in the last written place at a
+/// feed scaled to the plunge rate exports on every bundled
 /// post-processor, in mm and inches. Written level, it carries one of
 /// its tool's rates (S3), and every falling cut, read from the text
 /// alone, falls no faster than the plunge rate (S10).
@@ -772,10 +771,10 @@ fn sub_quantum_descent_is_written_at_a_tool_rate() {
     assert!(written_level > 0, "no step was written level");
 }
 
-/// UCCNC has no `G20`/`G21` (#164): an inch project's program has no
-/// units word, is in inches, warns which, and passes the safety pass,
-/// which reads it in inches. Read as millimetres, its safe Z of
-/// 0.1969 in would be 0.2 mm, and the safety pass would reject it.
+/// UCCNC has no `G20`/`G21`: an inch project's program has no units
+/// word, is in inches, warns which, and passes the safety pass, which
+/// reads it in inches. Read as millimetres, its safe Z of 0.1969 in
+/// would be 0.2 mm, and the safety pass would reject it.
 #[test]
 fn uccnc_inch_program_has_no_units_word_and_is_read_in_inches() {
     let mut project = project_with("uccnc");
@@ -831,7 +830,7 @@ fn comment_text_is_sanitized() {
         for line in named {
             // The text inside the comment has no comment delimiters.
             // Pauses are always `M0 (MSG, ...)`, whatever the post's
-            // comment style (#43).
+            // comment style.
             let (prefix, suffix) = if has_word(line, "M0") {
                 ("(MSG,", ")")
             } else {
@@ -849,10 +848,10 @@ fn comment_text_is_sanitized() {
     }
 }
 
-/// Acceptance 40 (#278): a name with accents and symbols keeps its
-/// letters, transliterated before the sanitizer runs, in each comment
-/// style; the program stays printable ASCII. Tool and operation names
-/// go through the same rule.
+/// Acceptance 40: a name with accents and symbols keeps its letters,
+/// transliterated before the sanitizer runs, in each comment style;
+/// the program stays printable ASCII. Tool and operation names go
+/// through the same rule.
 #[test]
 fn comment_text_transliterates() {
     for (post, header) in [
@@ -953,7 +952,7 @@ fn arc_ij_is_relative_to_emitted_start() {
     // The start rounds from 70.0004 to 70.000. I taken from the
     // unrounded start would be 5.0004 -> "5.000"; from the emitted
     // start it is 5.0008 -> "5.001". The arc lies in the waste beside
-    // the sample part, so S9 (#177) passes it.
+    // the sample part, so S9 passes it.
     let project = project_with("grblhal");
     let mut ops = ops_for(&project);
     let start = Point3::new(70.0004, 60.0, 5.0);
@@ -1008,7 +1007,7 @@ fn second_tool() -> Tool {
 
 /// The sample operation, then the same with a second tool. The
 /// project's tool-change mode becomes `"m6"`, the one program with a
-/// tool change that [`emit`] writes (#95).
+/// tool change that [`emit`] writes.
 fn two_tool_ops(project: &mut Project) -> Vec<EmitOp> {
     project.post_processor.tool_change_mode = ToolChangeMode::M6;
     project.tools.push(second_tool());
@@ -1028,10 +1027,10 @@ fn two_tool_ops(project: &mut Project) -> Vec<EmitOp> {
 /// its own when each tool run is one, and its operation comment names it
 /// `… (clearing t1)`, written `… clearing t1` since a comment cannot
 /// hold parentheses; the operation's own run keeps its plain name. The
-/// carve is the sample rectangle's V-Carve with the 90° V-bit `t2`, a
-/// 2 mm flat depth and one clearing pass with the sample's end mill
-/// `t1`; both runs pass the safety pass (S17, and S9 holding the
-/// clearing run to the floor, #408).
+/// carve is the sample rectangle's V-Carve with the 90° V-bit `t2`, a 2
+/// mm flat depth and one clearing pass with the sample's end mill `t1`;
+/// both runs pass the safety pass (S17, and S9 holding the clearing run
+/// to the floor).
 #[test]
 fn clearing_runs_become_programs_of_their_own_tools() {
     let mut project = project_with("grblhal");
@@ -1252,7 +1251,7 @@ fn manual_spindle_allows_missing_rpm() {
 /// #34, Behaviour 2 and 5: in manual mode the program sends no spindle
 /// words and no spin-up dwell. Before the first cut it retracts to safe
 /// Z and pauses with a message to turn the router on; resuming is the
-/// user's confirmation that it is running. #57: the first tool has no
+/// user's confirmation that it is running. The first tool has no
 /// tool-change stop, so the router-on pause is the only one.
 #[test]
 fn manual_spindle_pauses_before_first_cut() {
@@ -1311,9 +1310,9 @@ fn manual_spindle_message_includes_rpm_hint() {
 
 /// #34, Behaviour 3 and 4: with two tools the program pauses to turn
 /// the router off before each tool change and at the end, each time at
-/// safe Z. #43, #57: each later tool has two stops before it cuts, the
-/// `M6` to fit it and set Z zero and, after a retract, a pause to turn
-/// the router on. GRBL cannot change tools within a program.
+/// safe Z. Each later tool has two stops before it cuts, the `M6` to
+/// fit it and set Z zero and, after a retract, a pause to turn the
+/// router on. GRBL cannot change tools within a program.
 #[test]
 fn manual_spindle_pauses_off_at_tool_change_and_end() {
     let mut project = manual_project("grblhal");
@@ -1356,7 +1355,7 @@ fn manual_spindle_pauses_off_at_tool_change_and_end() {
 }
 
 /// Asserts that the first move after 0-based line `stop` of `text` is a
-/// rapid in Z alone to safe Z: Z is unknown after a stop (#68).
+/// rapid in Z alone to safe Z: Z is unknown after a stop.
 fn assert_retract_after(text: &str, stop: usize, label: &str) {
     let lines: Vec<&str> = text.lines().collect();
     let axis = |w: &str| ['X', 'Y', 'Z'].iter().any(|&a| w.starts_with(a));
@@ -1391,7 +1390,7 @@ fn manual_router_on_pause_is_followed_by_a_retract() {
     }
 }
 
-/// #68, #57: the same after an `M6` tool change, in both spindle modes.
+/// The same after an `M6` tool change, in both spindle modes.
 #[test]
 fn tool_change_is_followed_by_a_retract() {
     for control in [SpindleControl::Automatic, SpindleControl::Manual] {
@@ -1406,7 +1405,7 @@ fn tool_change_is_followed_by_a_retract() {
     }
 }
 
-/// #34: the program lists every stop, `M0` or `M6`, with its line and
+/// The program lists every stop, `M0` or `M6`, with its line and
 /// message, so the CLI can tell the user what each stop is for when
 /// the controller does not show the message (GRBL drops comments).
 #[test]
@@ -1446,7 +1445,7 @@ fn program_lists_every_pause_with_its_message() {
     }
 }
 
-/// #34: pause messages go through the comment sanitizer and fit the
+/// Pause messages go through the comment sanitizer and fit the
 /// controller's line buffer, even with the longest speed and line
 /// number a project can hold. The message is not cut short.
 #[test]
@@ -1492,7 +1491,7 @@ fn is_stop(line: &str) -> bool {
 }
 
 /// Every spindle mode, for each bundled post-processor, with one and
-/// with two tools. GRBL cannot change tools within a program (#57).
+/// with two tools. GRBL cannot change tools within a program.
 fn every_program() -> Vec<(String, String)> {
     let mut out = Vec::new();
     for post in ["grblhal", "grbl"] {
@@ -1516,9 +1515,9 @@ fn every_program() -> Vec<(String, String)> {
     out
 }
 
-/// S4, #43, #57: the user fits the tool and switches the router at a
-/// stop, so every `M0` and `M6` comes at a known Z at or above safe Z.
-/// At program start Z is unknown, so a `G0 Z` comes before the first.
+/// S4: the user fits the tool and switches the router at a stop, so
+/// every `M0` and `M6` comes at a known Z at or above safe Z. At
+/// program start Z is unknown, so a `G0 Z` comes before the first.
 #[test]
 fn tool_change_pause_is_at_safe_z() {
     let mut checked = 0;
@@ -1538,9 +1537,9 @@ fn tool_change_pause_is_at_safe_z() {
     assert!(checked > 0);
 }
 
-/// #43, #57: the user may set Z zero at the tool change, so the
-/// program lifts to safe Z again before the spindle starts (automatic)
-/// or before the router-on pause (manual).
+/// The user may set Z zero at the tool change, so the program lifts to
+/// safe Z again before the spindle starts (automatic) or before the
+/// router-on pause (manual).
 #[test]
 fn retracts_after_tool_change_pause() {
     for (case, text) in every_program() {
@@ -1571,10 +1570,10 @@ fn retracts_after_tool_change_pause() {
     }
 }
 
-/// #43, option C: every tool change asks for the tool and for Z zero
-/// to be set with it. A long tool name is shortened so the message fits
-/// [`MAX_MESSAGE_CHARS`]; the instruction is never cut. #57: the first
-/// tool has no tool change.
+/// #43, option C: every tool change asks for the tool and for Z zero to
+/// be set with it. A long tool name is shortened so the message fits
+/// [`MAX_MESSAGE_CHARS`]; the instruction is never cut. The first tool
+/// has no tool change.
 #[test]
 fn tool_change_message_asks_to_set_z_zero() {
     for (case, text) in every_program() {
@@ -1613,9 +1612,9 @@ fn tool_change_message_asks_to_set_z_zero() {
     }
 }
 
-/// #43: at a pause the user may probe or move by hand to set Z zero,
-/// which changes the controller's motion mode and feed. The first move
-/// after every pause states its motion word, and the first cut its feed.
+/// At a pause the user may probe or move by hand to set Z zero, which
+/// changes the controller's motion mode and feed. The first move after
+/// every pause states its motion word, and the first cut its feed.
 #[test]
 fn moves_after_a_pause_restate_motion_and_feed() {
     for (case, text) in every_program() {
@@ -1669,7 +1668,7 @@ fn after_pauses(text: &str) -> Vec<(usize, Vec<&str>)> {
     out
 }
 
-/// S5, #55: at a pause the user may leave the controller in another
+/// S5: at a pause the user may leave the controller in another
 /// state, so after every pause the program sets units, work
 /// coordinates, distance mode, plane, and feed mode again before it
 /// moves or starts the spindle.
@@ -1721,9 +1720,9 @@ fn setup_after_stop_repeats_g80_g40() {
     assert!(after_m6 > 0 && after_m0 > 0, "{after_m6} M6, {after_m0} M0");
 }
 
-/// #312: Mach3 v3 and UCCNC v3 cancel scaling (`G50`) and rotation
-/// (`G69`) in the header, before the first move, and again in the
-/// setup written after every stop that more motion follows, here the
+/// Mach3 v3 and UCCNC v3 cancel scaling (`G50`) and rotation (`G69`)
+/// in the header, before the first move, and again in the setup
+/// written after every stop that more motion follows, here the
 /// manual-spindle `M0`s, since the user may set either at the
 /// controller while it waits. Only those definitions write them.
 #[test]
@@ -1755,8 +1754,8 @@ fn setup_after_stop_repeats_g50_g69() {
             }
         }
     }
-    // #316: grblHAL v4 cancels scaling (`G50`) the same way, on a line
-    // of its own, in the header and after every stop: an `M6` and a
+    // grblHAL v4 cancels scaling (`G50`) the same way, on a line of
+    // its own, in the header and after every stop: an `M6` and a
     // manual-spindle `M0`. It has no rotation, so no `G69`. GRBL has
     // neither, so its programs write none of the four.
     let (mut after_m6, mut after_m0) = (0, 0);
@@ -1806,8 +1805,8 @@ fn setup_after_stop_repeats_g50_g69() {
     assert!(after_m6 > 0 && after_m0 > 0, "{after_m6} M6, {after_m0} M0");
 }
 
-/// #279: in `G80` mode a line with axis words and no motion word is an
-/// error on grblHAL and GRBL (`definitions/README.md`, "Header modal
+/// In `G80` mode a line with axis words and no motion word is an error
+/// on grblHAL and GRBL (`definitions/README.md`, "Header modal
 /// state"). So the first line that moves after the header's `G80`, and
 /// after each `G80` of a setup written again after a stop, carries
 /// `G0` or `G1`.
@@ -1842,7 +1841,7 @@ fn first_motion_after_g80_has_motion_word() {
     }
 }
 
-/// #55: an inch project sets inches again after a pause, never
+/// An inch project sets inches again after a pause, never
 /// millimetres.
 #[test]
 fn inch_project_resends_g20() {
@@ -1874,8 +1873,8 @@ fn inch_project_resends_g20() {
     }
 }
 
-/// #55: a definition whose header leaves out `G90` still gets it, at
-/// the start and after every pause, because S5 requires it.
+/// A definition whose header leaves out `G90` still gets it, at the
+/// start and after every pause, because S5 requires it.
 #[test]
 fn header_without_g90_still_sets_absolute_mode() {
     for post in ["grblhal", "grbl"] {
@@ -1936,9 +1935,9 @@ fn a_cut_outside_every_operation_is_refused() {
     emit_with(&project, &definition, &ops, DATE).unwrap();
 }
 
-/// #57: the user fits the first tool and sets work zero before starting
-/// the program, so nothing stops the program before its first cut but,
-/// with manual spindle control, the pause to turn the router on.
+/// The user fits the first tool and sets work zero before starting the
+/// program, so nothing stops the program before its first cut but, with
+/// manual spindle control, the pause to turn the router on.
 #[test]
 fn first_tool_has_no_tool_change_pause() {
     for (post, tools) in [("grblhal", 1), ("grblhal", 2), ("grbl", 1)] {
@@ -1973,11 +1972,11 @@ fn first_tool_has_no_tool_change_pause() {
     }
 }
 
-/// #57: on grblHAL a later tool is changed with `T<n> M6`, which stops
-/// the program in a state where the user may jog to set Z zero. Before
-/// it the program retracts to safe Z and stops the spindle; after it,
-/// it writes the setup again, retracts from the new zero, and starts
-/// the spindle with its dwell. There is no `M0` in the change.
+/// On grblHAL a later tool is changed with `T<n> M6`, which stops the
+/// program in a state where the user may jog to set Z zero. Before it
+/// the program retracts to safe Z and stops the spindle; after it, it
+/// writes the setup again, retracts from the new zero, and starts the
+/// spindle with its dwell. There is no `M0` in the change.
 #[test]
 fn grblhal_later_tool_uses_m6() {
     let mut project = project_with("grblhal");
@@ -2035,11 +2034,11 @@ fn grblhal_later_tool_uses_m6() {
     assert!(z.is_some_and(|z| z >= SAFE_Z_MACHINE - 1e-9), "{z:?}");
 }
 
-/// #57: grblHAL skips `M6` for the tool it already holds, and that
-/// number survives from the previous job. A program that changes tools
-/// first tells grblHAL which tool the user fitted, with `M61`, so a
-/// later `M6` is never skipped. A one-tool program has no `M6` and so
-/// no `M61`.
+/// grblHAL skips `M6` for the tool it already holds, and that number
+/// survives from the previous job. A program that changes tools first
+/// tells grblHAL which tool the user fitted, with `M61`, so a later
+/// `M6` is never skipped. A one-tool program has no `M6` and so no
+/// `M61`.
 #[test]
 fn grblhal_sets_current_tool_before_a_tool_change() {
     let mut project = project_with("grblhal");
@@ -2056,10 +2055,10 @@ fn grblhal_sets_current_tool_before_a_tool_change() {
     assert!(!text.lines().any(|l| has_word(l, "M61")), "{text}");
 }
 
-/// #57: GRBL has no `M6`, and in its `M0` feed hold it refuses to jog,
-/// so the user cannot set Z zero for a new bit. A GRBL program that
-/// needs a second tool is refused, naming the tools. Several operations
-/// with one tool still export.
+/// GRBL has no `M6`, and in its `M0` feed hold it refuses to jog, so
+/// the user cannot set Z zero for a new bit. A GRBL program that needs
+/// a second tool is refused, naming the tools. Several operations with
+/// one tool still export.
 #[test]
 fn grbl_multi_tool_export_fails() {
     for control in [SpindleControl::Automatic, SpindleControl::Manual] {
@@ -2084,16 +2083,16 @@ fn grbl_multi_tool_export_fails() {
         ops[1].tool = ops[0].tool.clone();
         profile_of(&mut ops[1].op).tool = ops[0].tool.id.clone();
         // Generated for the tool it now has: the 3 mm tool's path cut
-        // with the 6.35 mm tool would cut into the part (S9, #177).
+        // with the 6.35 mm tool would cut into the part (S9).
         let second = profile_of(&mut ops[1].op).clone();
         ops[1].toolpath = generate_profile(&project, &second).unwrap().0;
         emit(&project, &ops, DATE).unwrap();
     }
 }
 
-/// #95: with `"separate_programs"`, the bundled default, a two-tool
-/// project is one program per tool run, on grblHAL and on GRBL. Each is
-/// the program its run's operations alone emit: no `M6`, no `M61`, one
+/// With `"separate_programs"`, the bundled default, a two-tool project
+/// is one program per tool run, on grblHAL and on GRBL. Each is the
+/// program its run's operations alone emit: no `M6`, no `M61`, one
 /// spindle start at its tool's speed, its own extents, and it passed
 /// the safety pass on its own. Output is the same on every run.
 #[test]
@@ -2129,8 +2128,8 @@ fn tool_run_program_passes_safety_alone() {
     }
 }
 
-/// #95: with `"m6"` the programs are the one [`emit`] writes, with its
-/// `T2 M6` tool change, byte for byte.
+/// With `"m6"` the programs are the one [`emit`] writes, with its `T2
+/// M6` tool change, byte for byte.
 #[test]
 fn m6_mode_emits_one_program_with_m6() {
     let mut project = project_with("grblhal");
@@ -2184,9 +2183,9 @@ fn set_tool_number_is_written_as_t_word_and_file_name() {
     }
 }
 
-/// #120: with no `number`, a tool's `T` number is its 1-based place in
-/// the project's tool list, as in phase 1. Numbers that equal the
-/// places write the same bytes as no numbers, in both modes.
+/// With no `number`, a tool's `T` number is its 1-based place in the
+/// project's tool list, as in phase 1. Numbers that equal the places
+/// write the same bytes as no numbers, in both modes.
 #[test]
 fn unset_tool_number_falls_back_to_position() {
     for mode in [ToolChangeMode::M6, ToolChangeMode::SeparatePrograms] {
@@ -2212,8 +2211,8 @@ fn unset_tool_number_falls_back_to_position() {
     }
 }
 
-/// #120: in one program with `M6`, the set numbers are the `M61 Q<n>`
-/// of the first tool and the `T<n> M6` and `Fit T<n>` message of the
+/// In one program with `M6`, the set numbers are the `M61 Q<n>` of
+/// the first tool and the `T<n> M6` and `Fit T<n>` message of the
 /// later one, and the pause list says the same. The program still
 /// passes the safety pass, which `emit` runs.
 #[test]
@@ -2257,9 +2256,9 @@ fn m6_mode_uses_tool_number_in_m61_and_m6() {
     }
 }
 
-/// #120: the post-processor trusts no caller. Two tools of one program
-/// that resolve to the same `T` number, set or by position, or a set
-/// number of 0, fail the export, which validation would have refused.
+/// The post-processor trusts no caller. Two tools of one program that
+/// resolve to the same `T` number, set or by position, or a set number
+/// of 0, fail the export, which validation would have refused.
 #[test]
 fn clashing_or_zero_tool_number_fails_export() {
     for (numbers, number) in [
@@ -2290,7 +2289,7 @@ fn clashing_or_zero_tool_number_fails_export() {
     );
 }
 
-/// #95: [`emit`] writes one program, so with `"separate_programs"` it
+/// [`emit`] writes one program, so with `"separate_programs"` it
 /// refuses a second tool rather than write an `M6` the user did not
 /// choose.
 #[test]
@@ -2373,7 +2372,7 @@ fn programs_per_tool_flag_overrides_m6_mode_without_saving() {
 }
 
 /// Without a flag ([`ProgramSplit::ProjectDefault`]) the project's mode
-/// decides, as before (#95): `"m6"` is the one program [`emit`] writes,
+/// decides, as before: `"m6"` is the one program [`emit`] writes,
 /// `"separate_programs"` one per tool run.
 #[test]
 fn project_default_split_follows_the_project_mode() {
@@ -2593,7 +2592,7 @@ fn codes(text: &str) -> Vec<String> {
 }
 
 /// Whether `text` has any canned-cycle word. `G80` alone is no cycle:
-/// the grblHAL and GRBL v3 headers write it to cancel one (#279).
+/// the grblHAL and GRBL v3 headers write it to cancel one.
 fn has_cycle_word(text: &str) -> bool {
     ["G73", "G81", "G82", "G83", "G98", "G99"]
         .iter()
@@ -2602,7 +2601,7 @@ fn has_cycle_word(text: &str) -> bool {
 
 /// The lines between the one `G98` and the one `G80` after it of
 /// `text`; also asserts the line before `G98` is the rapid over the
-/// first hole. A `G80` before the `G98` is the header's (#279).
+/// first hole. A `G80` before the `G98` is the header's.
 fn cycle_lines(text: &str, first: (f64, f64)) -> Vec<String> {
     let codes = codes(text);
     let all = |word: &str, from: usize| -> Vec<usize> {
@@ -2642,9 +2641,9 @@ fn cut_order(entry: &EmitOp) -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// Format 21 (#425, #427): a countersink is never a canned cycle, so
-/// it is written as its plain moves whether or not the project asks
-/// for cycles, with no `canned_cycle_expanded` warning (nothing was
+/// Format 21: a countersink is never a canned cycle, so it is
+/// written as its plain moves whether or not the project asks for
+/// cycles, with no `canned_cycle_expanded` warning (nothing was
 /// expanded that could have been a cycle), and S18 passes it: one
 /// plunge per hole to the derived depth, 10 / (2 · tan 45°) = 5 mm.
 #[test]
@@ -2755,8 +2754,8 @@ fn dwell_writes_g82_with_p() {
 
 /// Port of `testCannedPeckG83`: a peck with a full retract writes `G83`
 /// with the peck as `Q`, here with `R` on the stock top (retract 0).
-/// [`g83_written_with_nonzero_retract_when_definition_has_it`] covers
-/// a retract plane above it (#153).
+/// [`g83_written_with_nonzero_retract_when_definition_has_it`] covers a
+/// retract plane above it.
 #[test]
 fn peck_writes_g83_with_q() {
     let peck = dc_project::DrillCycle::Peck {
@@ -2777,10 +2776,10 @@ fn peck_writes_g83_with_q() {
     assert_eq!(lines.len(), HOLES.len());
 }
 
-/// #153: the Drill toolpath pecks from the retract plane, as the
-/// controller does, so a definition with peck cycles writes `G83` and
-/// `G73` with any retract height: here `R1.000` with no warning, and
-/// the program passes the safety pass, which expands each line (S11).
+/// The Drill toolpath pecks from the retract plane, as the controller
+/// does, so a definition with peck cycles writes `G83` and `G73` with
+/// any retract height: here `R1.000` with no warning, and the program
+/// passes the safety pass, which expands each line (S11).
 #[test]
 fn g83_written_with_nonzero_retract_when_definition_has_it() {
     for (retract, word) in [
@@ -2971,9 +2970,9 @@ fn expanded_dwell_writes_g4() {
 /// Acceptance 24: the canned program's parsed motion, each cycle
 /// expanded as the controller performs it, is the plain-moves
 /// program's parsed motion, move for move: same kinds, same ends,
-/// same feeds. Simple, a full-retract peck from the stock top, and
-/// (#153) a full-retract and a chip-break peck with the retract plane
-/// 1 mm above it.
+/// same feeds. Simple, a full-retract peck from the stock top, and a
+/// full-retract and a chip-break peck with the retract plane 1 mm
+/// above it.
 #[test]
 fn canned_program_motion_equals_plain_program() {
     let peck = dc_project::DrillCycle::Peck {
@@ -3009,11 +3008,11 @@ fn canned_program_motion_equals_plain_program() {
     }
 }
 
-/// #325: a plunge rate the written places cannot hold, 1000 mm/min in
-/// inches (39.370 08 in/min), is written rounded down, `F39.3700`, not
-/// to the nearest, `F39.3701` (1000.0005 mm/min), in a canned cycle
-/// and as plain moves alike; both pass S10, which allows nothing above
-/// the plunge rate.
+/// A plunge rate the written places cannot hold, 1000 mm/min in inches
+/// (39.370 08 in/min), is written rounded down, `F39.3700`, not to the
+/// nearest, `F39.3701` (1000.0005 mm/min), in a canned cycle and as
+/// plain moves alike; both pass S10, which allows nothing above the
+/// plunge rate.
 #[test]
 fn plunge_feed_is_rounded_down_to_the_plunge_rate() {
     let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
@@ -3031,9 +3030,9 @@ fn plunge_feed_is_rounded_down_to_the_plunge_rate() {
     }
 }
 
-/// #335: a last pass's inside arcs run at `feed · ρ / (ρ + r)`, which
-/// in an 8 mm hole with the 6.35 mm bit is 206.25 mm/min, 8.120 08
-/// in/min. It is written rounded down, `F8.1200`, not to the nearest,
+/// A last pass's inside arcs run at `feed · ρ / (ρ + r)`, which in an
+/// 8 mm hole with the 6.35 mm bit is 206.25 mm/min, 8.120 08 in/min.
+/// It is written rounded down, `F8.1200`, not to the nearest,
 /// `F8.1201` (206.2525 mm/min), so the cutting edge moves no faster
 /// than the feed; the program passes S3 with it.
 #[test]
@@ -3063,8 +3062,8 @@ fn last_pass_edge_feed_is_written_rounded_down() {
     assert!(!text.contains("F8.1201"), "{text}");
 }
 
-// #283: the clearance, tool-change and park heights (design addendum
-// A7, acceptance 45).
+// The clearance, tool-change and park heights (design addendum A7,
+// acceptance 45).
 
 /// The repository's plaque: four operations with a 1/4" end mill, then
 /// an Engrave with a 1/8" one, every safe Z 15 mm, on grblHAL.
@@ -3116,7 +3115,7 @@ fn generated_ops(project: &Project) -> Vec<EmitOp> {
                 Operation::PhotoVCarve(_) => {
                     panic!("these tests use no Photo V-Carve operations")
                 }
-                // #436: an Inlay side's V-bit run.
+                // An Inlay side's V-bit run.
                 Operation::Inlay(p) => {
                     let (runs, _) = dc_cam::generate_inlay(project, p).unwrap();
                     let toolpath = runs
@@ -3173,8 +3172,8 @@ fn code_lines(text: &str) -> Vec<String> {
 fn tool_change_lifts_to_machine_z_before_m6() {
     let text = heights_plaque();
     let lines = code_lines(&text);
-    // The plaque cuts with T2 first since its Bore (maintainer
-    // decision 2026-10-24), so the one change is to T1.
+    // The plaque cuts with T2 first since its Bore, so the one
+    // change is to T1.
     let change = lines.iter().position(|l| l.starts_with("T1 M6")).unwrap();
     let before: Vec<&str> = lines[change - 3..=change]
         .iter()
@@ -3253,13 +3252,13 @@ fn machine_z_written_in_inch_units() {
     assert!(text.lines().any(|l| l == "G53 G0 Z-5.000"), "{text}");
 }
 
-/// Design addendum A7: with all three heights unset, as every older
-/// project migrates, the version 11 plaque exports the programs it did
-/// before #283, byte for byte. The expected programs are the tabs-migration
-/// corpus's, exported by the build before #105 and checked unchanged
-/// since by `cli::version_9_tab_settings_export_byte_identical_programs`,
-/// the T1 program since without the plaque's four holes, which its Drill
-/// now skips (#377).
+/// Design addendum A7: with all three heights unset, as every older project
+/// migrates, the version 11 plaque exports the programs it did before #283,
+/// byte for byte. The expected programs are the tabs-migration corpus's,
+/// exported by the build before #105 and checked unchanged since by
+/// `cli::version_9_tab_settings_export_byte_identical_programs`, the T1
+/// program since without the plaque's four holes, which its Drill now
+/// skips.
 #[test]
 fn unset_heights_are_byte_identical() {
     // The plaque as the build before #283 saved it, at version 11 on
@@ -3290,7 +3289,7 @@ fn unset_heights_are_byte_identical() {
 
 /// Design addendum A7: a program per tool run ends each program with
 /// the park and the lift, which is the tool-change height on GRBL; a
-/// definition without `G53` (Mach3, UCCNC, generic; #306) refuses the
+/// definition without `G53` (Mach3, UCCNC, generic) refuses the
 /// machine Z, while the clearance height and the park need none.
 #[test]
 fn every_program_ends_with_the_lift_and_unchecked_definitions_refuse_it() {
@@ -3338,8 +3337,8 @@ fn every_program_ends_with_the_lift_and_unchecked_definitions_refuse_it() {
     }
 }
 
-/// #306: LinuxCNC documents `G53` (`interp_find.cc` 170-191: the
-/// work, `G92` and tool length offsets are taken out of the Z word;
+/// LinuxCNC documents `G53` (`interp_find.cc` 170-191: the work, `G92`
+/// and tool length offsets are taken out of the Z word;
 /// `interp_check.cc` 103-108: `G0` or `G1`, absolute), so on both of
 /// its versions each program of a run per tool lifts to the machine Z
 /// in the program's units, after the park, right before the footer
@@ -3426,7 +3425,7 @@ fn machine_lift_before_router_off_on_linuxcnc() {
     }
 }
 
-/// #306: LinuxCNC with canned cycles: the series of `G81` cycles is
+/// LinuxCNC with canned cycles: the series of `G81` cycles is
 /// cancelled with `G80` before the lift (`G53` needs `G0` or `G1`,
 /// `interp_check.cc` 104-105, and the lift's `G0` sets it), and the
 /// safety pass accepts the lift from the `G98` return height.
@@ -3516,8 +3515,8 @@ fn export_refuses_bad_heights() {
 /// Design addendum A7 with manual spindle control: the lift comes
 /// before the router-off pause, with no retract in work coordinates
 /// between them. The user may jog at that pause, so the program lifts
-/// again, after the setup lines, right before `T2 M6` (#304 review);
-/// at the end the one lift is before the last router-off pause.
+/// again, after the setup lines, right before `T2 M6`; at the end the
+/// one lift is before the last router-off pause.
 #[test]
 fn manual_router_off_pause_follows_the_lift() {
     let mut project = project_with("grblhal");
@@ -3550,10 +3549,10 @@ fn manual_router_off_pause_follows_the_lift() {
     );
 }
 
-/// #304 review: with manual spindle control, every tool change lifts
-/// again after the router-off pause, right before its `T<n> M6`: three
-/// operations with tools 1, 2, 1 change tools twice, and each change
-/// has the lift before the pause and the one before the change.
+/// With manual spindle control, every tool change lifts again after
+/// the router-off pause, right before its `T<n> M6`: three operations
+/// with tools 1, 2, 1 change tools twice, and each change has the lift
+/// before the pause and the one before the change.
 #[test]
 fn manual_relift_before_every_tool_change() {
     let mut project = project_with("grblhal");
@@ -3723,13 +3722,13 @@ fn drill_project_with_two_hole_part_as(
     (project, op)
 }
 
-/// #304 review, #305, #314: a Drill linked at a height that is neither
-/// safe Z nor the clearance height follows no series of cycles, and is
-/// written as moves with the `clearance_height` reason. The sequencer
-/// never links holes so; here the first crossing of
-/// [`drill_project_with_two_hole_part`] is moved down to Z 16, between
-/// safe Z (11) and the clearance height (26). Without a clearance
-/// height every link is at safe Z, and the Drill is written as cycles.
+/// A Drill linked at a height that is neither safe Z nor the clearance
+/// height follows no series of cycles, and is written as moves with
+/// the `clearance_height` reason. The sequencer never links holes so;
+/// here the first crossing of [`drill_project_with_two_hole_part`] is
+/// moved down to Z 16, between safe Z (11) and the clearance height
+/// (26). Without a clearance height every link is at safe Z, and the
+/// Drill is written as cycles.
 #[test]
 fn clearance_height_expands_canned_cycles() {
     let (mut project, op) = drill_project_with_two_hole_part();
@@ -3777,7 +3776,7 @@ fn exact_motion(text: &str, post: &PostProcessor) -> Vec<MoveShape> {
 /// The code lines of each canned-cycle series in `text`, from the line
 /// after its `G98` to the line before its `G80`, with the code line
 /// before the `G98` and the one after the `G80`. A `G80` before the
-/// first `G98` is the header's (#279).
+/// first `G98` is the header's.
 fn series_of(text: &str) -> Vec<(String, Vec<String>, Option<String>)> {
     // Without line numbers (Mach3).
     let lines: Vec<String> = code_lines(text)
@@ -3807,21 +3806,21 @@ fn series_of(text: &str) -> Vec<(String, Vec<String>, Option<String>)> {
     series
 }
 
-/// #314: [`drill_project_with_two_hole_part`] with `clearance_mm: 20`
+/// [`drill_project_with_two_hole_part`] with `clearance_mm: 20`
 /// crosses between parts at the clearance height (Z 20) and between
 /// the two holes of the pair at safe Z (Z 5). On the test definition,
 /// with every cycle it has (`G81`, `G82`, `G83`, `G73`), it is written
 /// with no warning as one `G98` series per part, each closed by `G80`:
-/// the holes in cut order are (20, 20), the pair (20, 40) and
-/// (20, 50), then (50, 70) and (80, 30), so four series of 1, 2, 1
-/// and 1 holes. Each series starts after `Z5.000` over its first hole
-/// (`G98` returns every hole of it to safe Z), and each `G80` but the
-/// last is followed by the rise to the clearance height, `G0 Z20.000`,
-/// on which `G80` makes `G0` necessary. The expansion (S11) crosses
-/// between parts at Z 20 and between the pair's holes at Z 5; pecks
-/// at the same depths as the plain program (Z 1, −3, −5 per hole);
-/// nothing goes below the hole bottom, Z −5, or the material bottom,
-/// Z −6; and the motion is the plain program's move for move, so also
+/// the holes in cut order are (20, 20), the pair (20, 40) and (20,
+/// 50), then (50, 70) and (80, 30), so four series of 1, 2, 1 and 1
+/// holes. Each series starts after `Z5.000` over its first hole (`G98`
+/// returns every hole of it to safe Z), and each `G80` but the last is
+/// followed by the rise to the clearance height, `G0 Z20.000`, on
+/// which `G80` makes `G0` necessary. The expansion (S11) crosses
+/// between parts at Z 20 and between the pair's holes at Z 5; pecks at
+/// the same depths as the plain program (Z 1, −3, −5 per hole);
+/// nothing goes below the hole bottom, Z −5, or the material bottom, Z
+/// −6; and the motion is the plain program's move for move, so also
 /// once collinear rapids are joined.
 #[test]
 fn canned_series_per_part_at_the_clearance_height() {
@@ -4002,7 +4001,7 @@ type MoveShape = (
 /// The parsed motion of `text`, canned cycles expanded with `post`'s
 /// model, with each run of rapids in Z alone along one vertical line in
 /// one direction joined into one rapid: the motion is the same, the
-/// controller only does not stop between them (#305).
+/// controller only does not stop between them.
 fn joined_motion(text: &str, post: &PostProcessor) -> Vec<MoveShape> {
     let model = crate::parse::CycleModel::of(post);
     let moves = crate::parse::parse_motion_with(text, &model).unwrap();
@@ -4036,10 +4035,9 @@ fn joined_motion(text: &str, post: &PostProcessor) -> Vec<MoveShape> {
 }
 
 /// The plaque's screw holes drilled, as the plaque drilled them before
-/// its Bore (maintainer decision 2026-10-24): a Drill of the four 5 mm
-/// circles with the 6.35 mm bit at the bit's size, alone, on LinuxCNC
-/// with canned cycles on and a 20 mm clearance height, as a simple
-/// cycle with `dwell_s`.
+/// its Bore: a Drill of the four 5 mm circles with the 6.35 mm bit at
+/// the bit's size, alone, on LinuxCNC with canned cycles on and a 20
+/// mm clearance height, as a simple cycle with `dwell_s`.
 fn plaque_drill_on_linuxcnc(dwell_s: f64) -> (Project, Vec<EmitOp>) {
     let mut project = plaque();
     project.post_processor = PostProcessorRef::latest("linuxcnc").unwrap();
@@ -4070,18 +4068,17 @@ fn plaque_drill_on_linuxcnc(dwell_s: f64) -> (Project, Vec<EmitOp>) {
     (project, ops)
 }
 
-/// #305: the plaque's four screw holes are four parts, linked at the
-/// clearance height. On LinuxCNC with `clearance_mm: 20` and canned
-/// cycles on, the Drill is a rapid over the first hole at the
-/// clearance height, `G98` once, one `G81` (or `G82 … P`) line per
-/// hole, `G80`, and no warning. `G98` returns each hole to the Z
-/// before the first cycle of the series ([G] `#gcode:g98-g99`;
-/// `interp_cycles.cc` 926-931, 976), here Z 20, so the controller
-/// crosses between holes at the clearance height. The expansion
-/// (S11) plunges each hole from `R` to the bottom (Z −12, the stock
-/// bottom less the 0.2 mm through-cut allowance), goes back to Z 20 after each,
-/// never lower, and is the plain program's motion once its rapids
-/// along one vertical line are joined.
+/// The plaque's four screw holes are four parts, linked at the clearance
+/// height. On LinuxCNC with `clearance_mm: 20` and canned cycles on, the Drill
+/// is a rapid over the first hole at the clearance height, `G98` once, one
+/// `G81` (or `G82 … P`) line per hole, `G80`, and no warning. `G98` returns
+/// each hole to the Z before the first cycle of the series ([G]
+/// `#gcode:g98-g99`; `interp_cycles.cc` 926-931, 976), here Z 20, so the
+/// controller crosses between holes at the clearance height. The expansion
+/// (S11) plunges each hole from `R` to the bottom (Z −12, the stock bottom less
+/// the 0.2 mm through-cut allowance), goes back to Z 20 after each, never
+/// lower, and is the plain program's motion once its rapids along one vertical
+/// line are joined.
 #[test]
 fn canned_cycles_at_the_clearance_height() {
     for (dwell_s, word) in [(0.0, "G81"), (0.5, "G82")] {
@@ -4220,10 +4217,10 @@ fn canned_cycles_from_the_clearance_height_with_the_lift_on_linuxcnc() {
     }
 }
 
-/// #305: a clearance height equal to the Drill's safe Z (validation
-/// allows it) links the parts at safe Z. The cycles start from it, as
-/// without a clearance height, with no warning, and the program is the
-/// one without the clearance height.
+/// A clearance height equal to the Drill's safe Z (validation allows
+/// it) links the parts at safe Z. The cycles start from it, as without
+/// a clearance height, with no warning, and the program is the one
+/// without the clearance height.
 #[test]
 fn canned_cycles_with_the_clearance_height_at_safe_z() {
     let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);

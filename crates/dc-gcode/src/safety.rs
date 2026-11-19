@@ -86,9 +86,9 @@ use crate::transform::{MachineTransform, mm_per_unit};
 /// buffer holds 256 bytes including the terminator.
 pub const MAX_LINE_CHARS: usize = 255;
 
-/// The error for a lookup into the pass's own data that missed (review
-/// 1.1, #711), naming the `check` that could not be finished: see
-/// [`crate::material`]'s module docs, "Fail closed".
+/// The error for a lookup into the pass's own data that missed, naming
+/// the `check` that could not be finished: see [`crate::material`]'s
+/// module docs, "Fail closed".
 pub(crate) fn defect(check: &'static str) -> ExportError {
     ExportError::SafetyCheckDefect { check }
 }
@@ -105,14 +105,14 @@ pub(crate) struct OpSpan<'a> {
     /// The material it may cut, from the project (S9).
     pub material: &'a Material,
     /// The middles of the tabs it must leave standing, from the project
-    /// (S9, #337).
+    /// (S9).
     pub tabs: &'a [TabSpine],
     /// 1-based program lines, end exclusive, from the operation's first
     /// motion line to its last.
     pub lines: Range<usize>,
 }
 
-/// The project's heights the program was written for (#283).
+/// The project's heights the program was written for.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct ProgramHeights {
     /// `heights.tool_change_machine_z_mm`, the only machine Z a `G53` may
@@ -238,7 +238,7 @@ impl AxisRange {
 }
 
 /// Where a program takes the tool centre, in machine coordinates: every
-/// position it moves through, arcs' bulges included (#62). Z min is the
+/// position it moves through, arcs' bulges included. Z min is the
 /// deepest cut. An axis the program never sets is `None`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Extents {
@@ -304,16 +304,16 @@ fn arc_extremes(mv: &MachineMove) -> Vec<Point> {
     arc.axis_extremes().collect()
 }
 
-/// S7 (#62): every cutting move, widened by its operation's tool radius,
-/// stays inside the stock rectangle `[0, width] × [0, height]`, within one
-/// unit in the last written place. Arcs count to their bulge. A cut
-/// outside every operation has no tool radius to be widened by, and is
-/// refused ([`ExportError::CutOutsideOperation`]; [`check_rules`] refuses
-/// it first). A Photo V-Carve's cut
-/// (#646) is widened at each end by its groove's half-width at the stock
-/// top there, `(thickness − z) · tan(α/2)`, from 0 above the stock to the
-/// tool's radius ([`groove_radius_mm`]): its grooves may run past the
-/// picture's edge, and this is the rule that keeps them on the stock.
+/// S7: every cutting move, widened by its operation's tool radius, stays
+/// inside the stock rectangle `[0, width] × [0, height]`, within one unit
+/// in the last written place. Arcs count to their bulge. A cut outside
+/// every operation has no tool radius to be widened by, and is refused
+/// ([`ExportError::CutOutsideOperation`]; [`check_rules`] refuses it
+/// first). A Photo V-Carve's cut is widened at each end by its groove's
+/// half-width at the stock top there, `(thickness − z) · tan(α/2)`, from 0
+/// above the stock to the tool's radius ([`groove_radius_mm`]): its
+/// grooves may run past the picture's edge, and this is the rule that
+/// keeps them on the stock.
 fn check_on_stock(
     blocks: &[Block],
     post: &PostProcessor,
@@ -370,8 +370,8 @@ fn check_on_stock(
 }
 
 /// The half-width, mm, at the stock top of a Photo V-Carve's groove whose
-/// tip is at project `z_mm` (S7, #646): `(thickness − z) · tan(α/2)`, from
-/// 0 above the stock to the tool's radius. `None` for a line of any other
+/// tip is at project `z_mm` (S7): `(thickness − z) · tan(α/2)`, from 0
+/// above the stock to the tool's radius. `None` for a line of any other
 /// operation, a tool that is not a V-bit of a usable angle, or an unknown
 /// Z, where the full radius holds.
 fn groove_radius_mm(
@@ -435,25 +435,25 @@ fn check_rules(
     let mut wcs_set = false;
     let mut absolute_set = false;
     // The last pause: the controller's modal state must be set again after
-    // it, because the user may change it at the controller (#55).
+    // it, because the user may change it at the controller.
     let mut last_pause: Option<usize> = None;
     let mut spindle_on = false;
     let mut rpm: Option<f64> = None;
     let mut dwell_pending = false;
     // S15: the deepest a cut has reached at the XY of the last cut.
     let mut cut_to: Option<CutTo> = None;
-    // S2 (#214): the cuts of the operation being read.
+    // S2: the cuts of the operation being read.
     let mut floors = Floors::new(stock_thickness_mm, tolerances);
     // S16: the line of the last machine-coordinate lift, while no motion
     // has followed it, and whether a stop has come since.
     let mut lifted: Option<(usize, bool)> = None;
-    // S2 for #283: the span of the last move, and whether it has moved
-    // across the work yet.
+    // S2: the span of the last move, and whether it has moved across
+    // the work yet.
     let mut crossing: (Option<usize>, bool) = (None, false);
     for block in &blocks {
         let line = block.line;
-        // S16 (#283): `G53 G0 Z<v>`, to the project's tool-change machine
-        // Z, from a known Z at or above safe Z, where the bit already is.
+        // S16: `G53 G0 Z<v>`, to the project's tool-change machine Z,
+        // from a known Z at or above safe Z, where the bit already is.
         // Work Z is unknown after it, as after a pause.
         if let Some(z_mm) = block.machine_lift_mm {
             let Some(expected_mm) = machine_lift_mm else {
@@ -518,12 +518,12 @@ fn check_rules(
                 });
             }
         }
-        // S4, #43, #57: the user fits tools and switches the router at a
-        // pause or an `M6` tool change, so it comes with the bit at safe Z.
-        // Afterwards Z is unknown: the user may have jogged or set Z zero.
+        // S4: the user fits tools and switches the router at a pause or an
+        // `M6` tool change, so it comes with the bit at safe Z. Afterwards
+        // Z is unknown: the user may have jogged or set Z zero.
         let changes_tool = block.has('M', 6.0);
         if block.has('M', 0.0) || block.has('M', 1.0) || changes_tool {
-            // #283: a stop is at the clearance height when it is set.
+            // A stop is at the clearance height when it is set.
             let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm)
                 .safe_z_mm
                 .max(heights.clearance_z_mm.unwrap_or(f64::NEG_INFINITY));
@@ -575,7 +575,7 @@ fn check_rules(
             rpm = Some(s);
         }
         if starts_spindle {
-            // #43: Z is known again only after a retract since the last
+            // Z is known again only after a retract since the last
             // pause, where the user may have set Z zero.
             let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
             if !router.at_or_above(safe_z_mm) {
@@ -601,8 +601,8 @@ fn check_rules(
         let limits = Limits::for_line(line, spans, stock_thickness_mm);
         floors.enter(spans.iter().position(|s| s.lines.contains(&line)));
         let tolerance_mm = quantum_mm(post, mv.units);
-        // #68: Z after this move. A line without a Z word leaves Z where it
-        // was, which after a pause is unknown, whatever Z the program last
+        // Z after this move. A line without a Z word leaves Z where it was,
+        // which after a pause is unknown, whatever Z the program last
         // wrote.
         let z_after = match (block.value('Z'), mv.to.z) {
             (Some(_), Some(z)) => Some((transform.project_z(z, mv.units), tolerance_mm)),
@@ -650,10 +650,10 @@ fn check_rules(
         } else if !floors.allow_approach(mv, transform, router.z_mm, z_after, limits.safe_z_mm) {
             check_rapid(mv, &limits, router.z_mm, z_after)?;
         }
-        // S2 as changed for #283: with a clearance height, an operation's
-        // first move across the work and every one outside the operations
-        // run at or above it. Links within an operation are held to the
-        // toolpath by S6, whose sequencer links parts at it.
+        // S2: with a clearance height, an operation's first move across
+        // the work and every one outside the operations run at or above
+        // it. Links within an operation are held to the toolpath by S6,
+        // whose sequencer links parts at it.
         let span = spans.iter().position(|s| s.lines.contains(&line));
         if crossing.0 != span || span.is_none() {
             crossing = (span, false);
@@ -702,9 +702,9 @@ fn check_rules(
 /// manual spindle control, what the program has done since its last cut.
 /// Z is unknown at program start and after every pause (`M0`, `M1`, `M6`)
 /// until a move writes Z again; a rapid, a pause, and a spindle start all
-/// read this one state (#43, #68). A tool's first cut needs an `M0` or
-/// `M1` after the last cut and the last `M6`: the user fits a tool at an
-/// `M6`, so an `M6` never counts as the pause to turn the router on.
+/// read this one state. A tool's first cut needs an `M0` or `M1` after
+/// the last cut and the last `M6`: the user fits a tool at an `M6`, so an
+/// `M6` never counts as the pause to turn the router on.
 #[derive(Debug, Default)]
 struct RouterPauses<'a> {
     /// Z above stock bottom, mm, and its rounding tolerance, if known.
@@ -837,10 +837,10 @@ fn header_cancel_codes(post: &PostProcessor) -> Vec<f64> {
         .map(|&(_, code)| code)
         .collect()
 }
-/// The `M` codes of grblHAL's tool change, accepted when the definition's
-/// tool change uses `M6` (#57) and its mode is `"m6"` (#95): `M6` itself, checked like a pause, and
-/// `M61`, which sets the current tool number without a stop or a move.
-/// GRBL 1.1 has neither.
+/// The `M` codes of grblHAL's tool change, accepted when the definition's tool
+/// change uses `M6` and its mode is `"m6"`: `M6` itself, checked like a pause,
+/// and `M61`, which sets the current tool number without a stop or a move. GRBL
+/// 1.1 has neither.
 const TOOL_CHANGE_M: [f64; 2] = [6.0, 61.0];
 
 /// A dwell shorter than the configured one by less than this still counts:
@@ -891,8 +891,8 @@ fn check_words(
 ) -> Result<(), ExportError> {
     let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
     let canned: &[f64] = if with_canned { &CANNED_G } else { &[] };
-    // #312: true in the header, before the first move or spindle start,
-    // and again after each stop until the next one: the two places `emit`
+    // True in the header, before the first move or spindle start, and
+    // again after each stop until the next one: the two places `emit`
     // writes the setup lines.
     let mut in_setup = true;
     for block in blocks {
@@ -933,8 +933,8 @@ fn check_words(
     Ok(())
 }
 
-/// #312: `word`, one of the definition's header cancels (`G50`, `G69`),
-/// is accepted only as `emit` writes it: alone on its line, but for a line
+/// `word`, one of the definition's header cancels (`G50`, `G69`), is
+/// accepted only as `emit` writes it: alone on its line, but for a line
 /// number, so no axis, feed, speed or other value word can ride with it,
 /// and only in the header or in the setup after a stop (`in_setup`). On a
 /// dialect where `G50` takes axis words it is a different command, so
@@ -966,7 +966,7 @@ fn feed_quantum_mm_min(post: &PostProcessor, units: Units) -> f64 {
 }
 
 /// One output unit in the last written decimal place, in mm: the one
-/// `dc_cam::entry` keeps a helix's moves above (#265).
+/// `dc_cam::entry` keeps a helix's moves above.
 pub(crate) fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
     post.number_format.decimal_places.quantum_mm(units)
 }
@@ -1037,7 +1037,7 @@ fn check_depth(
 /// S2: a rapid ends at or above safe Z, and one that moves in XY also
 /// starts there. `from_z_mm` and `to_z_mm` are Z above stock bottom and
 /// its rounding tolerance before and after the move, `None` where Z is
-/// unknown: at program start and after a pause until Z is written (#68).
+/// unknown: at program start and after a pause until Z is written.
 fn check_rapid(
     mv: &MachineMove,
     limits: &Limits<'_>,
@@ -1062,12 +1062,11 @@ fn check_rapid(
     }
 }
 
-/// S2 as changed in #214: a rapid straight down from safe Z may stop below
-/// it, over the start of a ramp or helix, where the tool is in the air: at
-/// or above
-/// the stock top plus [`ENTRY_CLEARANCE_MM`], or that far above the lowest
-/// Z a cut of the same operation has reached through its XY. The cuts of
-/// the operation being read, in project space, are kept to find that Z.
+/// S2: a rapid straight down from safe Z may stop below it, over the start
+/// of a ramp or helix, where the tool is in the air: at or above the stock
+/// top plus [`ENTRY_CLEARANCE_MM`], or that far above the lowest Z a cut
+/// of the same operation has reached through its XY. The cuts of the
+/// operation being read, in project space, are kept to find that Z.
 struct Floors {
     /// The stock top plus the entry clearance, mm above stock bottom.
     above_stock_mm: f64,
@@ -1247,11 +1246,11 @@ pub(crate) fn differs(a: Option<f64>, b: Option<f64>) -> bool {
 /// the tool's plunge rate and its feed: its feed is the cutting feed
 /// scaled so its vertical rate stays under the plunge rate (S10's feed
 /// scale, `dc_cam::entry`), or a tool rate the emitter rounded down for
-/// the same reason (#325), which lands between the two. Whether that
-/// vertical rate is right is S10's check ([`check_descent_rate`]). A
-/// level cut of a Profile with a last pass may also run anywhere from
+/// the same reason, which lands between the two. Whether that vertical
+/// rate is right is S10's check ([`check_descent_rate`]). A level cut of a
+/// Profile with a last pass may also run anywhere from
 /// [`last_pass_floor_mm_min`] up to the feed: the last pass's inside arcs,
-/// or their chords, slowed so the cutting edge moves at the feed (#335).
+/// or their chords, slowed so the cutting edge moves at the feed.
 fn check_feed(
     mv: &MachineMove,
     op: &Operation,
@@ -1274,10 +1273,10 @@ fn check_feed(
             .is_some_and(|(plunge, cut)| {
                 feed_mm_min >= plunge - tolerance_mm_min && feed_mm_min <= cut + tolerance_mm_min
             });
-    // #335: a Profile's last pass runs its inside arcs at the feed
-    // scaled by `ρ / (ρ + r)`, so its cutting edge moves at the feed,
-    // and never slower than the edge needs in the smallest hole the
-    // last pass cuts, `a / (a + r)`; flattened, their chords too.
+    // A Profile's last pass runs its inside arcs at the feed scaled
+    // by `ρ / (ρ + r)`, so its cutting edge moves at the feed, and
+    // never slower than the edge needs in the smallest hole the last
+    // pass cuts, `a / (a + r)`; flattened, their chords too.
     let edge_scaled = is_level_cut(mv)
         && last_pass_floor_mm_min(op, tool)
             .zip(tool.feed_mm_min)
@@ -1304,8 +1303,8 @@ fn is_level_cut(mv: &MachineMove) -> bool {
 }
 
 /// The least feed, mm/min, a level cut of a Profile with a last pass may
-/// carry (#335): its tool's feed times `a / (a + r)`, the stock to leave over
-/// the stock to leave plus the tool radius, as slow as the generator runs the
+/// carry: its tool's feed times `a / (a + r)`, the stock to leave over the
+/// stock to leave plus the tool radius, as slow as the generator runs the
 /// last pass's tightest inside arc. `None` for any other operation.
 fn last_pass_floor_mm_min(op: &Operation, tool: &Tool) -> Option<f64> {
     let Operation::Profile(op) = op else {
@@ -1332,11 +1331,11 @@ fn is_descent(mv: &MachineMove) -> bool {
 /// plunge rate: feed × sin(slope) ≤ plunge, with the slope recomputed from
 /// the written numbers (`docs/specs/phase-2/functional.md`, S10). Every
 /// descending cut is held to it, whatever made it: an entry ramp or helix,
-/// a smooth tab's down slope (#157), a straight plunge (slope 90°, so its
-/// feed must be at most the plunge rate) or an arc that descends. Nothing
-/// above the plunge rate is allowed for rounding (#325): the emitter
-/// writes every feed the toolpath holds to the plunge rate so that the
-/// rate [`descent_rate_mm_min`] reads from the written numbers stays at or
+/// a smooth tab's down slope, a straight plunge (slope 90°, so its feed
+/// must be at most the plunge rate) or an arc that descends. Nothing above
+/// the plunge rate is allowed for rounding: the emitter writes every feed
+/// the toolpath holds to the plunge rate so that the rate
+/// [`descent_rate_mm_min`] reads from the written numbers stays at or
 /// under it. A move whose start is not known is skipped; S2 and S4 keep a
 /// program from cutting from an unknown position.
 fn check_descent_rate(
@@ -1364,7 +1363,7 @@ fn check_descent_rate(
 /// exactly, and infinite for a cut with no feed (S3 refuses that cut;
 /// S10 must not pass it). `None` for a rapid, a move that does not fall,
 /// or one whose start is not known. S10 judges every program by it, and
-/// the emitter writes feeds by it (#325).
+/// the emitter writes feeds by it.
 pub(crate) fn descent_rate_mm_min(mv: &MachineMove, transform: &MachineTransform) -> Option<f64> {
     let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
         (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
@@ -1386,8 +1385,8 @@ pub(crate) fn descent_rate_mm_min(mv: &MachineMove, transform: &MachineTransform
             arc.radius_mm * arc.sweep_rad.abs() * scale
         }
     };
-    // #711: a falling cut with no feed has no rate S10 could pass, so it
-    // falls faster than any plunge rate. S3 refuses it first.
+    // A falling cut with no feed has no rate S10 could pass, so it falls
+    // faster than any plunge rate. S3 refuses it first.
     let feed_mm_min = mv.feed.unwrap_or(f64::INFINITY) * scale;
     // `drop / length` first: exactly 1 on a straight plunge.
     Some(feed_mm_min * (drop_mm / run_mm.hypot(drop_mm)))
@@ -1460,9 +1459,8 @@ fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
 ///   moves in Z alone or in XY alone towards it (`emit` splits a rapid so
 ///   it never travels sideways below either end); in a Drill written as
 ///   canned cycles, also by none, or by a rapid in XY alone over it, when
-///   a rapid in Z alone passes through its end point and the toolpath
-///   goes on the same way along that line (#305,
-///   [`match_rapid_on_the_way`]);
+///   a rapid in Z alone passes through its end point and the toolpath goes
+///   on the same way along that line ([`match_rapid_on_the_way`]);
 /// - a straight cut by one `G1` that ends at its end point;
 /// - a dwell by a `G4` with the same seconds (within a millisecond, in
 ///   the definition's dwell units) between the motion lines around it;
@@ -1492,12 +1490,12 @@ fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
 /// place of straight moves is [`ExportError::ArcFitViolation`].
 ///
 /// The program reproduces the toolpath when some matching of its lines to
-/// the moves by these rules takes every move and every line (#483).
-/// Within one unit in the last place a line may end at more than one
-/// move: sub-quantum steps that round to one point, or a fitted arc's end
-/// near several vertices. The first matching tried takes, at each move,
-/// the first way the rules allow; where that fails, the others are tried
-/// in turn ([`Matching::search`]). The error is that of the matching that
+/// the moves by these rules takes every move and every line. Within one
+/// unit in the last place a line may end at more than one move:
+/// sub-quantum steps that round to one point, or a fitted arc's end near
+/// several vertices. The first matching tried takes, at each move, the
+/// first way the rules allow; where that fails, the others are tried in
+/// turn ([`Matching::search`]). The error is that of the matching that
 /// went furthest.
 fn check_reproduces(
     span: &OpSpan<'_>,
@@ -1654,8 +1652,8 @@ impl<'m, 'a> Matching<'m, 'a> {
     ///
     /// # Errors
     ///
-    /// [`ExportError::SafetyCheckDefect`] for a place past the last line
-    /// (#711): such a matching has claimed lines the program does not
+    /// [`ExportError::SafetyCheckDefect`] for a place past the last
+    /// line: such a matching has claimed lines the program does not
     /// have, and reading that as "no line is left" would pass it.
     fn lines(&self, at: &Place) -> Result<(&'m [ReadMove<'a>], &'m [ReadMove<'a>]), ExportError> {
         self.motions
@@ -1708,7 +1706,7 @@ impl<'m, 'a> Matching<'m, 'a> {
     ///
     /// The furthest matching's, as above; or
     /// [`ExportError::SafetyCheckDefect`] at once, whatever is left to
-    /// try, when a step leads past the last move or line (#711).
+    /// try, when a step leads past the last move or line.
     fn search(&self) -> Result<(), ExportError> {
         let mut at = Place {
             index: 0,
@@ -1793,8 +1791,8 @@ impl<'m, 'a> Matching<'m, 'a> {
     ///
     /// [`ExportError::SafetyCheckDefect`] for a step that takes more
     /// moves than the toolpath has left, or more lines than the span has
-    /// left (#711): past the last move a place reads as "every move
-    /// matched", and past the last line as "no line left".
+    /// left: past the last move a place reads as "every move matched",
+    /// and past the last line as "no line left".
     fn advance(&self, at: &Place, mv: &Move, step: Step) -> Result<Place, ExportError> {
         let index = at.index + step.covered;
         let cursor = at.cursor + step.lines;
@@ -1840,8 +1838,8 @@ impl<'m, 'a> Matching<'m, 'a> {
                     match_in_hole_rapid(rest, mv.to, gap_mm)
                 })
                 .or_else(|| {
-                    // #305: a cycle from the clearance height goes through
-                    // safe Z without stopping.
+                    // A cycle from the clearance height goes through safe
+                    // Z without stopping.
                     self.canned
                         .then(|| match_rapid_on_the_way(rest, mv.to, self.moves.get(index + 1)))
                         .flatten()
@@ -1924,11 +1922,11 @@ impl<'m, 'a> Matching<'m, 'a> {
     }
 
     /// The ways other than `taken` the rules allow to match `mv`, the move
-    /// at `at`, and what follows it (#483), in the order to try them: by
-    /// no lines, where the controller is already at its end and `emit`
-    /// writes nothing for such a move; then a fitted arc here, to each
-    /// vertex it may end at, nearest first. `view` is what the matching
-    /// sees at `at`.
+    /// at `at`, and what follows it, in the order to try them: by no
+    /// lines, where the controller is already at its end and `emit` writes
+    /// nothing for such a move; then a fitted arc here, to each vertex it
+    /// may end at, nearest first. `view` is what the matching sees at
+    /// `at`.
     fn other_steps(&self, at: &Place, mv: &Move, taken: Step, view: View<'_, 'a>) -> Vec<Step> {
         let View {
             rest,
@@ -2090,12 +2088,12 @@ fn match_in_hole_rapid(rest: &[ReadMove<'_>], target: Point3, gap_mm: f64) -> Op
     (z_only && at_xy && within).then_some(1)
 }
 
-/// S11 (#305): how many of `rest` a rapid to `target` takes when the
-/// controller goes through `target` without stopping there: one rapid of
-/// the controller's in Z alone, at the target's XY, passes through it on
-/// the way to a Z beyond it, and the toolpath goes on the same way along
-/// that line, by a rapid in Z alone (`next`), or the target is the
-/// toolpath's last move and the controller's rapid goes up, the retract
+/// S11: how many of `rest` a rapid to `target` takes when the controller
+/// goes through `target` without stopping there: one rapid of the
+/// controller's in Z alone, at the target's XY, passes through it on the
+/// way to a Z beyond it, and the toolpath goes on the same way along that
+/// line, by a rapid in Z alone (`next`), or the target is the toolpath's
+/// last move and the controller's rapid goes up, the retract
 /// [`check_reproduces`] accepts after the last move. Coming down, a rapid
 /// in XY alone to over the target may come first: the emitter's split of
 /// the move over the first hole, made at the clearance height. The lines
@@ -2220,7 +2218,7 @@ fn run_eligible(previous: Option<Point3>, mv: &Move, arc_fit_mm: f64) -> bool {
 enum FittedEnds {
     /// The nearest only.
     First,
-    /// Every one, nearest first (#483).
+    /// Every one, nearest first.
     All,
 }
 
@@ -2228,25 +2226,24 @@ enum FittedEnds {
 /// a fitted run accounts for, if the lines may stand for the moves: for
 /// each vertex the run may end at, nearest first (`ends`), or none.
 ///
-/// The lines are a chain of consecutive arc moves about one centre, one
-/// way, each sweeping at most 90°, the first starting at `previous`, the
-/// end of the toolpath move before, and the last ending at the end of a
-/// toolpath move: a fitted run is split into sub-arcs whose ends between
-/// are on the circle, and only the run's ends are vertices. The chain
-/// covers at least [`MIN_RUN_CHORDS`] moves, all straight cuts or shallow
-/// corner arcs (sagitta within `arc_fit_mm`) at the run's Z. Every vertex
-/// between, and every shallow arc's midpoint, lies on the chain within
-/// `arc_fit_mm` plus the lines' rounding, and the vertices turn the
-/// chain's way about its centre. The chain also lies within that of every
-/// move it covers along the move's whole length (#226): a straight move
-/// between two points on the circle is bowed off by the arc's sagitta over
-/// it, which the vertices alone never show. The chain may stop short of its last
-/// line where the toolpath goes on with a move a run cannot take, if the
-/// line before ends at the vertex there.
+/// The lines are a chain of consecutive arc moves about one centre, one way,
+/// each sweeping at most 90°, the first starting at `previous`, the end of the
+/// toolpath move before, and the last ending at the end of a toolpath move: a
+/// fitted run is split into sub-arcs whose ends between are on the circle, and
+/// only the run's ends are vertices. The chain covers at least
+/// [`MIN_RUN_CHORDS`] moves, all straight cuts or shallow corner arcs (sagitta
+/// within `arc_fit_mm`) at the run's Z. Every vertex between, and every shallow
+/// arc's midpoint, lies on the chain within `arc_fit_mm` plus the lines'
+/// rounding, and the vertices turn the chain's way about its centre. The chain
+/// also lies within that of every move it covers along the move's whole length:
+/// a straight move between two points on the circle is bowed off by the arc's
+/// sagitta over it, which the vertices alone never show. The chain may stop
+/// short of its last line where the toolpath goes on with a move a run cannot
+/// take, if the line before ends at the vertex there.
 ///
 /// More than one vertex may end the chain: every vertex within a unit in
-/// the last place of its end, the walk going on past each (#483: the
-/// fitter's run ended at a vertex after one that rounds to its end too).
+/// the last place of its end, the walk going on past each (the fitter's
+/// run ended at a vertex after one that rounds to its end too).
 fn match_fitted_arc(
     rest: &[ReadMove<'_>],
     moves: &[Move],
@@ -2303,8 +2300,8 @@ fn walk_fitted_arc(
         // more than one unit in the last place, within the allowance.
         // Compared with the piece before, not the first: over a long run
         // the snaps add up past the allowance (a 31.7 mm pocket ring
-        // drifted 0.012 mm in five pieces, #137). Every vertex is still
-        // checked against its own piece below.
+        // drifted 0.012 mm in five pieces). Every vertex is still checked
+        // against its own piece below.
         let same_circle = pieces.last().is_none_or(|p: &ToolpathArc| {
             p.clockwise == clockwise
                 && approx_eq(p.centre.x, centre.x, allowed_mm)
@@ -2367,12 +2364,12 @@ fn walk_fitted_arc(
             loop {
                 let current = pieces.get(piece)?;
                 if let Some(turn_rad) = current.turn_to(p, allowed_mm) {
-                    // #453: past the piece's end, away from the joint, and
-                    // on the next piece, `p` is on the next. On a circle
+                    // Past the piece's end, away from the joint, and on
+                    // the next piece, `p` is on the next. On a circle
                     // whose radius is near the allowance the angle slack
                     // is wider than a piece, so a vertex well into the
-                    // next piece is still within this one's slack, and
-                    // the walk would never reach the last piece.
+                    // next piece is still within this one's slack, and the
+                    // walk would never reach the last piece.
                     let at_joint = approx_eq(p.x, current.end.x, tolerance_mm)
                         && approx_eq(p.y, current.end.y, tolerance_mm);
                     let on_next = pieces
@@ -2392,15 +2389,15 @@ fn walk_fitted_arc(
                 piece += 1;
             }
         }
-        // #226: the chain stays within the allowance of the move along its
-        // whole length, not only at its ends: over the part of every piece
+        // The chain stays within the allowance of the move along its whole
+        // length, not only at its ends: over the part of every piece
         // between the move's ends, the farthest point from the move's
         // chord (for a straight move between points on the circle, its
         // sagitta). Each end is placed on each piece, not assumed to lie
-        // before or past it (#262): a vertex up to the angle slack past a
-        // piece's end counts as on that piece, and on a circle so small
-        // that the slack is a whole chord it lies inside the next piece,
-        // whose part before it the move does not span.
+        // before or past it: a vertex up to the angle slack past a piece's
+        // end counts as on that piece, and on a circle so small that the
+        // slack is a whole chord it lies inside the next piece, whose part
+        // before it the move does not span.
         for k in first_piece..=piece {
             let current = pieces.get(k)?;
             let from_rad = current.clamped_turn(vertex.xy());
@@ -2414,14 +2411,14 @@ fn walk_fitted_arc(
         cross += (vertex.xy() - centre).cross(mv.to.xy() - centre);
         covered += 1;
         vertex = mv.to;
-        // On the last piece; or, on a circle so small that its last
-        // pieces are within a unit in the last place (#483: a V-Carve's
-        // tip fitted on a circle 0.003 mm across), where every piece after
-        // this one starts and ends within a unit of the vertex. #453 keeps
-        // a vertex at a joint on the piece before it, so such a vertex
-        // never reached the last piece. Those pieces lie within the
-        // allowance of the vertex: each sweeps at most 90°, so no point of
-        // one is further from its start than its chord, a unit or two.
+        // On the last piece; or, on a circle so small that its last pieces
+        // are within a unit in the last place (a V-Carve's tip fitted on a
+        // circle 0.003 mm across), where every piece after this one starts
+        // and ends within a unit of the vertex. #453 keeps a vertex at a
+        // joint on the piece before it, so such a vertex never reached the
+        // last piece. Those pieces lie within the allowance of the vertex:
+        // each sweeps at most 90°, so no point of one is further from its
+        // start than its chord, a unit or two.
         let last = pieces.len().saturating_sub(1);
         let at_last = piece == last
             || pieces.get(piece + 1..).is_some_and(|after| {
@@ -2599,7 +2596,7 @@ impl ToolpathArc {
     }
 
     /// The farthest, mm, the arc between turns `from_rad` and `to_rad`
-    /// lies from the straight move `a` to `b` (#226).
+    /// lies from the straight move `a` to `b`.
     fn deviation_mm(&self, from_rad: f64, to_rad: f64, a: Point, b: Point) -> f64 {
         let sign = if self.clockwise { -1.0 } else { 1.0 };
         arc_chord_deviation_mm(

@@ -31,8 +31,8 @@ fn fixture() -> (Project, dc_project::ProfileOp, Tool) {
 
 /// [`fixture`] with a Profile of no targets: the hand-written cuts of
 /// the S7, extents and S10 tests cross the sample rectangle, and with
-/// no part to keep out of, S9 (#177) passes them, so each test sees
-/// only its own rule.
+/// no part to keep out of, S9 passes them, so each test sees only its
+/// own rule.
 fn partless_fixture() -> (Project, dc_project::ProfileOp, Tool) {
     let (project, mut op, tool) = fixture();
     op.targets.clear();
@@ -60,8 +60,8 @@ fn cut_then_half_circle(x0: f64, y0: f64, x1: f64, y1: f64) -> Toolpath {
     }
 }
 
-/// S7 (#62): the cutter's edge must stay on the stock. With a 6 mm
-/// tool a cut 3 mm in from every edge passes; one along the left edge
+/// S7: the cutter's edge must stay on the stock. With a 6 mm tool a
+/// cut 3 mm in from every edge passes; one along the left edge
 /// overhangs it by the radius; a half circle whose ends are 7 mm in
 /// from the back edge, with the radius, but which bulges 10 mm past
 /// them fails at +Y by 3 mm.
@@ -111,7 +111,7 @@ fn cut_off_stock_fails_s7() {
     );
 }
 
-/// #62: a program's extents are its machine coordinates' range, arc
+/// A program's extents are its machine coordinates' range, arc
 /// bulges included. The sample project's origin is the stock's
 /// bottom-left corner and top face, so machine X and Y are project X
 /// and Y and machine Z is project Z minus 6.
@@ -235,7 +235,7 @@ fn check_text_on(
 }
 
 /// [`check_text_on`] for a project whose tool-change machine Z is
-/// `machine_lift_mm` (S16, #283).
+/// `machine_lift_mm` (S16).
 fn check_text_lifting(
     text: &str,
     post: PostProcessor,
@@ -348,12 +348,12 @@ fn entry_program(first: &str, x: &str, second: &str) -> String {
     )
 }
 
-/// S2 as changed in #214: a ramp or helix starts 1 mm above the stock
-/// top, or 1 mm above the floor the operation's pass before cut there,
-/// and a rapid straight down from safe Z takes the tool there. A rapid
-/// in Z alone may end at or above the stock top plus the entry
-/// clearance anywhere, and at or above the entry clearance over the
-/// lowest Z a cut of the same operation has reached through its XY.
+/// S2: a ramp or helix starts 1 mm above the stock top, or 1 mm above
+/// the floor the operation's pass before cut there, and a rapid
+/// straight down from safe Z takes the tool there. A rapid in Z alone
+/// may end at or above the stock top plus the entry clearance
+/// anywhere, and at or above the entry clearance over the lowest Z a
+/// cut of the same operation has reached through its XY.
 #[test]
 fn rapid_down_to_entry_start_above_stock_is_accepted() {
     // Z 1 is the stock top plus 1 mm; Z 0 is 1 mm above the Z −1 the
@@ -452,11 +452,11 @@ fn plunge_program(first: &str, second: &str) -> String {
     )
 }
 
-/// S2 as changed in #214 and #227: a straight plunge (`entry:
-/// plunge`, an Engrave pass, a corner-relief notch) is reached by the
-/// same rapid straight down from safe Z as a ramp or helix, stopping
-/// 1 mm above the stock top or above the floor the operation cut
-/// there; one that stops lower is still refused.
+/// S2: a straight plunge (`entry: plunge`, an Engrave pass, a
+/// corner-relief notch) is reached by the same rapid straight down
+/// from safe Z as a ramp or helix, stopping 1 mm above the stock top
+/// or above the floor the operation cut there; one that stops lower
+/// is still refused.
 #[test]
 fn rapid_down_to_a_plunge_below_the_clearance_fails() {
     check_text(&plunge_program("1", "0")).unwrap();
@@ -500,9 +500,9 @@ fn every_cut_has_active_feed() {
     );
 }
 
-/// S3 with S10's feed scaling (slice 9): a ramp or helix move, one that
-/// falls while it moves in XY, runs at the cutting feed scaled down so
-/// its vertical rate stays under the plunge rate, which puts its feed
+/// S3 with S10's feed scaling: a ramp or helix move, one that falls
+/// while it moves in XY, runs at the cutting feed scaled down so its
+/// vertical rate stays under the plunge rate, which puts its feed
 /// between the tool's plunge rate (1000) and feed (300) rather than on
 /// one of them. It is still derived from the tool: above the feed or
 /// below the plunge rate fails, and so does such a feed on a level
@@ -693,7 +693,7 @@ fn only_codes_dreamcarve_emits_are_accepted() {
         ("G90.1", "G90.1"),
         ("G41", "G41"),
         ("G43", "G43"),
-        // A canned cycle with canned cycles off (#154).
+        // A canned cycle with canned cycles off.
         ("G81", "G81"),
         ("M8", "M8"),
     ] {
@@ -712,11 +712,11 @@ fn only_codes_dreamcarve_emits_are_accepted() {
     }
 }
 
-/// #154: the LinuxCNC and Mach3 headers cancel cutter compensation
-/// (`G40`), tool length offset (`G49`) and any canned cycle (`G80`),
-/// and select incremental arc centres (`G91.1`). Each only sets modal
-/// state, to what DreamCarve already assumes, so they pass with canned
-/// cycles off.
+/// The LinuxCNC and Mach3 headers cancel cutter compensation (`G40`),
+/// tool length offset (`G49`) and any canned cycle (`G80`), and select
+/// incremental arc centres (`G91.1`). Each only sets modal state, to
+/// what DreamCarve already assumes, so they pass with canned cycles
+/// off.
 #[test]
 fn header_cancel_codes_are_accepted() {
     for text in [
@@ -771,7 +771,7 @@ fn g50_g69_accepted() {
             );
         }
     }
-    // #316: grblHAL v4's header has `G50` and no `G69`; grblHAL has no
+    // grblHAL v4's header has `G50` and no `G69`; grblHAL has no
     // rotation.
     let grblhal_v4 = post("grblhal", 4);
     let ok = check_text_on(
@@ -807,7 +807,7 @@ fn g50_g69_accepted() {
     }
 }
 
-/// #312: on a definition whose header writes them, `G50` and `G69` are
+/// On a definition whose header writes them, `G50` and `G69` are
 /// accepted only as `emit` writes them: alone on a line (a line number
 /// aside), in the header or in the setup after a stop. With a value
 /// word, `G50` is another command on some dialects (it would pass a
@@ -1021,9 +1021,9 @@ fn check_manual(text: &str) -> Result<(), ExportError> {
     check_text_as(text, SpindleControl::Manual)
 }
 
-/// S4 (manual), #34: a tool's first cut must follow an `M0` issued at
-/// safe Z after the last cut, and the program must pause again at safe
-/// Z after its last cut. Safe Z is machine Z5 in the fixture.
+/// S4 (manual): a tool's first cut must follow an `M0` issued at safe
+/// Z after the last cut, and the program must pause again at safe Z
+/// after its last cut. Safe Z is machine Z5 in the fixture.
 #[test]
 fn manual_cut_without_on_pause_is_rejected() {
     let ok = "G21 G90\nG54\nG0 Z5\nM0 (MSG, Turn the router ON.)\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM0 (MSG, Turn the router OFF.)\n";
@@ -1036,9 +1036,9 @@ fn manual_cut_without_on_pause_is_rejected() {
         "{err:?}"
     );
 
-    // #68: a tool change is not the pause to turn the router on, nor
-    // does a pause before it count: the router needs its own pause
-    // after the `M6`.
+    // A tool change is not the pause to turn the router on, nor does
+    // a pause before it count: the router needs its own pause after
+    // the `M6`.
     let manual_grblhal = |text: &str| {
         let grblhal = grblhal_m6();
         check_text_on(text, grblhal, SpindleControl::Manual)
@@ -1077,7 +1077,7 @@ fn manual_cut_without_on_pause_is_rejected() {
     }
 }
 
-/// S4, #34: the automatic rules stand. The fixture is automatic, a
+/// S4: the automatic rules stand. The fixture is automatic, a
 /// program that starts the spindle and dwells passes, and one that
 /// relies on an `M0` instead of `M3` is rejected.
 #[test]
@@ -1103,7 +1103,7 @@ fn automatic_rules_unchanged() {
     ));
 }
 
-/// S4, #43: the user fits tools and switches the router at a pause, so
+/// S4: the user fits tools and switches the router at a pause, so
 /// every `M0` comes where Z is known to be at or above safe Z (machine
 /// Z5 in the fixture), in both spindle modes.
 #[test]
@@ -1138,9 +1138,9 @@ fn pause_must_be_at_safe_z() {
     .unwrap();
 }
 
-/// S4, #43: Z is not known after a pause, because the user may have
-/// fitted a tool and set Z zero. The spindle starts, and the router-on
-/// pause comes, only after a retract to safe Z.
+/// S4: Z is not known after a pause, because the user may have fitted
+/// a tool and set Z zero. The spindle starts, and the router-on pause
+/// comes, only after a retract to safe Z.
 #[test]
 fn spindle_start_needs_a_retract_after_a_pause() {
     let no_lift = "G21 G90\nG54\nG0 Z5\nM5\nM0\nG21 G90 G54 M3 S18000\nG4 P3\nG0 Z5\nM5\n";
@@ -1162,7 +1162,7 @@ fn spindle_start_needs_a_retract_after_a_pause() {
     check_manual(manual_lifted).unwrap();
 }
 
-/// S2, S4, #68: Z is unknown after a pause, because the user may have
+/// S2, S4: Z is unknown after a pause, because the user may have
 /// jogged or set Z zero, so an XY rapid needs a move to safe Z first.
 /// This is the same "Z unknown" state the pause and spindle-start
 /// checks use.
@@ -1187,8 +1187,8 @@ fn xy_rapid_after_pause_needs_a_retract() {
     }
 }
 
-/// #68, #57: the same holds after an `M6` tool change, where the user
-/// sets Z zero with the new bit.
+/// The same holds after an `M6` tool change, where the user sets Z
+/// zero with the new bit.
 #[test]
 fn xy_rapid_after_m6_needs_a_retract() {
     let check = |text: &str| {
@@ -1212,10 +1212,9 @@ fn xy_rapid_after_m6_needs_a_retract() {
     check(lifted).unwrap();
 }
 
-/// S5, #55: the controller is in a known state before the program
-/// moves: units, work coordinates, and absolute distance mode. A
-/// controller left in `G91` by an earlier job reads every coordinate as
-/// an offset.
+/// S5: the controller is in a known state before the program moves:
+/// units, work coordinates, and absolute distance mode. A controller
+/// left in `G91` by an earlier job reads every coordinate as an offset.
 #[test]
 fn absolute_mode_is_required_before_motion() {
     let err = check_text("G21\nG54\nG0 Z5\n").unwrap_err();
@@ -1231,10 +1230,10 @@ fn absolute_mode_is_required_before_motion() {
     check_text("G21 G90\nG54\nG0 Z5\n").unwrap();
 }
 
-/// S5, #55: at a pause the user may leave the controller in another
-/// state (`G91` to jog, `G20`, another work coordinate system), so
-/// units, work coordinates, and `G90` are set again after every pause
-/// before the program moves.
+/// S5: at a pause the user may leave the controller in another state
+/// (`G91` to jog, `G20`, another work coordinate system), so units,
+/// work coordinates, and `G90` are set again after every pause before
+/// the program moves.
 #[test]
 fn motion_after_a_pause_needs_setup_again() {
     let ok = "G21 G90\nG54\nG0 Z5\nM0\nG21\nG54\nG90\nG0 Z5\n";
@@ -1257,7 +1256,7 @@ fn motion_after_a_pause_needs_setup_again() {
     }
 }
 
-/// #55: the same rule holds for a spindle start after a pause.
+/// The same rule holds for a spindle start after a pause.
 #[test]
 fn spindle_start_after_a_pause_needs_setup_again() {
     let text = "G21 G90\nG54\nG0 Z5\nM0\nG0 Z5\nM3 S18000\nG4 P3\nG0 Z5\nM5\n";
@@ -1277,10 +1276,10 @@ fn spindle_start_after_a_pause_needs_setup_again() {
     check_text(text).unwrap();
 }
 
-/// #57: grblHAL's `M6` stops the program like `M0`, and the user fits
-/// the bit and sets Z zero there. So it must come at safe Z, Z is
-/// unknown after it, and the setup is written again before the program
-/// moves or starts the spindle.
+/// grblHAL's `M6` stops the program like `M0`, and the user fits the
+/// bit and sets Z zero there. So it must come at safe Z, Z is unknown
+/// after it, and the setup is written again before the program moves
+/// or starts the spindle.
 #[test]
 fn m6_counts_as_a_pause() {
     let check = |text: &str| {
@@ -1335,10 +1334,10 @@ fn m6_counts_as_a_pause() {
     );
 }
 
-/// #120: a tool's set `number` is its `T` word, so `M61 Q<n>` and
-/// `T<n> M6` carry any number, not only a place in the tool list. The
-/// `M6` and `M61` checks are the same for them: accepted with `"m6"`,
-/// `M6` still a pause that must be at safe Z, both refused in
+/// A tool's set `number` is its `T` word, so `M61 Q<n>` and `T<n> M6`
+/// carry any number, not only a place in the tool list. The `M6` and
+/// `M61` checks are the same for them: accepted with `"m6"`, `M6`
+/// still a pause that must be at safe Z, both refused in
 /// `"separate_programs"` mode.
 #[test]
 fn tool_change_checks_hold_for_explicit_tool_numbers() {
@@ -1361,8 +1360,8 @@ fn tool_change_checks_hold_for_explicit_tool_numbers() {
     }
 }
 
-/// #95: with `"separate_programs"`, the bundled default, each program
-/// has one tool, so `M6` and `M61` are refused even on grblHAL.
+/// With `"separate_programs"`, the bundled default, each program has
+/// one tool, so `M6` and `M61` are refused even on grblHAL.
 #[test]
 fn tool_change_words_need_m6_mode() {
     let grblhal = bundled_grblhal();
@@ -1388,7 +1387,7 @@ fn bundled_grblhal() -> PostProcessor {
 }
 
 /// The bundled grblHAL definition with tool-change mode `"m6"`: the
-/// one program with `M6` tool changes (#95).
+/// one program with `M6` tool changes.
 fn grblhal_m6() -> PostProcessor {
     let mut grblhal = bundled_grblhal();
     grblhal.tool_change.mode = ToolChangeMode::M6;
@@ -1569,9 +1568,9 @@ fn drill_rapid_into_uncut_fails() {
 
 /// Outside a Drill, S15's rapids are S2's: the same rapids in a
 /// Profile fail. The rapid from safe Z down to 1 mm above the stock
-/// (line 7) is S2's rapid down to an entry (#214) and passes; the
-/// retract to it (line 9) does not start at safe Z, and fails.
-/// (changed in #214: line 7 failed.)
+/// (line 7) is S2's rapid down to an entry and passes; the retract
+/// to it (line 9) does not start at safe Z, and fails. (changed in
+/// #214: line 7 failed.)
 #[test]
 fn drill_rapid_below_safe_z_on_profile_still_fails() {
     let (_, op, _) = fixture();
@@ -1644,8 +1643,8 @@ fn arc_as_written_passes() {
     check_against(&text, &line_then_arc()).unwrap();
 }
 
-/// S6, #60: G2 and G3 have the same radius check, so only S6 sees an
-/// arc that runs the other way round.
+/// S6: G2 and G3 have the same radius check, so only S6 sees an arc
+/// that runs the other way round.
 #[test]
 fn reversed_arc_fails_reproduction() {
     let text = line_then_arc_text("G2 X20 Y10 I0 J10\n");
@@ -1653,7 +1652,7 @@ fn reversed_arc_fails_reproduction() {
     assert!(is_mismatch_at(&result, 3), "{result:?}");
 }
 
-/// S6, #60: the same end points about a centre on the other side of the
+/// S6: the same end points about a centre on the other side of the
 /// chord.
 #[test]
 fn wrong_arc_centre_fails() {
@@ -1662,8 +1661,8 @@ fn wrong_arc_centre_fails() {
     assert!(is_mismatch_at(&result, 3), "{result:?}");
 }
 
-/// S6, #60: a move between two toolpath points that the toolpath does
-/// not have.
+/// S6: a move between two toolpath points that the toolpath does not
+/// have.
 #[test]
 fn extra_move_between_points_fails() {
     let text =
@@ -1698,12 +1697,12 @@ fn program_of(body: &str) -> String {
     format!("G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\n{body}M5\n")
 }
 
-/// S13 O7, S6 (#254): the post-processor preserves order, so a program
-/// whose shapes are reordered does not reproduce the toolpath. The two
+/// S13 O7, S6: the post-processor preserves order, so a program whose
+/// shapes are reordered does not reproduce the toolpath. The two
 /// shapes of one operation, cut at Y 50 then Y 70, pass as written
-/// (and as the emitter writes them); with the two blocks swapped,
-/// each intact with its own rapids and retract, the program fails
-/// with `MotionMismatch` naming the operation, at the first move.
+/// (and as the emitter writes them); with the two blocks swapped, each
+/// intact with its own rapids and retract, the program fails with
+/// `MotionMismatch` naming the operation, at the first move.
 #[test]
 fn reordered_shapes_fail_s6() {
     let (project, op, tool) = fixture();
@@ -1724,10 +1723,10 @@ fn reordered_shapes_fail_s6() {
     );
 }
 
-/// S13 O7, S6 (#254): two operations' sections swapped. Each section
-/// is one shape block, so both are the same length and each
-/// operation's lines hold the other's moves; the first operation
-/// checked, `o1`, fails with `MotionMismatch`. In order, it passes.
+/// S13 O7, S6: two operations' sections swapped. Each section is one
+/// shape block, so both are the same length and each operation's
+/// lines hold the other's moves; the first operation checked, `o1`,
+/// fails with `MotionMismatch`. In order, it passes.
 #[test]
 fn reordered_operations_fail_s6() {
     let (project, first, tool) = fixture();
@@ -1807,7 +1806,7 @@ fn flattened(n: u32, ccw: bool) -> String {
     text
 }
 
-/// S6, #60: an arc written as short straight moves, as with
+/// S6: an arc written as short straight moves, as with
 /// `arc_interpolation: false` or when the controller would reject the
 /// rounded arc, still reproduces the toolpath. The same end point
 /// reached the long way round does not.
@@ -1845,8 +1844,8 @@ fn flattened_arc_passes() {
     }
 }
 
-/// Mutation guard, #60: an emitter that writes every arc the other way
-/// round fails its own safety pass. The mutant is the emitter given a
+/// Mutation guard: an emitter that writes every arc the other way round
+/// fails its own safety pass. The mutant is the emitter given a
 /// definition with its two arc commands exchanged: the pass reads `G2`
 /// and `G3` as the controller does, whatever the definition calls them.
 #[test]
@@ -2043,7 +2042,7 @@ fn arc_bowing_off_a_long_straight_move_fails_s12() {
     );
 }
 
-/// #226: an arc within the tolerance of every chord it replaces, its
+/// An arc within the tolerance of every chord it replaces, its
 /// sagitta over each at most the tolerance plus one unit in the last
 /// place, passes: 18 chords of a 10 mm quarter circle bow 0.0095 mm,
 /// 32 chords 0.003 mm; as one arc and as two meeting at a vertex.
@@ -2060,12 +2059,12 @@ fn arc_within_tolerance_of_every_chord_passes() {
     }
 }
 
-/// #262: a move that spans the end of one piece and the start of the
-/// next is held to the part of both pieces between its ends. A 20°
-/// chord from 40° to 60° under two `G3` pieces meeting at 50° bows
-/// 0.15 mm off its arc, so S12 refuses the chain; with that stretch in
-/// 2° chords too it passes. (Each end of a move is placed on each
-/// piece; the fix for #262 must not stop measuring across the joint.)
+/// A move that spans the end of one piece and the start of the next is
+/// held to the part of both pieces between its ends. A 20° chord from
+/// 40° to 60° under two `G3` pieces meeting at 50° bows 0.15 mm off
+/// its arc, so S12 refuses the chain; with that stretch in 2° chords
+/// too it passes. (Each end of a move is placed on each piece; the fix
+/// for #262 must not stop measuring across the joint.)
 #[test]
 fn chord_across_a_piece_end_is_measured_on_both_pieces() {
     let on_circle = |deg: f64| {
@@ -2245,8 +2244,8 @@ fn canned_cycle_expansion_matches_drill_toolpath() {
     );
 }
 
-/// #153: the Drill toolpath [`dc_cam::generate_drill`] makes for a
-/// 2 mm peck, 3 mm deep, with the retract plane 1 mm above the 6 mm
+/// The Drill toolpath [`dc_cam::generate_drill`] makes for a 2 mm
+/// peck, 3 mm deep, with the retract plane 1 mm above the 6 mm
 /// stock, at (50, 50): pecks from `R` (Z 7) to 5, then to 3.
 fn generated_peck(retract: dc_project::PeckRetract) -> Toolpath {
     let (mut project, _, _) = fixture();
@@ -2410,12 +2409,12 @@ fn canned_cycles_from_clearance_match_the_toolpath() {
     );
 }
 
-/// #305: S6 joins toolpath rapids along one vertical line only where
-/// they lie on one rapid of the controller's in the same direction,
-/// and only for a Drill written as canned cycles. A toolpath that goes
-/// up past safe Z and then back down is not the cycle's one rapid up;
-/// and a plain program with one `G0 Z` where the toolpath has two
-/// still fails, as before, while the program that writes both passes.
+/// S6 joins toolpath rapids along one vertical line only where they
+/// lie on one rapid of the controller's in the same direction, and
+/// only for a Drill written as canned cycles. A toolpath that goes up
+/// past safe Z and then back down is not the cycle's one rapid up; and
+/// a plain program with one `G0 Z` where the toolpath has two still
+/// fails, as before, while the program that writes both passes.
 #[test]
 fn vertical_rapids_join_only_along_a_cycle_rapid() {
     let post = canned(Some(0.5));
@@ -2560,7 +2559,7 @@ fn canned_cycle_rapid_into_uncut_fails() {
     );
 }
 
-// S9 and S10 (slice 16; `docs/specs/phase-2/design.md`, "Test plan").
+// S9 and S10 (`docs/specs/phase-2/design.md`, "Test plan").
 
 /// The 1-based line of `text` with a word that starts `word`.
 fn line_with(text: &str, word: &str) -> usize {
@@ -2647,11 +2646,11 @@ fn vertical_plunge_at_cutting_feed_fails_s10() {
     );
 }
 
-/// #325: S10 allows nothing above the plunge rate. A short ramp, 0.3 mm
-/// down over 0.4 mm across (sin 0.6), at F501.5 falls at 300.9 mm/min
-/// against the fixture's 300: refused, though a unit off each written
-/// number would bring it under. Just under the plunge rate, at F499.999,
-/// it passes, and so does line 7, a straight plunge at exactly F300.
+/// S10 allows nothing above the plunge rate. A short ramp, 0.3 mm down
+/// over 0.4 mm across (sin 0.6), at F501.5 falls at 300.9 mm/min against
+/// the fixture's 300: refused, though a unit off each written number
+/// would bring it under. Just under the plunge rate, at F499.999, it
+/// passes, and so does line 7, a straight plunge at exactly F300.
 #[test]
 fn s10_refuses_vertical_rate_above_plunge() {
     let ramp = |f: &str| {
@@ -2687,9 +2686,9 @@ fn tab_lap(down_feed: f64) -> Toolpath {
     }
 }
 
-/// S10 holds on every descending move, a tab's down slope included
-/// (#157): one at the cutting feed that falls faster than the plunge
-/// rate fails; scaled, it passes. The up slope is not a descent.
+/// S10 holds on every descending move, a tab's down slope included:
+/// one at the cutting feed that falls faster than the plunge rate
+/// fails; scaled, it passes. The up slope is not a descent.
 #[test]
 fn tab_slope_steeper_than_plunge_fails_s10() {
     let (project, op, tool) = partless_fixture();
@@ -2704,8 +2703,8 @@ fn tab_slope_steeper_than_plunge_fails_s10() {
     );
 }
 
-/// #157: the sample Profile with smooth tabs, generated, exports: each
-/// down slope (2 mm over 3 mm) runs at its plunge-limited feed.
+/// The sample Profile with smooth tabs, generated, exports: each down
+/// slope (2 mm over 3 mm) runs at its plunge-limited feed.
 #[test]
 fn smooth_tab_profile_passes_s10() {
     let mut project = sample_project();
@@ -2855,10 +2854,10 @@ fn pocket_cut_outside_region_fails_s9() {
     );
 }
 
-/// S9 on a raster Pocket round the 20 mm circle island (#202): with a
-/// wall pass the links between line ends against the island follow
-/// its tool-centre ring, and the program passes, with stock to leave
-/// too, at angles that meet the island's curve everywhere.
+/// S9 on a raster Pocket round the 20 mm circle island: with a wall
+/// pass the links between line ends against the island follow its
+/// tool-centre ring, and the program passes, with stock to leave too,
+/// at angles that meet the island's curve everywhere.
 #[test]
 fn raster_edge_links_round_an_island_pass_s9() {
     for stock_to_leave_mm in [0.0, 0.5] {
@@ -2880,11 +2879,11 @@ fn raster_edge_links_round_an_island_pass_s9() {
     }
 }
 
-/// S9 on an offset Pocket at step-over 1.0 (#267): the corner clean-up
-/// rings are cut from inside the laps of the rings that leave them,
-/// out from a corner and back, and the program passes, on the rect with
-/// and without its island, with stock to leave too, the wall pass last
-/// or first, plunging or by helix.
+/// S9 on an offset Pocket at step-over 1.0: the corner clean-up rings
+/// are cut from inside the laps of the rings that leave them, out from
+/// a corner and back, and the program passes, on the rect with and
+/// without its island, with stock to leave too, the wall pass last or
+/// first, plunging or by helix.
 #[test]
 fn offset_corner_cleanups_pass_s9() {
     for stock_to_leave_mm in [0.0, 0.5] {
@@ -2913,12 +2912,12 @@ fn offset_corner_cleanups_pass_s9() {
     }
 }
 
-/// S9 on a raster Pocket whose wall curves inward (#218): an L, whose
-/// reflex corner rounds the tool-centre region by the tool radius, and
-/// a rect with a half-disc bay of radius 15 pushed in from its top.
-/// With a wall pass the links between line ends against those arcs
-/// follow the tool-centre ring, and the program passes, with a
-/// stock to leave too, at several angles.
+/// S9 on a raster Pocket whose wall curves inward: an L, whose reflex
+/// corner rounds the tool-centre region by the tool radius, and a rect
+/// with a half-disc bay of radius 15 pushed in from its top. With a
+/// wall pass the links between line ends against those arcs follow the
+/// tool-centre ring, and the program passes, with a stock to leave
+/// too, at several angles.
 #[test]
 fn raster_edge_links_along_a_concave_wall_pass_s9() {
     use dc_geometry::{Polyline, Vertex};
@@ -3001,8 +3000,8 @@ fn check_material_text(text: &str, project: &Project, op: &Operation) -> Result<
     material::check(&blocks, &post, &transform, tolerances, &span)
 }
 
-/// S17 for a V-Carve (#404, exact since #408; `crate::material`'s
-/// module docs), on a hand-written program for a V-Carve of the sample
+/// S17 for a V-Carve (exact since #408; `crate::material`'s module
+/// docs), on a hand-written program for a V-Carve of the sample
 /// rectangle (X 10 to 60, Y 10 to 40, stock-top origin) with the 90°
 /// 6.35 mm V-bit (cone 3.175 mm): a cut 2 mm deep well inside passes,
 /// after a plunge from above; a cut whose tip leaves the rectangle
@@ -3040,10 +3039,9 @@ fn hand_written_v_carve_off_its_region_fails_s9() {
     );
 }
 
-/// The sample project with a D-shaped hole in its rectangle (#686): an
-/// arc of `radius_mm` about (35, 25), 270° round through its bottom
-/// (bulge tan 67.5°, past 1, a half turn), closed by a chord across its
-/// top.
+/// The sample project with a D-shaped hole in its rectangle: an arc of
+/// `radius_mm` about (35, 25), 270° round through its bottom (bulge tan
+/// 67.5°, past 1, a half turn), closed by a chord across its top.
 fn sample_project_with_d_hole(radius_mm: f64) -> Project {
     use dc_geometry::{Polyline, Vertex};
     let mut project = sample_project();
@@ -3065,12 +3063,12 @@ fn sample_project_with_d_hole(radius_mm: f64) -> Project {
     project
 }
 
-/// #686: S17 refuses a level V-Carve cut across a wall arc that sweeps
-/// past a half turn. With a D hole of radius 3, a cut 0.2 mm deep
-/// along Y 24.5 from X 20 to X 40 has its ends and middle in the
-/// material and crosses the hole through the arc twice, so it is off
-/// its region; it used to read about 2 mm from the arc and pass. The
-/// same cut along Y 21.5, 0.5 mm below the arc's bottom, still passes.
+/// S17 refuses a level V-Carve cut across a wall arc that sweeps past
+/// a half turn. With a D hole of radius 3, a cut 0.2 mm deep along Y
+/// 24.5 from X 20 to X 40 has its ends and middle in the material and
+/// crosses the hole through the arc twice, so it is off its region; it
+/// used to read about 2 mm from the arc and pass. The same cut along Y
+/// 21.5, 0.5 mm below the arc's bottom, still passes.
 #[test]
 fn level_v_carve_cut_across_an_arc_past_a_half_turn_fails_s17() {
     let mut project = sample_project_with_d_hole(3.0);
@@ -3088,12 +3086,12 @@ fn level_v_carve_cut_across_an_arc_past_a_half_turn_fails_s17() {
     );
 }
 
-/// #686: S9 refuses a Pocket cut across an island arc that sweeps past
-/// a half turn. With a D island of radius 8 and the 6.35 mm tool, a
-/// cut along Y 24.5 from X 15 to X 55 starts and ends in the pocket
-/// and crosses the island through its arc twice; it used to read over
-/// 6 mm from the island (the arc's ends) and pass. The same cut along
-/// Y 13.5, 3.5 mm below the arc's bottom, still passes.
+/// S9 refuses a Pocket cut across an island arc that sweeps past a
+/// half turn. With a D island of radius 8 and the 6.35 mm tool, a cut
+/// along Y 24.5 from X 15 to X 55 starts and ends in the pocket and
+/// crosses the island through its arc twice; it used to read over 6 mm
+/// from the island (the arc's ends) and pass. The same cut along Y
+/// 13.5, 3.5 mm below the arc's bottom, still passes.
 #[test]
 fn pocket_cut_across_an_island_arc_past_a_half_turn_fails_s9() {
     let project = sample_project_with_d_hole(8.0);
@@ -3148,8 +3146,8 @@ fn relief_pocket(relief: dc_project::CornerRelief) -> Operation {
     })
 }
 
-/// S9's notch rule (slice 12, `crate::material`): with corner relief
-/// on, a Pocket cut may come nearer a wall than the tool radius in a
+/// S9's notch rule (`crate::material`): with corner relief on, a
+/// Pocket cut may come nearer a wall than the tool radius in a
 /// corner's relief zone. At the sample rectangle's corner (10, 10)
 /// with the 6.35 mm tool, the dogbone from the miter point (13.175,
 /// 13.175) to one radius from the corner, (12.245, 12.245), and the
@@ -3246,20 +3244,20 @@ fn arc_into_a_notch_off_its_zone_fails_s9() {
     }
 }
 
-/// The sample project's outside Profile (#177).
+/// The sample project's outside Profile.
 fn sample_profile_op() -> Operation {
     sample_project().operations[0].clone()
 }
 
-/// #337: S9 refuses a straight plunge into a tab below its top. The
-/// sample rectangle (X 10 to 60, Y 10 to 40) cut outside with a placed
-/// 6 mm tab in the middle of its bottom edge, its top 2 mm above the
-/// stock bottom (program Z -4). Plunging to Z -5 on the bit's path
-/// (Y 6.825) at the tab's centre, or 2 mm along from it, is refused at
-/// the plunge; the same plunge to Z -3.5, above the tab, passes, and so
+/// S9 refuses a straight plunge into a tab below its top. The sample
+/// rectangle (X 10 to 60, Y 10 to 40) cut outside with a placed 6 mm
+/// tab in the middle of its bottom edge, its top 2 mm above the stock
+/// bottom (program Z -4). Plunging to Z -5 on the bit's path (Y 6.825)
+/// at the tab's centre, or 2 mm along from it, is refused at the
+/// plunge; the same plunge to Z -3.5, above the tab, passes, and so
 /// does one past the tab's stretch, where a rect tab steps down, and
-/// one far from it. A plunge at the centre of a tab a request places
-/// is refused too.
+/// one far from it. A plunge at the centre of a tab a request places is
+/// refused too.
 #[test]
 fn s9_refuses_a_descent_into_a_tab() {
     let mut project = sample_project();
@@ -3336,16 +3334,16 @@ fn plunge_at(x: f64, y: f64) -> String {
     format!("G21 G90\nG54\nG0 Z5\nX{x} Y{y}\nG1 Z-5 F300\nG0 Z5\n")
 }
 
-/// #353: S9 holds a stock pass off a tab only as far as the tab
-/// material the last pass's lap leaves standing, not the lap's span.
-/// An inside Profile of an 8.5 mm wide slot (X 10 to 18.5, Y 10 to 40)
-/// with a tab on its left wall at Y 25: the lap on the right wall (X
-/// 15.325) cuts the far side of the left lap's kerf down to its floor
-/// (X 12.15 on), so the stock cutter on the left stock path (X
-/// 14.175) clears the tab the left lap leaves `4.175 − √(r² −
-/// 1.025²) + √(r² − 2.025²)` = 3.62 mm along from the tab. A plunge
-/// there 3.75 mm along either way, inside the lap's span less a tenth
-/// of the radius (3.86 mm), cuts none of it and passes.
+/// S9 holds a stock pass off a tab only as far as the tab material the
+/// last pass's lap leaves standing, not the lap's span. An inside
+/// Profile of an 8.5 mm wide slot (X 10 to 18.5, Y 10 to 40) with a
+/// tab on its left wall at Y 25: the lap on the right wall (X 15.325)
+/// cuts the far side of the left lap's kerf down to its floor (X 12.15
+/// on), so the stock cutter on the left stock path (X 14.175) clears
+/// the tab the left lap leaves `4.175 − √(r² − 1.025²) + √(r² −
+/// 2.025²)` = 3.62 mm along from the tab. A plunge there 3.75 mm along
+/// either way, inside the lap's span less a tenth of the radius (3.86
+/// mm), cuts none of it and passes.
 #[test]
 fn stock_to_leave_pass_leaves_a_tab_at_its_stretch_end() {
     let project = last_pass_tab_project(dc_project::Side::Inside, 8.5, (0.0, 15.0));
@@ -3354,11 +3352,11 @@ fn stock_to_leave_pass_leaves_a_tab_at_its_stretch_end() {
     check_material_text(&plunge_at(14.175, 21.25), &project, &op).unwrap();
 }
 
-/// #353: a stock pass that comes down onto the tab material the
-/// lap leaves still fails S9. In the slot of
+/// A stock pass that comes down onto the tab material the lap leaves still
+/// fails S9. In the slot of
 /// [`stock_to_leave_pass_leaves_a_tab_at_its_stretch_end`], a plunge 3.3 or
-/// 3.55 mm along the left stock path from the tab, short of the
-/// 3.62 mm where its cutter clears the tab, or at the tab, is refused.
+/// 3.55 mm along the left stock path from the tab, short of the 3.62 mm
+/// where its cutter clears the tab, or at the tab, is refused.
 #[test]
 fn stock_to_leave_pass_dropping_onto_a_tab_fails_s9() {
     let project = last_pass_tab_project(dc_project::Side::Inside, 8.5, (0.0, 15.0));
@@ -3372,15 +3370,14 @@ fn stock_to_leave_pass_dropping_onto_a_tab_fails_s9() {
     }
 }
 
-/// #353: on a straight wall the lap's kerf keeps its far side, where
-/// the tab stands the lap's whole span (4.175 mm) either side of the
-/// tab, and the stock cutter reaches it until it is
-/// `√(2ar − a²)` = 2.31 mm farther along: 6.49 mm in all, the last
-/// half millimetre of it the tab's tip, thinner than the slack. The
-/// sample rectangle cut outside with a tab on its bottom edge at X 35:
-/// a plunge on the stock path (Y 5.825) 5 or 5.8 mm along, past
-/// the lap's span less a tenth of the radius (3.86 mm), is refused;
-/// one 6.7 mm along passes.
+/// On a straight wall the lap's kerf keeps its far side, where the tab
+/// stands the lap's whole span (4.175 mm) either side of the tab, and
+/// the stock cutter reaches it until it is `√(2ar − a²)` = 2.31 mm
+/// farther along: 6.49 mm in all, the last half millimetre of it the
+/// tab's tip, thinner than the slack. The sample rectangle cut outside
+/// with a tab on its bottom edge at X 35: a plunge on the stock path
+/// (Y 5.825) 5 or 5.8 mm along, past the lap's span less a tenth of
+/// the radius (3.86 mm), is refused; one 6.7 mm along passes.
 #[test]
 fn stock_to_leave_pass_past_the_span_onto_a_tab_fails_s9() {
     let project = last_pass_tab_project(dc_project::Side::Outside, 50.0, (25.0, 0.0));
@@ -3398,10 +3395,10 @@ fn stock_to_leave_pass_past_the_span_onto_a_tab_fails_s9() {
     }
 }
 
-/// #352: S9 refuses a ramp into stock no earlier cut cleared. The
-/// sample rectangle (X 10 to 60, Y 10 to 40) cut outside, no tabs: the
-/// first pass ramps from the stock top out 18.8 mm into the waste from
-/// the right edge's tool-centre path (X 63.175) and back, laps, and the
+/// S9 refuses a ramp into stock no earlier cut cleared. The sample
+/// rectangle (X 10 to 60, Y 10 to 40) cut outside, no tabs: the first
+/// pass ramps from the stock top out 18.8 mm into the waste from the
+/// right edge's tool-centre path (X 63.175) and back, laps, and the
 /// second ramps from its floor along the same line, which passes. The
 /// second pass ramping from the same point 19 mm along a line no cut
 /// ran on, into full-height stock, is refused at that line; so is one
@@ -3441,12 +3438,11 @@ fn sample_profile_op_of(project: &Project) -> Operation {
     project.operations[0].clone()
 }
 
-/// S9 for Profile (#177): the sample's outside Profile of the
-/// rectangle X 10 to 60, Y 10 to 40 with the 6.35 mm tool. A ramp
-/// that zigzags out into the waste and back to the tool-centre path
-/// (X 6.825), then a lap along it, passes; the same ramp swung into
-/// the part, its tool centre at X 12, fails with `OffMaterial` at the
-/// ramp's line.
+/// S9 for Profile: the sample's outside Profile of the rectangle X 10
+/// to 60, Y 10 to 40 with the 6.35 mm tool. A ramp that zigzags out
+/// into the waste and back to the tool-centre path (X 6.825), then a
+/// lap along it, passes; the same ramp swung into the part, its tool
+/// centre at X 12, fails with `OffMaterial` at the ramp's line.
 #[test]
 fn profile_ramp_into_part_fails_s9() {
     let project = sample_project();
@@ -3490,7 +3486,7 @@ fn two_part_profile(x: f64) -> (Project, Operation) {
     (project, op)
 }
 
-/// S9 for Profile (#177): a lead-in arc onto the rectangle's right-hand
+/// S9 for Profile: a lead-in arc onto the rectangle's right-hand
 /// tool-centre path (X 63.175) that stays in the 6.825 mm gap before
 /// the second part passes; one that swings out to X 75.675, into the
 /// second part, fails with `OffMaterial` at the arc's line.
@@ -3513,12 +3509,12 @@ fn profile_lead_arc_into_neighbouring_part_fails_s9() {
     );
 }
 
-/// S9's lap rule (#177): with the second part 4 mm from the rectangle,
-/// closer than the 6.35 mm bit (`toolpaths_overlap`), the generated
-/// Profile still exports: each lap runs at the radius from its own
-/// outline, and the gouge into the neighbour is the one dc-cam warns
-/// about. A cut off the lap, to a tool centre in the middle of the
-/// gap, 2 mm from both parts, still fails.
+/// S9's lap rule: with the second part 4 mm from the rectangle, closer
+/// than the 6.35 mm bit (`toolpaths_overlap`), the generated Profile
+/// still exports: each lap runs at the radius from its own outline,
+/// and the gouge into the neighbour is the one dc-cam warns about. A
+/// cut off the lap, to a tool centre in the middle of the gap, 2 mm
+/// from both parts, still fails.
 #[test]
 fn lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails() {
     let (project, op) = two_part_profile(64.0);
@@ -3548,8 +3544,8 @@ fn lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails() {
     );
 }
 
-/// S9's notch rule on an outside Profile (#177): the generated dogbone
-/// in an L part's inside corner passes; the same program checked as a
+/// S9's notch rule on an outside Profile: the generated dogbone in an
+/// L part's inside corner passes; the same program checked as a
 /// Profile without relief fails at the notch.
 #[test]
 fn outside_notch_passes_s9_only_with_relief() {
@@ -3595,15 +3591,15 @@ fn outside_notch_passes_s9_only_with_relief() {
     assert!(matches!(err, ExportError::OffMaterial { .. }), "{err:?}");
 }
 
-/// #231: the sample's outside Profile with T-bones of a 60 × 40 mm
-/// frame at (90, 60) with a 30 × 20 mm hole at (105, 70). The T-bone
-/// in the hole's corner (105, 70) runs from the miter point
-/// (108.175, 73.175) to (108.175, 70) on the hole's long wall. Its
-/// return leg, written from a start the rounding moved 0.0005 mm into
-/// the part, passes; one starting 0.1 mm inside the part fails: the
-/// slack S9 judges the side with does not open the part. The tool
-/// gets to each start by rapids, which S9 does not hold to the
-/// material, so only the return leg is judged.
+/// The sample's outside Profile with T-bones of a 60 × 40 mm frame at
+/// (90, 60) with a 30 × 20 mm hole at (105, 70). The T-bone in the
+/// hole's corner (105, 70) runs from the miter point (108.175,
+/// 73.175) to (108.175, 70) on the hole's long wall. Its return leg,
+/// written from a start the rounding moved 0.0005 mm into the part,
+/// passes; one starting 0.1 mm inside the part fails: the slack S9
+/// judges the side with does not open the part. The tool gets to each
+/// start by rapids, which S9 does not hold to the material, so only
+/// the return leg is judged.
 #[test]
 fn outside_cut_starting_inside_the_part_is_rejected() {
     let mut project = sample_project();
@@ -3633,9 +3629,9 @@ fn outside_cut_starting_inside_the_part_is_rejected() {
     );
 }
 
-/// S9 for an inside Profile (#177): the tool centre stays inside the
-/// hole, a radius from its walls, as a Pocket's; a cut that crosses
-/// out of the hole fails.
+/// S9 for an inside Profile: the tool centre stays inside the hole,
+/// a radius from its walls, as a Pocket's; a cut that crosses out of
+/// the hole fails.
 #[test]
 fn inside_profile_cut_outside_hole_fails_s9() {
     let mut project = sample_project();
@@ -3653,7 +3649,7 @@ fn inside_profile_cut_outside_hole_fails_s9() {
 }
 
 /// S9's lap rule covers only what `toolpaths_overlap` warns about,
-/// shapes in different regions (#192). An inside Profile of the sample
+/// shapes in different regions. An inside Profile of the sample
 /// rectangle (X 10 to 60, Y 10 to 40) with a round island at (35, 25)
 /// leaves a band of 15 mm less the island's radius above and below it.
 /// With a radius-5 island (a 10 mm band) a lap round the island at the
@@ -3694,14 +3690,14 @@ fn inside_profile_lap_in_a_band_narrower_than_the_tool_fails_s9() {
     );
 }
 
-/// #199: S9 refuses what `generate_profile` refuses. An On line
-/// Profile of the sample rectangle (X 10 to 60, Y 10 to 40) with a
-/// round hole at (35, 25): a lap along the hole's line passes when the
-/// ring around it is 10 mm wide, and fails at its first arc when it is
-/// 5 mm (narrower than the 6.35 mm bit, wider than its radius) or
-/// 2 mm, although it runs on a target line: the two lines' cuts would
-/// cut through the ring. A cut along the left edge, 15 mm from the
-/// 10 mm hole, still passes.
+/// S9 refuses what `generate_profile` refuses. An On line Profile of
+/// the sample rectangle (X 10 to 60, Y 10 to 40) with a round hole at
+/// (35, 25): a lap along the hole's line passes when the ring around
+/// it is 10 mm wide, and fails at its first arc when it is 5 mm
+/// (narrower than the 6.35 mm bit, wider than its radius) or 2 mm,
+/// although it runs on a target line: the two lines' cuts would cut
+/// through the ring. A cut along the left edge, 15 mm from the 10 mm
+/// hole, still passes.
 #[test]
 fn on_line_profile_in_a_ring_narrower_than_the_tool_fails_s9() {
     let ring = |hole_mm: f64| {
@@ -3740,9 +3736,9 @@ fn on_line_profile_in_a_ring_narrower_than_the_tool_fails_s9() {
     check_material_text(left_edge, &narrow, &op).unwrap();
 }
 
-/// #175: an On line Profile cuts its targets' open paths, so S9 holds
-/// it to them as an Engrave: the generated program of an open line
-/// (with the sample's tabs and a ramp along the line) passes, and a
+/// An On line Profile cuts its targets' open paths, so S9 holds it to
+/// them as an Engrave: the generated program of an open line (with
+/// the sample's tabs and a ramp along the line) passes, and a
 /// hand-written cut beside the line fails.
 #[test]
 fn on_line_profile_of_an_open_path_passes_s9() {
@@ -3778,17 +3774,17 @@ fn on_line_profile_of_an_open_path_passes_s9() {
     );
 }
 
-/// #207: a Left or Right Profile's cuts stay on the open path offset
-/// by the tool radius to the chosen side, and keep the radius from
-/// every line of the operation and from the strip one radius wide each
-/// line keeps on its other side. The sample with an open line from
-/// (10, 60) to (70, 60) cut Left, with its tabs and a ramp: the
-/// generated program passes, and so does a hand-written cut at Y 63.175
-/// (the 6.35 mm bit's radius to the left of the line). Cuts on the
-/// line, at the radius to its right, half a radius off the offset, or
-/// past the line's end along it fail at their plunge; so does the same
-/// cut when the line is cut Right. (The cut past the end plunges on
-/// the path's end and fails at the move beyond it.)
+/// A Left or Right Profile's cuts stay on the open path offset by the
+/// tool radius to the chosen side, and keep the radius from every line
+/// of the operation and from the strip one radius wide each line keeps
+/// on its other side. The sample with an open line from (10, 60) to
+/// (70, 60) cut Left, with its tabs and a ramp: the generated program
+/// passes, and so does a hand-written cut at Y 63.175 (the 6.35 mm
+/// bit's radius to the left of the line). Cuts on the line, at the
+/// radius to its right, half a radius off the offset, or past the
+/// line's end along it fail at their plunge; so does the same cut when
+/// the line is cut Right. (The cut past the end plunges on the path's
+/// end and fails at the move beyond it.)
 #[test]
 fn left_right_cut_off_its_path_fails_s9() {
     let with_line = |side: dc_project::Side| {
@@ -3847,14 +3843,14 @@ fn left_right_cut_off_its_path_fails_s9() {
 }
 
 /// S9 holds a plunge off a tab on an open path of a Left or Right
-/// Profile (#207), which it did not: a spine was built for a tab on a
-/// closed outline and on an open path cut On line only. The sample
-/// with an open line from (10, 60) to (70, 60), its 6.35 mm bit, and
-/// one tab 6 mm wide whose top is 2 mm above the stock bottom (Z −4)
-/// asked for 30 mm along the line, or at its first vertex. The bit
-/// runs 3.175 mm to the cut side of the line, and the tab is centred
-/// on that path: at (40, 63.175) Left, (40, 56.825) Right. Its
-/// stretch is 6.175 mm either side of the centre.
+/// Profile, which it did not: a spine was built for a tab on a closed
+/// outline and on an open path cut On line only. The sample with an
+/// open line from (10, 60) to (70, 60), its 6.35 mm bit, and one tab
+/// 6 mm wide whose top is 2 mm above the stock bottom (Z −4) asked
+/// for 30 mm along the line, or at its first vertex. The bit runs
+/// 3.175 mm to the cut side of the line, and the tab is centred on
+/// that path: at (40, 63.175) Left, (40, 56.825) Right. Its stretch
+/// is 6.175 mm either side of the centre.
 ///
 /// The generated program passes. A hand-written plunge on the bit's
 /// path passes at the tab's centre down to its top and fails 1 mm
@@ -3932,7 +3928,7 @@ fn left_right_plunge_into_a_tab_on_an_open_path_fails_s9() {
     }
 }
 
-/// #342: S9 holds a Left or Right cut out of the strip a line keeps,
+/// S9 holds a Left or Right cut out of the strip a line keeps,
 /// bounded by the normals through its end vertices, whatever the
 /// offset does there. The sample with a 30° V notch, tip at (50, 50),
 /// down a 20 mm arm and up a 2 mm one, cut Left (inside it): its
@@ -4016,9 +4012,9 @@ fn s9_refuses_a_cut_past_an_open_path_end() {
     .unwrap();
 }
 
-/// #210: S9 refuses what `generate_profile` refuses. An On line
-/// Profile of the sample rectangle (X 10 to 60, Y 10 to 40) with an
-/// open line 2 mm above its bottom edge: the generator refuses it
+/// S9 refuses what `generate_profile` refuses. An On line Profile of
+/// the sample rectangle (X 10 to 60, Y 10 to 40) with an open line 2
+/// mm above its bottom edge: the generator refuses it
 /// (`BandNarrowerThanTool`), and a hand-written cut along the line
 /// fails at its plunge, although it is on a target line: with the
 /// outline's cut it would cut through the wall between them. The same
@@ -4111,16 +4107,16 @@ fn on_line_open_path_cutting_through_a_wall_fails_s9() {
     }
 }
 
-/// #221: S9 refuses what `generate_profile` refuses for a line closer
-/// than the bit to itself. On line, with the sample rectangle (X 10 to
-/// 60, Y 10 to 40, drawn at the origin): an open U in the part with
-/// legs 2 mm apart is refused by the generator, and a hand-written cut
-/// along it fails at its plunge, although it is on a target line: the
-/// cuts of the two legs would cut through the part between them. Legs
-/// 8 mm apart pass. An outline with a 3 mm neck fails the same way;
-/// one with a 3 mm notch passes, as the generator cuts it, because the
-/// notch between its stretches is waste. The generated programs of
-/// the wide U, a 60° V and the notched outline pass.
+/// S9 refuses what `generate_profile` refuses for a line closer than
+/// the bit to itself. On line, with the sample rectangle (X 10 to 60,
+/// Y 10 to 40, drawn at the origin): an open U in the part with legs 2
+/// mm apart is refused by the generator, and a hand-written cut along
+/// it fails at its plunge, although it is on a target line: the cuts
+/// of the two legs would cut through the part between them. Legs 8 mm
+/// apart pass. An outline with a 3 mm neck fails the same way; one
+/// with a 3 mm notch passes, as the generator cuts it, because the
+/// notch between its stretches is waste. The generated programs of the
+/// wide U, a 60° V and the notched outline pass.
 #[test]
 fn on_line_hairpin_fails_s9() {
     use dc_geometry::{Polyline, Vertex};
@@ -4240,9 +4236,9 @@ fn on_line_hairpin_fails_s9() {
     }
 }
 
-/// #223: S9 refuses what `generate_profile` refuses for a part the bit
-/// removes whole. On line, a 3 mm square part (drawn at (20, 10), so
-/// X 30 to 33, Y 20 to 23) is refused by the generator
+/// S9 refuses what `generate_profile` refuses for a part the bit
+/// removes whole. On line, a 3 mm square part (drawn at (20, 10), so X
+/// 30 to 33, Y 20 to 23) is refused by the generator
 /// (`PartNarrowerThanTool`), and a hand-written cut round it fails at
 /// its plunge, although it is on the part's line. A 7 mm square passes,
 /// hand-written and generated.
@@ -4288,7 +4284,7 @@ fn on_line_part_smaller_than_the_bit_fails_s9() {
     let (large, op) = square(7.0);
     check_material_text(&cut(7.0), &large, &Operation::Profile(op.clone())).unwrap();
     // With arc fitting on, as the sample has it: the square's lap
-    // stays four lines (#229).
+    // stays four lines.
     assert!(large.arc_fit_tolerance_mm.is_some());
     let (toolpath, _) = generate_profile(&large, &op).unwrap();
     emit(
@@ -4317,7 +4313,7 @@ fn emit_profile(edit: impl FnOnce(&mut dc_project::ProfileOp)) -> Result<String,
     .map(|(p, _)| p.text)
 }
 
-/// #337: the sample's Profile starting under a 3 mm tall tab (its cut
+/// The sample's Profile starting under a 3 mm tall tab (its cut
 /// starts nearest (35, 0), mid-way along the bottom edge, where a tab
 /// at 0 mm sits) exports with every entry and both tab shapes: the
 /// passes below the tab top come down onto it, not into it, which
@@ -4352,7 +4348,7 @@ fn start_under_a_tab_passes_s9() {
     }
 }
 
-/// S9 for Profile (#177) on generated programs: the sample's tabbed
+/// S9 for Profile on generated programs: the sample's tabbed
 /// outside Profile, with a ramp, a helix and a lead in and out, and
 /// inside and on the line, all pass the safety pass.
 #[test]
@@ -4597,10 +4593,10 @@ fn left_right_last_pass_passes_s9() {
         matches!(&err, ExportError::OffMaterial { line: 5, .. }),
         "half the stock to leave off: {err:?}"
     );
-    // #339: the last pass's step across the stock to leave, from the
-    // earlier passes' path to its own, level, passes; the same step in
-    // two halves, or falling as it crosses, fails at the move that
-    // starts or falls inside the band.
+    // The last pass's step across the stock to leave, from the earlier
+    // passes' path to its own, level, passes; the same step in two
+    // halves, or falling as it crosses, fails at the move that starts
+    // or falls inside the band.
     let step = |moves: &str| {
         format!("G21 G90\nG54\nG0 Z5\nX10 Y63.675\nG1 Z-1 F300\n{moves}X70 F1000\nG0 Z5\n")
     };
@@ -4617,10 +4613,10 @@ fn left_right_last_pass_passes_s9() {
     }
 }
 
-/// #105: programs cut round placed tabs pass the safety pass (S1–S7,
-/// S9, S10, S12): the sample's tabs placed from its request, with a
-/// fifth, taller and smooth, on the right-hand edge, on each side, with
-/// a plunge and with a ramp, and Inside and Outside with a lead. Every
+/// Programs cut round placed tabs pass the safety pass (S1–S7, S9, S10,
+/// S12): the sample's tabs placed from its request, with a fifth,
+/// taller and smooth, on the right-hand edge, on each side, with a
+/// plunge and with a ramp, and Inside and Outside with a lead. Every
 /// pass below a tab rises over it: the program holds each tab top.
 #[test]
 fn placed_tab_programs_pass_s1_to_s9() {
@@ -4720,9 +4716,8 @@ fn twenty_part_profile() -> (Project, Operation) {
     (project, op)
 }
 
-/// #177: S9 on a 20-part Profile with ramps, leads and tabs checks
-/// each move against the outlines near it, so it stays fast in a debug
-/// build.
+/// S9 on a 20-part Profile with ramps, leads and tabs checks each move
+/// against the outlines near it, so it stays fast in a debug build.
 #[test]
 fn s9_check_is_fast_on_twenty_profile_parts() {
     let (project, op) = twenty_part_profile();
@@ -4747,9 +4742,9 @@ fn s9_check_is_fast_on_twenty_profile_parts() {
     );
 }
 
-/// #221: S9 measures every On line cut against its own line's
-/// stretches, but only those near the cut, so an outline of 2000 chords
-/// cut On line in three passes stays fast in a debug build.
+/// S9 measures every On line cut against its own line's stretches, but
+/// only those near the cut, so an outline of 2000 chords cut On line in
+/// three passes stays fast in a debug build.
 #[test]
 fn s9_check_is_fast_on_an_on_line_outline_of_many_chords() {
     let mut project = sample_project();
@@ -4785,10 +4780,10 @@ fn s9_check_is_fast_on_an_on_line_outline_of_many_chords() {
     );
 }
 
-/// #158: S9 on the helix Pocket checks each of its more than eight
-/// hundred descent chords as a segment against the region's outlines,
-/// not as the union of swept capsules (6.7 s in a debug build in slice
-/// 9), so it stays fast in a debug build. (changed in #214: more than a
+/// S9 on the helix Pocket checks each of its more than eight hundred
+/// descent chords as a segment against the region's outlines, not as
+/// the union of swept capsules (6.7 s in a debug build in slice 9), so
+/// it stays fast in a debug build. (changed in #214: more than a
 /// thousand while the first pass's helices started at safe Z.)
 #[test]
 fn s9_check_is_fast_on_helix_pocket() {
@@ -5035,14 +5030,14 @@ fn drifting_run_text(shift: [f64; 4]) -> String {
     chord_run_text(&arcs)
 }
 
-/// #142, #137: a long fitted run whose sub-arc centres drift by I/J
-/// snapping passes S12. The first and last of four centres sit 0.009 mm
-/// out along their bisectors and differ by 0.012 mm on each axis once
-/// rounded, more than the arc-fit tolerance plus one unit in the last
-/// place (0.011 mm); each differs from its neighbour by under 0.008 mm.
-/// The run's 102 chords put no vertex at the sub-arcs' ends, so the
-/// chain must not break there. (changed in #226: 51 chords, which bow
-/// 0.011 mm from the arc, past the tolerance.)
+/// A long fitted run whose sub-arc centres drift by I/J snapping passes
+/// S12. The first and last of four centres sit 0.009 mm out along their
+/// bisectors and differ by 0.012 mm on each axis once rounded, more
+/// than the arc-fit tolerance plus one unit in the last place (0.011
+/// mm); each differs from its neighbour by under 0.008 mm. The run's
+/// 102 chords put no vertex at the sub-arcs' ends, so the chain must
+/// not break there. (changed in #226: 51 chords, which bow 0.011 mm
+/// from the arc, past the tolerance.)
 #[test]
 fn fitted_run_with_drifting_snapped_centres_passes_s12() {
     let toolpath = chord_run(102, 3.0 * FRAC_PI_2, None);
@@ -5161,8 +5156,8 @@ fn sub_quantum_steps_at(steps: &[f64]) -> Toolpath {
 /// 0.0014 mm off and no line follows for it.
 const SUB_QUANTUM_STEPS: [f64; 3] = [20.0004, 19.9996, 20.0007];
 
-/// #483: S6 matches a line to the toolpath move it was written for,
-/// not the first move it ends within a unit in the last place of. A
+/// S6 matches a line to the toolpath move it was written for, not
+/// the first move it ends within a unit in the last place of. A
 /// V-Carve's sub-quantum steps ([`SUB_QUANTUM_STEPS`]) are written
 /// as `X20.000` (the steps that round to it written as nothing) and
 /// `X20.001`; the program reproduces its toolpath, and exports.
@@ -5183,11 +5178,11 @@ fn line_after_sub_quantum_steps_matches_the_move_it_was_written_for() {
     );
 }
 
-/// #483: S6 still refuses a program that does not follow its
-/// toolpath, however it matches lines to moves. With `X20.002` in
-/// place of `X20.001`, the step to 20.0007 is 0.0013 mm off it and
-/// 0.0007 mm from X20, so no line can stand for the cut on to X 30:
-/// a mismatch at that move, as before.
+/// S6 still refuses a program that does not follow its toolpath,
+/// however it matches lines to moves. With `X20.002` in place of
+/// `X20.001`, the step to 20.0007 is 0.0013 mm off it and 0.0007 mm
+/// from X20, so no line can stand for the cut on to X 30: a
+/// mismatch at that move, as before.
 #[test]
 fn line_off_sub_quantum_steps_still_fails_s6() {
     let program = |line: &str| {
@@ -5203,7 +5198,7 @@ fn line_off_sub_quantum_steps_still_fails_s6() {
     assert!(is_mismatch_at(&result, 3), "{result:?}");
 }
 
-/// #483: a fitted arc that ends at a toolpath vertex the arc's end is
+/// A fitted arc that ends at a toolpath vertex the arc's end is
 /// within a unit in the last place of, where an earlier vertex is
 /// too. [`chord_run`]'s quarter circle, its last vertex 0.0006 mm
 /// short of (50, 60), then back along the circle to 0.002 mm short,
@@ -5240,10 +5235,10 @@ fn fitted_arc_ends_at_the_vertex_it_was_written_for() {
     assert!(result.is_err(), "{result:?}");
 }
 
-/// #142: two abutting runs on different circles stay separate chains.
-/// A quarter of the radius 10 circle about (50, 50) from +X to
-/// (50, 60), then a quarter of the radius 15 circle about (50, 45) on
-/// to (35, 45): written as one arc each, about its own centre, the
+/// Two abutting runs on different circles stay separate chains. A
+/// quarter of the radius 10 circle about (50, 50) from +X to (50,
+/// 60), then a quarter of the radius 15 circle about (50, 45) on to
+/// (35, 45): written as one arc each, about its own centre, the
 /// program passes; with the second arc written about the first
 /// circle's centre, its vertices are off it and it fails. (changed in
 /// #226: of eight chords each, which bow more than the tolerance.)
@@ -5269,7 +5264,7 @@ fn chain_does_not_join_two_different_circles() {
     assert!(result.is_err(), "{result:?}");
 }
 
-// S16 (#283): machine-coordinate moves.
+// S16: machine-coordinate moves.
 
 /// A program that cuts at the fixture's safe Z (work Z 5), then has
 /// `tail` after its last retract.
@@ -5375,8 +5370,8 @@ fn g53_lifts_from_safe_z_to_the_project_height() {
 
 /// S16: a `G53` is refused, as before #283, in a program whose project
 /// sets no tool-change machine Z, and on a definition that documents
-/// no machine-coordinate move (Mach3, UCCNC, generic; #306), whatever
-/// the project sets.
+/// no machine-coordinate move (Mach3, UCCNC, generic), whatever the
+/// project sets.
 #[test]
 fn g53_refused_without_height() {
     let text = lift_program("G53 G0 Z-5\nM5\n");
@@ -5523,12 +5518,12 @@ fn check_heights(
     .map(|_| ())
 }
 
-/// #304 review, S2 and S6 as changed for #283: with a clearance height
-/// (here work Z 20 over the fixture's 6 mm stock, absolute 26), an
-/// operation's first move across the work, every move across outside
-/// the operations (the park move), and every stop are at or above it;
-/// moves across inside an operation after its first stay held to safe
-/// Z (work Z 5). Without a clearance height the same low moves pass.
+/// #304 review, S2 and S6: with a clearance height (here work Z 20
+/// over the fixture's 6 mm stock, absolute 26), an operation's first
+/// move across the work, every move across outside the operations (the
+/// park move), and every stop are at or above it; moves across inside
+/// an operation after its first stay held to safe Z (work Z 5).
+/// Without a clearance height the same low moves pass.
 #[test]
 fn rapids_held_to_the_clearance_height() {
     let heights = ProgramHeights {
@@ -5563,9 +5558,9 @@ fn rapids_held_to_the_clearance_height() {
     check_heights(stop, 1..7, ProgramHeights::default()).unwrap();
 }
 
-/// Review 1.1 (#711): a matching whose place is past the last motion
-/// line has not taken every line: it has claimed lines the program
-/// does not have. It is not finished: the pass stops with the
+/// Review 1.1: a matching whose place is past the last motion line
+/// has not taken every line: it has claimed lines the program does
+/// not have. It is not finished: the pass stops with the
 /// internal-defect error.
 #[test]
 fn matching_is_not_finished_past_the_end() {
@@ -5621,8 +5616,8 @@ fn matching_of<'m>(
     }
 }
 
-/// #711: a place past the last motion line, or past the last move,
-/// has nothing true to show: no line "left", no move "before". The
+/// A place past the last motion line, or past the last move, has
+/// nothing true to show: no line "left", no move "before". The
 /// view is the internal-defect error, where it was an empty rest.
 #[test]
 fn view_fails_closed_on_a_place_past_the_end() {
@@ -5649,8 +5644,8 @@ fn view_fails_closed_on_a_place_past_the_end() {
     }
 }
 
-/// #711: a step that takes more motion lines than the span has left,
-/// or more moves than the toolpath has left, leads nowhere. Past the
+/// A step that takes more motion lines than the span has left, or
+/// more moves than the toolpath has left, leads nowhere. Past the
 /// last move a place read as "every move matched", and past the last
 /// line as "no line left": together, a pass.
 #[test]
@@ -5678,8 +5673,8 @@ fn advance_fails_closed_on_a_step_past_the_end() {
     }
 }
 
-/// #711: S10 reads a falling cut's vertical rate from its feed. With
-/// no feed the rate was 0, under every plunge rate; it is now above
+/// S10 reads a falling cut's vertical rate from its feed. With no
+/// feed the rate was 0, under every plunge rate; it is now above
 /// every one. S3 refuses such a cut first, and S10 no longer leans on
 /// that.
 #[test]
@@ -5714,9 +5709,9 @@ fn check_descent_rate_fails_closed_on_a_cut_without_feed() {
     );
 }
 
-/// Review 1.10, #711: S7 widens a cut by its operation's tool radius.
-/// A cut on a line of no operation was checked as a point; it is
-/// refused, here too and not only in the modal rules before it.
+/// Review 1.10: S7 widens a cut by its operation's tool radius. A cut
+/// on a line of no operation was checked as a point; it is refused,
+/// here too and not only in the modal rules before it.
 #[test]
 fn check_on_stock_fails_closed_on_a_cut_outside_every_span() {
     let (project, _, _) = fixture();

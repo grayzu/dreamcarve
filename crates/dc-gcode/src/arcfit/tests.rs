@@ -176,8 +176,8 @@ fn assert_runs_turn_as_their_moves(moves: &[Move]) {
     }
 }
 
-/// #502: a run that goes on round its circle past a full turn (a
-/// male Inlay's V-bit joins a ring of its band three chords before the
+/// A run that goes on round its circle past a full turn (a male
+/// Inlay's V-bit joins a ring of its band three chords before the
 /// point it laps from, then cuts the whole ring) keeps every lap. A
 /// sub-arc takes its sweep from its ends, modulo a turn, so one run
 /// over all 80 chords was written as its last 34° alone and the lap
@@ -189,17 +189,17 @@ fn run_past_a_full_turn_keeps_its_lap() {
     assert_runs_turn_as_their_moves(&chords(10.0, 80, 0.0, -past, 0.0));
 }
 
-/// #502: a run that closes after two turns (80 chords of a 2 mm
-/// circle, each within the tolerance of it) is two turns, not the one
-/// a closed run's ends give.
+/// A run that closes after two turns (80 chords of a 2 mm circle,
+/// each within the tolerance of it) is two turns, not the one a
+/// closed run's ends give.
 #[test]
 fn run_of_two_closed_turns_keeps_both() {
     assert_runs_turn_as_their_moves(&chords(2.0, 80, 0.0, 2.0 * TAU, 0.0));
 }
 
-/// #502: a ring that closes a hair past its start (its last vertex
-/// 1e-7 mm on, within the closed run's 1e-6 · r) is one whole turn,
-/// not the hair its ends give. Either way round.
+/// A ring that closes a hair past its start (its last vertex 1e-7
+/// mm on, within the closed run's 1e-6 · r) is one whole turn, not
+/// the hair its ends give. Either way round.
 #[test]
 fn run_closing_a_hair_past_its_start_is_a_whole_turn() {
     let past = TAU + 1e-8;
@@ -231,7 +231,7 @@ fn rejects_straight_run() {
     assert_eq!(moves_of(&fitted).len(), 5);
 }
 
-/// #213: the plaque's stay-down link into its wall ring, 0.006 mm, the
+/// The plaque's stay-down link into its wall ring, 0.006 mm, the
 /// ring's shallow corner arc (1.825 mm radius, 2.7°) and its 40 mm
 /// side all lie on a 154.75 mm circle, which bows 1.3 mm off the side
 /// into the wall. One full chord step is not a run.
@@ -253,14 +253,14 @@ fn long_side_after_a_fragment_is_not_an_arc() {
     assert_eq!(runs_of(&fitted), 0, "{fitted:?}");
 }
 
-/// #453: with the chord's ends unequally far from the centre, the arc
-/// bows farthest from it square to the chord, not towards its middle.
-/// A 30° arc of a 10 mm circle over a chord from (10, 0), on the
-/// circle, to 9.5 mm out at 30°: the farthest point is at 20.47°,
-/// `r` less the line's distance from the centre, 0.63121 mm. Towards
-/// the middle (14.61°) and the ten samples it read 0.62843 mm, short by
-/// 0.0028 mm; the fitter and S12 would have let such an arc stray that
-/// far past the tolerance.
+/// With the chord's ends unequally far from the centre, the arc bows
+/// farthest from it square to the chord, not towards its middle. A 30°
+/// arc of a 10 mm circle over a chord from (10, 0), on the circle, to
+/// 9.5 mm out at 30°: the farthest point is at 20.47°, `r` less the
+/// line's distance from the centre, 0.63121 mm. Towards the middle
+/// (14.61°) and the ten samples it read 0.62843 mm, short by 0.0028 mm;
+/// the fitter and S12 would have let such an arc stray that far past
+/// the tolerance.
 #[test]
 fn arc_chord_deviation_is_found_square_to_the_chord() {
     let o = Point::new(0.0, 0.0);
@@ -314,10 +314,10 @@ fn arc_chord_deviation_is_the_sagitta() {
     assert!(bow > 1.29, "{bow}");
 }
 
-/// #229: a 7 mm square's four corners lie on one circle, with even 90°
-/// steps, so every vertex gate passes; but each side is a chord that
-/// circle bows 1.45 mm off. A run's every straight move must lie within
-/// the tolerance of its arc, not only its ends.
+/// A 7 mm square's four corners lie on one circle, with even 90° steps,
+/// so every vertex gate passes; but each side is a chord that circle
+/// bows 1.45 mm off. A run's every straight move must lie within the
+/// tolerance of its arc, not only its ends.
 #[test]
 fn square_is_not_fitted_as_a_circle() {
     let moves = vec![
@@ -332,12 +332,12 @@ fn square_is_not_fitted_as_a_circle() {
     assert_eq!(lines_of(&fitted), 4);
 }
 
-/// #233: an 8.45 mm straight move, a 0.03 mm corner arc and a
-/// 0.002 mm straight move (the moves of the Pocket below) all lie on
-/// one 33 mm circle, and the step gate leaves the corner arc out of
-/// its median. The long chord's own deviation, 0.27 mm under that
-/// circle, refuses the run, as does #213's gate of two full chord
-/// steps; the Pocket below needs the deviation gate for its other runs.
+/// An 8.45 mm straight move, a 0.03 mm corner arc and a 0.002 mm
+/// straight move (the moves of the Pocket below) all lie on one 33 mm
+/// circle, and the step gate leaves the corner arc out of its median.
+/// The long chord's own deviation, 0.27 mm under that circle, refuses
+/// the run, as does #213's gate of two full chord steps; the Pocket
+/// below needs the deviation gate for its other runs.
 #[test]
 fn long_chord_with_tiny_corner_is_not_fitted() {
     let z = 5.0;
@@ -423,9 +423,9 @@ fn rotated_raster_pocket_with_island_exports_with_arc_fitting() {
     }
 }
 
-/// #229: a regular octagon of 10 mm radius, its chords bowing
-/// 0.76 mm from the circle through its corners, stays eight lines; the
-/// same circle as 72 chords (0.0095 mm each) is fitted.
+/// A regular octagon of 10 mm radius, its chords bowing 0.76 mm from
+/// the circle through its corners, stays eight lines; the same circle
+/// as 72 chords (0.0095 mm each) is fitted.
 #[test]
 fn regular_octagon_of_long_chords_is_not_fitted() {
     assert_eq!(runs_of(&fit(&chords(10.0, 8, 0.0, TAU, 0.0), TOL)), 0);
@@ -930,8 +930,8 @@ fn exact(value: f64) -> Option<f64> {
     Some(value)
 }
 
-/// #355: the fitted arc lies within 0.0099 mm of every chord, but in
-/// inch the I/J snap moves its centre two quanta each way (I 0.0773 →
+/// The fitted arc lies within 0.0099 mm of every chord, but in inch
+/// the I/J snap moves its centre two quanta each way (I 0.0773 →
 /// 0.0771, J −0.3556 → −0.3554, 0.0072 mm) to agree on the radius to
 /// 0.0002 mm instead of an already accepted 0.0013 mm. The arc as
 /// written then bows 0.0126 mm off a chord, past the 0.0125 mm S12
@@ -980,8 +980,8 @@ fn three_moves_fall_back(moves: &[Move]) {
     assert_eq!(lines_of(&out), 3);
 }
 
-/// #355: two 10° chords of a 2 mm circle and a third 0.0002 mm long,
-/// too short to write. The fit takes all three, but S12 counts only the
+/// Two 10° chords of a 2 mm circle and a third 0.0002 mm long, too
+/// short to write. The fit takes all three, but S12 counts only the
 /// moves up to the first vertex at the run's written end, two, so the
 /// run is written as its moves.
 #[test]
@@ -994,7 +994,7 @@ fn run_ending_in_a_sliver_falls_back() {
     ]);
 }
 
-/// #355: the sliver first. S12 reads it as a straight move written as
+/// The sliver first. S12 reads it as a straight move written as
 /// nothing, before the arcs, and counts two moves under them.
 #[test]
 fn run_starting_with_a_sliver_falls_back() {
@@ -1211,11 +1211,11 @@ fn laps(text: &str) -> Vec<Vec<crate::parse::MachineMove>> {
     laps
 }
 
-/// Functional acceptance 37 (#253), per lap: the coaster's three laps
-/// (12 mm in 4 mm passes) are two full untabbed laps of at most 8
-/// `G2`/`G3` each, and the final pass, whose four tabs (3 mm high, so
-/// their tops at Z −8.8 lie above it) split the lap into 5 runs: one
-/// run per segment between tabs, so at least 9 arcs.
+/// Functional acceptance 37, per lap: the coaster's three laps (12 mm
+/// in 4 mm passes) are two full untabbed laps of at most 8 `G2`/`G3`
+/// each, and the final pass, whose four tabs (3 mm high, so their
+/// tops at Z −8.8 lie above it) split the lap into 5 runs: one run
+/// per segment between tabs, so at least 9 arcs.
 #[test]
 fn coaster_arcs_counted_per_lap() {
     let project = coaster_project();
@@ -1255,10 +1255,10 @@ fn coaster_arcs_counted_per_lap() {
     assert!(n >= 9, "the tabbed lap has {n} arcs, want at least 9");
 }
 
-/// Functional acceptance 37 (#253): "the same number of `G1` moves as
-/// before on a post-processor without arc support". With
-/// `arc_interpolation` off, `arc_fit_tolerance_mm: 0.01` writes as many
-/// `G1` moves as `null`, and neither writes a `G2` or `G3`.
+/// Functional acceptance 37: "the same number of `G1` moves as before
+/// on a post-processor without arc support". With `arc_interpolation`
+/// off, `arc_fit_tolerance_mm: 0.01` writes as many `G1` moves as
+/// `null`, and neither writes a `G2` or `G3`.
 #[test]
 fn no_arc_support_keeps_the_g1_count() {
     let mut counts = Vec::new();
@@ -1530,14 +1530,13 @@ fn small_helix_flat_revolution_in_inches_exports() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-/// A level run like the floor rings of a V-bit's long level stretch
-/// (#480): `rings` concentric rings, each an ellipse, walked by moves
-/// whose lengths are drawn log-uniform from `shortest_mm` to
-/// `longest_mm` by a fixed generator from `seed`, each ring joined to
-/// the next by a short step in. From 0.002 to 0.4 mm the lengths vary
-/// as the stress case's do (#464, line art `0x4640000`), so almost
-/// every window fails the step uniformity gate though its points lie on
-/// a circle.
+/// A level run like the floor rings of a V-bit's long level stretch:
+/// `rings` concentric rings, each an ellipse, walked by moves whose
+/// lengths are drawn log-uniform from `shortest_mm` to `longest_mm` by
+/// a fixed generator from `seed`, each ring joined to the next by a
+/// short step in. From 0.002 to 0.4 mm the lengths vary as the stress
+/// case's do (line art `0x4640000`), so almost every window fails the
+/// step uniformity gate though its points lie on a circle.
 fn dense_level_rings(
     rings: usize,
     outer_mm: f64,
@@ -1609,11 +1608,11 @@ fn find_arc_runs_exhaustive(
     found
 }
 
-/// #480: a long dense level run cost about `n · 128` circle fits, each
+/// A long dense level run cost about `n · 128` circle fits, each
 /// judged by every gate over up to 128 points, and the stress case's
-/// V-bit run (49 445 moves) took 41 s to fit
-/// in a release build. The search now fits a few windows a point, and
-/// finds exactly the arcs the exhaustive search finds.
+/// V-bit run (49 445 moves) took 41 s to fit in a release build. The
+/// search now fits a few windows a point, and finds exactly the arcs
+/// the exhaustive search finds.
 #[test]
 fn fit_of_a_long_dense_level_run_is_bounded() {
     let points = dense_level_rings(8, 8.0, 0.002, 0.4, 0x0480);
@@ -1630,11 +1629,11 @@ fn fit_of_a_long_dense_level_run_is_bounded() {
     assert_eq!(found, find_arc_runs_exhaustive(&points, &mids, TOL));
 }
 
-/// #480: skipping the windows whose moves are too uneven for any circle
-/// never changes what the search finds: on runs whose lengths vary by
-/// less than, about, and more than the step uniformity gate's ratio of
-/// four, with and without shallow corner arcs, at two tolerances, the
-/// arcs are the exhaustive search's, bit for bit.
+/// Skipping the windows whose moves are too uneven for any circle never
+/// changes what the search finds: on runs whose lengths vary by less
+/// than, about, and more than the step uniformity gate's ratio of four,
+/// with and without shallow corner arcs, at two tolerances, the arcs
+/// are the exhaustive search's, bit for bit.
 #[test]
 fn uneven_window_skip_finds_the_exhaustive_arcs() {
     let ranges = [(0.05, 0.1), (0.05, 0.2), (0.05, 0.25), (0.01, 1.0)];

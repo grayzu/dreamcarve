@@ -3,7 +3,7 @@
 
 //! S17, the cone, on the parsed program (`docs/specs/phase-3/design.md`,
 //! "Safety pass" and "Algorithms → Tapered ball nose", step 7; functional
-//! S17; security review H3, H4 and M1).
+//! S17, H4 and M1).
 //!
 //! A carving bit is a stack of discs about its axis that widen with
 //! height ([`BitProfile`]): a V-bit's of radius `d · slope` at height `d`
@@ -26,21 +26,21 @@
 //!   since `w` never narrows with depth.
 //! - **A straight cut whose Z varies:** for each wall segment, the least of
 //!   `g(τ) = dist(p(τ), wall) − w(d(τ))` over the cut, exactly, by the
-//!   shared [`least_room`] (#678), which the generator calls too. For a
-//!   V-bit the radius is linear in `τ` and the least is in closed form. For
-//!   a TBN the cut is split where `d(τ)` crosses `h_t` and `h_R`: the
-//!   cylinder stretch is the end mill's constant `R`, the cone stretch is
-//!   the virtual V-bit's `(d + δ) · tan β`, both in that closed form, and
-//!   the ball stretch's least is at an end or a stationary point, a root of
-//!   a polynomial of degree at most four. No sampling step.
+//!   shared [`least_room`], which the generator calls too. For a V-bit the
+//!   radius is linear in `τ` and the least is in closed form. For a TBN the
+//!   cut is split where `d(τ)` crosses `h_t` and `h_R`: the cylinder
+//!   stretch is the end mill's constant `R`, the cone stretch is the
+//!   virtual V-bit's `(d + δ) · tan β`, both in that closed form, and the
+//!   ball stretch's least is at an end or a stationary point, a root of a
+//!   polynomial of degree at most four. No sampling step.
 //!
 //! The walls are the carved regions' outlines as drawn, arcs and all. The
 //! slack is S9's (`material`'s module docs): one unit in the last written
 //! place, the flatten tolerance (the generator measures its chains against
 //! chords, which near a concave arc lie up to that far beyond the true
-//! wall, #407; the floor trace runs at exactly `w(F)` from the walls,
-//! #405, and the floor's chords where grown islands touch are within it),
-//! the arc-fit tolerance when arcs are fitted (S12), and [`EPS_MM`].
+//! wall; the floor trace runs at exactly `w(F)` from the walls, and the
+//! floor's chords where grown islands touch are within it), the arc-fit
+//! tolerance when arcs are fitted (S12), and [`EPS_MM`].
 
 use dc_geometry::profile::{BitProfile, WallPiece, least_room};
 use dc_geometry::{
@@ -64,16 +64,16 @@ pub(crate) struct Cone {
     pub(super) floor_z_mm: Option<f64>,
     /// The Z the flank is engaged from, mm: the stock top, or the start
     /// plane when an enabled earlier Pocket at its depth contains the
-    /// targets (security review H4).
+    /// targets.
     pub(super) engaged_from_z_mm: f64,
     /// The cutting height, the deepest the flank may be engaged, mm
     /// (`Tool::cutting_height_mm`): a V-bit's cone height, `diameter / (2
     /// · slope)`, or a TBN's `min(flute_length_mm, h_R)`.
     pub(super) cone_mm: f64,
-    /// A male Inlay's open band edge (#448): the same cone held to the
-    /// band `B` with the stock top as its plane, since beyond `B` the
-    /// board stands to the top, so no disc below the stock top may cross
-    /// it. `None` for every other carve.
+    /// A male Inlay's open band edge: the same cone held to the band `B`
+    /// with the stock top as its plane, since beyond `B` the board
+    /// stands to the top, so no disc below the stock top may cross it.
+    /// `None` for every other carve.
     pub(super) edge: Option<Box<Cone>>,
 }
 
@@ -115,9 +115,9 @@ impl Cone {
     /// - No cut reaches below the flat depth, nor engages the flank deeper
     ///   than the cone (the shank, H4).
     /// - Its room is at least `−slack_mm` all along (module docs).
-    /// - With an open band edge (#448), the same holds of the edge's cone,
-    ///   whose plane is the stock top: the cone's disc there stays inside
-    ///   the band.
+    /// - With an open band edge, the same holds of the edge's cone, whose
+    ///   plane is the stock top: the cone's disc there stays inside the
+    ///   band.
     pub(super) fn check(
         &self,
         path: Segment,

@@ -78,11 +78,11 @@ fn last_pass_step_between_starts_trimmed_by_the_end_vertex_is_allowed() {
     assert!(!band.allows(step, false, SLACK_MM));
 }
 
-/// #358: the band at an open end stays the strip's. A level arc from
-/// the stock path's end to the last pass's path that bows past
-/// the path's end vertex, `r` to `r + a` from it, cuts past the open
-/// end and still fails, and no point on the kept side, `r` to `r + a`
-/// from the path, lies in the band.
+/// The band at an open end stays the strip's. A level arc from the
+/// stock path's end to the last pass's path that bows past the path's
+/// end vertex, `r` to `r + a` from it, cuts past the open end and
+/// still fails, and no point on the kept side, `r` to `r + a` from
+/// the path, lies in the band.
 #[test]
 fn last_pass_step_past_an_open_end_or_on_the_kept_side_fails() {
     let path = line_path(&[(0.0, 0.0), (10.0, 0.0)]);

@@ -145,7 +145,7 @@ pub struct Block {
     /// the same line number. The line's own block has the cycle's words and
     /// no motion.
     pub synthetic: bool,
-    /// For a `G53 G0 Z<v>` line (S16, #283), the machine Z it lifts to,
+    /// For a `G53 G0 Z<v>` line (S16), the machine Z it lifts to,
     /// millimetres: a move in machine coordinates, which is not a
     /// [`MachineMove`] (those are work coordinates). Work Z is unknown
     /// after it.
@@ -610,7 +610,7 @@ impl State {
 }
 
 /// Why a motion word or a `G53` lift while a canned cycle is the motion
-/// mode is refused (S11, #314).
+/// mode is refused (S11).
 fn series_without_cancel() -> String {
     "a series of canned cycles must end with G80 before any other motion".to_owned()
 }

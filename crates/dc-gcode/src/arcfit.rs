@@ -76,8 +76,8 @@ pub const ARC_RADIUS_GROSS_MM: f64 = 0.5;
 pub const ARC_RADIUS_RELATIVE: f64 = 0.001;
 
 /// The smallest radius an arc is written with, in units of the last
-/// written place (#506): 0.005 mm at three millimetre places. A V-Carve
-/// chain round a tip a few thousandths across is fitted with arcs whose
+/// written place: 0.005 mm at three millimetre places. A V-Carve chain
+/// round a tip a few thousandths across is fitted with arcs whose
 /// radius is a unit or two, whose I and J round to the same units; the
 /// safety pass could not match such a written arc to its moves
 /// (`ArcFitViolation`, line art `0x54`). Its moves are written instead.
@@ -95,15 +95,15 @@ pub const MIN_RUN_CHORDS: usize = 3;
 /// Fewest points a run has: [`MIN_RUN_CHORDS`] chords.
 const MIN_RUN_POINTS: usize = MIN_RUN_CHORDS + 1;
 
-/// The smallest radius a run is fitted on, in tolerances (#527). On a
-/// circle a few tolerances across, the tolerance is a fair part of the
-/// radius, so points that are only near it fit: a V-bit floor's leftover
-/// loop a few hundredths across, with its link in and out of the ring's
-/// lap, went round circles about 0.04 mm in radius, and once their I and J
-/// were snapped to the written places the arcs no longer followed the
-/// moves (`ArcFitViolation`, lettering `0x37` in inches, line art `0x9b`).
-/// Such a run is a few moves long and is written as its moves. Six keeps
-/// #262's flat helix revolutions (radius 0.084 mm at 0.01) fitted.
+/// The smallest radius a run is fitted on, in tolerances. On a circle a
+/// few tolerances across, the tolerance is a fair part of the radius, so
+/// points that are only near it fit: a V-bit floor's leftover loop a few
+/// hundredths across, with its link in and out of the ring's lap, went
+/// round circles about 0.04 mm in radius, and once their I and J were
+/// snapped to the written places the arcs no longer followed the moves
+/// (`ArcFitViolation`, lettering `0x37` in inches, line art `0x9b`). Such
+/// a run is a few moves long and is written as its moves. Six keeps #262's
+/// flat helix revolutions (radius 0.084 mm at 0.01) fitted.
 const MIN_RADIUS_TOLERANCES: f64 = 6.0;
 
 /// The smallest total sweep a run may have, radians (0.5°): a residual-only
@@ -361,10 +361,10 @@ const DEVIATION_SAMPLES: u32 = 8;
 /// The farthest, mm, any point of the arc of the circle about `centre`
 /// with radius `radius_mm`, from angle `from_rad` through `sweep_rad`
 /// (counter-clockwise when positive), lies from the straight move `a` to
-/// `b` it stands for (#226, #229). For a chord whose ends are on the
-/// circle this is its sagitta, `r(1 − cos(sweep/2))`; for ends off it, it
-/// also counts how far they are off. Checked at the arc's ends, at the
-/// point of the arc farthest from the chord's line on either side, and at
+/// `b` it stands for. For a chord whose ends are on the circle this is
+/// its sagitta, `r(1 − cos(sweep/2))`; for ends off it, it also counts
+/// how far they are off. Checked at the arc's ends, at the point of the
+/// arc farthest from the chord's line on either side, and at
 /// `DEVIATION_SAMPLES` points between.
 #[must_use]
 pub fn arc_chord_deviation_mm(
@@ -396,7 +396,7 @@ pub fn arc_chord_deviation_mm(
         turn.rem_euclid(TAU) <= sweep
     };
     // Where the arc bows farthest from the chord's line: square to the
-    // chord, where the arc's tangent is parallel to it (#453). Towards the
+    // chord, where the arc's tangent is parallel to it. Towards the
     // chord's middle is the same only when both ends are equally far from
     // the centre; a run's vertices may each be off the circle by up to the
     // tolerance, and there the arc strayed 0.00002 mm past it unseen.
@@ -434,7 +434,7 @@ fn find_arc_runs(points: &[Point], mids: &[Option<Point>], tolerance_mm: f64) ->
     find_arc_runs_counted(points, mids, tolerance_mm, &mut SearchWork::default())
 }
 
-/// The work [`find_arc_runs`] did, for the test that bounds it (#480).
+/// The work [`find_arc_runs`] did, for the test that bounds it.
 #[derive(Debug, Default, Clone, Copy)]
 struct SearchWork {
     /// Windows given a circle fit and judged by the gates.
@@ -474,7 +474,7 @@ fn find_arc_runs_counted(
             let (Some(&first), Some(&last)) = (sub.first(), sub.last()) else {
                 continue;
             };
-            // #480: a window whose moves differ too much in length for any
+            // A window whose moves differ too much in length for any
             // circle to make their steps even is rejected before its fit.
             if every_mid
                 && steps
@@ -519,9 +519,9 @@ fn find_arc_runs_counted(
 const SIN_RATIO: f64 = 0.9;
 
 /// Relative slack [`StepSpan::uneven_on_any_circle`] keeps over its
-/// bound, for the rounding of the angles the gates measure (#480). With
-/// it the bound holds while the median step is over [`SWEEP_EPS`], and a
-/// window whose median step is not fails the gate anyway.
+/// bound, for the rounding of the angles the gates measure. With it the
+/// bound holds while the median step is over [`SWEEP_EPS`], and a window
+/// whose median step is not fails the gate anyway.
 const UNEVEN_SLACK: f64 = 0.05;
 
 /// The lengths of a window's moves, as the step uniformity gate sees them.
@@ -541,8 +541,8 @@ struct StepSpan {
 impl StepSpan {
     /// Whether the step uniformity gate (3 in [`gates_pass`]) rejects the
     /// window on every circle the residual gate (1) accepts, where
-    /// `chord_mm` is the distance between its ends (#480). The search then
-    /// skips it before its fit: the arcs found are the same.
+    /// `chord_mm` is the distance between its ends. The search then skips
+    /// it before its fit: the arcs found are the same.
     ///
     /// Within the residual gate every point is between `r − t` and `r + t`
     /// from the centre, so a step of angle `θ` over a move of length `L`
@@ -661,7 +661,7 @@ fn gates_pass(
     radius_mm: f64,
     tolerance_mm: f64,
 ) -> bool {
-    // 0. A circle more than a few tolerances across (#527).
+    // 0. A circle more than a few tolerances across.
     if radius_mm < MIN_RADIUS_TOLERANCES * tolerance_mm {
         return false;
     }
@@ -730,11 +730,11 @@ fn gates_pass(
     if median <= SWEEP_EPS || largest > median * MAX_STEP_RATIO {
         return false;
     }
-    // 3a. At least two chord steps of the largest's size class (#213):
-    // one long straight move, a short fragment and a shallow corner arc
-    // put four points on any circle through the move's ends, and the
-    // median of two steps tolerates the fragment, so a 40 mm wall side
-    // became an arc bowing 1.3 mm into the wall.
+    // 3a. At least two chord steps of the largest's size class: one
+    // long straight move, a short fragment and a shallow corner arc put
+    // four points on any circle through the move's ends, and the median
+    // of two steps tolerates the fragment, so a 40 mm wall side became
+    // an arc bowing 1.3 mm into the wall.
     let full = steps
         .iter()
         .filter(|&&s| s * MAX_STEP_RATIO >= largest)
@@ -746,7 +746,7 @@ fn gates_pass(
     if total_sweep < MIN_TOTAL_SWEEP_RAD {
         return false;
     }
-    // 6. At most one turn (#502). `split_arc` takes the sweep from the
+    // 6. At most one turn. `split_arc` takes the sweep from the
     // run's ends, which give it only modulo a turn: a run that goes on
     // round its circle past a full turn (a ring joined a few chords before
     // the point it laps from) would be written as its last part alone and
@@ -756,10 +756,9 @@ fn gates_pass(
         return false;
     }
     // 1a. The arc stays within the tolerance of every move it replaces,
-    // not only of its ends (#226, #229): a square's four corners lie on
-    // one circle, which bows 1.45 mm off a 7 mm side. A shallow corner arc
-    // counts as its chord: both bow the same way, each by at most the
-    // tolerance.
+    // not only of its ends: a square's four corners lie on one circle,
+    // which bows 1.45 mm off a 7 mm side. A shallow corner arc counts as
+    // its chord: both bow the same way, each by at most the tolerance.
     !points
         .windows(2)
         .zip(angles.iter().zip(&diffs))
@@ -774,8 +773,8 @@ fn gates_pass(
 }
 
 /// The median of `values`, which it reorders; `None` if empty. It selects
-/// the middle value rather than sorting (#480): every window of a long
-/// level run takes a median of up to [`MAX_CANDIDATE_POINTS`] steps.
+/// the middle value rather than sorting: every window of a long level run
+/// takes a median of up to [`MAX_CANDIDATE_POINTS`] steps.
 fn median(values: &mut [f64]) -> Option<f64> {
     let n = values.len();
     let middle = n / 2;
@@ -824,8 +823,8 @@ fn split_arc(start: Point3, end: Point3, centre: Point, clockwise: bool) -> Vec<
         sweep += TAU;
     }
     // A run that closes is the whole turn `gates_pass` let through as
-    // closed (#502): its ends may be a hair apart either way, and a hair
-    // past the start is not a hair-long arc.
+    // closed: its ends may be a hair apart either way, and a hair past
+    // the start is not a hair-long arc.
     let closed = start.xy().distance_to(end.xy()) <= radius_mm * CLOSED_CHORD_RATIO;
     if closed || sweep.abs() < SWEEP_EPS {
         sweep = if clockwise { -TAU } else { TAU };
@@ -933,8 +932,8 @@ pub fn resolve_emitted_arc(
         accepted: false,
         delta_r_mm: f64::INFINITY,
     };
-    // #506: an arc a few units across is not written: its centre, start
-    // and end are rounded to the same units, so its words describe a
+    // An arc a few units across is not written: its centre, start and
+    // end are rounded to the same units, so its words describe a
     // different arc. Its moves are written instead.
     if opts.quantum > 0.0 && raw_i.hypot(raw_j) < MIN_ARC_RADIUS_QUANTA * opts.quantum {
         return rejected;
@@ -1057,8 +1056,8 @@ fn snap_offsets(
 /// Whether every sub-arc of `run` survives formatting, walking the
 /// formatted position from `start` (machine coordinates) through each
 /// sub-arc's end: the controller accepts it, and as written it follows the
-/// moves it replaces ([`written_arcs_follow_moves`], #355). `to_machine`
-/// maps project XY to machine XY.
+/// moves it replaces ([`written_arcs_follow_moves`]). `to_machine` maps
+/// project XY to machine XY.
 fn run_survives_formatting(
     run: &ArcRun,
     start: Point,
@@ -1249,14 +1248,14 @@ impl WrittenArc {
 }
 
 /// Whether the `written` sub-arcs follow `moves`, the moves of the run
-/// they replace, from `start` (project space), as S12 judges them (#355):
-/// every vertex, and every shallow arc's midpoint, lies on a sub-arc in
-/// order, and over the part of every sub-arc between a move's ends the
-/// arc lies within `budget` (output units) of the move's chord. The
-/// written centre is not the fitted one: the I/J snap moves it up to two
-/// quanta each way so the rounded ends agree on the radius, which in inch
-/// is 0.0072 mm, and the fit's chords may already be bowed by nearly the
-/// whole tolerance. `tolerance_mm` decides which corner arcs are shallow.
+/// they replace, from `start` (project space), as S12 judges them: every
+/// vertex, and every shallow arc's midpoint, lies on a sub-arc in order,
+/// and over the part of every sub-arc between a move's ends the arc lies
+/// within `budget` (output units) of the move's chord. The written centre
+/// is not the fitted one: the I/J snap moves it up to two quanta each way
+/// so the rounded ends agree on the radius, which in inch is 0.0072 mm,
+/// and the fit's chords may already be bowed by nearly the whole
+/// tolerance. `tolerance_mm` decides which corner arcs are shallow.
 ///
 /// S12 also needs [`MIN_RUN_CHORDS`] moves under the arcs, and counts
 /// neither a first move that ends within `reach` (output units, each
@@ -1264,7 +1263,7 @@ impl WrittenArc {
 /// as nothing, nor any move after the first vertex within `reach` of the
 /// last sub-arc's written end, where the run ends. So a run that begins
 /// or ends with chords too short to write has fewer moves than the fit
-/// counted (#355).
+/// counted.
 fn written_arcs_follow_moves(
     written: &[WrittenArc],
     start: Point,
@@ -1301,10 +1300,10 @@ fn written_arcs_follow_moves(
                     return false;
                 };
                 if current.holds(p, budget) {
-                    // As S12 (#453): past the piece's end, away from the
-                    // joint, and on the next piece, `p` is on the next,
-                    // though on a circle near the budget in radius it is
-                    // still within this piece's angle slack.
+                    // As S12: past the piece's end, away from the joint,
+                    // and on the next piece, `p` is on the next, though
+                    // on a circle near the budget in radius it is still
+                    // within this piece's angle slack.
                     let on_next = written
                         .get(piece + 1)
                         .is_some_and(|next| next.holds(p, budget));
@@ -1340,7 +1339,7 @@ fn written_arcs_follow_moves(
 /// Resolves `fitted` into what can be emitted: every run the controller
 /// would reject once formatted, whose written arcs stray more than
 /// `tolerance_mm` plus one unit in the last place from the moves they
-/// replace (#355), or that has no known emitted start, is replaced by its
+/// replace, or that has no known emitted start, is replaced by its
 /// original moves. `start` is the formatted machine XY the controller is
 /// at when the sequence begins, if known; `to_machine` maps project XY to
 /// machine XY; `tolerance_mm` is the one `fitted` was fitted with.

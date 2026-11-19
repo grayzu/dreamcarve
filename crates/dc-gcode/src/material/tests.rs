@@ -66,8 +66,8 @@ fn square_and_frame() -> Vec<Area> {
     areas_of(regions, true)
 }
 
-/// Review 1.1 (#711). `walls_allow` took a range of the area's edges
-/// and read one outside them as no wall: the issue's
+/// Review 1.1. `walls_allow` took a range of the area's edges and
+/// read one outside them as no wall: the issue's
 /// `walls_allow_refuses_a_scope_outside_the_area`, written against
 /// that signature, failed (a cut through the wall was "clear" of the
 /// edges `4..8` of a square). The range is gone, as every caller
@@ -108,8 +108,8 @@ fn walls_allow_holds_a_cut_to_every_edge_of_the_area() {
     ));
 }
 
-/// #711: each loop holds its own edges, in order, and together they
-/// are the area's, so the lap and On line rules read a loop's edges
+/// Each loop holds its own edges, in order, and together they are
+/// the area's, so the lap and On line rules read a loop's edges
 /// without a range into the area's that could miss.
 #[test]
 fn each_loop_owns_its_edges() {
@@ -125,9 +125,9 @@ fn each_loop_owns_its_edges() {
     }
 }
 
-/// #711: an area with no edge has no bounds to be far from. A point
-/// at the origin stood in for them, and an outside Profile's cut
-/// inside a part elsewhere passed that part by; with bounds that are
+/// An area with no edge has no bounds to be far from. A point at the
+/// origin stood in for them, and an outside Profile's cut inside a
+/// part elsewhere passed that part by; with bounds that are
 /// everywhere, the part is looked at, and the cut is in it.
 #[test]
 fn outside_regions_fails_closed_on_an_area_without_bounds() {
@@ -161,9 +161,9 @@ fn sample() -> (Project, Operation, Tool, MachineTransform) {
     (project, op, tool, transform)
 }
 
-/// #711: an inside or outside Profile is held to the trench rule,
-/// which needs the stock top. Without a thickness the rule was left
-/// out and the Profile held without it; now it has no material.
+/// An inside or outside Profile is held to the trench rule, which
+/// needs the stock top. Without a thickness the rule was left out
+/// and the Profile held without it; now it has no material.
 #[test]
 fn material_of_fails_closed_on_a_profile_without_a_stock_top() {
     let (mut project, _, _, _) = sample();
@@ -190,9 +190,9 @@ fn material_of_fails_closed_on_a_profile_without_a_stock_top() {
     }
 }
 
-/// #711: the tab rule tells a straight plunge by where a cut starts
-/// and ends. A cut whose start is not known cannot be told from one,
-/// so in a span with tabs it does not keep them (it passed before).
+/// The tab rule tells a straight plunge by where a cut starts and
+/// ends. A cut whose start is not known cannot be told from one, so
+/// in a span with tabs it does not keep them (it passed before).
 #[test]
 fn keeps_tabs_fails_closed_on_an_unknown_position() {
     let (project, op, tool, transform) = sample();
@@ -229,9 +229,9 @@ fn keeps_tabs_fails_closed_on_an_unknown_position() {
     }
 }
 
-/// #711: the trench rule tells a ramp by where a cut starts and ends.
-/// A cut whose start is not known cannot be told from one, so it is
-/// not in the trench (it passed before).
+/// The trench rule tells a ramp by where a cut starts and ends. A cut
+/// whose start is not known cannot be told from one, so it is not in
+/// the trench (it passed before).
 #[test]
 fn trench_allows_fails_closed_on_an_unknown_position() {
     let (_, _, _, transform) = sample();
@@ -251,9 +251,9 @@ fn trench_allows_fails_closed_on_an_unknown_position() {
     assert!(!Trench::new(rule, &[], RADIUS_MM).allows(&unknown, &transform, 0.01));
 }
 
-/// #711: a tab request the layout rule cannot place (here a width
-/// below 0, which the generator refuses) left the Profile with no
-/// tab to keep. Now the tabs do not resolve, and the run has no
+/// A tab request the layout rule cannot place (here a width below
+/// 0, which the generator refuses) left the Profile with no tab
+/// to keep. Now the tabs do not resolve, and the run has no
 /// material.
 #[test]
 fn tab_spines_fails_closed_on_a_request_that_cannot_be_placed() {
@@ -266,8 +266,8 @@ fn tab_spines_fails_closed_on_a_request_that_cannot_be_placed() {
     assert!(tabs.is_empty());
 }
 
-/// #711: a Profile with a tab on its target but no tool, no depth or
-/// no stock thickness to build the tab's spine from kept no tab. Now
+/// A Profile with a tab on its target but no tool, no depth or no
+/// stock thickness to build the tab's spine from kept no tab. Now
 /// its tabs do not resolve. With no tab on its targets there is
 /// nothing to resolve.
 #[test]
@@ -293,9 +293,9 @@ fn tab_spines_fails_closed_on_a_missing_tool_or_floor() {
     assert_eq!(spines(&no_tool).map(|t| t.len()), Some(0));
 }
 
-/// #711: a placed tab whose outline is not in its definition, or
-/// whose instance is gone, was dropped, and the Profile held to the
-/// tabs that were left. Now the tabs do not resolve.
+/// A placed tab whose outline is not in its definition, or whose
+/// instance is gone, was dropped, and the Profile held to the tabs
+/// that were left. Now the tabs do not resolve.
 #[test]
 fn tab_spine_fails_closed_on_an_outline_that_does_not_resolve() {
     let (mut project, _, _, _) = sample();
@@ -322,14 +322,13 @@ fn tab_spine_fails_closed_on_an_outline_that_does_not_resolve() {
     assert!(spines(&no_instance).is_none());
 }
 
-/// A tab on an open outline has a spine for an On line Profile, which
-/// cuts along it (#175): the outline and its open offsets by the tool
-/// radius either side. A Left or Right Profile's has one too
+/// A tab on an open outline has a spine for an On line Profile, which cuts
+/// along it: the outline and its open offsets by the tool radius either side. A
+/// Left or Right Profile's has one too
 /// (`tab_spine_on_an_open_path_of_a_left_or_right_profile_is_on_its_cut_side`).
-/// An inside or outside Profile does not cut an open outline. A
-/// closed outline that is no contour (a bow tie) leaves an On line
-/// Profile's tabs unresolved; a Left Profile, which cuts open paths
-/// only, has no tab on it.
+/// An inside or outside Profile does not cut an open outline. A closed outline
+/// that is no contour (a bow tie) leaves an On line Profile's tabs unresolved;
+/// a Left Profile, which cuts open paths only, has no tab on it.
 #[test]
 fn tab_spine_on_an_open_outline_is_an_on_line_profiles() {
     let (mut project, _, _, _) = sample();
@@ -374,9 +373,9 @@ fn tab_spine_on_an_open_outline_is_an_on_line_profiles() {
     assert_eq!(spines(&bow_tie, Side::Left).map(|t| t.len()), Some(0));
 }
 
-/// A tab on an open path of a Left or Right Profile (#207) is measured
-/// as the generator lays it: along the path offset by the tool radius
-/// to the cut side, from the point of that offset nearest the tab. The
+/// A tab on an open path of a Left or Right Profile is measured as the
+/// generator lays it: along the path offset by the tool radius to the
+/// cut side, from the point of that offset nearest the tab. The
 /// sample's 6.35 mm bit and a 40 mm line from (10, 10) in project
 /// space, with one smooth tab 6 mm wide and 2 mm tall asked for at
 /// distance 0: cut Left the spine's one path is the line 3.175 mm to
@@ -386,11 +385,11 @@ fn tab_spine_on_an_open_outline_is_an_on_line_profiles() {
 /// offset's first point, where its request puts it. The top is held
 /// for the radius along the offset from there, then slopes to the
 /// floor over half the tab's width: a cut at the centre or 2.5 mm
-/// along may not go below the top; one 5.175 mm along, 2 mm down the
-/// 3 mm slope and the margin (0.1 of the radius) further, may go to
-/// 0.455 mm above the floor and no lower; one 6.5 mm along is clear.
-/// A cut on the line itself or on the other side is on no path of
-/// the tab's.
+/// along may not go below the top; one 5.175 mm along, 2 mm down the 3
+/// mm slope and the margin (0.1 of the radius) further, may go to
+/// 0.455 mm above the floor and no lower; one 6.5 mm along is clear. A
+/// cut on the line itself or on the other side is on no path of the
+/// tab's.
 #[test]
 fn tab_spine_on_an_open_path_of_a_left_or_right_profile_is_on_its_cut_side() {
     const R_MM: f64 = 6.35 / 2.0;
@@ -537,8 +536,8 @@ fn tab_span_does_not_wrap_round_an_open_path() {
     ));
 }
 
-/// #711: a path of a tab's spine with no length has no nearest point,
-/// so a plunge cannot be measured along it. That read as "not on this
+/// A path of a tab's spine with no length has no nearest point, so a
+/// plunge cannot be measured along it. That read as "not on this
 /// path"; now the plunge goes below the tab. The same for a lap the
 /// tab cannot be found on.
 #[test]
@@ -586,11 +585,11 @@ fn cut(transform: &MachineTransform, line: usize, from: Point3, to: Point3) -> M
     }
 }
 
-/// #356: a first pass's ramp leg from 0.5 mm above the stock top to
-/// 0.015 mm below it, 20 mm along X, then a later pass's ramp leg back
-/// from its end, from Z `TOP_MM` − 0.1 to X `back_to_x`: whether the
-/// trench rule allows that later leg, with `arc_fit_mm`. Only the last
-/// 0.58 mm of the first leg (X 19.42 to 20) is below the stock top.
+/// A first pass's ramp leg from 0.5 mm above the stock top to 0.015 mm
+/// below it, 20 mm along X, then a later pass's ramp leg back from its
+/// end, from Z `TOP_MM` − 0.1 to X `back_to_x`: whether the trench
+/// rule allows that later leg, with `arc_fit_mm`. Only the last 0.58
+/// mm of the first leg (X 19.42 to 20) is below the stock top.
 fn later_leg_allowed(back_to_x: f64, arc_fit_mm: Option<f64>) -> bool {
     let project = sample_project();
     let post = project.post_processor.resolve().unwrap();
@@ -622,10 +621,10 @@ fn later_leg_allowed(back_to_x: f64, arc_fit_mm: Option<f64>) -> bool {
     trench.allows(&later, &transform, slack)
 }
 
-/// #356: a ramp leg above the stock top but for its last 0.015 mm is
-/// trench only along that last part. A later ramp leg within that part
-/// is allowed; one that runs past it, along the part above the top,
-/// fails S9, with arc fitting off and on alike.
+/// A ramp leg above the stock top but for its last 0.015 mm is trench
+/// only along that last part. A later ramp leg within that part is
+/// allowed; one that runs past it, along the part above the top, fails
+/// S9, with arc fitting off and on alike.
 #[test]
 fn only_the_part_of_a_cut_below_the_top_is_trench() {
     for arc_fit_mm in [None, Some(0.01)] {
