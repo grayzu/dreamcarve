@@ -323,7 +323,7 @@ fn runs_of(
         written_mm: 0.0,
         grid: None,
     };
-    medial::runs(graph, &depth, no_simplifying, &walls, &[])
+    medial::runs(graph, &depth, no_simplifying, &walls, &[]).expect("runs")
 }
 
 /// [`runs_of`] as blocks, sequenced from safe Z 13 over a stock top at 10.
@@ -526,7 +526,8 @@ fn links_keep_the_cone_inside_an_open_edge() {
     );
     assert!(!edge.allows(link.0, link.1), "the edge refuses the link");
 
-    let runs = medial::runs_within(&chains, &depth, no_simplifying, &walls, &[], Some(&edge));
+    let runs = medial::runs_within(&chains, &depth, no_simplifying, &walls, &[], Some(&edge))
+        .expect("runs");
     assert_eq!(runs.len(), 2, "the tool lifts between the chains: {runs:?}");
     for run in &runs {
         let mut from = run.start;
@@ -587,6 +588,7 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
         grid: None,
     };
     let blocks: Vec<CutBlock> = medial::runs(&chain, &depth, no_simplifying, &walls, &[])
+        .expect("runs")
         .iter()
         .map(|run| medial::run_block(run, &test_shape(), rates, TOP_MM + 5.0))
         .collect();
@@ -1433,7 +1435,9 @@ fn links_never_run_below_the_final_v_surface() {
                 profile: BitProfile::VBit { slope },
             };
             let walls = Walls::new(std::slice::from_ref(region), p.flatten_tolerance_mm);
-            for run in medial::runs(&graph, &depth, Tolerances::at_step(step_mm), &walls, &[]) {
+            for run in medial::runs(&graph, &depth, Tolerances::at_step(step_mm), &walls, &[])
+                .expect("runs")
+            {
                 let mut from = run.start;
                 for step in &run.steps {
                     if step.link {
@@ -1554,7 +1558,7 @@ fn fitting_splits_a_short_stretch_off_the_axis() {
         written_mm: 0.0,
         grid: None,
     };
-    let runs = medial::runs(&g, &depth, tolerances, &walls, &[]);
+    let runs = medial::runs(&g, &depth, tolerances, &walls, &[]).expect("runs");
     let points: Vec<Point3> = runs
         .iter()
         .flat_map(|r| std::iter::once(r.start).chain(r.steps.iter().map(|s| s.to)))
@@ -1562,5 +1566,77 @@ fn fitting_splits_a_short_stretch_off_the_axis() {
     assert!(
         points.iter().any(|p| p.y.abs() < 0.005),
         "no point on the axis: {points:?}"
+    );
+}
+
+/// Code review finding 1.2: a medial graph that names a node it lacks, or
+/// whose nodes and neighbour lists differ in number, is refused. The walk
+/// once stopped there, and the chain past it was not carved.
+#[test]
+fn chains_refuse_a_graph_that_is_not_one() {
+    let dangling = graph(&[(0.0, 0.0, 1.0), (1.0, 0.0, 1.0)], &[&[1], &[0, 5]]);
+    let lacks = CamError::internal("a medial graph's node has a neighbour the graph lacks");
+    assert_eq!(medial::extract_chains(&dangling), Err(lacks.clone()));
+    let uneven = graph(&[(0.0, 0.0, 1.0), (1.0, 0.0, 1.0)], &[&[1]]);
+    assert_eq!(
+        medial::extract_chains(&uneven),
+        Err(CamError::internal(
+            "a medial graph's nodes and their neighbour lists differ in number"
+        ))
+    );
+    // And so no runs are made of it.
+    let region = nest(vec![
+        Contour::new(Polyline::rect(Point::new(-5.0, -5.0), 10.0, 10.0)).expect("a square"),
+    ])
+    .expect("nests")
+    .0;
+    let walls = Walls::new(&region, 0.01);
+    let depth = Depth {
+        start_plane_z_mm: TOP_MM,
+        flat_depth_mm: None,
+        profile: BitProfile::VBit { slope: 1.0 },
+    };
+    assert_eq!(
+        medial::runs(&dangling, &depth, Tolerances::at_step(0.5), &walls, &[]),
+        Err(lacks)
+    );
+}
+
+/// A carve whose regions and shapes differ in number is refused: paired
+/// as they come, the regions past the shorter list were not carved.
+#[test]
+fn a_carve_with_a_region_of_no_shape_is_refused() {
+    let regions = nest(vec![
+        Contour::new(Polyline::rect(Point::new(0.0, 0.0), 10.0, 10.0)).expect("a square"),
+        Contour::new(Polyline::rect(Point::new(20.0, 0.0), 10.0, 10.0)).expect("a square"),
+    ])
+    .expect("nests")
+    .0;
+    let carve = Carve {
+        regions,
+        shapes: vec![test_shape()],
+        start_plane_z_mm: TOP_MM,
+        engaged_from_z_mm: TOP_MM,
+        flat_depth_mm: None,
+        strategy: &VCarveStrategy::Medial,
+        step_over_fraction: None,
+        cleared_by: Vec::new(),
+        open_edge: None,
+        design: None,
+    };
+    let differ = CamError::internal("a carve's regions and their shapes differ in number");
+    assert_eq!(carve.named_regions().err(), Some(differ.clone()));
+    assert_eq!(shape_at(&carve, Point3::new(1.0, 1.0, 0.0)), Err(differ));
+    // With no region at all there is no shape to name.
+    let empty = Carve {
+        regions: Vec::new(),
+        shapes: Vec::new(),
+        ..carve
+    };
+    assert_eq!(
+        shape_at(&empty, Point3::new(1.0, 1.0, 0.0)),
+        Err(CamError::internal(
+            "a carve with no region failed its cone test"
+        ))
     );
 }

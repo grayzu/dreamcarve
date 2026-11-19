@@ -54,6 +54,7 @@
 //!   [`CutBlock`](crate::CutBlock) (as a run of medial chains, #404), entered by a plunge
 //!   to its first ring's Z; `sequence` retracts between blocks.
 
+use crate::error::CamError;
 use crate::pocket::rings::is_noise;
 use crate::pocket::{MAX_RINGS, RingWall, ring_is_ccw};
 use crate::sequence::nearest_of;
@@ -133,13 +134,18 @@ pub(crate) fn levels(
 /// `direction`; joined to the ring before it tool-down when
 /// [`ring_links_tool_down`] passes, else a new run. Arcs are lines within
 /// `tolerance_mm` on the far side from their wall ([`ring_points`]).
+///
+/// # Errors
+///
+/// [`CamError::Internal`] when a ring left to cut has no point to start
+/// at, where the ring would otherwise not be cut.
 pub(crate) fn runs(
     levels: &[Level],
     direction: CutDirection,
     walls: &Walls,
     depth: &Depth,
     tolerance_mm: f64,
-) -> Vec<Run> {
+) -> Result<Vec<Run>, CamError> {
     let mut runs: Vec<Run> = Vec::new();
     let mut current: Option<Run> = None;
     let mut position: Option<Point3> = None;
@@ -157,26 +163,28 @@ pub(crate) fn runs(
             .filter(|points| points.len() >= 2)
             .collect();
         while !left.is_empty() {
-            let (slot, start) = position.map_or((0, 0), |p| nearest_start(&left, p.xy()));
+            // The first ring of all starts at its first point.
+            let (slot, start) = match position {
+                Some(p) => nearest_start(&left, p.xy())?,
+                None => (0, 0),
+            };
             let mut ring = left.remove(slot);
             let last = ring.len().saturating_sub(1);
             ring.rotate_left(start.min(last));
-            let Some(&first) = ring.first() else {
-                continue;
-            };
+            let &first = ring
+                .first()
+                .ok_or_else(|| CamError::internal("an offset ring to cut has no point"))?;
             let entry = Point3::new(first.x, first.y, level.z_mm);
             let links = current.is_some()
                 && position.is_some_and(|p| ring_links_tool_down(walls, depth, p, entry));
             if !links {
                 runs.extend(current.take());
-                current = Some(Run {
-                    start: entry,
-                    steps: Vec::new(),
-                });
             }
-            let Some(run) = current.as_mut() else {
-                continue;
-            };
+            // The run this ring links on to, or a new one from its entry.
+            let run = current.get_or_insert_with(|| Run {
+                start: entry,
+                steps: Vec::new(),
+            });
             if links {
                 run.steps.push(Step {
                     to: entry,
@@ -196,7 +204,7 @@ pub(crate) fn runs(
         }
     }
     runs.extend(current);
-    runs
+    Ok(runs)
 }
 
 /// Security review H2 for a link between two rings: the straight move
@@ -226,14 +234,16 @@ pub(crate) fn ring_links_tool_down(walls: &Walls, depth: &Depth, from: Point3, t
 
 /// The ring of `left` and its point nearest `p`, as `(slot, index)`:
 /// nearest first by [`nearest_of`]'s rule, so ties keep the rings' and
-/// points' order.
-fn nearest_start(left: &[Vec<Point>], p: Point) -> (usize, usize) {
+/// points' order. The rings left each have points:
+/// [`CamError::Internal`] with none to start at.
+fn nearest_start(left: &[Vec<Point>], p: Point) -> Result<(usize, usize), CamError> {
     let candidates = left.iter().enumerate().flat_map(|(slot, ring)| {
         ring.iter()
             .enumerate()
             .map(move |(index, q)| ((slot, index), q.distance_to(p)))
     });
-    nearest_of(candidates).unwrap_or((0, 0))
+    nearest_of(candidates)
+        .ok_or_else(|| CamError::internal("the offset rings left to cut have no point"))
 }
 
 /// The points of the loop `contour` (its inside on the left of travel, as

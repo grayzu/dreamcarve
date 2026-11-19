@@ -1126,7 +1126,20 @@ pub enum CamError {
     },
     /// Any other geometry failure.
     #[error(transparent)]
-    Geometry(#[from] GeometryError),
+    Geometry(GeometryError),
+}
+
+/// A geometry failure as it is, but for a defect the geometry code found
+/// in itself ([`GeometryError::Internal`]): that is this crate's
+/// [`CamError::Internal`], for a generator to name its operation in
+/// ([`CamError::for_op`]).
+impl From<GeometryError> for CamError {
+    fn from(error: GeometryError) -> Self {
+        match error {
+            GeometryError::Internal { what } => Self::internal(what),
+            other => Self::Geometry(other),
+        }
+    }
 }
 
 impl CamError {
@@ -1271,5 +1284,25 @@ mod tests {
             *slot = 5;
         }
         assert_eq!(items, [5, 2]);
+    }
+
+    /// A defect the geometry code finds in itself is this crate's
+    /// internal defect, which a generator names its operation in; any
+    /// other geometry failure stays what it is.
+    #[test]
+    fn a_geometry_defect_is_an_internal_defect() {
+        let defect = CamError::from(GeometryError::Internal { what: "a hole" });
+        assert_eq!(defect, CamError::internal("a hole"));
+        assert_eq!(
+            defect.for_op(&OperationId::new("carve")),
+            CamError::Internal {
+                op: Some(OperationId::new("carve")),
+                what: "a hole",
+            }
+        );
+        assert_eq!(
+            CamError::from(GeometryError::Unresolved),
+            CamError::Geometry(GeometryError::Unresolved)
+        );
     }
 }

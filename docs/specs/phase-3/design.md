@@ -932,6 +932,10 @@ pub fn drawn_band(boundary: &[Region], tolerance_mm: f64) -> Vec<Region>;
 pub fn closed_band(band: &[Region], rounding_mm: f64, tolerance_mm: f64) -> Vec<Region>;
 /// Where a design stands in a band.
 pub enum BandClearance {
+    /// `design` has no outline: nothing stands in the band, so there is
+    /// no narrowest distance and no point to give (not an infinite
+    /// clearance at the origin; code review finding 1.2).
+    NoDesign,
     /// Every part of `design` is inside `band` with its outlines at least
     /// `narrowest_mm` from the band's edge, nearest at `(x_mm, y_mm)`.
     Inside { narrowest_mm: f64, x_mm: f64, y_mm: f64 },

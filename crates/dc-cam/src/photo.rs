@@ -270,6 +270,12 @@ pub fn generate_photo(
     project: &Project,
     op: &PhotoVCarveOp,
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
+    photo(project, op).map_err(|e| e.for_op(&op.id))
+}
+
+/// [`generate_photo`], before a defect it finds ([`CamError::Internal`])
+/// names `op`.
+fn photo(project: &Project, op: &PhotoVCarveOp) -> Result<(Toolpath, Vec<Warning>), CamError> {
     let tool = project
         .tools
         .iter()

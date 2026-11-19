@@ -70,7 +70,7 @@
 //!   greedy order are the same under reflection.
 
 use crate::block::CutBlock;
-use crate::error::ShapeRef;
+use crate::error::{CamError, ShapeRef, at, at_mut};
 use crate::tabs::LapRates;
 use crate::toolpath::Move;
 use crate::vcarve::cone::{OpenEdgeWalls, Walls};
@@ -377,7 +377,7 @@ pub(crate) fn runs(
     tolerances: Tolerances,
     walls: &Walls,
     floors: &[Region],
-) -> Vec<Run> {
+) -> Result<Vec<Run>, CamError> {
     runs_within(graph, depth, tolerances, walls, floors, None)
 }
 
@@ -393,6 +393,13 @@ pub(crate) fn runs(
 /// (#508), and split by a retract elsewhere. With an edge only the chains a V wall at the band's edge
 /// needs fail it, and chains on the floor far out, which the floor's
 /// cutting covers.
+///
+/// # Errors
+///
+/// [`CamError::Internal`] for a graph that is not one ([`extract_chains`]),
+/// a chain that names a node the graph lacks, or a chain left to cut with
+/// no end to start it from. Each was once passed over, and the groove it
+/// stood for not cut.
 pub(crate) fn runs_within(
     graph: &MedialGraph,
     depth: &Depth,
@@ -400,39 +407,42 @@ pub(crate) fn runs_within(
     walls: &Walls,
     floors: &[Region],
     edge: Option<&OpenEdgeWalls>,
-) -> Vec<Run> {
-    let chains: Vec<Vec<Point3>> =
-        prune_redundant_leaf_chains(graph, extract_chains(graph), tolerances.redundancy_mm)
-            .iter()
-            .flat_map(|chain| {
-                let points: Vec<Point3> = chain
-                    .iter()
-                    .filter_map(|&i| graph.nodes.get(i))
-                    .map(|n| Point3::new(n.p.x, n.p.y, depth.z_mm(n.clearance_mm)))
-                    .collect();
-                let simple = simplify_chain(&points, tolerances.simplify_mm, walls, depth);
-                within_walls(fit_chain(&simple, walls, depth, &tolerances), walls)
-                    .into_iter()
-                    .flat_map(|points| within_edge(points, edge))
-                    .flat_map(|points| {
-                        let ends = (points.first().copied(), points.last().copied());
-                        let pieces = clear_of_walls(points, walls, tolerances.written_mm);
-                        // #499: an end the margin cut back starts on the
-                        // written grid, as near the corner as it can.
-                        match tolerances.grid {
-                            Some(grid) => {
-                                let snap = Snap {
-                                    walls,
-                                    depth,
-                                    grid,
-                                    edge,
-                                };
-                                snapped_ends(ends.0, ends.1, pieces, &snap)
-                            }
-                            None => pieces,
-                        }
-                    })
-                    .collect::<Vec<_>>()
+) -> Result<Vec<Run>, CamError> {
+    // The chains still to cut, in the order they were found.
+    let mut remaining: Vec<Vec<Point3>> = Vec::new();
+    let kept =
+        prune_redundant_leaf_chains(graph, extract_chains(graph)?, tolerances.redundancy_mm)?;
+    for chain in &kept {
+        let mut points: Vec<Point3> = Vec::with_capacity(chain.len());
+        for &i in chain {
+            let n = at(
+                &graph.nodes,
+                i,
+                "a medial chain names a node its graph lacks",
+            )?;
+            points.push(Point3::new(n.p.x, n.p.y, depth.z_mm(n.clearance_mm)));
+        }
+        let simple = simplify_chain(&points, tolerances.simplify_mm, walls, depth)?;
+        let fitted = within_walls(fit_chain(&simple, walls, depth, &tolerances), walls)
+            .into_iter()
+            .flat_map(|points| within_edge(points, edge))
+            .flat_map(|points| {
+                let ends = (points.first().copied(), points.last().copied());
+                let pieces = clear_of_walls(points, walls, tolerances.written_mm);
+                // #499: an end the margin cut back starts on the
+                // written grid, as near the corner as it can.
+                match tolerances.grid {
+                    Some(grid) => {
+                        let snap = Snap {
+                            walls,
+                            depth,
+                            grid,
+                            edge,
+                        };
+                        snapped_ends(ends.0, ends.1, pieces, &snap)
+                    }
+                    None => pieces,
+                }
             })
             .map(|points| {
                 // #452: a chain deepened to its corners is cut off where
@@ -444,33 +454,28 @@ pub(crate) fn runs_within(
                     points
                 }
             })
-            .filter(|points| !points.is_empty() && !inside_floor(points, depth, floors))
-            .collect();
+            .filter(|points| !points.is_empty() && !inside_floor(points, depth, floors));
+        remaining.extend(fitted);
+    }
 
-    let mut remaining: Vec<usize> = (0..chains.len()).collect();
     let mut runs: Vec<Run> = Vec::new();
     let mut current: Option<Run> = None;
     let mut position: Option<Point3> = None;
     while !remaining.is_empty() {
         let picked = match position {
-            None => shallowest_end(&chains, &remaining),
-            Some(p) => nearest_end(&chains, &remaining, p),
+            None => shallowest_end(&remaining),
+            Some(p) => nearest_end(&remaining, p),
         };
-        let Some((slot, reversed)) = picked else {
-            break;
-        };
-        let index = remaining.remove(slot);
-        let Some(chain) = chains.get(index) else {
-            continue;
-        };
-        let oriented: Vec<Point3> = if reversed {
-            chain.iter().rev().copied().collect()
-        } else {
-            chain.clone()
-        };
-        let Some((&entry, rest)) = oriented.split_first() else {
-            continue;
-        };
+        // No chain left is empty, so one of them has the end to go to.
+        let (slot, reversed) =
+            picked.ok_or_else(|| CamError::internal("a medial chain left to cut has no end"))?;
+        let mut oriented = remaining.remove(slot);
+        if reversed {
+            oriented.reverse();
+        }
+        let (&entry, rest) = oriented
+            .split_first()
+            .ok_or_else(|| CamError::internal("a medial chain picked to cut has no point"))?;
         let from = position.filter(|_| current.is_some());
         // Continuing through a shared node: the tool is already there.
         let continues = from.is_some_and(|p| p.xy().distance_to(entry.xy()) <= EPS_MM);
@@ -487,14 +492,12 @@ pub(crate) fn runs_within(
             });
         if !(continues || links) {
             runs.extend(current.take());
-            current = Some(Run {
-                start: entry,
-                steps: Vec::new(),
-            });
         }
-        let Some(run) = current.as_mut() else {
-            continue;
-        };
+        // The run this chain goes on with, or a new one from its entry.
+        let run = current.get_or_insert_with(|| Run {
+            start: entry,
+            steps: Vec::new(),
+        });
         if let Some(p) = from {
             // At a shared node only a difference in Z is cut.
             if links || (continues && (p.z - entry.z).abs() > EPS_MM) {
@@ -509,7 +512,7 @@ pub(crate) fn runs_within(
         position = oriented.last().copied();
     }
     runs.extend(current);
-    runs
+    Ok(runs)
 }
 
 /// The fitted chain `points` cut where a stretch's tip path still leaves
@@ -693,19 +696,19 @@ fn within_edge(points: Vec<Point3>, edge: Option<&OpenEdgeWalls>) -> Vec<Vec<Poi
 /// which holds the stretch between them to the floor too). A chain wholly
 /// on the floor keeps one point, which [`inside_floor`] then drops.
 fn off_floor(points: Vec<Point3>, depth: &Depth, floors: &[Region]) -> Vec<Point3> {
-    let on_floor = |p: Option<&Point3>| p.is_some_and(|&p| inside_floor(&[p], depth, floors));
-    let mut lo = 0;
-    while lo + 1 < points.len() && on_floor(points.get(lo)) && on_floor(points.get(lo + 1)) {
-        lo += 1;
-    }
-    let mut hi = points.len();
-    while hi > lo + 1 && on_floor(points.get(hi - 1)) && on_floor(points.get(hi - 2)) {
-        hi -= 1;
-    }
-    points
-        .get(lo..hi)
-        .map(<[Point3]>::to_vec)
-        .unwrap_or_default()
+    let on_floor = |stretch: &&[Point3]| stretch.iter().all(|&p| inside_floor(&[p], depth, floors));
+    // The stretches on the floor at the start, and those at the end among
+    // the ones after them.
+    let stretches = points.len().saturating_sub(1);
+    let front = points.windows(2).take_while(on_floor).count();
+    let back = points
+        .windows(2)
+        .rev()
+        .take(stretches - front)
+        .take_while(on_floor)
+        .count();
+    let kept = points.len() - front - back;
+    points.into_iter().skip(front).take(kept).collect()
 }
 
 /// Step 6: true when the fitted chain `points` lies wholly on the cleared
@@ -789,14 +792,12 @@ fn feed_between(from: Point3, to: Point3, rates: LapRates) -> f64 {
     }
 }
 
-/// The remaining chain end with the highest Z, as `(slot in remaining,
-/// reversed)`; ties go to the earlier chain, then its first end.
-fn shallowest_end(chains: &[Vec<Point3>], remaining: &[usize]) -> Option<(usize, bool)> {
+/// The end with the highest Z among the chains `remaining`, as `(slot in
+/// remaining, reversed)`; ties go to the earlier chain, then its first
+/// end. `None` when none of them has a point.
+fn shallowest_end(remaining: &[Vec<Point3>]) -> Option<(usize, bool)> {
     let mut best: Option<(usize, bool, f64)> = None;
-    for (slot, &index) in remaining.iter().enumerate() {
-        let Some(chain) = chains.get(index) else {
-            continue;
-        };
+    for (slot, chain) in remaining.iter().enumerate() {
         let ends = [(false, chain.first()), (true, chain.last())];
         for (reversed, end) in ends {
             if let Some(end) = end
@@ -809,18 +810,17 @@ fn shallowest_end(chains: &[Vec<Point3>], remaining: &[usize]) -> Option<(usize,
     best.map(|(slot, reversed, _)| (slot, reversed))
 }
 
-/// The remaining chain whose nearer end is nearest `p` in XY, as `(slot in
-/// remaining, reversed)` (upstream's greedy pick: a strictly nearer end
-/// wins, the last end only when strictly nearer than the first, and an
-/// end at `p` ends the search).
-fn nearest_end(chains: &[Vec<Point3>], remaining: &[usize], p: Point3) -> Option<(usize, bool)> {
+/// The chain of `remaining` whose nearer end is nearest `p` in XY, as
+/// `(slot in remaining, reversed)` (upstream's greedy pick: a strictly
+/// nearer end wins, the last end only when strictly nearer than the first,
+/// and an end at `p` ends the search). `None` when none of them has a
+/// point.
+fn nearest_end(remaining: &[Vec<Point3>], p: Point3) -> Option<(usize, bool)> {
     let mut best: Option<(usize, bool)> = None;
     let mut best_cost = f64::INFINITY;
-    for (slot, &index) in remaining.iter().enumerate() {
-        let (Some(first), Some(last)) = chains
-            .get(index)
-            .map_or((None, None), |c| (c.first(), c.last()))
-        else {
+    for (slot, chain) in remaining.iter().enumerate() {
+        // A chain with no point has no end to be near.
+        let (Some(first), Some(last)) = (chain.first(), chain.last()) else {
             continue;
         };
         let forward = first.xy().distance_to(p.xy());
@@ -842,9 +842,27 @@ fn nearest_end(chains: &[Vec<Point3>], remaining: &[usize], p: Point3) -> Option
 /// maximal path whose interior nodes have degree 2, then the pure cycles
 /// left (first node repeated at the end), then each isolated node alone
 /// (a plunge point for a dot).
-pub(crate) fn extract_chains(graph: &MedialGraph) -> Vec<Vec<usize>> {
-    let degree: Vec<usize> = graph.adjacency.iter().map(Vec::len).collect();
-    let degree_of = |n: usize| degree.get(n).copied().unwrap_or(0);
+///
+/// # Errors
+///
+/// [`CamError::Internal`] for a graph that is not one: its nodes and
+/// their neighbour lists differ in number, or a node has a neighbour the
+/// graph lacks. A walk once stopped there, and the chain past it was not
+/// cut.
+pub(crate) fn extract_chains(graph: &MedialGraph) -> Result<Vec<Vec<usize>>, CamError> {
+    if graph.adjacency.len() != graph.nodes.len() {
+        return Err(CamError::internal(
+            "a medial graph's nodes and their neighbour lists differ in number",
+        ));
+    }
+    let neighbours = |n: usize| {
+        at(
+            &graph.adjacency,
+            n,
+            "a medial graph's node has a neighbour the graph lacks",
+        )
+        .map(Vec::as_slice)
+    };
     let key = |a: usize, b: usize| (a.min(b), a.max(b));
     let mut visited: BTreeSet<(usize, usize)> = BTreeSet::new();
     let mut chains: Vec<Vec<usize>> = Vec::new();
@@ -854,18 +872,14 @@ pub(crate) fn extract_chains(graph: &MedialGraph) -> Vec<Vec<usize>> {
         let mut prev = start;
         let mut curr = next;
         visited.insert(key(start, next));
-        while degree_of(curr) == 2 && curr != start {
+        // A node of any degree but 2 ends the chain, as coming back to
+        // its start does.
+        while let &[a, b] = neighbours(curr)? {
+            if curr == start {
+                break;
+            }
             chain.push(curr);
-            let following = match graph.adjacency.get(curr).map(Vec::as_slice) {
-                Some(&[a, b]) => {
-                    if a == prev {
-                        b
-                    } else {
-                        a
-                    }
-                }
-                _ => break,
-            };
+            let following = if a == prev { b } else { a };
             if !visited.insert(key(curr, following)) {
                 break;
             }
@@ -873,41 +887,40 @@ pub(crate) fn extract_chains(graph: &MedialGraph) -> Vec<Vec<usize>> {
             curr = following;
         }
         chain.push(curr);
-        chain
+        Ok::<_, CamError>(chain)
     };
 
-    let n = graph.nodes.len().min(graph.adjacency.len());
-    for node in 0..n {
-        if matches!(degree_of(node), 0 | 2) {
+    for (node, around) in graph.adjacency.iter().enumerate() {
+        if matches!(around.len(), 0 | 2) {
             continue;
         }
-        for &neighbour in graph.adjacency.get(node).into_iter().flatten() {
+        for &neighbour in around {
             if visited.contains(&key(node, neighbour)) {
                 continue;
             }
-            let chain = walk(node, neighbour, &mut visited);
+            let chain = walk(node, neighbour, &mut visited)?;
             chains.push(chain);
         }
     }
     // Edges not visited yet belong to pure degree-2 cycles.
-    for node in 0..n {
-        if degree_of(node) != 2 {
+    for (node, around) in graph.adjacency.iter().enumerate() {
+        if around.len() != 2 {
             continue;
         }
-        for &neighbour in graph.adjacency.get(node).into_iter().flatten() {
+        for &neighbour in around {
             if visited.contains(&key(node, neighbour)) {
                 continue;
             }
-            let chain = walk(node, neighbour, &mut visited);
+            let chain = walk(node, neighbour, &mut visited)?;
             chains.push(chain);
         }
     }
-    for node in 0..graph.nodes.len() {
-        if degree_of(node) == 0 {
+    for (node, around) in graph.adjacency.iter().enumerate() {
+        if around.is_empty() {
             chains.push(vec![node]);
         }
     }
-    chains
+    Ok(chains)
 }
 
 /// Drops leaf chains that deepen the carve nowhere by more than
@@ -917,68 +930,71 @@ pub(crate) fn extract_chains(graph: &MedialGraph) -> Vec<Vec<usize>> {
 /// a node still in the skeleton (not its own body) is dropped. Corner tips
 /// (clearance 0) are kept; at most [`MAX_PRUNE_PASSES`] passes; one chain
 /// always stays.
+///
+/// The chains are `graph`'s own ([`extract_chains`]), each with a node
+/// and naming only nodes of the graph: [`CamError::Internal`] otherwise,
+/// where a chain would be kept or dropped unjudged.
 fn prune_redundant_leaf_chains(
     graph: &MedialGraph,
     chains: Vec<Vec<usize>>,
     tolerance_mm: f64,
-) -> Vec<Vec<usize>> {
+) -> Result<Vec<Vec<usize>>, CamError> {
     if chains.len() <= 1 || tolerance_mm <= 0.0 {
-        return chains;
+        return Ok(chains);
     }
-    let degree = |n: usize| graph.adjacency.get(n).map_or(0, Vec::len);
+    let lacks = "a medial chain names a node its graph lacks";
+    let degree = |n: usize| at(&graph.adjacency, n, lacks).map(Vec::len);
     let mut removed: BTreeSet<usize> = BTreeSet::new();
     let mut alive = vec![true; chains.len()];
+    let mut alive_count = chains.len();
 
-    let contained = |p: usize, body: &BTreeSet<usize>, removed: &BTreeSet<usize>| -> bool {
-        let Some(node) = graph.nodes.get(p) else {
-            return false;
-        };
-        graph.nodes.iter().enumerate().any(|(q, other)| {
+    let contained = |p: usize, body: &BTreeSet<usize>, removed: &BTreeSet<usize>| {
+        let node = at(&graph.nodes, p, lacks)?;
+        Ok::<_, CamError>(graph.nodes.iter().enumerate().any(|(q, other)| {
             if q == p || removed.contains(&q) || body.contains(&q) {
                 return false;
             }
             let slack = other.clearance_mm - node.clearance_mm + tolerance_mm;
             slack > 0.0 && node.p.distance_to(other.p) <= slack
-        })
+        }))
     };
 
     for _ in 0..MAX_PRUNE_PASSES {
         let mut changed = false;
-        for (index, chain) in chains.iter().enumerate() {
-            if !alive.get(index).copied().unwrap_or(false) {
+        for (chain, alive) in chains.iter().zip(alive.iter_mut()) {
+            if !*alive {
                 continue;
             }
-            if alive.iter().filter(|a| **a).count() <= 1 {
+            if alive_count <= 1 {
                 break;
             }
             let (Some(&first), Some(&last)) = (chain.first(), chain.last()) else {
-                continue;
+                return Err(CamError::internal("a medial chain has no node"));
             };
-            let first_is_leaf = degree(first) == 1;
-            let last_is_leaf = degree(last) == 1;
+            let first_is_leaf = degree(first)? == 1;
+            let last_is_leaf = degree(last)? == 1;
             // An interior chain, or a floating segment.
             if first_is_leaf == last_is_leaf {
                 continue;
             }
             let leaf = if first_is_leaf { first } else { last };
-            if graph
-                .nodes
-                .get(leaf)
-                .is_none_or(|n| n.clearance_mm < TIP_CLEARANCE_MM)
-            {
+            if at(&graph.nodes, leaf, lacks)?.clearance_mm < TIP_CLEARANCE_MM {
                 continue;
             }
             // The junction stays in the skeleton; only the chain's own body
             // may not vouch for itself.
             let junction = if first_is_leaf { last } else { first };
             let body: BTreeSet<usize> = chain.iter().copied().filter(|&n| n != junction).collect();
-            if chain
-                .iter()
-                .all(|&n| n == junction || contained(n, &body, &removed))
-            {
-                if let Some(a) = alive.get_mut(index) {
-                    *a = false;
+            let mut covered = true;
+            for &n in chain {
+                if n != junction && !contained(n, &body, &removed)? {
+                    covered = false;
+                    break;
                 }
+            }
+            if covered {
+                *alive = false;
+                alive_count -= 1;
                 removed.extend(body);
                 changed = true;
             }
@@ -987,11 +1003,11 @@ fn prune_redundant_leaf_chains(
             break;
         }
     }
-    chains
+    Ok(chains
         .into_iter()
         .zip(alive)
         .filter_map(|(chain, alive)| alive.then_some(chain))
-        .collect()
+        .collect())
 }
 
 /// Douglas-Peucker on a chain's points, measured on the carved edge (#457;
@@ -1017,25 +1033,21 @@ pub(crate) fn simplify_chain(
     tolerance_mm: f64,
     walls: &Walls,
     depth: &Depth,
-) -> Vec<Point3> {
+) -> Result<Vec<Point3>, CamError> {
     if tolerance_mm <= 0.0 || points.len() <= 2 {
-        return points.to_vec();
+        return Ok(points.to_vec());
     }
+    // The points kept between the ends.
     let mut keep = vec![false; points.len()];
-    if let Some(k) = keep.first_mut() {
-        *k = true;
-    }
-    if let Some(k) = keep.last_mut() {
-        *k = true;
-    }
-    let mut stack = vec![(0, points.len() - 1)];
+    let last = points.len() - 1;
+    // A stretch still to judge runs between two points of the chain.
+    let lacks = "a stretch of a medial chain ends at no point of it";
+    let mut stack = vec![(0, last)];
     while let Some((lo, hi)) = stack.pop() {
         if hi - lo < 2 {
             continue;
         }
-        let (Some(&a), Some(&b)) = (points.get(lo), points.get(hi)) else {
-            continue;
-        };
+        let (a, b) = (*at(points, lo, lacks)?, *at(points, hi, lacks)?);
         let inner = || points.iter().enumerate().take(hi).skip(lo + 1);
         let mut worst: Option<usize> = None;
         let mut worst_mm = tolerance_mm;
@@ -1059,18 +1071,17 @@ pub(crate) fn simplify_chain(
             }
         }
         if let Some(w) = worst {
-            if let Some(k) = keep.get_mut(w) {
-                *k = true;
-            }
+            *at_mut(&mut keep, w, lacks)? = true;
             stack.push((lo, w));
             stack.push((w, hi));
         }
     }
-    points
+    Ok(points
         .iter()
         .zip(keep)
-        .filter_map(|(&p, k)| k.then_some(p))
-        .collect()
+        .enumerate()
+        .filter_map(|(i, (&p, k))| (k || i == 0 || i == last).then_some(p))
+        .collect())
 }
 
 /// The lowest a V-bit cone of `slope` reaches over `q`, mm, while its tip

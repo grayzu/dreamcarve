@@ -545,7 +545,7 @@ pub(super) fn region_paths(
         *anchor = lines.first().map(|l| l.start).or(*anchor);
     }
     let first_rings = match settings.wall {
-        WallRings::First => wall_paths(root, settings.direction, keep, anchor),
+        WallRings::First => wall_paths(root, settings.direction, keep, anchor)?,
         WallRings::Last | WallRings::Omitted => Vec::new(),
     };
     // Nearest-first from where the tool is (#150).
@@ -577,7 +577,7 @@ pub(super) fn region_paths(
         WallRings::Last => {
             out.extend(line_paths());
             *anchor = last_end.or(*anchor);
-            for (path, _) in wall_paths(root, settings.direction, keep, anchor) {
+            for (path, _) in wall_paths(root, settings.direction, keep, anchor)? {
                 out.push((path, Some(root.clone())));
             }
         }
@@ -686,7 +686,7 @@ fn wall_paths(
     direction: CutDirection,
     keep: &dyn Fn(&Ring) -> bool,
     anchor: &mut Option<Point>,
-) -> Vec<(Polyline, Point)> {
+) -> Result<Vec<(Polyline, Point)>, CamError> {
     let tree = RingTree {
         nodes: vec![RingNode {
             region: root.clone(),
@@ -695,13 +695,14 @@ fn wall_paths(
             splice: None,
         }],
     };
-    tree.walk_keeping(WallRings::Last, anchor, keep)
+    Ok(tree
+        .walk_keeping(WallRings::Last, anchor, keep)?
         .into_iter()
         .map(|ring| {
             let start = ring.start;
             (ring_path(ring, direction), start)
         })
-        .collect()
+        .collect())
 }
 
 /// The strip `line` clears in tool-centre terms: the line grown by the

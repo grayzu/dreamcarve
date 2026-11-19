@@ -2029,3 +2029,28 @@ fn open_edge_male_cuts_a_floor_piece_a_hair_wide() {
         );
     }
 }
+
+/// Code review finding 1.2: a band region is named by the design outline
+/// it borders, and with no outline to name it by it is refused. It was
+/// once named by a shape with an empty instance id.
+#[test]
+fn a_band_that_borders_no_design_outline_is_refused() {
+    let regions = dc_geometry::nest(vec![
+        dc_geometry::Contour::new(Polyline::rect(Point::new(0.0, 0.0), 30.0, 20.0))
+            .expect("a rectangle"),
+    ])
+    .expect("nests")
+    .0;
+    let no_design = Targets {
+        regions: Vec::new(),
+        shapes: Vec::new(),
+        containment: Vec::new(),
+        contours: Vec::new(),
+    };
+    assert_eq!(
+        bordering_shape(&regions[0], &no_design),
+        Err(CamError::internal(
+            "a male Inlay's band borders no outline of its design"
+        ))
+    );
+}

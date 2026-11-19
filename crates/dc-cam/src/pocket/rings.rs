@@ -41,7 +41,9 @@ use dc_geometry::{
 use std::f64::consts::TAU;
 
 use super::rest::grow_all;
+use crate::error::{CamError, at};
 use crate::sequence::nearest_of;
+use std::collections::BTreeMap;
 
 /// `region` inset by `inset_mm`: its outer offset inward and its islands
 /// outward by `inset_mm`, the islands then cut from the outer. An island
@@ -252,6 +254,9 @@ impl RingTree {
         tolerance_mm: f64,
         max_nodes: usize,
     ) -> Option<Self> {
+        // The nodes still to step, each with its own region, so stepping
+        // one looks nothing up; and the children each stepped node got.
+        let mut pending: Vec<(usize, Region)> = vec![(0, root.clone())];
         let mut nodes = vec![RingNode {
             region: root,
             children: Vec::new(),
@@ -259,29 +264,23 @@ impl RingTree {
             splice: None,
         }];
         let link_limit_mm = 2.0 * radius_mm + stepover_mm;
-        let mut pending = vec![0usize];
-        while let Some(index) = pending.pop() {
-            let (children, residual) = match nodes.get(index) {
-                Some(node) => {
-                    let children: Vec<Region> = stepped(&node.region, stepover_mm, tolerance_mm)
-                        .into_iter()
-                        .filter(|r| !is_noise(r, tolerance_mm))
-                        .collect();
-                    let residual: Vec<(Region, Option<Splice>)> =
-                        if stepover_mm > radius_mm + tolerance_mm {
-                            residual_regions(&node.region, &children, radius_mm, tolerance_mm)
-                                .into_iter()
-                                .map(|r| {
-                                    let splice = splice_of(&node.region, &r, link_limit_mm);
-                                    (r, splice)
-                                })
-                                .collect()
-                        } else {
-                            Vec::new()
-                        };
-                    (children, residual)
-                }
-                None => continue,
+        let mut children_of: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        while let Some((index, parent)) = pending.pop() {
+            let children: Vec<Region> = stepped(&parent, stepover_mm, tolerance_mm)
+                .into_iter()
+                .filter(|r| !is_noise(r, tolerance_mm))
+                .collect();
+            let residual: Vec<(Region, Option<Splice>)> = if stepover_mm > radius_mm + tolerance_mm
+            {
+                residual_regions(&parent, &children, radius_mm, tolerance_mm)
+                    .into_iter()
+                    .map(|r| {
+                        let splice = splice_of(&parent, &r, link_limit_mm);
+                        (r, splice)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
             };
             let mut ids = Vec::with_capacity(children.len() + residual.len());
             let tagged = children
@@ -294,7 +293,7 @@ impl RingTree {
                 }
                 ids.push(nodes.len());
                 if !residual {
-                    pending.push(nodes.len());
+                    pending.push((nodes.len(), region.clone()));
                 }
                 nodes.push(RingNode {
                     region,
@@ -303,7 +302,11 @@ impl RingTree {
                     splice,
                 });
             }
-            if let Some(node) = nodes.get_mut(index) {
+            children_of.insert(index, ids);
+        }
+        // A residual node is never stepped: it has no children.
+        for (index, node) in nodes.iter_mut().enumerate() {
+            if let Some(ids) = children_of.remove(&index) {
                 node.children = ids;
             }
         }
@@ -320,26 +323,39 @@ impl RingTree {
     /// a [`Cleanup`] of that ring (#267). `anchor` is updated to each
     /// ring's point nearest it, which is where that ring will start and
     /// end.
-    pub fn walk(&self, wall: WallRings, anchor: &mut Option<Point>) -> Vec<Ring> {
+    ///
+    /// # Errors
+    ///
+    /// [`CamError::Internal`] for a tree that is not one: a child, a
+    /// splice or a ring that names nothing of it, or an outline with no
+    /// vertex. Such a ring was once left out, and its material left
+    /// standing.
+    pub fn walk(&self, wall: WallRings, anchor: &mut Option<Point>) -> Result<Vec<Ring>, CamError> {
         self.walk_keeping(wall, anchor, &|_| true)
     }
 
     /// [`RingTree::walk`] over the rings `keep` accepts: a ring it refuses
     /// is not cut, and the next ring starts nearest the end of the last one
     /// kept. Rest machining refuses the rings that cut only air (#167).
+    ///
+    /// # Errors
+    ///
+    /// As [`RingTree::walk`].
     pub fn walk_keeping(
         &self,
         wall: WallRings,
         anchor: &mut Option<Point>,
         keep: &dyn Fn(&Ring) -> bool,
-    ) -> Vec<Ring> {
+    ) -> Result<Vec<Ring>, CamError> {
         let mut out = Vec::new();
         if wall == WallRings::First {
-            self.push_rings(0, anchor, keep, &mut out);
+            self.push_rings(0, anchor, keep, &mut out)?;
         }
-        let mut first = self.walked_children(0, keep);
-        if wall == WallRings::Omitted {
-            first.retain(|&c| self.nodes.get(c).is_some_and(|n| !n.residual));
+        let mut first = Vec::new();
+        for child in self.walked_children(0, keep)? {
+            if wall != WallRings::Omitted || !self.node(child)?.residual {
+                first.push(child);
+            }
         }
         // Frames of (node, children not yet visited).
         let mut stack: Vec<(usize, Vec<usize>)> = vec![(0, first)];
@@ -348,80 +364,103 @@ impl RingTree {
                 let node = *node;
                 stack.pop();
                 if node != 0 || wall == WallRings::Last {
-                    self.push_rings(node, anchor, keep, &mut out);
+                    self.push_rings(node, anchor, keep, &mut out)?;
                 }
                 continue;
             }
-            let pick = nearest_of(remaining.iter().enumerate().map(|(i, &n)| {
-                let d = self
-                    .nodes
-                    .get(n)
-                    .map_or(f64::INFINITY, |n| nearest(n.region.outer(), *anchor).1);
-                (i, d)
-            }));
-            let Some(child) = pick.map(|i| remaining.remove(i)) else {
-                break;
-            };
-            stack.push((child, self.walked_children(child, keep)));
+            let mut distances = Vec::with_capacity(remaining.len());
+            for (i, &n) in remaining.iter().enumerate() {
+                distances.push((i, nearest(self.node(n)?.region.outer(), *anchor)?.1));
+            }
+            let pick = nearest_of(distances)
+                .ok_or_else(|| CamError::internal("no child of a ring is nearest"))?;
+            let child = remaining.remove(pick);
+            stack.push((child, self.walked_children(child, keep)?));
         }
-        out
+        Ok(out)
+    }
+
+    /// Node `index` of the tree, which a child, a ring or a frame of the
+    /// walk names.
+    fn node(&self, index: usize) -> Result<&RingNode, CamError> {
+        at(&self.nodes, index, "a ring tree lacks a node it names")
     }
 
     /// The children of `node` the walk visits: all but the residual nodes
     /// cut from one of its rings ([`RingTree::spliced`]).
-    fn walked_children(&self, node: usize, keep: &dyn Fn(&Ring) -> bool) -> Vec<usize> {
-        let Some(n) = self.nodes.get(node) else {
-            return Vec::new();
-        };
-        n.children
-            .iter()
-            .copied()
-            .filter(|&c| self.spliced(node, c, keep).is_none())
-            .collect()
+    fn walked_children(
+        &self,
+        node: usize,
+        keep: &dyn Fn(&Ring) -> bool,
+    ) -> Result<Vec<usize>, CamError> {
+        let mut out = Vec::new();
+        for &child in &self.node(node)?.children {
+            if self.spliced(node, child, keep)?.is_none() {
+                out.push(child);
+            }
+        }
+        Ok(out)
     }
 
     /// Ring `index` of `node`, 0 its outer and `i + 1` its hole `i`, with
-    /// no clean-ups and a start still to be set.
-    fn ring_of(&self, node: usize, index: usize) -> Option<Ring> {
-        let region = &self.nodes.get(node)?.region;
+    /// no clean-ups, starting at its first vertex until the walk says
+    /// where ([`nearest`] with no anchor).
+    fn ring_of(&self, node: usize, index: usize) -> Result<Ring, CamError> {
+        let region = &self.node(node)?.region;
         let (contour, kind) = match index.checked_sub(1) {
             None => (region.outer(), RingKind::Outer),
-            Some(hole) => (region.holes().get(hole)?, RingKind::Hole),
+            Some(hole) => (
+                at(region.holes(), hole, "a ring is of no hole of its node")?,
+                RingKind::Hole,
+            ),
         };
-        Some(Ring {
+        Ok(Ring {
             contour: contour.clone(),
             kind,
             node,
-            start: Point::new(0.0, 0.0),
+            start: nearest(contour, None)?.0,
             cleanups: Vec::new(),
         })
     }
 
     /// The splice of `child` into a ring of its parent `node`, when it has
-    /// one and `keep` accepts that ring.
-    fn spliced(&self, node: usize, child: usize, keep: &dyn Fn(&Ring) -> bool) -> Option<Splice> {
-        let splice = self.nodes.get(child).filter(|c| c.residual)?.splice?;
+    /// one and `keep` accepts that ring: `None` for a child that is not a
+    /// residual node, or one no straight link reaches.
+    fn spliced(
+        &self,
+        node: usize,
+        child: usize,
+        keep: &dyn Fn(&Ring) -> bool,
+    ) -> Result<Option<Splice>, CamError> {
+        let child = self.node(child)?;
+        let Some(splice) = child.splice.filter(|_| child.residual) else {
+            return Ok(None);
+        };
         let ring = self.ring_of(node, splice.ring)?;
-        keep(&ring).then_some(splice)
+        Ok(keep(&ring).then_some(splice))
     }
 
     /// The residual rings of `node` spliced into its ring `index`.
-    fn cleanups(&self, node: usize, index: usize, keep: &dyn Fn(&Ring) -> bool) -> Vec<Cleanup> {
-        let Some(n) = self.nodes.get(node) else {
-            return Vec::new();
-        };
-        n.children
-            .iter()
-            .filter_map(|&c| {
-                let splice = self.spliced(node, c, keep).filter(|s| s.ring == index)?;
-                let mut ring = self.ring_of(c, 0)?;
-                ring.start = splice.start;
-                Some(Cleanup {
-                    at: splice.at,
-                    ring,
-                })
-            })
-            .collect()
+    fn cleanups(
+        &self,
+        node: usize,
+        index: usize,
+        keep: &dyn Fn(&Ring) -> bool,
+    ) -> Result<Vec<Cleanup>, CamError> {
+        let mut out = Vec::new();
+        for &child in &self.node(node)?.children {
+            // Spliced into another ring, or cut as a ring of its own.
+            let Some(splice) = self.spliced(node, child, keep)?.filter(|s| s.ring == index) else {
+                continue;
+            };
+            let mut ring = self.ring_of(child, 0)?;
+            ring.start = splice.start;
+            out.push(Cleanup {
+                at: splice.at,
+                ring,
+            });
+        }
+        Ok(out)
     }
 
     /// Appends `node`'s outer and holes that `keep` accepts, nearest
@@ -432,30 +471,29 @@ impl RingTree {
         anchor: &mut Option<Point>,
         keep: &dyn Fn(&Ring) -> bool,
         out: &mut Vec<Ring>,
-    ) {
-        let Some(n) = self.nodes.get(node) else {
-            return;
-        };
-        let mut rings: Vec<Ring> = (0..=n.region.holes().len())
-            .filter_map(|index| {
-                let mut ring = self.ring_of(node, index).filter(|r| keep(r))?;
-                ring.cleanups = self.cleanups(node, index, keep);
-                Some(ring)
-            })
-            .collect();
+    ) -> Result<(), CamError> {
+        let holes = self.node(node)?.region.holes().len();
+        let mut rings: Vec<Ring> = Vec::with_capacity(holes + 1);
+        for index in 0..=holes {
+            let mut ring = self.ring_of(node, index)?;
+            if keep(&ring) {
+                ring.cleanups = self.cleanups(node, index, keep)?;
+                rings.push(ring);
+            }
+        }
         while !rings.is_empty() {
-            let pick = nearest_of(
-                rings
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| (i, nearest(&r.contour, *anchor).1)),
-            )
-            .unwrap_or(0);
+            let mut distances = Vec::with_capacity(rings.len());
+            for (i, ring) in rings.iter().enumerate() {
+                distances.push((i, nearest(&ring.contour, *anchor)?.1));
+            }
+            let pick = nearest_of(distances)
+                .ok_or_else(|| CamError::internal("no ring of a node is nearest"))?;
             let mut ring = rings.remove(pick);
-            ring.start = nearest(&ring.contour, *anchor).0;
+            ring.start = nearest(&ring.contour, *anchor)?.0;
             *anchor = Some(ring.start);
             out.push(ring);
         }
+        Ok(())
     }
 }
 
@@ -482,13 +520,13 @@ fn splice_of(parent: &Region, piece: &Region, limit_mm: f64) -> Option<Splice> {
         .chain(parent.holes())
         .enumerate()
         .flat_map(|(ring, contour)| {
-            vertices.iter().map(move |v| {
-                let (at, d) = nearest(contour, Some(v.point()));
-                ((ring, at), d)
+            vertices.iter().filter_map(move |v| {
+                let (at, d) = nearest_to(contour, v.point())?;
+                Some(((ring, at), d))
             })
         });
     let (ring, at) = nearest_of(candidates)?;
-    let start = nearest(piece.outer(), Some(at)).0;
+    let start = nearest_to(piece.outer(), at)?.0;
     let reached = at.distance_to(start) <= limit_mm + EPS_MM && link_inside(parent, at, start);
     reached.then_some(Splice { ring, at, start })
 }
@@ -524,8 +562,28 @@ fn link_inside(region: &Region, from: Point, to: Point) -> bool {
 }
 
 /// Where a ring starts: the point of `contour` nearest `anchor` among its
-/// vertices and along its arcs, and its distance; the first vertex and 0
-/// with no anchor. Upstream (`contourNearestVertexIndex`) takes the
+/// vertices and along its arcs, and its distance ([`nearest_to`]); the
+/// first vertex and 0 with no anchor.
+///
+/// # Errors
+///
+/// [`CamError::Internal`] for a contour with no vertex, which a
+/// [`Contour`] cannot be: the ring would otherwise start at the origin.
+pub fn nearest(contour: &Contour, anchor: Option<Point>) -> Result<(Point, f64), CamError> {
+    match anchor {
+        Some(anchor) => nearest_to(contour, anchor),
+        None => contour
+            .polyline()
+            .vertices()
+            .first()
+            .map(|v| (v.point(), 0.0)),
+    }
+    .ok_or_else(|| CamError::internal("a ring's outline has no vertex"))
+}
+
+/// The point of `contour` nearest `anchor` among its vertices and along
+/// its arcs, and its distance; `None` for a contour with no vertex, which
+/// a [`Contour`] cannot be. Upstream (`contourNearestVertexIndex`) takes the
 /// nearest vertex of a Clipper polygon, whose arcs are sampled densely, so
 /// on an arc its nearest vertex is in effect the nearest point, and on a
 /// straight edge it is a corner. DreamCarve keeps arcs, so a circle has
@@ -536,17 +594,10 @@ fn link_inside(region: &Region, from: Point, to: Point) -> bool {
 /// corner). A point within [`EPS_MM`] of an arc's end is that end, so no
 /// sliver arc is made. Ties go to the earlier segment, points within
 /// `NEAREST_TIE_MM` of the nearest included (#215).
-#[must_use]
-pub fn nearest(contour: &Contour, anchor: Option<Point>) -> (Point, f64) {
+fn nearest_to(contour: &Contour, anchor: Point) -> Option<(Point, f64)> {
     let polyline = contour.polyline();
-    let first = polyline
-        .vertices()
-        .first()
-        .map_or(Point::new(0.0, 0.0), |v| v.point());
-    let Some(anchor) = anchor else {
-        return (first, 0.0);
-    };
-    let candidates = std::iter::once(first).chain(polyline.segments().map(|segment| {
+    let first = polyline.vertices().first().map(|v| v.point());
+    let candidates = first.into_iter().chain(polyline.segments().map(|segment| {
         let mut point = if segment.arc().is_some() {
             closest_on_segment(segment, anchor)
         } else {
@@ -559,8 +610,8 @@ pub fn nearest(contour: &Contour, anchor: Option<Point>) -> (Point, f64) {
         }
         point
     }));
-    let best = nearest_of(candidates.map(|p| (p, p.distance_to(anchor)))).unwrap_or(first);
-    (best, best.distance_to(anchor))
+    let best = nearest_of(candidates.map(|p| (p, p.distance_to(anchor))))?;
+    Some((best, best.distance_to(anchor)))
 }
 
 /// The point of `segment` nearest `p`, following an arc.
@@ -686,15 +737,15 @@ fn way_along(ring: &Polyline, from: Point, to: Point) -> Option<Polyline> {
             .position(|v| v.point().distance_to(p) <= EPS_MM)
     };
     let (first, last) = (at(from)?, at(to)?);
-    let mut out = Vec::new();
-    let mut index = first;
-    for _ in 0..vertices.len() {
-        out.push(*vertices.get(index)?);
-        if index == last {
-            break;
-        }
-        index = (index + 1) % vertices.len();
-    }
+    // From vertex `first` round to vertex `last`, both included.
+    let count = (last + vertices.len() - first) % vertices.len() + 1;
+    let mut out: Vec<Vertex> = vertices
+        .iter()
+        .cycle()
+        .skip(first)
+        .take(count)
+        .copied()
+        .collect();
     if let Some(end) = out.last_mut() {
         end.bulge = 0.0;
     }
@@ -772,7 +823,7 @@ mod tests {
         let r = region(vec![Polyline::circle(Point::new(0.0, 0.0), 10.0)]);
         let tree = RingTree::build(r, 50.0, 25.0, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
         let mut anchor = Some(Point::new(12.0, 1.0));
-        let rings = tree.walk(WallRings::Last, &mut anchor);
+        let rings = tree.walk(WallRings::Last, &mut anchor).expect("a walk");
         assert_eq!(rings.len(), 1);
         let theta = 1.0_f64.atan2(12.0);
         let want = Point::new(10.0 * theta.cos(), 10.0 * theta.sin());
@@ -813,7 +864,7 @@ mod tests {
         // A straight edge offers only its corners, as upstream's polygon
         // does: from inside the rect, its nearest corner.
         let r = region(vec![rect]);
-        let (p, d) = nearest(r.outer(), Some(Point::new(5.0, 2.0)));
+        let (p, d) = nearest(r.outer(), Some(Point::new(5.0, 2.0))).expect("a nearest point");
         assert!(p.distance_to(Point::new(0.0, 0.0)) <= EPS_MM, "{p:?}");
         assert_approx_eq!(d, 29.0_f64.sqrt(), 1e-9);
     }
@@ -839,7 +890,7 @@ mod tests {
             1e-6
         );
         // #267: it is cut from the ring, out and back along a radius.
-        let rings = tree.walk(WallRings::Last, &mut None);
+        let rings = tree.walk(WallRings::Last, &mut None).expect("a walk");
         assert_eq!(rings.iter().map(|r| r.node).collect::<Vec<_>>(), [0]);
         let cleanups = &rings[0].cleanups;
         assert_eq!(cleanups.len(), 1, "{cleanups:?}");
@@ -850,7 +901,7 @@ mod tests {
             1e-6
         );
         // With the wall pass omitted the residual ring goes with it.
-        assert!(tree.walk(WallRings::Omitted, &mut None).is_empty());
+        assert_eq!(tree.walk(WallRings::Omitted, &mut None), Ok(Vec::new()));
 
         let tree = RingTree::build(circle(3.0), 6.35, 3.175, tol, 100).unwrap();
         assert_eq!(tree.nodes.len(), 1);
@@ -901,7 +952,7 @@ mod tests {
             );
         }
         // Every residual ring of the tree is a clean-up of its parent's ring.
-        let rings = tree.walk(WallRings::Last, &mut None);
+        let rings = tree.walk(WallRings::Last, &mut None).expect("a walk");
         assert!(rings.iter().all(|r| !tree.nodes[r.node].residual));
         let cleanups: usize = rings.iter().map(|r| r.cleanups.len()).sum();
         assert_eq!(cleanups, tree.nodes.iter().filter(|n| n.residual).count());
@@ -916,7 +967,7 @@ mod tests {
         // Half-height 5: insets of 2 and 4 remain, 6 does not.
         assert_eq!(tree.nodes.len(), 3);
         let mut anchor = None;
-        let rings = tree.walk(WallRings::Last, &mut anchor);
+        let rings = tree.walk(WallRings::Last, &mut anchor).expect("a walk");
         let nodes: Vec<usize> = rings.iter().map(|r| r.node).collect();
         assert_eq!(nodes, [2, 1, 0]);
         assert!(
@@ -966,5 +1017,63 @@ mod tests {
                 "ring {i} is {across_mm} mm across"
             );
         }
+    }
+
+    /// Code review finding 1.2: a tree that names a child it lacks is
+    /// refused, where the walk once left that child's rings uncut.
+    #[test]
+    fn walk_refuses_a_child_the_tree_lacks() {
+        let r = region(vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 10.0)]);
+        let mut tree = RingTree::build(r, 1.2, 1.5, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        let missing = tree.nodes.len();
+        tree.nodes[0].children.push(missing);
+        for wall in [WallRings::Last, WallRings::First, WallRings::Omitted] {
+            assert_eq!(
+                tree.walk(wall, &mut None),
+                Err(CamError::internal("a ring tree lacks a node it names")),
+                "{wall:?}"
+            );
+        }
+    }
+
+    /// A residual node spliced onto a ring its parent lacks is refused,
+    /// where it was once cut neither from a lap nor as a ring of its own.
+    #[test]
+    fn walk_refuses_a_splice_onto_no_ring() {
+        let r = region(vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 10.0)]);
+        let at = Point::new(1.0, 1.0);
+        let tree = RingTree {
+            nodes: vec![
+                RingNode {
+                    region: r.clone(),
+                    children: vec![1],
+                    residual: false,
+                    splice: None,
+                },
+                RingNode {
+                    region: r,
+                    children: Vec::new(),
+                    residual: true,
+                    // The parent has an outer and no hole: no ring 3.
+                    splice: Some(Splice {
+                        ring: 3,
+                        at,
+                        start: at,
+                    }),
+                },
+            ],
+        };
+        assert_eq!(
+            tree.walk(WallRings::Last, &mut None),
+            Err(CamError::internal("a ring is of no hole of its node"))
+        );
+    }
+
+    /// With no anchor a ring starts at its first vertex, at no distance.
+    #[test]
+    fn nearest_with_no_anchor_is_the_first_vertex() {
+        let r = region(vec![Polyline::rect(Point::new(2.0, 3.0), 20.0, 10.0)]);
+        let first = r.outer().polyline().vertices()[0].point();
+        assert_eq!(nearest(r.outer(), None), Ok((first, 0.0)));
     }
 }

@@ -2281,7 +2281,7 @@ fn pass_block(
             } else {
                 block.descent_from_z_mm
             };
-            let (descent, from_z_mm) = entry.descend(&pass_entry, from_z_mm, previous);
+            let (descent, from_z_mm) = entry.descend(&pass_entry, from_z_mm, previous)?;
             entry_warnings.record(shape, &descent);
             entry.check(op, shape, &pass_entry, &descent, from_z_mm, p.domain)?;
             block.descent_from = descent.from;
@@ -2857,10 +2857,7 @@ pub(crate) fn containment_pairs(
 
 /// True when `p` lies inside or on `contour`, whichever way it winds.
 pub(crate) fn contour_contains(contour: &Contour, p: Point) -> bool {
-    nest(vec![contour.clone()])
-        .ok()
-        .and_then(|(regions, _)| regions.into_iter().next())
-        .is_some_and(|region| region.contains_point(p))
+    contour.contains_point(p)
 }
 
 /// How the tabs of a tabbed Profile leave one outline it cuts
@@ -2899,24 +2896,19 @@ pub(crate) fn cut_outlines(project: &Project, op: &ProfileOp) -> Option<Vec<(Sha
 }
 
 /// The shape `region`'s outer came from, `region` being one that `nest`
-/// returned for the contours of `shapes`, in order; `None` for a region
-/// that is not. The generators here use [`region_outer`], which refuses
-/// that.
-pub(crate) fn outer_shape<'s>(
-    region: &Region,
-    shapes: &'s [(ShapeRef, Contour)],
-) -> Option<&'s ShapeRef> {
-    shapes.get(region.outer_index()).map(|(s, _)| s)
-}
-
-/// [`outer_shape`] of a region that has one: [`CamError::Internal`] for a
-/// region whose outer is of no shape, which would otherwise not be cut.
+/// returned for the contours of `shapes`, in order: [`CamError::Internal`]
+/// for a region whose outer is of no shape, which would otherwise not be
+/// cut.
 pub(crate) fn region_outer<'s>(
     region: &Region,
     shapes: &'s [(ShapeRef, Contour)],
 ) -> Result<&'s ShapeRef, CamError> {
-    outer_shape(region, shapes)
-        .ok_or_else(|| CamError::internal("a region's outline is of no target shape"))
+    let (shape, _) = at(
+        shapes,
+        region.outer_index(),
+        "a region's outline is of no target shape",
+    )?;
+    Ok(shape)
 }
 
 /// Each hole of `region` with the shape it came from, in hole order;

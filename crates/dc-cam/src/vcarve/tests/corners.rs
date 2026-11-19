@@ -289,7 +289,7 @@ fn chain_along_a_wall_into_a_corner_is_fitted_to_its_axis() {
         written_mm: 0.0,
         grid: None,
     };
-    let runs = medial::runs(&chain, &depth, tolerances, &walls, &[]);
+    let runs = medial::runs(&chain, &depth, tolerances, &walls, &[]).expect("runs");
     let mut moves: Vec<(Point3, Point3)> = Vec::new();
     for run in &runs {
         let mut from = run.start;

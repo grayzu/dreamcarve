@@ -944,7 +944,8 @@ fn acceptance_26_on_line_ramps_along_a_100_mm_line() {
         side: CutSide::Internal,
         quantum_mm: 0.001,
     };
-    let d = along_path(&line, 15.0, f64::INFINITY, 11.0, 4.0, &t, 0.01);
+    let d =
+        along_path(&line, 15.0, f64::INFINITY, 11.0, 4.0, &t, 0.01).expect("a path with a start");
     assert_eq!(d.used, EntryKind::Ramp);
     assert!(d.from.distance_to(Point::new(10.0, 20.0)) <= EPS_MM);
     let mut from = Point3::new(d.from.x, d.from.y, 11.0);
@@ -988,7 +989,8 @@ fn on_line_ramp_reverses_at_the_end_of_a_short_open_path() {
         quantum_mm: 0.001,
     };
     // 10 mm at 2.14 mm a leg: five legs, four turns.
-    let d = along_path(&line, 15.0, f64::INFINITY, 10.0, 0.0, &t, 0.01);
+    let d =
+        along_path(&line, 15.0, f64::INFINITY, 10.0, 0.0, &t, 0.01).expect("a path with a start");
     assert_eq!(d.used, EntryKind::Ramp);
     let xs: Vec<f64> = d.moves.iter().map(|m| m.to.x).collect();
     assert!(

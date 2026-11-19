@@ -154,9 +154,12 @@ pub fn drawn_band(boundary: &[Region], tolerance_mm: f64) -> Vec<Region> {
 /// Where a design stands in a band ([`band_clearance`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BandClearance {
+    /// The design has no outline: nothing stands in the band, so there is
+    /// no narrowest distance and no point to give.
+    NoDesign,
     /// Every part of the design is inside the band with its outlines at
     /// least `narrowest_mm` from the band's edge; the nearest point of the
-    /// design is `(x_mm, y_mm)`. Infinite for an empty design.
+    /// design is `(x_mm, y_mm)`.
     Inside {
         /// The least distance from the design's outlines to the band's
         /// edge, mm.
@@ -188,8 +191,8 @@ pub enum BandClearance {
 /// [`EPS_MM`]), crosses it or lies outside the band, at the worst point.
 /// Only the design's outers count (a hole is farther from the edge than
 /// its outer), and arcs are followed; `tolerance_mm` is the chord
-/// tolerance the outside test samples them at. An empty design is inside
-/// with an infinite clearance; any design is outside an empty band.
+/// tolerance the outside test samples them at. An empty design is
+/// [`BandClearance::NoDesign`]; any design is outside an empty band.
 #[must_use]
 pub fn band_clearance(design: &[Region], band: &[Region], tolerance_mm: f64) -> BandClearance {
     let edges: Vec<(Segment, Rect)> = band
@@ -248,12 +251,9 @@ pub fn band_clearance(design: &[Region], band: &[Region], tolerance_mm: f64) -> 
             }
         }
     }
+    // No outline of the design was measured: it has none.
     let Some((gap_mm, at)) = nearest else {
-        return BandClearance::Inside {
-            narrowest_mm: f64::INFINITY,
-            x_mm: 0.0,
-            y_mm: 0.0,
-        };
+        return BandClearance::NoDesign;
     };
     if gap_mm > EPS_MM {
         return BandClearance::Inside {
@@ -1809,5 +1809,15 @@ mod tests {
 
         let inside = drawn_band(&regions(vec![rect(5.0, 5.0, 20.0, 20.0)]), TOL);
         assert_eq!(band_on_board(&inside, board, TOL), None);
+    }
+
+    /// Code review finding 1.2: a design with no outline stands nowhere
+    /// in the band, and is said so. It was once inside with an infinite
+    /// clearance at the origin.
+    #[test]
+    fn band_clearance_of_no_design() {
+        let band = regions(vec![rect(-40.0, -40.0, 80.0, 80.0)]);
+        assert_eq!(band_clearance(&[], &band, TOL), BandClearance::NoDesign);
+        assert_eq!(band_clearance(&[], &[], TOL), BandClearance::NoDesign);
     }
 }
