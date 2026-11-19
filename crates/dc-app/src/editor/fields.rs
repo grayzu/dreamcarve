@@ -44,7 +44,9 @@
 //! fills the Inlay: its values once, a Male board group whose width and
 //! height are the stock's while `null` ([`StockDefault`]), a derived line
 //! ([`FieldKind::InlayDerived`]), the clearing list, and a Cut-out group
-//! whose tabs are the Profile's tab rows at `cut_out.tabs`.
+//! whose tabs are the Profile's tab rows at `cut_out.tabs`. Slice 15
+//! (#544) fills the Photo V-Carve: its picture in the targets' place
+//! ([`Row::picks_picture`]), chosen from the project's, and its grooves.
 //!
 //! Slice 26 (#618, the review redesign; capabilities 66, 66a): there is no
 //! Identity group, since the name is the editor's header and *enabled* the
@@ -399,7 +401,27 @@ pub struct Row {
     pub summary: Option<StrKey>,
 }
 
+/// The key of a Photo V-Carve's picture in its record: the bitmap's id.
+const IMAGE_KEY: &str = "image";
+
 impl Row {
+    /// Whether it is a Photo V-Carve's Picture row (capability 67: "its
+    /// Setup row is a **Picture** dropdown of the project's pictures, not
+    /// target editing"; slice 15, #544): a dropdown whose options are the
+    /// project's pictures ([`super::offered_pictures`]), the one carved
+    /// shown as chosen ([`super::picture_text`]), choosing one written by
+    /// [`super::set_picture`].
+    ///
+    /// Its [`Row::kind`] is a [`FieldKind::Choice`] of no fixed options,
+    /// since the table cannot list a project's pictures. That stands in
+    /// for a kind of its own, `FieldKind::PicturePicker`, which waits for
+    /// the window: its renderers match [`FieldKind`] exhaustively, and
+    /// the window is being rebuilt while this lands.
+    #[must_use]
+    pub fn picks_picture(&self) -> bool {
+        self.key == IMAGE_KEY && matches!(self.kind, FieldKind::Choice([]))
+    }
+
     /// What its value is measured in.
     #[must_use]
     pub const fn unit(&self) -> Unit {
@@ -809,6 +831,13 @@ const V_CARVE_STRATEGIES: &[ChoiceOption] = &[
         "offset",
         v_carve_offset_template,
     ),
+];
+
+/// A Photo V-Carve's strategy (slice 15, #544): one set of grooves, or a
+/// second across the first.
+const PHOTO_STRATEGIES: &[ChoiceOption] = &[
+    tag(StrKey::EditorChoiceRaster, "raster"),
+    tag(StrKey::EditorChoiceHatch, "hatch"),
 ];
 
 // ── The tables. ────────────────────────────────────────────────────────
@@ -1546,8 +1575,95 @@ const INLAY: &[Row] = &[
     SAFE_Z,
 ];
 
-/// Every row of `kind`, in render order (capability 68). Empty for a
-/// Photo V-Carve, which has no record before phase 3.5 (slice 15, #544).
+/// Capability 68's Photo V-Carve line, every field (slice 15, #544;
+/// mock-up 07, right). It has no targets: Setup opens with its Picture
+/// ([`Row::picks_picture`]), then the V-bit and the maximum depth, which
+/// is `null` until typed and never set by the app (S20). Its start plane
+/// is a V-Carve's; *invert* is with the depths, since it says which
+/// pixels are deep. Strategy holds the grooves: how many sets, their
+/// direction, their spacing as a percentage of a groove's width at the
+/// full depth, and how often the picture is read along one. Heights adds
+/// the lift between grooves to safe Z.
+const PHOTO_V_CARVE: &[Row] = &[
+    row(
+        Group::Setup,
+        IMAGE_KEY,
+        FieldKind::Choice(&[]),
+        StrKey::EditorFieldPicture,
+        StrKey::EditorFieldPictureHelp,
+    ),
+    TOOL,
+    row(
+        Group::Setup,
+        "max_depth_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldMaxDepth,
+        StrKey::EditorFieldMaxDepthHelp,
+    ),
+    row(
+        Group::Depth,
+        "start_depth_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldStartDepth,
+        StrKey::EditorFieldStartDepthHelp,
+    ),
+    row(
+        Group::Depth,
+        "start_plane_cleared_externally",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldStartPlaneCleared,
+        StrKey::EditorFieldStartPlaneClearedHelp,
+    ),
+    row(
+        Group::Depth,
+        "invert",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldInvert,
+        StrKey::EditorFieldInvertHelp,
+    ),
+    THROUGH_CUT_ALLOWANCE,
+    row(
+        Group::Strategy,
+        "strategy",
+        FieldKind::Choice(PHOTO_STRATEGIES),
+        StrKey::EditorFieldPhotoStrategy,
+        StrKey::EditorFieldPhotoStrategyHelp,
+    ),
+    row(
+        Group::Strategy,
+        "line_angle_deg",
+        FieldKind::Angle,
+        StrKey::EditorFieldLineAngle,
+        StrKey::EditorFieldLineAngleHelp,
+    )
+    .summarised(StrKey::EditorSummaryLineAngle),
+    row(
+        Group::Strategy,
+        "line_spacing_fraction",
+        FieldKind::Percentage,
+        StrKey::EditorFieldLineSpacing,
+        StrKey::EditorFieldLineSpacingHelp,
+    )
+    .summarised(StrKey::EditorSummaryLineSpacing),
+    row(
+        Group::Strategy,
+        "sample_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldSample,
+        StrKey::EditorFieldSampleHelp,
+    ),
+    SAFE_Z,
+    row(
+        Group::Heights,
+        "stepover_retract_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldStepoverRetract,
+        StrKey::EditorFieldStepoverRetractHelp,
+    )
+    .summarised(StrKey::EditorSummaryRetract),
+];
+
+/// Every row of `kind`, in render order (capability 68).
 #[must_use]
 pub const fn table(kind: Kind) -> &'static [Row] {
     match kind {
@@ -1558,7 +1674,7 @@ pub const fn table(kind: Kind) -> &'static [Row] {
         Kind::Engrave => ENGRAVE,
         Kind::VCarve => V_CARVE,
         Kind::Inlay => INLAY,
-        Kind::PhotoVCarve => &[],
+        Kind::PhotoVCarve => PHOTO_V_CARVE,
     }
 }
 

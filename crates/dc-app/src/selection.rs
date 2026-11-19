@@ -5,8 +5,14 @@
 //! instances, tabs, or one operation. View state, not project state
 //! (functional spec, capability 52): selecting is never an undo step. When
 //! a snapshot drops what was selected, the selection drops it too.
+//!
+//! Pictures are selected too (slice 15, #544; capability 57), alone, as
+//! tabs are. Their selection is kept beside [`Selection`]
+//! ([`crate::App::selected_pictures`], changed by [`pictures_clicked`]):
+//! the window matches [`Selection`] exhaustively and is being rebuilt
+//! while this lands, so the variant `Selection::Bitmaps` waits for it.
 
-use dc_project::{InstanceId, OperationId, Project, TabId};
+use dc_project::{BitmapId, InstanceId, OperationId, Project, TabId};
 
 use crate::viewport::pick::Hit;
 
@@ -20,6 +26,36 @@ pub enum ClickMode {
     Add,
     /// Ctrl/⌘-click: the hit in or out.
     Toggle,
+}
+
+/// `selected` after a click on `id`: it alone, it added, or it in or out,
+/// in selection order.
+fn clicked_among<T: Clone + PartialEq>(selected: &[T], id: &T, mode: ClickMode) -> Vec<T> {
+    let mut ids = selected.to_vec();
+    match mode {
+        ClickMode::Replace => ids = vec![id.clone()],
+        ClickMode::Add => {
+            if !ids.contains(id) {
+                ids.push(id.clone());
+            }
+        }
+        ClickMode::Toggle => {
+            if ids.contains(id) {
+                ids.retain(|i| i != id);
+            } else {
+                ids.push(id.clone());
+            }
+        }
+    }
+    ids
+}
+
+/// The selected pictures after a click on picture `id`, on its row or on
+/// the Viewport (capability 57): it alone, added with Shift, or in or out
+/// with Ctrl/⌘, as [`Selection::clicked`] treats a shape.
+#[must_use]
+pub fn pictures_clicked(selected: &[BitmapId], id: &BitmapId, mode: ClickMode) -> Vec<BitmapId> {
+    clicked_among(selected, id, mode)
 }
 
 /// What the panels and the Viewport act on.
@@ -81,22 +117,7 @@ impl Selection {
                 ClickMode::Add | ClickMode::Toggle => self.clone(),
             };
         };
-        let mut ids = self.instances().to_vec();
-        match mode {
-            ClickMode::Replace => ids = vec![id.clone()],
-            ClickMode::Add => {
-                if !ids.contains(id) {
-                    ids.push(id.clone());
-                }
-            }
-            ClickMode::Toggle => {
-                if ids.contains(id) {
-                    ids.retain(|i| i != id);
-                } else {
-                    ids.push(id.clone());
-                }
-            }
-        }
+        let ids = clicked_among(self.instances(), id, mode);
         if ids.is_empty() {
             Self::Nothing
         } else {
@@ -117,22 +138,7 @@ impl Selection {
     /// alone, added, or toggled, as an instance is. Adding or toggling a
     /// tab to a selection of anything else starts a tab selection.
     fn tab_clicked(&self, tab: &TabId, mode: ClickMode) -> Self {
-        let mut ids = self.tabs().to_vec();
-        match mode {
-            ClickMode::Replace => ids = vec![tab.clone()],
-            ClickMode::Add => {
-                if !ids.contains(tab) {
-                    ids.push(tab.clone());
-                }
-            }
-            ClickMode::Toggle => {
-                if ids.contains(tab) {
-                    ids.retain(|t| t != tab);
-                } else {
-                    ids.push(tab.clone());
-                }
-            }
-        }
+        let ids = clicked_among(self.tabs(), tab, mode);
         if ids.is_empty() {
             Self::Nothing
         } else {

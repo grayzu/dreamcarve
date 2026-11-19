@@ -475,9 +475,17 @@ pub fn carve_message(app: &App, op: &OperationId) -> Option<String> {
             Fact::StartPlane { depth } => {
                 Some(strings.fmt(StrKey::AppCarveSummaryStartPlane, &[("depth", depth)]))
             }
-            Fact::Grooves { count, depth, .. } => Some(strings.fmt(
+            Fact::Grooves {
+                count,
+                width,
+                depth,
+            } => Some(strings.fmt(
                 StrKey::AppCarveSummaryGrooves,
-                &[("count", &count.to_string()), ("depth", depth)],
+                &[
+                    ("count", &count.to_string()),
+                    ("width", width),
+                    ("depth", depth),
+                ],
             )),
             _ => None,
         })

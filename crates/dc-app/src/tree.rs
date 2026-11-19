@@ -136,6 +136,11 @@ pub struct BitmapRow {
     /// The Photo V-Carves that carve it, in project order: the row's
     /// count, and its hover's list.
     pub operations: Vec<OperationRef>,
+    /// It is the picture the marked Photo V-Carve carves (capability 67;
+    /// slice 15, #544): that operation's place in the palette, for the
+    /// bar on the row's left edge. `None` until [`Tree::with_targets`]
+    /// marks the rows.
+    pub target: Option<usize>,
 }
 
 /// The tree's three sections, in order.
@@ -281,6 +286,7 @@ impl Tree {
                         name: op.name().to_owned(),
                     })
                     .collect(),
+                target: None,
             })
             .collect();
 
@@ -301,6 +307,12 @@ impl Tree {
         for row in &mut self.shapes {
             row.target = marks
                 .filter(|m| m.targets.contains(&row.id))
+                .map(|m| m.colour);
+        }
+        // A Photo V-Carve's target is its picture.
+        for row in &mut self.bitmaps {
+            row.target = marks
+                .filter(|m| m.picture.as_ref() == Some(&row.id))
                 .map(|m| m.colour);
         }
         self
@@ -372,20 +384,35 @@ impl Tree {
     /// "Selection": "tree: range"). `to` alone when `from` has no row.
     #[must_use]
     pub fn range(&self, from: &InstanceId, to: &InstanceId) -> Vec<InstanceId> {
-        let at = |id: &InstanceId| self.shapes.iter().position(|r| r.id == *id);
-        match (at(from), at(to)) {
-            (Some(a), Some(b)) => {
-                let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-                self.shapes
-                    .get(lo..=hi)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|r| r.id.clone())
-                    .collect()
-            }
-            (None, Some(_)) => vec![to.clone()],
-            _ => Vec::new(),
+        let ids: Vec<&InstanceId> = self.shapes.iter().map(|r| &r.id).collect();
+        between(&ids, from, to)
+    }
+
+    /// Every bitmap from `from` to `to` inclusive, in row order: what a
+    /// Shift-click selects among the Pictures rows, as [`Tree::range`]
+    /// among the shapes. `to` alone when `from` has no row.
+    #[must_use]
+    pub fn bitmap_range(&self, from: &BitmapId, to: &BitmapId) -> Vec<BitmapId> {
+        let ids: Vec<&BitmapId> = self.bitmaps.iter().map(|r| &r.id).collect();
+        between(&ids, from, to)
+    }
+}
+
+/// The ids of `rows` from `from` to `to` inclusive, in row order; `to`
+/// alone when `from` is not among them, and none when `to` is not.
+fn between<T: Clone + PartialEq>(rows: &[&T], from: &T, to: &T) -> Vec<T> {
+    let at = |id: &T| rows.iter().position(|r| *r == id);
+    match (at(from), at(to)) {
+        (Some(a), Some(b)) => {
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            rows.get(lo..=hi)
+                .unwrap_or_default()
+                .iter()
+                .map(|r| (*r).clone())
+                .collect()
         }
+        (None, Some(_)) => vec![to.clone()],
+        _ => Vec::new(),
     }
 }
 
@@ -547,8 +574,11 @@ fn all_bitmaps(project: &Project, ids: &[BitmapId]) -> (bool, bool) {
 
 /// The context menu of the Pictures rows `ids` (capabilities 56 and 57):
 /// Rename, Hide or Show (Show when any is hidden), Lock or Unlock (Unlock
-/// when every one is locked), Delete and Zoom to. A picture has no linked
-/// copy and is no operation's target, so a shape's other items are absent.
+/// when every one is locked), Delete, Zoom to, and *Add operation ▸*,
+/// whose menu for the rows is [`crate::operations::add_menu_with`]: a
+/// Photo V-Carve on the picture (slice 15, #544). A picture has no linked
+/// copy, and its Photo V-Carve names it by the editor's Picture row, so a
+/// shape's Duplicate, *Add to* and *Remove from* are absent.
 #[must_use]
 pub fn bitmap_menu(project: &Project, ids: &[BitmapId]) -> Vec<MenuItem> {
     let (visible, locked) = all_bitmaps(project, ids);
@@ -566,12 +596,14 @@ pub fn bitmap_menu(project: &Project, ids: &[BitmapId]) -> Vec<MenuItem> {
         },
         MenuItem::Delete,
         MenuItem::ZoomTo,
+        MenuItem::AddOperation,
     ]
 }
 
 /// The command `item` runs on the bitmaps `ids`; `None` for the items
 /// that are not a change to the project (Rename, which commits through
-/// [`rename_bitmap`], and Zoom to), for an item [`bitmap_menu`] does not
+/// [`rename_bitmap`], Zoom to, and Add operation, a submenu whose items
+/// run [`crate::operations::add_with`]), for an item [`bitmap_menu`] does not
 /// offer, with nothing chosen, or when the project lacks one of `ids`.
 #[must_use]
 pub fn bitmap_menu_command(project: &Project, item: MenuItem, ids: &[BitmapId]) -> Option<Command> {

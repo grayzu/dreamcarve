@@ -48,6 +48,11 @@
 //! one-line summary of its values, and a group holding a located error or
 //! warning opens. The tests named `fields::…` and `summary::…` are the
 //! issue's.
+//!
+//! Slice 15 (#544) completes the Photo V-Carve: its picture, chosen from
+//! the project's pictures in the targets' place, and its own rows
+//! (capability 68's last line). Its record has no targets, so *Add ▸ Photo
+//! V-Carve* needs a picture, not shapes.
 
 #![allow(
     clippy::panic,
@@ -88,7 +93,7 @@ fn still_to_come(kind: Kind) -> &'static [&'static str] {
         // 26, #449, #602): the data model lands first; picking its
         // instances is a row of a later slice.
         Kind::Inlay => &["boundary"],
-        // Slice 15 (#544): no record before phase 3.5.
+        // Complete in slice 15 (#544).
         Kind::PhotoVCarve => &[],
     }
 }
@@ -99,16 +104,31 @@ fn project() -> Project {
     common::load_dcv(&common::fixture("sign.dcv"))
 }
 
+/// [`project`] with one picture, `b1`: what *Add ▸ Photo V-Carve* needs
+/// before it offers one.
+fn pictured() -> Project {
+    let mut project = project();
+    project
+        .bitmaps
+        .push(dc_project::test_support::sample_bitmap());
+    project
+}
+
 /// Every committed project's operations, and each kind's new operation on
-/// [`project`]: the records the table is checked against.
+/// [`pictured`]: the records the table is checked against.
 fn seeds() -> Vec<Operation> {
     let strings = Strings::english();
-    let base = project();
+    let base = pictured();
     let targets: Vec<_> = base.instances.iter().map(|i| i.id.clone()).collect();
     let mut seeds: Vec<Operation> = Kind::ALL
         .into_iter()
         .filter_map(|kind| operations::new_operation(&base, &strings, kind, &targets))
         .collect();
+    assert_eq!(
+        seeds.len(),
+        Kind::ALL.len(),
+        "every kind has a new operation"
+    );
     for (_, path) in common::quick_start_projects()
         .into_iter()
         .chain(common::golden_projects())
@@ -263,16 +283,12 @@ fn fields_table_matches_the_records() {
         }
         if kind == Kind::PhotoVCarve {
             // The committed projects hold Photo V-Carves from 3.5 (the
-            // RasterCarve goldens, #647), but the editor's Photo table is
-            // phase 4's slice 15 (#544), which checks them against it.
-            assert!(table.is_empty(), "no Photo V-Carve table before #544");
+            // RasterCarve goldens, #647): the table is checked against
+            // them and against a new one (slice 15, #544).
             assert!(
-                records
-                    .iter()
-                    .all(|op| matches!(op, Operation::PhotoVCarve(_))),
-                "Photo V-Carve seeds are Photo V-Carves"
+                seeds.iter().filter(|s| Kind::of(s) == kind).count() > 1,
+                "a committed project's Photo V-Carve is among the seeds"
             );
-            continue;
         }
         assert!(!records.is_empty(), "{kind:?} has a new operation");
         let pending = still_to_come(kind);
@@ -376,6 +392,11 @@ fn other_value(
     current: &Value,
 ) -> Option<Value> {
     let number = current.as_f64();
+    // A Photo V-Carve's picture: the file reads any id; validation says
+    // whether the project has that bitmap.
+    if row.picks_picture() {
+        return Some(Value::from(if current == "b2" { "b1" } else { "b2" }));
+    }
     Some(match row.kind {
         FieldKind::Length | FieldKind::Rate | FieldKind::Seconds => {
             Value::from(number.map_or(2.5, |n| n + 1.25))
@@ -458,11 +479,10 @@ fn groups_render_in_the_fixed_order() {
         ]
     );
     let strings = Strings::english();
-    let base = project();
+    let base = pictured();
     for kind in Kind::ALL {
-        let Some(op) = operations::new_operation(&base, &strings, kind, &[]) else {
-            continue;
-        };
+        let op = operations::new_operation(&base, &strings, kind, &[])
+            .unwrap_or_else(|| panic!("{kind:?} has a new operation"));
         let shown: Vec<Group> = fields::groups(&op).into_iter().map(|(g, _)| g).collect();
         let mut sorted = shown.clone();
         sorted.sort_by_key(|g| Group::ALL.iter().position(|a| a == g));
@@ -2840,6 +2860,570 @@ fn photo_picker_does_not() {
     );
 }
 
+/// The Add picture sheet over `tests/fixtures/photo/<name>`, `width_mm`
+/// wide.
+fn picture_sheet(
+    name: &str,
+    width_mm: f64,
+    purpose: dc_app::import::Purpose,
+) -> dc_app::import::PictureImport {
+    let file = common::fixture(&format!("photo/{name}"));
+    let format = file
+        .extension()
+        .and_then(|e| dc_import::ImageFormat::from_extension(&e.to_string_lossy()))
+        .expect("a picture's extension");
+    let mut sheet =
+        dc_app::import::PictureImport::open(format, name, &common::read(&file), purpose);
+    sheet.set_width_mm(width_mm);
+    sheet
+}
+
+/// The gradient fixture as *New Project from Picture…* makes it, 100 mm
+/// wide (acceptance 77): the bitmap `b1`, 100 × 50 mm at (10, 10), `init`'s
+/// 60° V-bit `t1` with nothing set, and the Photo V-Carve `op1` at `init`'s
+/// defaults, its maximum depth unset.
+fn gradient_fixture() -> dc_app::test_support::Harness {
+    let mut h = dc_app::test_support::Harness::from_project(
+        dc_app::App::new_project().expect("a new project"),
+    );
+    h.app
+        .new_from_picture(&picture_sheet(
+            "gradient.png",
+            100.0,
+            dc_app::import::Purpose::New,
+        ))
+        .expect("a project from the gradient");
+    h
+}
+
+/// What export needs that `init` leaves to the user, set as the user sets
+/// it: the stock's thickness and the V-bit's rates. The Photo V-Carve is
+/// left as `init` wrote it.
+fn ready_to_cut(h: &mut dc_app::test_support::Harness) {
+    let mut stock = h.app.project().stock.clone();
+    stock.thickness_mm = Some(12.0);
+    h.run(Command::SetStock(stock)).expect("a thickness");
+    let mut tool = h.app.project().tools[0].clone();
+    tool.feed_mm_min = Some(1000.0);
+    tool.plunge_mm_min = Some(300.0);
+    tool.rpm = Some(18000);
+    h.run(Command::UpdateTool(tool)).expect("the bit's rates");
+}
+
+/// Slice 15 (#544); capabilities 66a and 68, acceptance 77. The Photo
+/// V-Carve's editor: Setup is the Picture (the record's `image`, chosen
+/// from the project's pictures, not target editing), the V-bit and the
+/// maximum depth, never set by the app (S20); then its start plane and
+/// *invert* under Depth, its grooves under Strategy (the spacing a
+/// percentage of a groove's full-depth width), and safe Z with the lift
+/// between grooves under Heights. Every edit is one step, and validation's
+/// message sits under the field it names. The gradient fixture at `init`'s
+/// defaults, once it has a maximum depth, draws the grooves `--preview`
+/// draws, and the status line gives `check`'s groove count and width.
+#[test]
+fn photo_v_carve_fields() {
+    use dc_app::editor::summary;
+    use dc_project::BitmapId;
+
+    let strings = Strings::english();
+    let mut h = gradient_fixture();
+    let op = op_of(&h, "op1");
+    let Operation::PhotoVCarve(photo) = &op else {
+        panic!("init writes a Photo V-Carve");
+    };
+    assert_eq!(
+        photo,
+        &dc_job::project_from::default_photo_v_carve(
+            BitmapId::new("b1"),
+            dc_project::ToolId::new("t1")
+        ),
+        "the fixture is at init's defaults"
+    );
+
+    // The rows, in render order, and their groups.
+    assert_eq!(
+        keys(&op),
+        [
+            "image",
+            "tool",
+            "max_depth_mm",
+            "start_depth_mm",
+            "start_plane_cleared_externally",
+            "invert",
+            "through_cut_allowance_mm",
+            "strategy",
+            "line_angle_deg",
+            "line_spacing_fraction",
+            "sample_mm",
+            "safe_z_mm",
+            "stepover_retract_mm",
+        ]
+    );
+    let shown: Vec<Group> = fields::groups(&op).into_iter().map(|(g, _)| g).collect();
+    assert_eq!(
+        shown,
+        [Group::Setup, Group::Depth, Group::Strategy, Group::Heights]
+    );
+
+    // What each row shows at init's defaults, with its unit.
+    let shows = |op: &Operation, key: &str| {
+        let row = row_of(op, key);
+        (
+            editor::value_text(h.app.project(), op, row),
+            editor::unit_suffix(row, Units::Mm),
+        )
+    };
+    assert_eq!(shows(&op, "max_depth_mm"), (String::new(), "mm"));
+    assert_eq!(shows(&op, "start_depth_mm"), ("0".to_owned(), "mm"));
+    assert_eq!(shows(&op, "line_angle_deg"), ("22.5".to_owned(), "°"));
+    assert_eq!(shows(&op, "line_spacing_fraction"), ("110".to_owned(), "%"));
+    assert_eq!(shows(&op, "sample_mm"), ("0.25".to_owned(), "mm"));
+    assert_eq!(shows(&op, "safe_z_mm"), ("5".to_owned(), "mm"));
+    assert_eq!(shows(&op, "stepover_retract_mm"), ("1".to_owned(), "mm"));
+    assert_eq!(
+        strings.get(row_of(&op, "max_depth_mm").label),
+        "Max depth",
+        "the chapter's name"
+    );
+    assert_eq!(strings.get(row_of(&op, "image").label), "Picture");
+    let strategy = row_of(&op, "strategy");
+    let FieldKind::Choice(options) = strategy.kind else {
+        panic!("the strategy is a choice");
+    };
+    let labels: Vec<&str> = options.iter().map(|o| strings.get(o.label)).collect();
+    assert_eq!(labels, ["Raster", "Hatch"]);
+    assert_eq!(editor::choice(&op, strategy), Some(0));
+    assert!(!editor::checked(&op, row_of(&op, "invert")));
+    assert!(!editor::checked(
+        &op,
+        row_of(&op, "start_plane_cleared_externally")
+    ));
+    // No value is the tool's or the stock's: nothing to reset, no
+    // placeholder, and the depth is the user's (S20).
+    for row in fields::rows(&op) {
+        assert!(!editor::can_reset(&op, row), "{}", row.key);
+        assert_eq!(
+            editor::placeholder(h.app.project(), &strings, &op, row),
+            None,
+            "{}",
+            row.key
+        );
+    }
+    let unset = editor::Located::of(h.warnings(), &op)
+        .status(row_of(&op, "max_depth_mm"))
+        .expect("the unset depth is reported under its field");
+    assert_eq!(unset.tier, Tier::Error);
+    assert!(unset.message.contains("max_depth_mm"), "{}", unset.message);
+    // Under the Tool row: the V-bit's cone, which the depth must fit.
+    let (cone, _) = texts(&editor::notes(
+        h.app.project(),
+        &strings,
+        &op,
+        &editor::Slot::of(row_of(&op, "tool")),
+    ));
+    assert_eq!(cone, ["cone height 5.4993 mm"]);
+
+    // The closed groups' summaries (mock-up 07, right).
+    let group = |h: &dc_app::test_support::Harness, group: Group| {
+        summary::group(h.app.project(), &strings, &op_of(h, "op1"), group)
+    };
+    assert_eq!(
+        group(&h, Group::Strategy),
+        "Raster, angle 22.5°, spacing 110 %"
+    );
+    assert_eq!(group(&h, Group::Heights), "Safe Z 5 mm, retract 1 mm");
+    assert_eq!(
+        group(&h, Group::Depth),
+        "Start depth 0 mm, through-cut allowance 0 mm"
+    );
+
+    // Each edit is one step named for its field.
+    let typed = |h: &mut dc_app::test_support::Harness, key: &str, text: &str| {
+        let op = op_of(h, "op1");
+        let edit = editor::commit_text(h.app.project(), &op, row_of(&op, key), text);
+        run_edit(h, edit)
+    };
+    assert_eq!(
+        typed(&mut h, "max_depth_mm", "2"),
+        "Set max depth of “Photo V-Carve”"
+    );
+    assert_eq!(
+        typed(&mut h, "line_spacing_fraction", "125 %"),
+        "Set line spacing of “Photo V-Carve”"
+    );
+    assert_eq!(
+        typed(&mut h, "line_angle_deg", "45°"),
+        "Set line angle of “Photo V-Carve”"
+    );
+    typed(&mut h, "sample_mm", "0.5");
+    typed(&mut h, "stepover_retract_mm", "2");
+    typed(&mut h, "start_depth_mm", "1");
+    let op = op_of(&h, "op1");
+    let hatch = editor::choose(h.app.project(), &op, row_of(&op, "strategy"), 1);
+    assert_eq!(run_edit(&mut h, hatch), "Set strategy of “Photo V-Carve”");
+    let op = op_of(&h, "op1");
+    let invert = editor::set_checked(&op, row_of(&op, "invert"), true);
+    assert_eq!(run_edit(&mut h, invert), "Set invert of “Photo V-Carve”");
+    let Operation::PhotoVCarve(edited) = op_of(&h, "op1") else {
+        panic!("still a Photo V-Carve");
+    };
+    assert_eq!(edited.max_depth_mm, Some(2.0));
+    assert_eq!(edited.line_spacing_fraction, 1.25, "a percentage on screen");
+    assert_eq!(edited.line_angle_deg, 45.0);
+    assert_eq!(edited.sample_mm, 0.5);
+    assert_eq!(edited.stepover_retract_mm, 2.0);
+    assert_eq!(edited.start_depth_mm, 1.0);
+    assert_eq!(edited.strategy, dc_project::PhotoStrategy::Hatch);
+    assert!(edited.invert);
+    assert_eq!(
+        group(&h, Group::Strategy),
+        "Hatch, angle 45°, spacing 125 %"
+    );
+    assert_eq!(
+        group(&h, Group::Depth),
+        "Start depth 1 mm, invert, through-cut allowance 0 mm"
+    );
+
+    // Validation's messages land under the field each names: grooves
+    // closer than their width overlap (a warning, which opens Strategy);
+    // an angle of half a turn or more is refused by the file's rule.
+    typed(&mut h, "line_spacing_fraction", "90");
+    let op = op_of(&h, "op1");
+    let located = editor::Located::of(h.warnings(), &op);
+    let overlap = located
+        .status(row_of(&op, "line_spacing_fraction"))
+        .expect("photo_lines_overlap under the spacing");
+    assert_eq!(overlap.tier, Tier::Warning);
+    assert!(
+        summary::opened(&op, &located).contains(&Group::Strategy),
+        "the warning opens Strategy"
+    );
+    assert_eq!(
+        located.group(Group::Strategy),
+        Some((Tier::Warning, 1)),
+        "and its closed header counts it"
+    );
+    typed(&mut h, "line_angle_deg", "200");
+    let op = op_of(&h, "op1");
+    let range = editor::Located::of(h.warnings(), &op)
+        .status(row_of(&op, "line_angle_deg"))
+        .expect("photo_line_angle_range under the angle");
+    assert_eq!(range.tier, Tier::Error);
+    // Back to init's defaults, with the 2 mm depth.
+    for _ in 0..9 {
+        h.app.undo().expect("a step to undo");
+    }
+    let Operation::PhotoVCarve(back) = op_of(&h, "op1") else {
+        panic!("still a Photo V-Carve");
+    };
+    assert_eq!(
+        back,
+        dc_project::PhotoVCarveOp {
+            max_depth_mm: Some(2.0),
+            ..photo.clone()
+        }
+    );
+
+    // The Picture row: the project's pictures by name, in file order,
+    // the one carved shown as chosen; choosing another is one step.
+    let op = op_of(&h, "op1");
+    let picture = row_of(&op, "image");
+    assert!(picture.picks_picture());
+    assert_eq!(picture.group, Group::Setup);
+    assert!(!row_of(&op, "tool").picks_picture());
+    let offered = |h: &dc_app::test_support::Harness| -> Vec<(String, String)> {
+        editor::offered_pictures(h.app.project())
+            .into_iter()
+            .map(|(id, name)| (id.as_str().to_owned(), name))
+            .collect()
+    };
+    assert_eq!(offered(&h), [("b1".to_owned(), "gradient".to_owned())]);
+    assert_eq!(
+        editor::picture(h.app.project(), &op).map(|b| b.id.as_str()),
+        Some("b1")
+    );
+    assert_eq!(
+        editor::picture_text(h.app.project(), &strings, &op).as_deref(),
+        Some("gradient")
+    );
+    assert_eq!(
+        editor::set_picture(&op, picture, &BitmapId::new("b1")).unwrap(),
+        None,
+        "the picture it carves already: no step"
+    );
+    assert!(
+        editor::set_picture(&op, row_of(&op, "tool"), &BitmapId::new("b1")).is_err(),
+        "only the Picture row picks a picture"
+    );
+    h.app
+        .import_picture(&picture_sheet(
+            "colour.jpg",
+            20.0,
+            dc_app::import::Purpose::Import,
+        ))
+        .expect("the colour picture imports");
+    assert_eq!(
+        offered(&h),
+        [
+            ("b1".to_owned(), "gradient".to_owned()),
+            ("b2".to_owned(), "colour".to_owned())
+        ]
+    );
+    let other = editor::set_picture(&op, picture, &BitmapId::new("b2"));
+    assert_eq!(run_edit(&mut h, other), "Set image of “Photo V-Carve”");
+    let op = op_of(&h, "op1");
+    assert_eq!(
+        editor::picture_text(h.app.project(), &strings, &op).as_deref(),
+        Some("colour")
+    );
+    h.app.undo().expect("the picture");
+    h.app.undo().expect("the import");
+
+    // Acceptance 77: generated, the Viewport draws the grooves
+    // `--preview` draws, and the status line is `check`'s count and
+    // full-depth width.
+    ready_to_cut(&mut h);
+    assert!(
+        !h.app.validation().has_errors(),
+        "{:?}",
+        h.app.validation().errors
+    );
+    let id = OperationId::new("op1");
+    assert!(editor::carve_summary(&h.app, &id).is_empty(), "not yet");
+    h.generate();
+    let project = h.app.project().clone();
+    let built = dc_job::build(
+        &project,
+        dc_job::ProgramSplit::ProjectDefault,
+        dc_app::test_support::DATE,
+    );
+    let generated = built.generated.expect("the gradient generates");
+    assert_eq!(generated.len(), 1, "one run: the V-bit's");
+    let scene = h.app.scene();
+    let drawn = scene.operation(&id).expect("op1 is drawn");
+    assert_eq!(drawn.runs.len(), 1);
+    assert_eq!(
+        drawn.runs[0].run.toolpath, generated[0].toolpath,
+        "the grooves drawn are the generator's"
+    );
+    assert!(
+        scene.preview_svg(&project) == dc_job::preview::render_generated(&project, &generated),
+        "the Viewport's SVG dump is --preview's"
+    );
+    let check = dc_job::describe_carves(&project, &generated);
+    assert_eq!(check.len(), 1, "{check:?}");
+    assert_eq!(editor::carve_summary(&h.app, &id), check);
+    let facts = dc_job::summary::carve_facts(&project, &generated);
+    let (count, width, depth) = facts[0].boards[0]
+        .facts
+        .iter()
+        .find_map(|fact| match fact {
+            dc_job::summary::Fact::Grooves {
+                count,
+                width,
+                depth,
+            } => Some((*count, width.clone(), depth.clone())),
+            _ => None,
+        })
+        .expect("check counts the grooves");
+    assert_eq!(depth, "2.000 mm", "as check writes a length");
+    assert!(count > 1, "{count} grooves");
+    assert!(
+        check[0].contains(&format!("{count} grooves {width} wide")),
+        "{}",
+        check[0]
+    );
+    // One plunge to each groove's first depth: the grooves drawn are as
+    // many as `check` counts.
+    let plunges = dc_app::scene::strokes(&drawn.runs[0].run.toolpath)
+        .iter()
+        .filter(|s| s.kind == dc_app::scene::StrokeKind::Plunge)
+        .count();
+    assert_eq!(plunges, count, "one plunge per groove");
+    h.app.edit(Some(id.clone()));
+    let estimate = dc_job::EstimateConfig::default();
+    let bar = dc_app::status::cells(
+        &h.app,
+        &dc_app::status::Inputs {
+            cursor_mm: None,
+            drag: None,
+            hover: None,
+            message: None,
+            estimate: &estimate,
+        },
+    );
+    assert_eq!(
+        bar.message,
+        Some(format!(
+            "Photo V-Carve · {count} grooves {width} wide, to {depth}"
+        ))
+    );
+    assert_eq!(bar.message_op, Some(id));
+}
+
+/// Slice 15 (#544); capability 65. A Photo V-Carve carves a picture, not
+/// shapes: with no picture in the project *Add ▸ Photo V-Carve* is below
+/// the divider with its reason, whatever is selected, and there is no new
+/// one; with one picture it is offered and the new operation carves it,
+/// at `init`'s defaults with the project's first V-bit; with several, the
+/// selected picture, and with none selected the menu says to select one.
+/// A Photo V-Carve whose picture is deleted keeps naming it, and the
+/// Picture row says so until another is chosen.
+#[test]
+fn photo_needs_a_picture_target() {
+    use dc_project::BitmapId;
+
+    let strings = Strings::english();
+    let needs = Some("A Photo V-Carve needs a picture".to_owned());
+
+    // No picture: unavailable, selected shapes or not, and nothing to add.
+    let sign = project();
+    let letters = vec![dc_project::InstanceId::new("i6")];
+    for selected in [letters.as_slice(), &[]] {
+        let menu = operations::add_menu(&sign, &strings, selected);
+        assert!(!menu.available.contains(&Kind::PhotoVCarve), "{menu:?}");
+        assert!(
+            menu.unavailable
+                .contains(&(Kind::PhotoVCarve, needs.clone())),
+            "{menu:?}"
+        );
+        assert_eq!(
+            operations::add(&sign, &strings, Kind::PhotoVCarve, selected),
+            None
+        );
+    }
+    assert_eq!(
+        operations::new_operation(&sign, &strings, Kind::PhotoVCarve, &letters),
+        None
+    );
+    assert_eq!(
+        operations::photo_target(&sign, &[]),
+        Err(StrKey::OperationsReasonPicture)
+    );
+    // A picture the project does not have is no picture.
+    assert_eq!(
+        operations::photo_target(&sign, &[BitmapId::new("b1")]),
+        Err(StrKey::OperationsReasonPicture)
+    );
+
+    // One picture: offered with nothing selected, beside the sentence
+    // that says what the other kinds need; the new operation carves it.
+    let one = pictured();
+    let menu = operations::add_menu(&one, &strings, &[]);
+    assert_eq!(menu.available, [Kind::PhotoVCarve]);
+    assert_eq!(
+        menu.prompt.as_deref(),
+        Some(strings.get(StrKey::OperationsAddSelectShapes))
+    );
+    assert_eq!(menu.unavailable.len(), Kind::ALL.len() - 1);
+    let with_shapes = operations::add_menu(&one, &strings, &letters);
+    assert!(with_shapes.available.contains(&Kind::PhotoVCarve));
+    assert_eq!(with_shapes.prompt, None);
+    assert_eq!(
+        operations::photo_target(&one, &[]),
+        Ok(BitmapId::new("b1")),
+        "the only picture"
+    );
+    let mut h = dc_app::test_support::Harness::from_project(one);
+    let add = operations::add(h.app.project(), &strings, Kind::PhotoVCarve, &letters)
+        .expect("a picture can take a Photo V-Carve");
+    assert_eq!(h.run(add).expect("it adds"), "Add “Photo V-Carve 1”");
+    let added = h.app.project().operations.last().cloned().expect("added");
+    let Operation::PhotoVCarve(photo) = &added else {
+        panic!("a Photo V-Carve");
+    };
+    let mut init = dc_job::project_from::default_photo_v_carve(
+        BitmapId::new("b1"),
+        dc_project::ToolId::new("t4"),
+    );
+    init.id = photo.id.clone();
+    init.name = "Photo V-Carve 1".into();
+    assert_eq!(photo, &init, "init's defaults, the picture, the V-bit");
+    assert_eq!(photo.max_depth_mm, None, "no depth of the app's own (S20)");
+    assert!(
+        added.targets().is_empty(),
+        "it carves a picture, not shapes"
+    );
+    assert_eq!(h.app.editing(), Some(added.id()), "and the editor shows it");
+
+    // Several pictures: the selected one; with none selected, or more
+    // than one, the menu says to select one.
+    let mut second = dc_project::test_support::sample_bitmap();
+    second.id = BitmapId::new("b2");
+    second.name = "portrait".into();
+    let mut two = h.app.project().clone();
+    two.bitmaps.push(second);
+    let mut h = dc_app::test_support::Harness::from_project(two);
+    let both = [BitmapId::new("b1"), BitmapId::new("b2")];
+    let select_one = Some("Select the picture to carve".to_owned());
+    for pictures in [&[][..], &both[..]] {
+        let menu = operations::add_menu_with(h.app.project(), &strings, &[], pictures);
+        assert!(
+            menu.unavailable
+                .contains(&(Kind::PhotoVCarve, select_one.clone())),
+            "{menu:?}"
+        );
+        assert_eq!(
+            operations::add_with(h.app.project(), &strings, Kind::PhotoVCarve, &[], pictures),
+            None
+        );
+    }
+    let chosen = [BitmapId::new("b2")];
+    let menu = operations::add_menu_with(h.app.project(), &strings, &[], &chosen);
+    assert_eq!(menu.available, [Kind::PhotoVCarve]);
+    // The app's own selection of pictures is what the window passes.
+    h.app.select_pictures(chosen.to_vec());
+    let add = operations::add_with(
+        h.app.project(),
+        &strings,
+        Kind::PhotoVCarve,
+        &[],
+        h.app.selected_pictures(),
+    )
+    .expect("the selected picture can take one");
+    assert_eq!(h.run(add).expect("it adds"), "Add “Photo V-Carve 2”");
+    let added = h.app.project().operations.last().cloned().expect("added");
+    assert_eq!(
+        editor::picture(h.app.project(), &added).map(|b| b.name.as_str()),
+        Some("portrait")
+    );
+    assert_ne!(added.id().as_str(), "op1", "an id of its own");
+
+    // Its picture deleted: the operation stays and names what it lost;
+    // validation's message is under the Picture row, which shows the id
+    // as not in the project and still offers the pictures there are.
+    h.run(Command::DeleteBitmaps(chosen.to_vec()))
+        .expect("the picture deletes");
+    let lost = h.app.project().operations.last().cloned().expect("kept");
+    assert_eq!(lost, added, "the Photo V-Carve is untouched");
+    assert_eq!(editor::picture(h.app.project(), &lost), None);
+    assert_eq!(
+        editor::picture_text(h.app.project(), &strings, &lost).as_deref(),
+        Some("b2 · not in the project")
+    );
+    let status = editor::Located::of(h.warnings(), &lost)
+        .status(row_of(&lost, "image"))
+        .expect("photo_unknown_bitmap under the Picture row");
+    assert_eq!(status.tier, Tier::Error);
+    let again = editor::set_picture(&lost, row_of(&lost, "image"), &BitmapId::new("b1"));
+    run_edit(&mut h, again);
+    let fixed = h.app.project().operations.last().cloned().expect("kept");
+    assert!(
+        editor::Located::of(h.warnings(), &fixed)
+            .status(row_of(&fixed, "image"))
+            .is_none(),
+        "another picture chosen: nothing under the row"
+    );
+    // Any other kind has no picture.
+    let drill = op_of(&h, "op1");
+    assert!(!matches!(drill, Operation::PhotoVCarve(_)));
+    assert_eq!(editor::picture(h.app.project(), &drill), None);
+    assert_eq!(
+        editor::picture_text(h.app.project(), &strings, &drill),
+        None
+    );
+}
+
 /// #685; capability 68a: an Inlay cut with a tapered ball nose shows the
 /// seat line under its derived line, with `check`'s figures
 /// (`dc_job::summary::seat_lines`: how far the seat moves per 0.5° of
@@ -3008,9 +3592,9 @@ mod fields {
                 "plug_depth_mm",
                 "male_board.thickness_mm",
             ],
-            // The Picture, the V-bit, the maximum depth: slice 15 (#544)
-            // gives the Photo V-Carve its record, and its table these.
-            Kind::PhotoVCarve => &["picture", "tool", "max_depth_mm"],
+            // The Picture in the targets' place (the record's `image`),
+            // the V-bit, the maximum depth (slice 15, #544).
+            Kind::PhotoVCarve => &["image", "tool", "max_depth_mm"],
         }
     }
 
@@ -3021,11 +3605,6 @@ mod fields {
     fn setup_rows_lead_each_kind() {
         for kind in Kind::ALL {
             let rows = table(kind);
-            if kind == Kind::PhotoVCarve && rows.is_empty() {
-                // No record before phase 3.5 (`still_to_come`), so no rows
-                // yet; slice 15 (#544) makes this check its Setup too.
-                continue;
-            }
             let setup: Vec<&str> = rows
                 .iter()
                 .take_while(|r| r.group == Group::Setup)

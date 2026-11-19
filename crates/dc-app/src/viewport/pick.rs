@@ -34,6 +34,10 @@
 //! click that finds no instance and lands on one, by the same tolerance
 //! and containment rules, is [`Hit::MaleBoardShape`] of its Inlay.
 //!
+//! Pictures (slice 15, #544; DreamCarve's own, with no upstream
+//! counterpart): a click that lands on none of the above and inside a
+//! bitmap's footprint picks that picture ([`picture_under`]).
+//!
 //! Re-derived for Y-up: nothing here depends on direction. Distances and
 //! containment are taken in project millimetres, with the tolerance
 //! converted at the camera's scale, as upstream does; arcs are measured as
@@ -41,7 +45,7 @@
 //! even-odd over each outline flattened at [`crate::scene::PICK_FLATTEN_MM`].
 
 use dc_geometry::{Point, Polyline, Rect, point_segment_distance_mm};
-use dc_project::{InstanceId, OperationId, TabId};
+use dc_project::{BitmapId, InstanceId, OperationId, TabId};
 
 use crate::scene::{Scene, Shape};
 use crate::selection::Selection;
@@ -340,6 +344,43 @@ pub fn pick_with_cuts(
         0 => male_board_shape(scene, camera, at, tolerance_px)
             .map_or(Hit::Nothing, Hit::MaleBoardShape),
         n => found.into_iter().nth(cycle % n).unwrap_or(Hit::Nothing),
+    }
+}
+
+/// The picture whose footprint holds pane point `at` (functional spec,
+/// capability 56; slice 15, #544): the one drawn on top where footprints
+/// overlap, the last in file order. A footprint's edge is its own; a
+/// hidden picture is not in the Scene and so never picked, and a locked
+/// one is, as a locked shape is. There is no tolerance: a picture is its
+/// whole footprint, not an outline to aim at.
+#[must_use]
+pub fn picture_at(scene: &Scene, camera: &Camera, at: Pos) -> Option<BitmapId> {
+    let p = camera.to_world(at);
+    scene
+        .bitmaps()
+        .iter()
+        .rev()
+        .find(|bitmap| {
+            let (min, max) = (bitmap.footprint.min, bitmap.footprint.max);
+            p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y
+        })
+        .map(|bitmap| bitmap.id.clone())
+}
+
+/// The picture a click at pane point `at` selects, given what [`pick`] or
+/// [`pick_with_cuts`] found there: [`picture_at`] when `hit` is
+/// [`Hit::Nothing`], and none otherwise. A picture is drawn under the
+/// shapes, the tabs, the toolpaths and the male board, so each of those
+/// takes the click first (capability 56: "under the shapes").
+///
+/// This stands beside [`Hit`], which the window matches exhaustively
+/// while it is being rebuilt; its place is a `Hit::Bitmap` that
+/// [`pick_with_cuts`] returns last.
+#[must_use]
+pub fn picture_under(scene: &Scene, camera: &Camera, at: Pos, hit: &Hit) -> Option<BitmapId> {
+    match hit {
+        Hit::Nothing => picture_at(scene, camera, at),
+        Hit::Instance(_) | Hit::Tab(_) | Hit::Toolpath(_) | Hit::MaleBoardShape(_) => None,
     }
 }
 

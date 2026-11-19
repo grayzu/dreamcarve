@@ -242,9 +242,23 @@ folder are app preferences, kept outside the project.
     pixels, and reporting a colour-to-grayscale conversion as `image add`
     does. The picture shows on the Viewport as it does on screen, under the
     shapes, at its footprint. A bitmap is a row in the Design Tree with a
-    name, visibility and lock, moves like a shape, and does not rotate,
-    scale or mirror in this phase (phase 3 decision). It is deleted like a
-    shape; a Photo V-Carve that loses its picture says so.
+    name, visibility and lock, moves like a shape, and does not rotate
+    or mirror in this phase (phase 3 decision). It is never stretched,
+    since its footprint keeps the picture's proportions: one picture's W
+    or H can be retyped in Properties, the other side following the
+    pixels as it does at import, about the footprint's centre; no handle
+    scales it. It is deleted like a
+    shape; a Photo V-Carve that loses its picture says so. A picture is
+    selected from its row, or by a click inside its footprint where no
+    shape, tab or toolpath takes the click (it is under all of them), the
+    topmost where two overlap. Pictures are selected on their own, as
+    tabs are. Properties shows a selected picture's X, Y, W and H (its
+    footprint; several pictures' joint box), its size in pixels,
+    read-only, and the Photo V-Carves that carve it; X and Y are typed
+    for any selection of pictures, W and H for one picture, with the
+    proportion link always closed. A move or a resize is one undo step
+    named for the picture, a locked picture refuses both, and the Photo
+    V-Carve that carves the picture regenerates over its new footprint.
 57. **Design Tree** (`01-workspace.svg`, left). One row per feature
     instance, in file order, with: an eye (visible), a padlock (locked),
     a **shape glyph** that says what the shape is (a closed outline, a
@@ -494,7 +508,12 @@ folder are app preferences, kept outside the project.
     order (capability 10) and nothing regroups it. *Add* opens a menu of
     the eight kinds, the kinds the current selection can take listed
     first and the rest below a divider with the reason (an open path cannot
-    take a Pocket; a Photo V-Carve needs a picture). The new operation
+    take a Pocket; a Photo V-Carve needs a picture). A Photo V-Carve
+    carves a picture, not the selected shapes: it is offered whenever
+    there is a picture for it, the selected one or, with none selected,
+    the project's only one; with several pictures and not exactly one
+    selected, its reason says to select the picture to carve. A Pictures
+    row's *Add operation ▸* offers it for that picture. The new operation
     targets the selection, takes the project's first tool whose type fits
     (a V-bit for V-Carve, Inlay and Photo V-Carve; a drill or end mill for
     Drill) or none, is named `<Kind> <n>`, and gets the CLI's defaults for
@@ -625,7 +644,7 @@ folder are app preferences, kept outside the project.
     | Engrave | Depth: `depth_mm`, `step_down_mm` (tool's), `through_cut_allowance_mm`. Strategy: `alternate_direction`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | V-Carve | Depth: `flat_depth_mm` (off for `null`), `start_depth_mm`, `start_plane_cleared_externally`, `through_cut_allowance_mm`. Strategy: `strategy` (Medial; Offset with `step_over_mm` and `direction`), `step_over_fraction`, `clearing` (70). Order: `machining_order`. Heights: `safe_z_mm`. |
     | Inlay (format 25, #498) | Depth, one set for both boards (68a): `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `margin_mm`, `outline_rounding_mm` (off for `null`), `through_cut_allowance_mm`. Male board: `male_board.width_mm` and `height_mm` (the stock's for `null`), `male_board.thickness_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out: off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
-    | Photo V-Carve | Targets: `image`. Depth: `max_depth_mm`, `start_depth_mm`, `invert`. Strategy: `line_angle_deg`, `line_spacing_fraction` (as a percentage), `strategy` (Raster, Hatch), `sample_mm`. Heights: `safe_z_mm`, `stepover_retract_mm`. |
+    | Photo V-Carve | Targets: `image`. Depth: `max_depth_mm`, `start_depth_mm`, `start_plane_cleared_externally`, `invert`, `through_cut_allowance_mm`. Strategy: `strategy` (Raster, Hatch), `line_angle_deg`, `line_spacing_fraction` (as a percentage), `sample_mm`. Heights: `safe_z_mm`, `stepover_retract_mm`. |
 
     Photo V-Carve lands with phase 3.5 (format v27); its editor is a slice
     of this phase that waits for it, and nothing else in the phase does
@@ -811,7 +830,9 @@ folder are app preferences, kept outside the project.
     | Floor ridges | 0.400 mm along the rings, up to 0.800 mm at corners no clearing pass reaches |
 
     The status bar's message cell shows the selected operation's first
-    fact (*Lettering · deepest cut 1.658 mm, no flat depth*) and opens the
+    fact (*Lettering · deepest cut 1.658 mm, no flat depth*; for a Photo
+    V-Carve its grooves, *Portrait · 42 grooves 2.309 mm wide, to
+    2.000 mm*) and opens the
     drawer at its note. *Copy* writes the notes as `check` prints them,
     so the text the CLI prints is unchanged.
 77. **Export** (`11-export-dialog.svg`; File ▸ Export G-code…, Ctrl E;
@@ -930,7 +951,9 @@ folder are app preferences, kept outside the project.
 - Drawing or editing shape geometry: lines, rectangles, circles, text,
   node editing, fillets, booleans, offsets, joining open paths, snapping,
   alignment, distribution, arrays, folders, construction geometry (phase 5).
-- Rotating, scaling or mirroring a picture (phase 3 decision; revisit in 5).
+- Rotating or mirroring a picture, or stretching it out of its pixels'
+  proportions (phase 3 decision; revisit in 5). Its size can be retyped
+  (56).
 - 3D preview and material-removal simulation (phase 6).
 - Machine-definition editing (ADR-0004: definitions are bundled); a
   post-processor converter (phase 8). Editing library tools in place is
