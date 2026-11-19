@@ -35,18 +35,27 @@
 //! - "In project" is every field but the id equal, where upstream listed
 //!   the fields it compared.
 //!
+//! Not in upstream either (#685; phase 3.6's tapered ball nose): the
+//! table's columns and cells ([`Column`], [`row`]). The Ø column is the
+//! cutting diameter for every type, a tapered ball nose's tip has its own
+//! column, and the Angle column says which angle it holds
+//! ([`crate::tools::angle_text`]). The search reads the tip too. The
+//! import review's status and the values a tapered ball nose came in
+//! without ([`review_status`], [`review_unset`], [`skipped`]).
+//!
 //! Nothing here depends on the coordinate frame, so nothing was
 //! re-derived for Y-up.
 
 use std::collections::BTreeSet;
 
-use dc_library::import::{Incoming, Merged, Review, ReviewItem};
+use dc_library::import::{Incoming, Merged, Outcome, Review, ReviewItem, Status};
 use dc_library::{Library, LibraryError, LibraryTool, LibraryToolId};
 use dc_project::{Tool, ToolId, ToolKind, Units};
 
 use crate::command::copy_name;
 use crate::error::CommandError;
-use crate::tools::ToolField;
+use crate::strings::{StrKey, Strings};
+use crate::tools::{KindChoice, ToolField};
 
 /// The type filter's choices: every type, or one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -76,6 +85,19 @@ impl KindFilter {
         Self::Engraver,
         Self::Drill,
     ];
+
+    /// The choice's name in the dropdown.
+    #[must_use]
+    pub const fn label(self) -> StrKey {
+        match self {
+            Self::All => StrKey::AppKindAll,
+            Self::EndMill => StrKey::AppKindEndMill,
+            Self::BallNose => StrKey::AppKindBallNose,
+            Self::VBit => StrKey::AppKindVBit,
+            Self::Engraver => StrKey::AppKindEngraver,
+            Self::Drill => StrKey::AppKindDrill,
+        }
+    }
 
     /// Whether a tool of `kind` passes.
     #[must_use]
@@ -150,8 +172,9 @@ pub(crate) fn trimmed(value: f64, decimals: usize) -> String {
 
 /// Upstream `entryMatchesFilters`: the type filter, then the search. A
 /// search is whitespace-separated terms; an entry matches when any term
-/// is in its name, vendor, product id or diameter (in `units`), ignoring
-/// case.
+/// is in its name, vendor, product id or a diameter its row shows (in
+/// `units`: the cutting diameter, and a tapered ball nose's tip, #685),
+/// ignoring case.
 #[must_use]
 pub fn entry_matches(entry: &LibraryTool, filter: &Filter, units: Units) -> bool {
     if !filter.kind.matches(&entry.tool.cutter) {
@@ -162,13 +185,137 @@ pub fn entry_matches(entry: &LibraryTool, filter: &Filter, units: Units) -> bool
         return true;
     }
     let haystack = normalize(&format!(
-        "{} {} {} {}",
+        "{} {} {} {} {}",
         entry.tool.name,
         entry.tool.vendor.as_deref().unwrap_or_default(),
         entry.tool.product_id.as_deref().unwrap_or_default(),
-        diameter_text(entry.tool.diameter_mm, units)
+        diameter_text(entry.tool.diameter_mm, units),
+        crate::tools::tip_text(&entry.tool, units).unwrap_or_default()
     ));
     search.split(' ').any(|term| haystack.contains(term))
+}
+
+/// The columns of the library's table, and of the import review's
+/// (capability 64; #685), in order. The vendor is the group, not a
+/// column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Column {
+    /// The tool's name.
+    Name,
+    /// Its type.
+    Kind,
+    /// `diameter_mm`: the cutting diameter, for every type.
+    Diameter,
+    /// A tapered ball nose's tip diameter.
+    Tip,
+    /// A V-bit's included angle, or a tapered ball nose's per side,
+    /// labelled.
+    Angle,
+    /// The flute count.
+    Flutes,
+    /// The feed.
+    Feed,
+    /// The plunge rate.
+    Plunge,
+    /// The spindle speed.
+    Rpm,
+    /// The vendor's product id.
+    Product,
+}
+
+impl Column {
+    /// The columns, in the table's order.
+    pub const ALL: [Self; 10] = [
+        Self::Name,
+        Self::Kind,
+        Self::Diameter,
+        Self::Tip,
+        Self::Angle,
+        Self::Flutes,
+        Self::Feed,
+        Self::Plunge,
+        Self::Rpm,
+        Self::Product,
+    ];
+
+    /// The column's heading.
+    #[must_use]
+    pub const fn heading(self) -> StrKey {
+        match self {
+            Self::Name => StrKey::AppLibraryColumnName,
+            Self::Kind => StrKey::AppLibraryColumnKind,
+            Self::Diameter => StrKey::AppLibraryColumnDiameter,
+            Self::Tip => StrKey::AppLibraryColumnTip,
+            Self::Angle => StrKey::AppLibraryColumnAngle,
+            Self::Flutes => StrKey::AppLibraryColumnFlutes,
+            Self::Feed => StrKey::AppLibraryColumnFeed,
+            Self::Plunge => StrKey::AppLibraryColumnPlunge,
+            Self::Rpm => StrKey::AppLibraryColumnRpm,
+            Self::Product => StrKey::AppLibraryColumnProduct,
+        }
+    }
+
+    /// Whether the column holds numbers, which the table sets to the
+    /// right.
+    #[must_use]
+    pub const fn numeric(self) -> bool {
+        !matches!(self, Self::Name | Self::Kind | Self::Product)
+    }
+}
+
+/// What one cell of a tool's table row holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cell {
+    /// A value, as the cell shows it.
+    Text(String),
+    /// Nothing: the tool's type has no such value (an end mill's tip), or
+    /// the value is optional and absent (a product id).
+    Empty,
+    /// A value the tool still needs before an operation may use it
+    /// (`Tool::unset_values`: a rate, a tapered ball nose's tip or
+    /// taper): the table draws its red dash, never a value.
+    Unset,
+}
+
+impl Cell {
+    /// The cell of a value the tool needs: its text, or [`Cell::Unset`].
+    fn needed(text: Option<String>) -> Self {
+        text.map_or(Self::Unset, Self::Text)
+    }
+}
+
+/// `tool`'s cell under `column`, lengths and rates in `units`
+/// (capability 64; #685).
+#[must_use]
+pub fn cell(strings: &Strings, tool: &Tool, column: Column, units: Units) -> Cell {
+    let tapered = matches!(tool.cutter, ToolKind::TaperedBallNose { .. });
+    match column {
+        Column::Name => Cell::Text(tool.name.clone()),
+        Column::Kind => Cell::Text(strings.get(KindChoice::of(&tool.cutter).label()).to_owned()),
+        Column::Diameter => Cell::Text(diameter_text(tool.diameter_mm, units)),
+        Column::Tip if tapered => Cell::needed(crate::tools::tip_text(tool, units)),
+        Column::Angle if tapered => Cell::needed(crate::tools::angle_text(strings, tool)),
+        Column::Tip => Cell::Empty,
+        Column::Angle => crate::tools::angle_text(strings, tool).map_or(Cell::Empty, Cell::Text),
+        Column::Flutes => Cell::Text(tool.flutes.to_string()),
+        Column::Feed => Cell::needed(tool.feed_mm_min.map(|v| rate_text(v, units))),
+        Column::Plunge => Cell::needed(tool.plunge_mm_min.map(|v| rate_text(v, units))),
+        Column::Rpm => Cell::needed(tool.rpm.map(|rpm| rpm.to_string())),
+        Column::Product => tool
+            .product_id
+            .clone()
+            .filter(|id| !id.is_empty())
+            .map_or(Cell::Empty, Cell::Text),
+    }
+}
+
+/// `tool`'s table row: its cell under each of [`Column::ALL`], in order.
+#[must_use]
+pub fn row(strings: &Strings, tool: &Tool, units: Units) -> Vec<Cell> {
+    Column::ALL
+        .into_iter()
+        .map(|column| cell(strings, tool, column, units))
+        .collect()
 }
 
 /// The library's tools that pass `filter`, in library order (upstream
@@ -278,6 +425,75 @@ pub fn review(lib: &Library, bytes: &[u8]) -> Result<(Incoming, Review), Library
     let incoming = dc_library::import::read(bytes)?;
     let review = dc_library::import::review(lib, incoming.clone())?;
     Ok((incoming, review))
+}
+
+/// An item's status as the review's row shows it under the choice
+/// `replace` (capability 64b): *New*; *Same*; a changed tool kept is
+/// added under its stored name, and replaced it overwrites yours; a
+/// skipped item says why, in `tools import`'s words (a Fusion tapered
+/// mill with no shaft diameter, or with a flat or bull tip, among them:
+/// `dc_library::fusion::SkipReason`).
+#[must_use]
+pub fn review_status(strings: &Strings, item: &ReviewItem, replace: bool) -> String {
+    match item.status {
+        Status::New => strings.get(StrKey::AppLibraryReviewNew).to_owned(),
+        Status::Present => strings.get(StrKey::AppLibraryStatusSame).to_owned(),
+        Status::Changed => match (&item.keep, replace) {
+            (Outcome::Imported { stored_name, .. }, false) => {
+                strings.fmt(StrKey::AppLibraryStatusKept, &[("name", stored_name)])
+            }
+            _ => strings.get(StrKey::AppLibraryStatusReplaced).to_owned(),
+        },
+        Status::Skipped => {
+            let reason = match &item.keep {
+                Outcome::Skipped { reason } => reason.as_str(),
+                _ => "",
+            };
+            strings.fmt(StrKey::AppLibraryStatusSkipped, &[("reason", reason)])
+        }
+    }
+}
+
+/// The line the review lists for a tapered ball nose that comes in with
+/// values unset (capability 64b; #685), naming each by its label in the
+/// editor, where it is typed after the import: *Still to set: Taper per
+/// side, Flute length*. The item's own `notes` name the same values as
+/// `tools import` prints them. `None` for any other item, and for a
+/// tapered ball nose with every value. Unset rates are not named here:
+/// their cells show them.
+#[must_use]
+pub fn review_unset(strings: &Strings, item: &ReviewItem) -> Option<String> {
+    let tool = item.tool.as_ref()?;
+    let labels: Vec<&str> = crate::tools::unset_fields(tool)
+        .into_iter()
+        .filter(|field| {
+            matches!(
+                field,
+                ToolField::TipDiameter | ToolField::Taper | ToolField::FluteLength
+            )
+        })
+        .map(|field| strings.get(field.label()))
+        .collect();
+    (!labels.is_empty()).then(|| {
+        strings.fmt(
+            StrKey::AppLibraryReviewUnset,
+            &[("fields", &labels.join(", "))],
+        )
+    })
+}
+
+/// The review's skipped items, in file order, each with the reason
+/// `tools import` prints (capability 64b).
+#[must_use]
+pub fn skipped(review: &Review) -> Vec<(&str, &str)> {
+    review
+        .items
+        .iter()
+        .filter_map(|item| match &item.keep {
+            Outcome::Skipped { reason } => Some((item.name.as_str(), reason.as_str())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// One vendor's items in the import review's table: the vendor (`None`

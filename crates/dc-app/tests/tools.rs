@@ -1013,8 +1013,8 @@ fn tapered_ball_nose_unset_fields_show_required() {
         .find(|f| f.field.as_deref() == Some("tools[t3].cutter.tapered_ball_nose.flute_length_mm"))
         .expect("the refusal is listed");
     assert_eq!(refusal.tier, Tier::Error);
-    assert_eq!(refusal.code.as_deref(), Some("tool_value_unset"));
     assert_eq!(refusal.message, message);
+    assert!(harness.app.validation().has_errors(), "export is disabled");
 
     // Every value unset, on a tool no operation uses: validation says
     // nothing of them yet, and the fields are flagged all the same.

@@ -2726,7 +2726,7 @@ fn v_carve_and_inlay_pickers_offer_tapered_ball_noses() {
     assert_eq!(note("t3").as_deref(), Some("cutting height 19.05 mm"));
     let fine = project.tools[1].cutting_height_mm().expect("every value");
     assert!((fine - 18.374).abs() < 1e-3, "{fine}");
-    assert_eq!(note("t2").as_deref(), Some("cutting height 18.374 mm"));
+    assert_eq!(note("t2").as_deref(), Some("cutting height 18.3737 mm"));
     assert_eq!(note("t5").as_deref(), Some("cone height 3.175 mm"));
     assert_eq!(note("t6"), None, "nothing to derive it from yet");
     assert_eq!(note("t4"), None);
@@ -2748,12 +2748,19 @@ fn v_carve_and_inlay_pickers_offer_tapered_ball_noses() {
         &carve,
         &editor::Slot::of(row_of(&carve, "tool")),
     ));
-    assert_eq!(under_carve, ["cutting height 18.374 mm"]);
+    assert_eq!(under_carve, ["cutting height 18.3737 mm"]);
+}
+
+/// The ids of `tools`.
+fn ids<'t>(tools: &[&'t dc_project::Tool]) -> Vec<&'t str> {
+    tools.iter().map(|t| t.id.as_str()).collect()
 }
 
 /// #685; capability 68: a Photo V-Carve's depth follows a V-bit's angle,
 /// for good, so its picker offers the V-bits and no tapered ball nose,
-/// as validation refuses one there (`v_carve_needs_v_bit`).
+/// as validation refuses one there (`v_carve_needs_v_bit`). The Photo
+/// V-Carve's editor rows are their own slice; its Tool row reads
+/// `offered_tools`, as every operation's does.
 #[test]
 fn photo_picker_does_not() {
     use dc_project::test_support::{photo_project, tool_tbn_ultra};
@@ -2781,21 +2788,34 @@ fn photo_picker_does_not() {
             ("t3", "a tapered ball nose")
         ]
     );
-    assert_eq!(offered_ids(&project, &photo, "tool"), ["t2"]);
+    assert_eq!(ids(&editor::offered_tools(&project, &photo)), ["t2"]);
     assert_eq!(refused_as_carving_bit(&project, &photo), ["t1", "t3"]);
+    for tool in &project.tools {
+        assert_eq!(
+            editor::carving_bit_refused(&project, &photo, tool),
+            tool.id.as_str() != "t2",
+            "{}",
+            tool.id
+        );
+    }
+    // A disabled Photo V-Carve is still edited: the same tools.
+    let mut off = photo.clone();
+    if let Operation::PhotoVCarve(p) = &mut off {
+        p.enabled = false;
+    }
+    assert_eq!(ids(&editor::offered_tools(&project, &off)), ["t2"]);
 
     // The same bit is offered to a V-Carve of the same project.
     let carve = Operation::VCarve(dc_project::test_support::sample_v_carve());
-    assert_eq!(
-        editor::offered_tools(&project, &carve)
-            .iter()
-            .map(|t| t.id.as_str())
-            .collect::<Vec<_>>(),
-        ["t2", "t3"]
-    );
+    assert_eq!(ids(&editor::offered_tools(&project, &carve)), ["t2", "t3"]);
+    assert!(!editor::carving_bit_refused(
+        &project,
+        &carve,
+        &project.tools[2]
+    ));
 
-    // A file may still name one: it shows as chosen, with validation's
-    // message, and the picker does not offer it back.
+    // A file may still name one: validation says why not, at the
+    // operation's tool, and the picker does not offer it back.
     let mut with_tbn = project.clone();
     for op in &mut with_tbn.operations {
         if let Operation::PhotoVCarve(p) = op {
@@ -2804,21 +2824,19 @@ fn photo_picker_does_not() {
     }
     let h = dc_app::test_support::Harness::from_project(with_tbn);
     let op = op_of(&h, "o8");
-    let row = row_of(&op, "tool");
-    let chosen = editor::Slot::of(row)
-        .tool(h.app.project(), &op)
-        .expect("the file's tool");
-    assert_eq!(chosen.id.as_str(), "t3");
-    assert_eq!(offered_ids(h.app.project(), &op, "tool"), ["t2"]);
-    let status = editor::status(h.warnings(), h.app.project(), &op, row)
-        .expect("validation's message under the row");
-    assert_eq!(status.tier, Tier::Error);
+    assert_eq!(ids(&editor::offered_tools(h.app.project(), &op)), ["t2"]);
+    let refusal = h
+        .warnings()
+        .iter()
+        .find(|f| f.field.as_deref() == Some("operations[o8].tool"))
+        .expect("validation's message at the tool");
+    assert_eq!(refusal.tier, Tier::Error);
     assert!(
-        status
+        refusal
             .message
             .contains("a Photo V-Carve needs a V-bit; a tapered ball nose is not supported there"),
         "{}",
-        status.message
+        refusal.message
     );
 }
 
@@ -2933,10 +2951,17 @@ fn inlay_with_a_tapered_ball_nose_shows_the_seat_line() {
         &editor::Slot::of(row_of(&v_bit, "male_board")),
     ));
     assert_eq!(lines.len(), 2, "{lines:?}");
-    assert!(lines[1].contains("of the 90° bit's 3.175 mm cone"), "{}", lines[1]);
+    assert!(
+        lines[1].contains("of the 90° bit's 3.175 mm cone"),
+        "{}",
+        lines[1]
+    );
     let v_inlay = inlay_fixture();
     let op1 = op_of(&v_inlay, "op1");
-    assert_eq!(editor::seat_line(v_inlay.app.project(), &strings, &op1), None);
+    assert_eq!(
+        editor::seat_line(v_inlay.app.project(), &strings, &op1),
+        None
+    );
 }
 
 /// The editor's table (`dc_app::editor::fields`), re-exported here so the

@@ -758,10 +758,7 @@ fn tapered_entry() -> LibraryTool {
 }
 
 /// The cells of `tool`'s table row by column.
-fn cells(
-    tool: &Tool,
-    units: Units,
-) -> Vec<(dc_app::library::Column, dc_app::library::Cell)> {
+fn cells(tool: &Tool, units: Units) -> Vec<(dc_app::library::Column, dc_app::library::Cell)> {
     use dc_app::library::{Column, row};
     let strings = dc_app::Strings::english();
     let cells = row(&strings, tool, units);
@@ -912,7 +909,6 @@ fn fusion_tapered_mill(description: &str, without: &[&str]) -> serde_json::Value
         "unit": "inches",
         "description": description,
         "guid": description,
-        "vendor": "IDC Woodcraft",
         "geometry": {
             "DC": 0.03, "RE": 0.015, "TA": 6.7, "LCF": 0.75,
             "SFDM": 0.25, "NOF": 2, "OAL": 2.5
@@ -1019,7 +1015,10 @@ fn import_review_names_unset_tapered_values_and_skipped_tapered_mills() {
     for (name, reason) in [("No shaft", no_shaft), ("Flat tip", flat)] {
         let entry = item(name);
         assert_eq!(entry.status, Status::Skipped);
-        assert_eq!(entry.tool, None, "not imported, with a placeholder or without");
+        assert_eq!(
+            entry.tool, None,
+            "not imported, with a placeholder or without"
+        );
         assert_eq!(review_unset(&strings, entry), None);
         for replace in [false, true] {
             assert_eq!(

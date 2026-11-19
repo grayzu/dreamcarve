@@ -35,8 +35,8 @@ use std::borrow::Cow;
 use dc_geometry::Point;
 use dc_job::{Finding, Tier};
 use dc_project::{
-    Board, DrillCycle, INLAY_MIN_PLUG_BASE_MM, Operation, OperationId, Project, Tool, ToolId,
-    ToolKind, Units,
+    Board, DrillCycle, INLAY_MIN_PLUG_BASE_MM, Operation, OperationId, Problem, Project, Tool,
+    ToolId, ToolKind, Units,
 };
 use serde_json::{Value, json};
 
@@ -45,7 +45,6 @@ pub use fields::{ChoiceOption, FieldKind, Group, Row, StockDefault, ToolDefault,
 use crate::app::App;
 use crate::command::Command;
 use crate::error::CommandError;
-use crate::operations::Kind;
 use crate::project::FieldStatus;
 use crate::strings::{StrKey, Strings};
 use crate::units;
@@ -538,19 +537,112 @@ pub fn set_tool(op: &Operation, row: &Row, tool: &ToolId) -> Result<Option<Comma
     Slot::of(row).set_tool(op, tool)
 }
 
-/// The tools the Tool row's picker offers for `op`, in project order: the
-/// V-bits for a kind that carves with one (V-Carve, Inlay, Photo
-/// V-Carve; slice 13, #542), every tool otherwise. A file's tool of
-/// another type still shows as chosen, with validation's message under
-/// the row.
+/// The tools the Tool row's picker offers for `op`, in project order: for
+/// a kind that carves with its bit's flank (V-Carve, Inlay, Photo
+/// V-Carve; slice 13, #542), the tools validation takes as that kind's
+/// carving bit ([`carving_bit_refused`]); every tool otherwise. So a
+/// V-Carve and an Inlay are offered the V-bits and the tapered ball noses
+/// (#685), a Photo V-Carve the V-bits alone. A tapered ball nose whose
+/// values are still unset is offered, as a tool with no feed is: its
+/// fields say what it needs ([`crate::tools::required`]). A file's tool
+/// of another type still shows as chosen, with validation's message
+/// under the row.
 #[must_use]
 pub fn offered_tools<'p>(project: &'p Project, op: &Operation) -> Vec<&'p Tool> {
-    let v_bits = matches!(Kind::of(op), Kind::VCarve | Kind::Inlay | Kind::PhotoVCarve);
+    let Some(mut probe) = CarvingProbe::of(project, op) else {
+        return project.tools.iter().collect();
+    };
     project
         .tools
         .iter()
-        .filter(|t| !v_bits || matches!(t.cutter, ToolKind::VBit { .. }))
+        .filter(|tool| !probe.refuses(tool))
         .collect()
+}
+
+/// Whether validation refuses `tool` as the carving bit of `op`
+/// (`v_carve_needs_v_bit`: an enabled V-Carve or Inlay carves with a
+/// V-bit or a tapered ball nose, a Photo V-Carve with a V-bit). The
+/// pickers ask this rather than keep a rule of their own, so they offer
+/// exactly what the file accepts. `false` for any other kind, which
+/// takes every tool.
+#[must_use]
+pub fn carving_bit_refused(project: &Project, op: &Operation, tool: &Tool) -> bool {
+    CarvingProbe::of(project, op).is_some_and(|mut probe| probe.refuses(tool))
+}
+
+/// A project holding one enabled carve and one tool, for asking
+/// validation whether that tool may carve it: the carve is `op` with
+/// nothing but its kind and its tool kept, and the project has no shapes,
+/// pictures or tabs, so the question costs the same however large the
+/// project is.
+struct CarvingProbe {
+    project: Project,
+}
+
+impl CarvingProbe {
+    /// The probe for `op`; `None` when it is not a carve.
+    fn of(project: &Project, op: &Operation) -> Option<Self> {
+        let mut carve = op.clone();
+        match &mut carve {
+            Operation::VCarve(c) => {
+                c.enabled = true;
+                c.targets.clear();
+                c.clearing.clear();
+            }
+            Operation::Inlay(i) => {
+                i.enabled = true;
+                i.targets.clear();
+                i.boundary.clear();
+                i.clearing.clear();
+                i.cut_out = None;
+            }
+            Operation::PhotoVCarve(p) => p.enabled = true,
+            Operation::Profile(_)
+            | Operation::Pocket(_)
+            | Operation::Drill(_)
+            | Operation::Bore(_)
+            | Operation::Engrave(_) => return None,
+        }
+        Some(Self {
+            project: Project {
+                version: project.version,
+                name: project.name.clone(),
+                display_units: project.display_units,
+                flatten_tolerance_mm: project.flatten_tolerance_mm,
+                arc_fit_tolerance_mm: project.arc_fit_tolerance_mm,
+                stock: project.stock.clone(),
+                origin: project.origin.clone(),
+                heights: project.heights.clone(),
+                tools: Vec::new(),
+                operations: vec![carve],
+                tabs: Vec::new(),
+                instances: Vec::new(),
+                bitmaps: Vec::new(),
+                post_processor: project.post_processor.clone(),
+                definitions: std::collections::BTreeMap::new(),
+            },
+        })
+    }
+
+    /// Whether validation refuses `tool` as the carve's bit.
+    fn refuses(&mut self, tool: &Tool) -> bool {
+        for op in &mut self.project.operations {
+            match op {
+                Operation::VCarve(c) => c.tool.clone_from(&tool.id),
+                Operation::Inlay(i) => i.tool.clone_from(&tool.id),
+                Operation::PhotoVCarve(p) => p.tool.clone_from(&tool.id),
+                Operation::Profile(_)
+                | Operation::Pocket(_)
+                | Operation::Drill(_)
+                | Operation::Bore(_)
+                | Operation::Engrave(_) => {}
+            }
+        }
+        self.project.tools = vec![tool.clone()];
+        dc_project::validate(&self.project)
+            .iter()
+            .any(|problem| matches!(problem, Problem::VCarveNeedsVBit { .. }))
+    }
 }
 
 /// A line the editor draws under a row: a hint, or an alert drawn in the
@@ -571,12 +663,14 @@ impl Note {
 }
 
 /// The lines under `slot`'s control for `op` (mock-ups 06 and 07): under a
-/// tool picker, the chosen V-bit's cone height (for an Inlay's own tool,
-/// that one bit cuts both boards); under an Inlay's male board thickness,
-/// the board left under the band ([`male_base_mm`]), red below
+/// tool picker, the chosen V-bit's cone height or tapered ball nose's
+/// cutting height ([`tool_note`]; for an Inlay's own tool, that one bit
+/// cuts both boards); under an Inlay's male board thickness, the board
+/// left under the band ([`male_base_mm`]), red below
 /// [`INLAY_MIN_PLUG_BASE_MM`]; for an Inlay's derived line, the male's
-/// planes ([`male_planes`]), the engagement red past the cone. Empty for
-/// any other row.
+/// planes ([`male_planes`]), the engagement red past the cone or the
+/// cutting height, and, cut with a tapered ball nose, its seat line
+/// ([`seat_line`]). Empty for any other row.
 #[must_use]
 pub fn notes(project: &Project, strings: &Strings, op: &Operation, slot: &Slot<'_>) -> Vec<Note> {
     let units = project.display_units;
@@ -609,32 +703,47 @@ pub fn notes(project: &Project, strings: &Strings, op: &Operation, slot: &Slot<'
                 ],
             );
             let engagement = length_text(planes.engagement_mm, units);
-            let angle = project
+            let cutter = project
                 .tools
                 .iter()
                 .find(|t| t.id == inlay.tool)
-                .and_then(|t| match t.cutter {
-                    ToolKind::VBit { included_angle_deg } => Some(included_angle_deg),
-                    _ => None,
-                });
-            let engagement_line = match (planes.cone_height_mm, angle) {
-                (Some(cone_mm), Some(angle)) => Note {
+                .map(|t| &t.cutter);
+            let engagement_line = match (planes.cone_height_mm, cutter) {
+                (Some(cone_mm), Some(ToolKind::VBit { included_angle_deg })) => Note {
                     text: strings.fmt(
                         StrKey::EditorInlayEngagement,
                         &[
                             ("engagement", &engagement),
-                            ("angle", &plain(angle)),
+                            ("angle", &plain(*included_angle_deg)),
                             ("cone", &length_text(cone_mm, units)),
                         ],
                     ),
                     alert: planes.exceeds_cone(),
                 },
+                // #685: a tapered ball nose's flank ends at its cutting
+                // height, the lower of its flutes and its cap.
+                (Some(height_mm), Some(ToolKind::TaperedBallNose { .. })) => Note {
+                    text: strings.fmt(
+                        StrKey::EditorInlayEngagementTapered,
+                        &[
+                            ("engagement", &engagement),
+                            ("height", &length_text(height_mm, units)),
+                        ],
+                    ),
+                    alert: planes.exceeds_cone(),
+                },
+                (None, Some(ToolKind::TaperedBallNose { .. })) => Note::hint(strings.fmt(
+                    StrKey::EditorInlayEngagementTaperedUnset,
+                    &[("engagement", &engagement)],
+                )),
                 _ => Note::hint(strings.fmt(
                     StrKey::EditorInlayEngagementNoCone,
                     &[("engagement", &engagement)],
                 )),
             };
-            vec![Note::hint(planes_line), engagement_line]
+            let mut lines = vec![Note::hint(planes_line), engagement_line];
+            lines.extend(seat_line(project, strings, op).map(Note::hint));
+            lines
         }
         (FieldKind::Length, Operation::Inlay(_)) if slot.key() == "male_board.thickness_mm" => {
             male_base_mm(op).map_or_else(Vec::new, |base_mm| {
@@ -657,9 +766,11 @@ pub fn notes(project: &Project, strings: &Strings, op: &Operation, slot: &Slot<'
 /// What the bench needs to see of an Inlay's male (capability 68a), mm
 /// below the male board's top, from `dc-project`'s own rules: its start
 /// plane ([`dc_project::InlayOp::male_start_plane_mm`]), its band's flat
-/// floor and the V-bit flank's engagement there (both
+/// floor and the bit's flank's engagement there (both
 /// [`dc_project::InlayOp::engagement_mm`] on the male board, the depth
-/// validation's cone check compares), and the V-bit's cone height.
+/// validation's cone check compares), and the bit's cutting height
+/// ([`Tool::cutting_height_mm`]): a V-bit's cone, or the lower of a
+/// tapered ball nose's flutes and cap (#685).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MalePlanes {
     /// `depth_mm − glue_gap_mm`: where the male's walls pass exactly
@@ -667,17 +778,18 @@ pub struct MalePlanes {
     pub start_plane_mm: f64,
     /// `start + plug_depth_mm`: the band's flat floor.
     pub band_floor_mm: f64,
-    /// How deep the V-bit's flank engages: the band floor, since the
+    /// How deep the bit's flank engages: the band floor, since the
     /// board above the start plane is the plug and is never cleared.
     pub engagement_mm: f64,
-    /// The Inlay's V-bit's cone height; `None` when its tool is not a
-    /// V-bit with a cone.
+    /// The Inlay's bit's cutting height: a V-bit's cone height, or a
+    /// tapered ball nose's `min(flute length, cap height)`. `None` when
+    /// its tool is neither, or lacks a usable value.
     pub cone_height_mm: Option<f64>,
 }
 
 impl MalePlanes {
-    /// Whether the flank engages deeper than the cone, as validation's
-    /// `v_bit_cone_exceeded` decides it.
+    /// Whether the flank engages deeper than the bit's cutting height, as
+    /// validation's `v_bit_cone_exceeded` decides it.
     #[must_use]
     pub fn exceeds_cone(&self) -> bool {
         self.cone_height_mm
@@ -741,20 +853,53 @@ pub const fn reset_label(row: &Row) -> StrKey {
     }
 }
 
-/// The line under a tool picker showing `tool`: a V-bit's cone height,
-/// `cone height 3.175 mm`, in the display units (the V-Carve chapter's
-/// `diameter / (2 tan(α/2))`, the depth past which the shank cuts); `None`
-/// for any other cutter, or a V-bit whose angle or diameter has no cone.
+/// The line under a tool picker showing `tool`, in the display units,
+/// from [`Tool::cutting_height_mm`]: a V-bit's cone height, `cone height
+/// 3.175 mm` (the V-Carve chapter's `diameter / (2 tan(α/2))`, the depth
+/// past which the shank cuts); a tapered ball nose's cutting height,
+/// `cutting height 19.05 mm` (#685: the lower of its flutes and where its
+/// cone reaches the cutting diameter). `None` for any other cutter, a
+/// V-bit whose angle or diameter has no cone, and a tapered ball nose
+/// with a value unset or out of range.
 #[must_use]
 pub fn tool_note(project: &Project, strings: &Strings, tool: &Tool) -> Option<String> {
-    // The pickers offer no tapered ball nose yet; its own note, the
-    // cutting height, is #685's.
-    if !matches!(tool.cutter, ToolKind::VBit { .. }) {
+    let key = match tool.cutter {
+        ToolKind::VBit { .. } => StrKey::EditorToolCone,
+        ToolKind::TaperedBallNose { .. } => StrKey::EditorToolCuttingHeight,
+        ToolKind::EndMill | ToolKind::BallNose | ToolKind::Engraver | ToolKind::Drill => {
+            return None;
+        }
+    };
+    let height_mm = tool.cutting_height_mm()?;
+    let text = length_text(height_mm, project.display_units);
+    Some(strings.fmt(key, &[("value", &text)]))
+}
+
+/// The seat line of Inlay `op` cut with a tapered ball nose (capability
+/// 68a; #685): how far its plug's seat moves for an error in the bit's
+/// taper and tip radius, from its own `depth_mm` and `plug_depth_mm`
+/// ([`dc_project::inlay_seat_sensitivity`]), with the figures of the line
+/// `check` prints (`dc_job::summary::seat_lines`), less the operation it
+/// names: `seat: moves 0.55 mm per 0.5° of taper, 0.76 mm per 0.05 mm of
+/// tip radius; test-fit before gluing`. In millimetres whatever the
+/// display units, as its steps are. Shown for a disabled Inlay too, which
+/// is still edited. `None` for another kind, an Inlay cut with a V-bit,
+/// and until the bit's values, the depth and the plug depth are usable.
+#[must_use]
+pub fn seat_line(project: &Project, strings: &Strings, op: &Operation) -> Option<String> {
+    let Operation::Inlay(inlay) = op else {
         return None;
-    }
-    let cone_mm = tool.cutting_height_mm()?;
-    let text = length_text(cone_mm, project.display_units);
-    Some(strings.fmt(StrKey::EditorToolCone, &[("value", &text)]))
+    };
+    let seat = dc_project::inlay_seat_sensitivity(project, inlay)?;
+    Some(strings.fmt(
+        StrKey::EditorInlaySeat,
+        &[
+            ("taper", &format!("{:.2}", seat.taper_mm)),
+            ("taper_step", &dc_project::SEAT_TAPER_STEP_DEG.to_string()),
+            ("tip", &format!("{:.2}", seat.tip_mm)),
+            ("tip_step", &dc_project::SEAT_TIP_STEP_MM.to_string()),
+        ],
+    ))
 }
 
 /// `value_mm` in `units` with its suffix: `5.5 mm`.
