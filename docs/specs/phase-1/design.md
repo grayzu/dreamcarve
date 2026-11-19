@@ -659,7 +659,7 @@ S6 and the modal rules (`safety.rs`):
 | `RouterPauses::cut`, `tool: Option` | Closed: no tool is a first cut | Takes the tool |
 | `check_on_stock`, `groove_radius_mm(..).unwrap_or(full_mm)` | Closed: the full radius | Unchanged |
 | `check_rules`, `rpm.is_none_or(..)`, `router.z_mm` unknown (2) | Closed: not running, not at safe Z | Unchanged |
-| An arc's `i.unwrap_or(0.0)`, `j.unwrap_or(0.0)` (5, and `material::project_path`) | Not a miss: the controller reads an absent word as 0 | Unchanged |
+| An arc's `i.unwrap_or(0.0)`, `j.unwrap_or(0.0)` (5, and `material::project_path`; now in `MachineMove::arc_centre`, which those sites call, and in `check_arc`) | Not a miss: the controller reads an absent word as 0 | Unchanged |
 | `arc_fit_mm.unwrap_or(0.0)` (2), `clearance_z_mm.unwrap_or(NEG_INFINITY)`, `cut_to..map_or(z_mm, ..)`, `next_dwell.unwrap_or(..)` (5) | Not a miss: the option is unset | Unchanged |
 | `check_depth`, `descent_rate_mm_min`, an unknown Z (2) | Not a lookup: S2 and S4 need a known Z before an XY rapid, a stop, a spindle start and so any cut | Unchanged |
 
