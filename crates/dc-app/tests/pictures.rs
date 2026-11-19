@@ -6,6 +6,12 @@
 //! Design Tree's Pictures section, with a name, an eye and a padlock, and
 //! each visible one is in the Scene at its footprint, with its pixels, for
 //! the Viewport to draw under the shapes.
+//!
+//! Slice 15 (#544; capabilities 56 to 58): a picture is a thing to select
+//! and place. A click inside its footprint picks it, under everything
+//! else; it is selected from its row or the Viewport; its Properties are
+//! its position, its size and its pixels; it moves as one undo step, and
+//! the Photo V-Carve that carves it follows.
 
 #![allow(
     clippy::panic,
@@ -20,12 +26,17 @@ mod common;
 use std::sync::Arc;
 
 use dc_app::import::{PictureImport, Purpose};
+use dc_app::operations::{self, Kind};
+use dc_app::properties::{self, Edit, Field};
+use dc_app::scene::{StrokeKind, strokes};
 use dc_app::test_support::Harness;
 use dc_app::tree::{self, MenuItem, Row, Section, Tree};
-use dc_app::{App, Command, CommandError};
-use dc_geometry::{Point, Rect};
+use dc_app::viewport::camera::Camera;
+use dc_app::viewport::pick::{self, Hit, PICK_TOLERANCE_PX};
+use dc_app::{App, ClickMode, Command, CommandError, Selection, pictures};
+use dc_geometry::{Point, Rect, Vec2};
 use dc_import::ImageFormat;
-use dc_project::{BitmapId, Stock};
+use dc_project::{BitmapId, Operation, Stock, Units};
 
 use common::{fixture, plaque, read};
 
@@ -144,6 +155,7 @@ fn a_bitmap_row_hides_locks_renames_and_deletes() {
             MenuItem::Lock,
             MenuItem::Delete,
             MenuItem::ZoomTo,
+            MenuItem::AddOperation,
         ]
     );
     let before = harness.app.project().clone();
@@ -162,6 +174,7 @@ fn a_bitmap_row_hides_locks_renames_and_deletes() {
             MenuItem::Unlock,
             MenuItem::Delete,
             MenuItem::ZoomTo,
+            MenuItem::AddOperation,
         ]
     );
     // The header's eye: one row is hidden, so it shows them all.
@@ -361,4 +374,543 @@ fn bitmaps_are_in_the_scene_at_their_footprints() {
     // Undo takes the picture off the Viewport.
     harness.app.undo();
     assert!(harness.app.scene().bitmaps().is_empty());
+}
+
+/// A camera at 4 px/mm whose screen point for project (0, 0) is
+/// (100, 500).
+fn camera() -> Camera {
+    let mut camera = Camera {
+        centre_mm: Point::new(0.0, 0.0),
+        px_per_mm: 4.0,
+        viewport_px: Vec2::new(2000.0, 1000.0),
+    };
+    camera.pan(-900.0, 0.0);
+    camera
+}
+
+/// [`two_pictures`] with what generation needs set: the stock's
+/// thickness, the V-bit's rates and the Photo V-Carve's maximum depth.
+fn two_pictures_ready() -> Harness {
+    let mut harness = two_pictures();
+    let mut stock = harness.app.project().stock.clone();
+    stock.thickness_mm = Some(12.0);
+    harness.run(Command::SetStock(stock)).expect("a thickness");
+    let mut tool = harness.app.project().tools[0].clone();
+    tool.feed_mm_min = Some(1000.0);
+    tool.plunge_mm_min = Some(300.0);
+    tool.rpm = Some(18000);
+    harness.run(Command::UpdateTool(tool)).expect("the rates");
+    let mut op = harness.app.project().operations[0].clone();
+    let Operation::PhotoVCarve(photo) = &mut op else {
+        panic!("op1 is the Photo V-Carve");
+    };
+    photo.max_depth_mm = Some(2.0);
+    harness
+        .run(Command::UpdateOperation(op))
+        .expect("a maximum depth");
+    assert!(
+        !harness.app.validation().has_errors(),
+        "{:?}",
+        harness.app.validation().errors
+    );
+    harness
+}
+
+/// Slice 15 (#544); capabilities 56 and 57: a click inside a picture's
+/// footprint picks it: the one drawn on top where two overlap (the last
+/// in file order), a locked one too, a hidden one never. A picture is
+/// under everything else, so it is picked only where the click lands on
+/// no shape, tab or toolpath.
+#[test]
+fn a_click_inside_a_footprint_picks_the_picture_under_everything_else() {
+    let mut harness = two_pictures();
+    let camera = camera();
+    let at = |x: f64, y: f64| camera.to_screen(Point::new(x, y));
+    let scene = harness.app.scene().clone();
+    // b1 is 100 × 50 at (10, 10); b2 is 20 × 20 at the origin, on top.
+    assert_eq!(
+        pick::picture_at(&scene, &camera, at(50.0, 30.0)),
+        Some(b("b1"))
+    );
+    assert_eq!(
+        pick::picture_at(&scene, &camera, at(5.0, 5.0)),
+        Some(b("b2"))
+    );
+    assert_eq!(
+        pick::picture_at(&scene, &camera, at(15.0, 15.0)),
+        Some(b("b2")),
+        "where they overlap, the one drawn on top"
+    );
+    assert_eq!(pick::picture_at(&scene, &camera, at(150.0, 30.0)), None);
+    assert_eq!(pick::picture_at(&scene, &camera, at(5.0, 30.0)), None);
+    assert_eq!(
+        pick::picture_at(&scene, &camera, at(110.0, 60.0)),
+        Some(b("b1")),
+        "its edge is its own"
+    );
+
+    // Hidden: not picked, so the picture under it is. Locked: picked.
+    harness
+        .run(Command::SetBitmapFlags {
+            ids: vec![b("b2")],
+            visible: Some(false),
+            locked: None,
+        })
+        .expect("hides");
+    harness
+        .run(Command::SetBitmapFlags {
+            ids: vec![b("b1")],
+            visible: None,
+            locked: Some(true),
+        })
+        .expect("locks");
+    let scene = harness.app.scene().clone();
+    assert_eq!(pick::picture_at(&scene, &camera, at(5.0, 5.0)), None);
+    assert_eq!(
+        pick::picture_at(&scene, &camera, at(15.0, 15.0)),
+        Some(b("b1"))
+    );
+
+    // Under the shapes: on the plaque with a picture across it, a click
+    // on a shape is the shape's, and the picture's only on empty stock.
+    let mut harness = Harness::from_project(plaque());
+    harness
+        .app
+        .import_picture(&sheet("gradient.png", 400.0, Purpose::Import))
+        .expect("imports");
+    let scene = harness.app.scene().clone();
+    let shapes = scene.shapes_bounds().expect("the plaque's shapes");
+    let outline = scene.shapes()[0].outlines[0].vertices()[0].point();
+    let on_shape = camera.to_screen(outline);
+    let hit = pick::pick(&scene, &camera, on_shape, PICK_TOLERANCE_PX, 0);
+    assert!(matches!(hit, Hit::Instance(_)), "{hit:?}");
+    assert_eq!(
+        pick::picture_at(&scene, &camera, on_shape),
+        Some(b("b1")),
+        "the picture lies under it"
+    );
+    assert_eq!(
+        pick::picture_under(&scene, &camera, on_shape, &hit),
+        None,
+        "but the shape takes the click"
+    );
+    let empty = at(shapes.max.x + 50.0, shapes.max.y + 50.0);
+    let hit = pick::pick(&scene, &camera, empty, PICK_TOLERANCE_PX, 0);
+    assert_eq!(hit, Hit::Nothing);
+    assert_eq!(
+        pick::picture_under(&scene, &camera, empty, &hit),
+        Some(b("b1"))
+    );
+    let off = at(450.0, 30.0);
+    let hit = pick::pick(&scene, &camera, off, PICK_TOLERANCE_PX, 0);
+    assert_eq!(pick::picture_under(&scene, &camera, off, &hit), None);
+}
+
+/// Slice 15 (#544); capability 57: clicking a picture's row or the
+/// picture selects it; Shift adds, Ctrl toggles. Pictures are selected
+/// alone, as tabs are: selecting one drops the shapes, tabs or operation
+/// selected, and selecting any of those drops the pictures. Selecting is
+/// view state, never an undo step, and a picture that goes leaves the
+/// selection.
+#[test]
+fn a_picture_is_selected_from_its_row_or_the_viewport() {
+    let mut harness = two_pictures();
+    let steps = harness.app.history().undo_labels().count();
+    assert!(harness.app.selected_pictures().is_empty());
+
+    harness.app.click_picture(&b("b1"), ClickMode::Replace);
+    assert_eq!(harness.app.selected_pictures(), [b("b1")]);
+    assert_eq!(harness.app.selection(), &Selection::Nothing);
+    harness.app.click_picture(&b("b2"), ClickMode::Add);
+    assert_eq!(harness.app.selected_pictures(), [b("b1"), b("b2")]);
+    harness.app.click_picture(&b("b2"), ClickMode::Add);
+    assert_eq!(harness.app.selected_pictures(), [b("b1"), b("b2")]);
+    harness.app.click_picture(&b("b1"), ClickMode::Toggle);
+    assert_eq!(harness.app.selected_pictures(), [b("b2")]);
+    harness.app.click_picture(&b("b1"), ClickMode::Toggle);
+    assert_eq!(harness.app.selected_pictures(), [b("b2"), b("b1")]);
+    harness.app.click_picture(&b("b1"), ClickMode::Replace);
+    assert_eq!(harness.app.selected_pictures(), [b("b1")]);
+    harness.app.click_picture(&b("b1"), ClickMode::Toggle);
+    assert!(harness.app.selected_pictures().is_empty());
+    // A picture the project does not have is not selected.
+    harness.app.select_pictures(vec![b("b9"), b("b2")]);
+    assert_eq!(harness.app.selected_pictures(), [b("b2")]);
+    harness.app.click_picture(&b("b9"), ClickMode::Add);
+    assert_eq!(harness.app.selected_pictures(), [b("b2")]);
+    // Shift-click in the tree: the rows between.
+    let tree = Tree::build(harness.app.project());
+    assert_eq!(
+        tree.bitmap_range(&b("b2"), &b("b1")),
+        [b("b1"), b("b2")],
+        "in row order"
+    );
+    assert_eq!(tree.bitmap_range(&b("b9"), &b("b2")), [b("b2")]);
+
+    // One kind at a time: an operation selected drops the pictures, and
+    // a picture selected drops the operation; the editor keeps showing it.
+    let op1 = harness.app.project().operations[0].id().clone();
+    harness.app.select(Selection::Operation(op1.clone()));
+    assert!(harness.app.selected_pictures().is_empty());
+    harness.app.click_picture(&b("b2"), ClickMode::Replace);
+    assert_eq!(harness.app.selection(), &Selection::Nothing);
+    assert_eq!(harness.app.editing(), Some(&op1));
+    // A plain click on nothing clears it.
+    harness.app.select(Selection::Nothing);
+    assert!(harness.app.selected_pictures().is_empty());
+
+    assert_eq!(
+        harness.app.history().undo_labels().count(),
+        steps,
+        "selecting is not an undo step"
+    );
+
+    // A picture that goes leaves the selection, and coming back by undo
+    // does not select it again.
+    harness.app.select_pictures(vec![b("b1"), b("b2")]);
+    harness
+        .run(Command::DeleteBitmaps(vec![b("b2")]))
+        .expect("deletes");
+    assert_eq!(harness.app.selected_pictures(), [b("b1")]);
+    harness.app.undo();
+    assert_eq!(harness.app.selected_pictures(), [b("b1")]);
+    // While an operation's targets are edited nothing else is selected.
+    assert!(harness.app.edit_targets(&op1));
+    harness.app.click_picture(&b("b2"), ClickMode::Replace);
+    assert_eq!(harness.app.selected_pictures(), [b("b1")]);
+    harness.app.cancel_targets();
+    // A new project has no selection.
+    harness
+        .app
+        .reset(App::new_project().expect("a new project"));
+    assert!(harness.app.selected_pictures().is_empty());
+}
+
+/// Slice 15 (#544); capabilities 56 and 58: a selected picture's
+/// Properties are its footprint's X and Y (its bottom-left corner), W and
+/// H, its size in pixels (read-only), its eye and padlock, and the Photo
+/// V-Carves that carve it; several pictures show their joint box. A
+/// locked selection's fields are read-only, with *Unlock*.
+#[test]
+fn a_pictures_properties_are_its_position_size_and_pixels() {
+    let mut harness = two_pictures();
+    let strings = harness.app.strings().clone();
+    let project = harness.app.project().clone();
+    let one = pictures::properties(&project, &[b("b1")]).expect("b1's properties");
+    assert_eq!(one.name.as_deref(), Some("gradient"));
+    assert_eq!(one.pixels, Some((64, 32)));
+    assert_eq!(
+        one.placement.bounds,
+        Rect {
+            min: Point::new(10.0, 10.0),
+            max: Point::new(110.0, 60.0),
+        }
+    );
+    assert_eq!(one.placement.count, 1);
+    assert_eq!(one.placement.visible, Some(true));
+    assert_eq!(one.placement.locked, Some(false));
+    assert!(!one.placement.any_locked);
+    assert_eq!(
+        one.placement.rotation_deg,
+        Some(0.0),
+        "a picture never turns"
+    );
+    assert_eq!(one.placement.targeted_by, ["Photo V-Carve"]);
+    assert_eq!(pictures::title(&strings, &one), "Properties · gradient");
+    assert_eq!(strings.get(pictures::PIXELS_LABEL), "Pixels");
+    assert_eq!(
+        pictures::pixels_text(&strings, &one).as_deref(),
+        Some("64 × 32 px")
+    );
+    // The fields are a shape's, with a shape's text.
+    let text = |field| properties::field_text(&one.placement, field, Units::Mm);
+    assert_eq!(properties::fields(&one.placement), &properties::FIELDS);
+    assert_eq!(
+        properties::FIELDS.map(text),
+        ["10", "10", "100", "50"].map(str::to_owned)
+    );
+    assert_eq!(
+        properties::field_text(&one.placement, Field::W, Units::Inch),
+        "3.937"
+    );
+    assert!(!pictures::read_only(&one, Field::X));
+    assert!(!pictures::read_only(&one, Field::Y));
+
+    // Several: their joint box, no one name or pixel size.
+    let both = pictures::properties(&project, &[b("b1"), b("b2")]).expect("both");
+    assert_eq!(
+        both.placement.bounds,
+        Rect {
+            min: Point::new(0.0, 0.0),
+            max: Point::new(110.0, 60.0),
+        }
+    );
+    assert_eq!(both.placement.count, 2);
+    assert_eq!((both.name.as_deref(), both.pixels), (None, None));
+    assert_eq!(pictures::title(&strings, &both), "Properties · 2 pictures");
+    assert_eq!(pictures::pixels_text(&strings, &both), None);
+    assert_eq!(both.placement.targeted_by, ["Photo V-Carve"]);
+    let colour = pictures::properties(&project, &[b("b2")]).expect("b2");
+    assert!(colour.placement.targeted_by.is_empty(), "nothing carves it");
+    assert_eq!(
+        pictures::bounds(&project, &[b("b2")]),
+        Some(colour.placement.bounds),
+        "what Zoom to frames"
+    );
+
+    // Nothing selected, or a picture the project lacks: no properties.
+    assert_eq!(pictures::properties(&project, &[]), None);
+    assert_eq!(pictures::properties(&project, &[b("b9")]), None);
+    assert_eq!(pictures::bounds(&project, &[]), None);
+
+    // Hidden and locked: mixed flags over several, read-only fields, and
+    // *Unlock* unlocks the locked ones in one step.
+    assert_eq!(pictures::unlock(&project, &[b("b1"), b("b2")]), None);
+    harness
+        .run(Command::SetBitmapFlags {
+            ids: vec![b("b2")],
+            visible: Some(false),
+            locked: Some(true),
+        })
+        .expect("hides and locks");
+    let project = harness.app.project().clone();
+    let both = pictures::properties(&project, &[b("b1"), b("b2")]).expect("both");
+    assert_eq!(
+        (both.placement.visible, both.placement.locked),
+        (None, None),
+        "mixed"
+    );
+    assert!(both.placement.any_locked);
+    assert!(properties::read_only(&both.placement));
+    for field in properties::FIELDS {
+        assert!(pictures::read_only(&both, field), "{field:?}");
+    }
+    let unlock = pictures::unlock(&project, &[b("b1"), b("b2")]).expect("a command");
+    assert_eq!(
+        unlock,
+        Command::SetBitmapFlags {
+            ids: vec![b("b2")],
+            visible: None,
+            locked: Some(false),
+        }
+    );
+    assert_eq!(harness.run(unlock).expect("unlocks"), "Unlock “colour”");
+}
+
+/// Slice 15 (#544); capabilities 56 and 58: a picture moves like a
+/// shape. Typing X or Y, dragging it or nudging it is one undo step named
+/// for the picture; several move as one; a locked picture refuses, and
+/// the message names it. The Photo V-Carve that carves it regenerates,
+/// its grooves moved with the picture.
+#[test]
+fn moving_a_picture_is_one_undo_step_and_takes_its_grooves_along() {
+    let mut harness = two_pictures_ready();
+    harness.generate();
+    let op1 = harness.app.project().operations[0].id().clone();
+    let before = harness.app.project().clone();
+    let cuts_before: Vec<_> = {
+        let run = &harness.app.scene().operation(&op1).expect("drawn").runs[0];
+        strokes(&run.run.toolpath)
+            .into_iter()
+            .filter(|s| s.kind == StrokeKind::Cut)
+            .collect()
+    };
+    assert!(!cuts_before.is_empty(), "the grooves");
+
+    // Typed X: the footprint's left edge moves there.
+    let one = [b("b1")];
+    let props = pictures::properties(&before, &one).expect("b1");
+    let typed =
+        properties::parse(&props.placement, Field::X, "15", Units::Mm, true).expect("a length");
+    assert_eq!(typed, Edit::X { mm: 15.0 });
+    let command = pictures::edit(&before, &one, typed).expect("a move");
+    assert_eq!(
+        command,
+        Command::MoveBitmaps {
+            ids: one.to_vec(),
+            dx_mm: 5.0,
+            dy_mm: 0.0,
+        }
+    );
+    assert_eq!(harness.run(command).expect("it moves"), "Move “gradient”");
+    let typed = Edit::Y { mm: 13.0 };
+    let command = pictures::edit(harness.app.project(), &one, typed).expect("a move");
+    harness.run(command).expect("it moves");
+    let moved = harness.app.project().bitmaps[0].clone();
+    assert_eq!((moved.x_mm, moved.y_mm), (15.0, 13.0));
+    assert_eq!(
+        dc_project::Bitmap {
+            x_mm: 10.0,
+            y_mm: 10.0,
+            ..moved
+        },
+        before.bitmaps[0],
+        "nothing but its corner changed"
+    );
+    assert_eq!(harness.app.project().bitmaps[1], before.bitmaps[1]);
+    // The value it has is no step.
+    assert!(matches!(
+        pictures::edit(harness.app.project(), &one, Edit::X { mm: 15.0 }),
+        Err(CommandError::NothingToDo)
+    ));
+
+    // Its Photo V-Carve regenerates, every groove moved by (5, 3).
+    assert!(!harness.app.generation().is_current(&op1), "stale");
+    harness.generate();
+    let run = &harness.app.scene().operation(&op1).expect("drawn").runs[0];
+    let cuts: Vec<_> = strokes(&run.run.toolpath)
+        .into_iter()
+        .filter(|s| s.kind == StrokeKind::Cut)
+        .collect();
+    assert_eq!(cuts.len(), cuts_before.len());
+    for (now, was) in cuts.iter().zip(&cuts_before) {
+        let d = (now.to.x - was.to.x - 5.0)
+            .abs()
+            .max((now.to.y - was.to.y - 3.0).abs())
+            .max((now.to.z - was.to.z).abs());
+        assert!(d <= 1e-6, "{now:?} vs {was:?}");
+    }
+    harness.app.undo();
+    harness.app.undo();
+    assert_eq!(harness.app.project(), &before, "two steps, two undos");
+
+    // A drag or a nudge: the selection by a vector, several as one.
+    let both = [b("b1"), b("b2")];
+    let command = pictures::move_by(&before, &both, 2.0, -1.5).expect("a move");
+    assert_eq!(
+        command,
+        Command::MoveBitmaps {
+            ids: both.to_vec(),
+            dx_mm: 2.0,
+            dy_mm: -1.5,
+        }
+    );
+    assert_eq!(harness.run(command).expect("they move"), "Move 2 pictures");
+    let corners: Vec<(f64, f64)> = harness
+        .app
+        .project()
+        .bitmaps
+        .iter()
+        .map(|x| (x.x_mm, x.y_mm))
+        .collect();
+    assert_eq!(corners, [(12.0, 8.5), (2.0, -1.5)]);
+    // Typed X on several moves their joint box's left edge.
+    let command =
+        pictures::edit(harness.app.project(), &both, Edit::X { mm: 0.0 }).expect("a move");
+    harness.run(command).expect("they move");
+    let xs: Vec<f64> = harness
+        .app
+        .project()
+        .bitmaps
+        .iter()
+        .map(|x| x.x_mm)
+        .collect();
+    assert_eq!(xs, [10.0, 0.0]);
+    harness.app.undo();
+    harness.app.undo();
+
+    // Nothing to move, nowhere to go, or not a place: refused.
+    assert!(matches!(
+        pictures::move_by(&before, &[], 1.0, 0.0),
+        Err(CommandError::NothingSelected)
+    ));
+    assert!(matches!(
+        pictures::move_by(&before, &one, 0.0, 0.0),
+        Err(CommandError::NothingToDo)
+    ));
+    assert!(matches!(
+        pictures::move_by(&before, &[b("b9")], 1.0, 0.0),
+        Err(CommandError::UnknownBitmap { id }) if id == b("b9")
+    ));
+    for bad in [f64::NAN, f64::INFINITY, 1e12] {
+        let refused = harness.run(Command::MoveBitmaps {
+            ids: one.to_vec(),
+            dx_mm: bad,
+            dy_mm: 0.0,
+        });
+        assert!(refused.is_err(), "{bad}: {refused:?}");
+    }
+    assert_eq!(harness.app.project(), &before, "and nothing changed");
+
+    // Locked: refused, naming the picture; the others stay too.
+    harness
+        .run(Command::SetBitmapFlags {
+            ids: vec![b("b2")],
+            visible: None,
+            locked: Some(true),
+        })
+        .expect("locks");
+    let locked = harness.app.project().clone();
+    let refusal = pictures::move_by(&locked, &both, 1.0, 1.0).expect_err("b2 is locked");
+    assert_eq!(refusal.to_string(), "picture “colour” is locked");
+    assert!(matches!(
+        harness.run(Command::MoveBitmaps {
+            ids: both.to_vec(),
+            dx_mm: 1.0,
+            dy_mm: 1.0,
+        }),
+        Err(CommandError::PictureLocked { names }) if names == ["colour"]
+    ));
+    assert_eq!(harness.app.project(), &locked);
+    assert!(
+        pictures::move_by(&locked, &one, 1.0, 1.0).is_ok(),
+        "the unlocked one still moves"
+    );
+}
+
+/// Slice 15 (#544); capability 67: a Photo V-Carve's target is its
+/// picture, so while one is shown in the editor its picture's row carries
+/// the target bar and the Scene names the picture; no shape is a target.
+#[test]
+fn a_photo_v_carves_picture_is_marked_as_its_target() {
+    let mut harness = two_pictures();
+    let op1 = harness.app.project().operations[0].id().clone();
+    assert!(harness.app.scene().targets().is_none());
+    harness.app.edit(Some(op1.clone()));
+    let marks = harness.app.scene().targets().expect("op1 is marked").clone();
+    assert_eq!(marks.op, op1);
+    assert!(marks.targets.is_empty(), "no shape is its target");
+    assert_eq!(marks.picture, Some(b("b1")));
+    let tree = Tree::build(harness.app.project()).with_targets(Some(&marks));
+    assert_eq!(tree.bitmap(&b("b1")).unwrap().target, Some(marks.colour));
+    assert_eq!(tree.bitmap(&b("b2")).unwrap().target, None);
+    let unmarked = Tree::build(harness.app.project()).with_targets(None);
+    assert_eq!(unmarked.bitmap(&b("b1")).unwrap().target, None);
+    // Another picture chosen: the mark follows.
+    let mut op = harness.app.project().operations[0].clone();
+    let Operation::PhotoVCarve(photo) = &mut op else {
+        panic!("op1 is the Photo V-Carve");
+    };
+    photo.image = b("b2");
+    harness.run(Command::UpdateOperation(op)).expect("b2");
+    let marks = harness.app.scene().targets().expect("still marked");
+    assert_eq!(marks.picture, Some(b("b2")));
+    harness.app.edit(None);
+    assert!(harness.app.scene().targets().is_none());
+}
+
+/// Slice 15 (#544); capabilities 57 and 65: a Pictures row's menu offers
+/// *Add operation ▸*, whose menu for the row is the Operations tab's: a
+/// Photo V-Carve on that picture.
+#[test]
+fn a_bitmap_rows_menu_adds_a_photo_v_carve_on_it() {
+    let harness = two_pictures();
+    let strings = harness.app.strings().clone();
+    let project = harness.app.project();
+    assert!(tree::bitmap_menu(project, &[b("b2")]).contains(&MenuItem::AddOperation));
+    assert_eq!(
+        tree::bitmap_menu_command(project, MenuItem::AddOperation, &[b("b2")]),
+        None,
+        "a submenu, not a command"
+    );
+    let menu = operations::add_menu_with(project, &strings, &[], &[b("b2")]);
+    assert_eq!(menu.available, [Kind::PhotoVCarve]);
+    let Some(Command::AddOperation(Operation::PhotoVCarve(photo))) =
+        operations::add_with(project, &strings, Kind::PhotoVCarve, &[], &[b("b2")])
+    else {
+        panic!("a Photo V-Carve to add");
+    };
+    assert_eq!(photo.image, b("b2"));
+    assert_eq!(photo.name, "Photo V-Carve 1", "op1 is `Photo V-Carve`");
+    assert_eq!(photo.tool.as_str(), "t1", "init's V-bit");
 }
