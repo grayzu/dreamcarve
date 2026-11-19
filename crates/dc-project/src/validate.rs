@@ -75,7 +75,6 @@ use crate::tool::CuttingLimit;
 use dc_geometry::{EPS_MM, GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::fmt;
 
 /// How serious a [`Problem`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -98,10 +97,22 @@ pub enum StartFootprint {
     Picture,
 }
 
+impl StartFootprint {
+    /// The footprint as [`Problem::StartDepthUncleared`]'s message names it.
+    const fn in_words(self) -> &'static str {
+        match self {
+            Self::Targets => "its targets",
+            Self::BitAtEachHole => "the whole of its V-bit at each hole",
+            Self::Picture => "its picture's footprint",
+        }
+    }
+}
+
 /// One finding of [`validate`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Problem {
     /// A definition's `id` differs from its key in `definitions`.
+    #[error("definition keyed `{key}` has id `{id}`")]
     DefinitionKeyMismatch {
         /// The map key.
         key: DefinitionId,
@@ -109,21 +120,25 @@ pub enum Problem {
         id: DefinitionId,
     },
     /// Two instances share an id.
+    #[error("instance id `{id}` is used twice")]
     DuplicateInstanceId {
         /// The repeated id.
         id: InstanceId,
     },
     /// Two tools share an id.
+    #[error("tool id `{id}` is used twice")]
     DuplicateToolId {
         /// The repeated id.
         id: ToolId,
     },
     /// Two operations share an id.
+    #[error("operation id `{id}` is used twice")]
     DuplicateOperationId {
         /// The repeated id.
         id: OperationId,
     },
     /// An instance places a definition that does not exist.
+    #[error("instance `{instance}` places definition `{definition}`, which does not exist")]
     DanglingDefinition {
         /// The instance holding the reference.
         instance: InstanceId,
@@ -131,6 +146,7 @@ pub enum Problem {
         definition: DefinitionId,
     },
     /// An operation cuts with a tool that does not exist.
+    #[error("operation `{operation}` uses tool `{tool}`, which does not exist")]
     DanglingTool {
         /// The operation holding the reference.
         operation: OperationId,
@@ -138,6 +154,7 @@ pub enum Problem {
         tool: ToolId,
     },
     /// An operation targets an instance that does not exist.
+    #[error("operation `{operation}` targets instance `{instance}`, which does not exist")]
     DanglingInstance {
         /// The operation holding the reference.
         operation: OperationId,
@@ -145,11 +162,13 @@ pub enum Problem {
         instance: InstanceId,
     },
     /// Two placed tabs share an id (#105).
+    #[error("two tabs have the id `{id}`")]
     DuplicateTabId {
         /// The repeated id.
         id: TabId,
     },
     /// A placed tab is on an instance that does not exist (#105).
+    #[error("tab `{tab}` is on instance `{instance}`, which does not exist")]
     TabDanglingInstance {
         /// The tab.
         tab: TabId,
@@ -158,6 +177,9 @@ pub enum Problem {
     },
     /// A placed tab is on a profile its instance's definition does not
     /// have (#105).
+    #[error(
+        "tab `{tab}` is on profile {profile} of instance `{instance}`, whose definition has {count} profile(s), numbered from 0"
+    )]
     TabProfileMissing {
         /// The tab.
         tab: TabId,
@@ -169,6 +191,7 @@ pub enum Problem {
         count: usize,
     },
     /// A number is outside the range its field allows.
+    #[error("{field} is {value}, expected {expected}")]
     OutOfRange {
         /// Path to the field, such as `tools[t1].diameter_mm`.
         field: String,
@@ -178,11 +201,13 @@ pub enum Problem {
         expected: &'static str,
     },
     /// A number is NaN or infinite.
+    #[error("{field} is not a finite number")]
     NonFinite {
         /// Path to the field.
         field: String,
     },
     /// An operation is disabled and will not be exported.
+    #[error("operation `{operation}` is disabled and will not be exported")]
     OperationDisabled {
         /// The disabled operation.
         operation: OperationId,
@@ -190,6 +215,10 @@ pub enum Problem {
     /// A tool has no value for a field export needs (feed, plunge or RPM),
     /// or no step-down while an enabled operation sets none either (#98).
     /// An error since #76, so `check` lists every unset value in one run.
+    #[error(
+        "tools[{tool}].{field} is not set ({}) for tool `{name}`",
+        unset_unit(.field)
+    )]
     ToolValueUnset {
         /// The tool.
         tool: ToolId,
@@ -200,6 +229,7 @@ pub enum Problem {
     },
     /// A tool no enabled operation uses. Its unset rates are not reported
     /// (#84): nothing cuts with it, and they are never defaulted.
+    #[error("tool `{tool}` (`{name}`) is defined but not used by any enabled operation")]
     UnusedTool {
         /// The tool.
         tool: ToolId,
@@ -208,8 +238,13 @@ pub enum Problem {
     },
     /// The stock thickness is unset. It sets depth, tab heights and, with
     /// Z zero at the stock bottom, safe Z, so it is never defaulted (#64).
+    #[error("{STOCK_THICKNESS} is not set (mm)")]
     StockThicknessUnset,
     /// An operation has no value for a field export needs (its depth).
+    #[error(
+        "operations[{operation}].{field} is not set ({}) for operation `{name}`",
+        unset_unit(.field)
+    )]
     OperationValueUnset {
         /// The operation.
         operation: OperationId,
@@ -219,6 +254,7 @@ pub enum Problem {
         field: &'static str,
     },
     /// A tool's number is outside the range its field allows.
+    #[error("tool `{name}` (`{tool}`): {field} is {value}, expected {expected}")]
     ToolOutOfRange {
         /// The tool.
         tool: ToolId,
@@ -236,6 +272,9 @@ pub enum Problem {
     /// spec, capability 8). Not reported for a definition an enabled
     /// Engrave or an On line, Left or Right Profile targets, since those
     /// cut it (#175, #207).
+    #[error(
+        "`{name}` (definition `{definition}`, profile {profile}) is an open path and no operation cuts it; only an On line, Left or Right Profile or an Engrave cuts an open path"
+    )]
     OpenProfile {
         /// The definition.
         definition: DefinitionId,
@@ -246,6 +285,10 @@ pub enum Problem {
     },
     /// The post-processor's file extension could name the project file or a
     /// path (see [`is_safe_file_extension`]).
+    #[error(
+        "the post-processor's file extension `{}` is not allowed: it must be 1 to {MAX_FILE_EXTENSION_CHARS} letters or digits and not `dcv`",
+        .extension.escape_default()
+    )]
     UnsafeFileExtension {
         /// The extension found.
         extension: String,
@@ -253,12 +296,18 @@ pub enum Problem {
     /// The tool-change mode is `"m6"`, but the post-processor definition's
     /// tool change has no `M6`, so it cannot change tools within a program
     /// (#95). GRBL 1.1 has none.
+    #[error(
+        "tool_change_mode is \"m6\", but post-processor `{post}` has no M6 in its tool change, so it cannot change tools within one program; use \"separate_programs\""
+    )]
     ToolChangeModeNeedsM6 {
         /// The post-processor's id.
         post: String,
     },
     /// An enabled operation cuts deeper per pass than its tool is wide
     /// (#67). A warning: the program is still what was asked for.
+    #[error(
+        "operation `{name}` (`{operation}`) cuts {step_down_mm} mm per pass, deeper than the {diameter_mm} mm diameter of tool `{tool_name}`; passes that deep can break the bit, so use a step-down of at most {diameter_mm} mm"
+    )]
     StepDownAboveDiameter {
         /// The operation.
         operation: OperationId,
@@ -280,6 +329,11 @@ pub enum Problem {
     /// other cutter makes the part the wrong size: an error. On the line the
     /// tool centre follows the line, so any cutter is allowed. So is a male
     /// Inlay's cut-out (format 23, #443), at `cut_out.tool`.
+    #[error(
+        "operation `{name}` (`{operation}`) {} tool `{tool_name}` (`{tool}`), {cutter}; {}. Use an end mill",
+        flat_cut(.field).0,
+        flat_cut(.field).1
+    )]
     CutterNotFlat {
         /// The operation.
         operation: OperationId,
@@ -297,6 +351,9 @@ pub enum Problem {
     },
     /// An enabled operation targets nothing, so its program would start
     /// and stop the spindle without moving (#67). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) is enabled but has no targets, so it would cut nothing; add targets or disable it"
+    )]
     OperationHasNoTargets {
         /// The operation.
         operation: OperationId,
@@ -306,6 +363,9 @@ pub enum Problem {
     /// A used tool's spindle speed is above [`MAX_RPM`] (#67). A warning:
     /// GRBL and grblHAL clamp `S` to the machine's maximum (`$30`), and
     /// under manual control the speed is only a hint.
+    #[error(
+        "tool `{name}` (`{tool}`) is set to {rpm} RPM, faster than the {MAX_RPM} RPM a hobby spindle or router turns; check it for a typo"
+    )]
     SpindleSpeedHigh {
         /// The tool.
         tool: ToolId,
@@ -316,6 +376,9 @@ pub enum Problem {
     },
     /// A used tool plunges faster than it cuts (#67), which usually means
     /// the two rates are swapped. A warning.
+    #[error(
+        "tool `{name}` (`{tool}`) plunges at {plunge_mm_min} mm/min, faster than it cuts ({feed_mm_min} mm/min); a plunge rate is usually well below the feed rate, so check the two are not swapped"
+    )]
     PlungeAboveFeed {
         /// The tool.
         tool: ToolId,
@@ -329,6 +392,9 @@ pub enum Problem {
     /// A used tool's diameter is above [`MAX_TOOL_DIAMETER_MM`] (#67). A
     /// warning: a shape such a bit does not fit is already skipped with a
     /// warning, and around a part it cuts valid geometry.
+    #[error(
+        "tool `{name}` (`{tool}`) is {diameter_mm} mm in diameter, larger than the {MAX_TOOL_DIAMETER_MM} mm of a hobby router bit; check it for a typo"
+    )]
     LargeDiameter {
         /// The tool.
         tool: ToolId,
@@ -340,6 +406,9 @@ pub enum Problem {
     /// Two tools of enabled operations resolve to the same `T` number,
     /// set or positional (#117, functional spec capability 21a): the
     /// program would change to the wrong bit. An error at the later tool.
+    #[error(
+        "tool `{name}` (`{tool}`) and tool `{other}` would both be T{number} in the program; a tool with no `number` is its position in the list, so give one of them another number"
+    )]
     DuplicateToolNumber {
         /// The later tool.
         tool: ToolId,
@@ -352,6 +421,9 @@ pub enum Problem {
     },
     /// A Pocket's `rest_of` is not an earlier enabled Pocket with the same
     /// targets (#117, functional spec capability 13). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) rests on `{rest_of}`, which is not an earlier enabled Pocket with the same targets; rest machining clears what such a Pocket left"
+    )]
     RestOfInvalid {
         /// The Pocket holding the reference.
         operation: OperationId,
@@ -363,6 +435,9 @@ pub enum Problem {
     /// An On line, Left or Right Profile asks for a helix entry (#117,
     /// functional spec capability 16; #207). A helix sits in material the
     /// operation removes, and those cuts remove only their kerf. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) cuts on the line or beside an open path but asks for a helix entry; a helix sits in material the cut removes, and such a cut removes only its kerf. Use \"plunge\" or a ramp"
+    )]
     HelixNeedsWasteSide {
         /// The operation.
         operation: OperationId,
@@ -372,6 +447,9 @@ pub enum Problem {
     /// Canned cycles are on, but the post-processor definition has none
     /// (#117, functional spec capability 14), so the choice could only be
     /// ignored. An error.
+    #[error(
+        "use_canned_cycles is true, but post-processor `{post}` has no canned cycles, so Drill cannot write them; set it to false"
+    )]
     CannedCyclesUnsupported {
         /// The post-processor's id.
         post: String,
@@ -379,6 +457,9 @@ pub enum Problem {
     /// An enabled Drill cuts with a cutter other than a drill or flat end
     /// mill (#117): a V-bit or ball nose makes a cone, not a hole. A
     /// warning.
+    #[error(
+        "operation `{name}` (`{operation}`) drills with tool `{tool_name}` (`{tool}`), {cutter}, which makes a cone rather than a flat-bottomed hole; a drill or an end mill is usual"
+    )]
     DrillCutterUnusual {
         /// The operation.
         operation: OperationId,
@@ -394,6 +475,9 @@ pub enum Problem {
     /// An enabled Pocket or Profile asks for corner relief on a tool whose
     /// step-down is unset (#117): the relief pass steps down at the
     /// tool's step-down, so it is skipped. A warning.
+    #[error(
+        "operation `{name}` (`{operation}`) asks for corner relief, but tool `{tool_name}` (`{tool}`) has no step_down_mm, which the relief pass steps down at; the relief is skipped until it is set"
+    )]
     ReliefNeedsStepDown {
         /// The operation.
         operation: OperationId,
@@ -407,6 +491,9 @@ pub enum Problem {
     /// The clearance height is below an enabled operation's safe Z (#283):
     /// a link between parts would run lower than that operation's links
     /// between passes. An error.
+    #[error(
+        "{CLEARANCE} is {clearance_mm} mm, below the {safe_z_mm} mm safe_z_mm of operation `{name}` (`{operation}`); links between parts would run lower than its links between passes, so raise the clearance to at least {safe_z_mm} mm"
+    )]
     ClearanceBelowSafeZ {
         /// The operation.
         operation: OperationId,
@@ -422,6 +509,9 @@ pub enum Problem {
     /// and GRBL home Z to the top of its travel at a negative machine
     /// position (grblHAL `machine_limits.c`, GRBL `limits.c`), so a Z of 0
     /// or more is past the limit switch. An error.
+    #[error(
+        "{MACHINE_Z} is {machine_z_mm} mm, which is not below 0 as the program writes it; grblHAL and GRBL, and LinuxCNC as its configuration tools set it up, home Z at the top of its travel, where machine Z is 0 or just below, so the lift must be below 0, at least the homing pull-off below it"
+    )]
     MachineZNotBelowHome {
         /// The value, mm.
         machine_z_mm: f64,
@@ -430,12 +520,18 @@ pub enum Problem {
     /// documents no machine-coordinate move (`work_coordinates.
     /// machine_command` is `null`), so the lift cannot be written (#283).
     /// An error.
+    #[error(
+        "{MACHINE_Z} is set, but post-processor `{post}` does not document a machine-coordinate move (G53), so the lift cannot be written; set it to null"
+    )]
     MachineZNeedsG53 {
         /// The post-processor's id.
         post: String,
     },
     /// An enabled Engrave with a V-bit cuts deeper than the bit's cone is
     /// tall (#117), so the shank, not the cone, would cut. A warning.
+    #[error(
+        "operation `{name}` (`{operation}`) engraves {depth_mm} mm deep with tool `{tool_name}`, whose cone is only {cone_height_mm:.3} mm tall; below that the shank cuts, so use a shallower depth or a wider bit"
+    )]
     EngraveDeeperThanCone {
         /// The operation.
         operation: OperationId,
@@ -452,6 +548,9 @@ pub enum Problem {
     /// An enabled Profile's last pass stock to leave is not more than 0 and at
     /// most a third of its bit's diameter (#284; VCarve advises keeping it
     /// well below a third). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has last_pass.stock_to_leave_mm {stock_to_leave_mm} mm with tool `{tool_name}` ({diameter_mm} mm); it must be more than 0 and at most {limit_mm:.3} mm, a third of the bit's diameter, as VCarve advises"
+    )]
     LastPassStockToLeave {
         /// The operation.
         operation: OperationId,
@@ -470,6 +569,10 @@ pub enum Problem {
     /// both flanks of the bit, so it leaves no wall for the last pass to
     /// take the stock to leave off. An error. (changed in #311: Left and Right,
     /// which cut one flank against the part, take a last pass.)
+    #[error(
+        "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the stock to leave off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line",
+        side_cut(*.side)
+    )]
     LastPassNeedsSide {
         /// The operation.
         operation: OperationId,
@@ -482,6 +585,9 @@ pub enum Problem {
     /// effect, the operation's or else the tool's (#310 review): it would
     /// cut that much in one pass, where every other pass steps down less.
     /// An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has last_pass.thickness_mm {thickness_mm} mm, more than its {step_down_mm} mm step-down ({step_down_field}); the last pass would cut that deep in one go. Make it at most the step-down, or set it to null for the usual last pass"
+    )]
     LastPassThickerThanStepDown {
         /// The operation.
         operation: OperationId,
@@ -498,6 +604,9 @@ pub enum Problem {
     /// An enabled Bore's `pitch_mm` is more than its tool's step-down
     /// (format 18; maintainer decision 2026-10-24): one turn of the helix
     /// would cut deeper than a pass. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has pitch_mm {pitch_mm} mm, more than its tool's {step_down_mm} mm step-down; each turn of the helix would cut deeper than a pass. Make it at most the step-down, or set it to null to use the step-down"
+    )]
     BorePitchOverStepDown {
         /// The operation.
         operation: OperationId,
@@ -511,6 +620,9 @@ pub enum Problem {
     /// `flatten_tolerance_mm` is above [`MAX_FLATTEN_TOLERANCE_MM`]
     /// (format 20; phase 3 security review L6): the safety checks' slack
     /// and the medial axis's chords scale with it. An error.
+    #[error(
+        "{FLATTEN_TOLERANCE} is {flatten_tolerance_mm} mm, above the {MAX_FLATTEN_TOLERANCE_MM} mm limit; the safety checks allow the program that far off the true curves, so a coarser tolerance could hide a cut through a wall. Use at most {MAX_FLATTEN_TOLERANCE_MM} mm"
+    )]
     FlattenToleranceRange {
         /// The value set, mm.
         flatten_tolerance_mm: f64,
@@ -520,6 +632,10 @@ pub enum Problem {
     /// tapered ball nose (format 28, slice 27c, #679): its depth follows
     /// the bit's profile. A Photo V-Carve (format 27) needs a V-bit, for
     /// good. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) carves with tool `{tool_name}` (`{tool}`), {cutter}; {}",
+        carving_bit_advice(.cutter, *.photo)
+    )]
     VCarveNeedsVBit {
         /// The operation.
         operation: OperationId,
@@ -539,6 +655,7 @@ pub enum Problem {
     /// not finite or ending inside the ball, or a cutting diameter not
     /// above the tip. Reported instead of `tool_out_of_range` or
     /// `non_finite` for those fields, on every tool, used or not. An error.
+    #[error("tool `{name}` (`{tool}`): {field} is {value}, expected {expected}")]
     TaperedBallNoseRange {
         /// The tool.
         tool: ToolId,
@@ -556,6 +673,9 @@ pub enum Problem {
     /// 22) cuts with has an included angle not above 0 degrees and below
     /// 180 (format 20). Reported instead of
     /// `tool_out_of_range` for such a tool. An error.
+    #[error(
+        "tool `{name}` (`{tool}`) has an included angle of {included_angle_deg} degrees; a V-Carve, an Inlay, a Photo V-Carve or a countersink needs a V-bit angle above 0 and below 180 degrees to work out its depth"
+    )]
     VBitAngleRange {
         /// The tool.
         tool: ToolId,
@@ -572,6 +692,10 @@ pub enum Problem {
     /// earlier floor at the start depth holds the targets, an enabled
     /// Pocket's or an enabled V-Carve's flat floor
     /// ([`crate::cleared_start_plane`]). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) engages tool `{tool_name}`{}",
+        cone_exceeded(*.engagement_mm, *.cone_height_mm, *.from_stock_top, .field, .limit)
+    )]
     VBitConeExceeded {
         /// The operation.
         operation: OperationId,
@@ -601,6 +725,9 @@ pub enum Problem {
     },
     /// A V-Carve has clearing passes but no flat depth (format 20;
     /// capability 40): with no floor there is nothing to clear. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has clearing passes but no flat_depth_mm; with no flat floor there is nothing for them to clear, so set a flat depth or remove the passes"
+    )]
     ClearingNeedsFlatDepth {
         /// The operation.
         operation: OperationId,
@@ -610,6 +737,9 @@ pub enum Problem {
     /// An enabled V-Carve's clearing pass cuts with a tool that is not a
     /// flat end mill (format 20; capability 40): it is cut as a Pocket,
     /// which offsets by half the diameter. An error.
+    #[error(
+        "clearing pass {pass} of operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; a clearing pass is cut as a Pocket, which only a flat end mill cuts to size. Use an end mill"
+    )]
     ClearingNeedsEndMill {
         /// The operation.
         operation: OperationId,
@@ -626,6 +756,9 @@ pub enum Problem {
     },
     /// A clearing pass names a tool that does not exist (format 20). An
     /// error.
+    #[error(
+        "clearing pass {pass} of operation `{operation}` uses tool `{tool}`, which does not exist"
+    )]
     ClearingDanglingTool {
         /// The operation.
         operation: OperationId,
@@ -637,6 +770,9 @@ pub enum Problem {
     /// An enabled V-Carve's clearing pass cuts with a tool wider than the
     /// pass before it (format 20; capability 40). It still runs and
     /// clears what it can reach. A warning.
+    #[error(
+        "clearing pass {pass} of operation `{name}` (`{operation}`) uses tool `{tool_name}` ({diameter_mm} mm), wider than the pass before it (`{previous_tool_name}`, {previous_diameter_mm} mm); it still runs, but list the largest tool first so each pass clears only what the one before could not reach"
+    )]
     ClearingNotDescending {
         /// The operation.
         operation: OperationId,
@@ -654,6 +790,9 @@ pub enum Problem {
         previous_diameter_mm: f64,
     },
     /// A start depth is below 0 (format 20; capability 41). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has start_depth_mm {start_depth_mm} mm; the start plane is a depth below the stock top, 0 or more"
+    )]
     StartDepthNegative {
         /// The operation.
         operation: OperationId,
@@ -670,6 +809,10 @@ pub enum Problem {
     /// enabled earlier V-Carve (#426), holds its footprint, and it does not
     /// say another program cleared the start plane (format 20; capability
     /// 41; phase 3 security review M2). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) starts {start_depth_mm} mm below the stock top, but no enabled Pocket, nor the flat floor of an enabled V-Carve, before it contains {}; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true",
+        .footprint.in_words()
+    )]
     StartDepthUncleared {
         /// The operation.
         operation: OperationId,
@@ -686,6 +829,9 @@ pub enum Problem {
     /// An enabled countersink Drill cuts with a tool that is not a V-bit
     /// (format 21; capability 44): its depth follows the bit's angle. An
     /// error.
+    #[error(
+        "operation `{name}` (`{operation}`) countersinks with tool `{tool_name}` (`{tool}`), {cutter}; a countersink's depth follows the angle of a V-bit, so use a V-bit"
+    )]
     CountersinkNeedsVBit {
         /// The operation.
         operation: OperationId,
@@ -700,6 +846,9 @@ pub enum Problem {
     },
     /// A countersink's mouth diameter is not above 0 (format 21). An
     /// error.
+    #[error(
+        "operation `{name}` (`{operation}`) has a countersink diameter_mm of {diameter_mm} mm; the mouth must be wider than 0"
+    )]
     CountersinkDiameterPositive {
         /// The operation.
         operation: OperationId,
@@ -711,6 +860,9 @@ pub enum Problem {
     /// An enabled countersink asks for a mouth wider than its V-bit
     /// (format 21; capability 44): past its diameter the bit has no
     /// cutting edge, and the shank would rub. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) asks for a {diameter_mm} mm countersink, wider than the {tool_diameter_mm} mm tool `{tool_name}`; past its diameter a V-bit has no cutting edge, so use a mouth at most the bit's diameter or a wider bit"
+    )]
     CountersinkMouthExceedsTool {
         /// The operation.
         operation: OperationId,
@@ -726,6 +878,9 @@ pub enum Problem {
     /// A countersink Drill sets `allow_tool_wider_than_hole` to `true`
     /// (format 21): the field has no effect on a countersink, whose bit is
     /// wider than the hole by design. A warning.
+    #[error(
+        "operation `{name}` (`{operation}`) countersinks, so allow_tool_wider_than_hole has no effect: a countersink's V-bit is wider than the hole by design, and a hole at least as wide as the mouth is skipped instead; set it to false"
+    )]
     CountersinkIgnoresToolWidth {
         /// The operation.
         operation: OperationId,
@@ -736,6 +891,9 @@ pub enum Problem {
     /// capability 45): the male's start plane, `depth_mm − glue_gap_mm`
     /// below the stock top, would be at or above the stock top, so the
     /// plug would have no wall to seat. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has glue_gap_mm {glue_gap_mm} mm, not below its depth_mm {depth_mm} mm; the male starts depth_mm − glue_gap_mm below the stock top, so its plug would have no wall to seat. Make the glue gap smaller than the depth (0 or 0.25 mm to start)"
+    )]
     InlayGlueGapNotBelowDepth {
         /// The operation.
         operation: OperationId,
@@ -749,6 +907,9 @@ pub enum Problem {
     /// A male Inlay's `margin_mm` is not above 0 (format 22; capability
     /// 45): its surround is the design grown by the margin, so with none
     /// there is no band to carve round the plug. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) is a male inlay with margin_mm {margin_mm} mm; its surround is carved that far beyond the design, so it must be above 0 (5 to 7.5 mm leaves room to clamp the plug board)"
+    )]
     InlayMarginPositive {
         /// The operation.
         operation: OperationId,
@@ -760,6 +921,9 @@ pub enum Problem {
     /// An Inlay's `outline_rounding_mm` is set and not a number above 0
     /// (format 24, #448): it is the radius the male's band is closed by,
     /// so 0 or less rounds nothing and is written `null`. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has outline_rounding_mm {rounding_mm} mm; the male's band is rounded by that radius, so it must be above 0. Set it to null for no rounding, or to a radius such as 10"
+    )]
     InlayOutlineRounding {
         /// The operation.
         operation: OperationId,
@@ -772,6 +936,9 @@ pub enum Problem {
     /// under its surround's floor (format 22; capability 45): the board
     /// the plug stands on may flex or crack when it is pressed into the
     /// glue. It still cuts. A warning.
+    #[error(
+        "operation `{name}` (`{operation}`) cuts its plug's surround {floor_depth_mm} mm below the male board's top, leaving {base_mm} mm of the {thickness_mm} mm male board under it, less than {INLAY_MIN_PLUG_BASE_MM} mm; the base may flex or crack when the plug is pressed into the glue. Use a thicker male board, or a smaller depth_mm or plug_depth_mm"
+    )]
     InlayPlugBaseThin {
         /// The operation.
         operation: OperationId,
@@ -789,6 +956,9 @@ pub enum Problem {
     /// bit's tangent height `h_t` (slice 27e, #681): the plug's top edge
     /// rides on the pocket's floor fillet, so it stands `lift_mm` proud
     /// and its walls open by `wall_gap_mm` at the surface. A warning.
+    #[error(
+        "operation `{name}` (`{operation}`) has glue_gap_mm {glue_gap_mm} mm, below its tapered ball nose's tangent height {tangent_height_mm:.3} mm, so the plug's top edge rides on the pocket's rounded floor: it stands about {lift_mm:.3} mm proud with its walls {wall_gap_mm:.3} mm open at the surface. Set glue_gap_mm to at least {tangent_height_mm:.3} mm, and test-fit a coupon first"
+    )]
     InlayGlueGapBelowBall {
         /// The operation.
         operation: OperationId,
@@ -807,6 +977,9 @@ pub enum Problem {
     /// the bit's tangent height `h_t` (slice 27e, #681): the plug's wall
     /// just below the surface is the ball's, narrower than the pocket by up
     /// to `wall_gap_mm`. A warning.
+    #[error(
+        "operation `{name}` (`{operation}`) has plug_depth_mm {plug_depth_mm} mm, below its tapered ball nose's tangent height {tangent_height_mm:.3} mm, so the plug's wall just below the surface is cut by the ball, up to {wall_gap_mm:.3} mm narrower than the pocket. Set plug_depth_mm to at least {tangent_height_mm:.3} mm"
+    )]
     InlayPlugDepthBelowBall {
         /// The operation.
         operation: OperationId,
@@ -822,6 +995,9 @@ pub enum Problem {
     /// An Inlay's male board has a width or height set that is not above 0
     /// (format 25, #498): `null` is the stock's, a number is the board's
     /// size. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has male_board.{field} {value_mm} mm; the male board's size must be above 0. Set it to null to use the stock's"
+    )]
     InlayMaleBoardSize {
         /// The operation.
         operation: OperationId,
@@ -834,6 +1010,9 @@ pub enum Problem {
     },
     /// An Inlay's male board has a thickness set that is not above 0
     /// (format 25, #498). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has male_board.thickness_mm {thickness_mm} mm; measure the male board and set its thickness, above 0"
+    )]
     InlayMaleBoardThickness {
         /// The operation.
         operation: OperationId,
@@ -845,6 +1024,9 @@ pub enum Problem {
     /// Two enabled Inlays that cut their males name different male boards
     /// (#498): every male program of a project is cut on the one male
     /// board, the first such Inlay's. An error, on the later Inlay.
+    #[error(
+        "operation `{name}` (`{operation}`) cuts its male on a male_board other than operation `{first}`'s; every Inlay of a project cuts its male on the one male board, so give them the same male_board"
+    )]
     InlayMaleBoardsDiffer {
         /// The later operation.
         operation: OperationId,
@@ -860,6 +1042,10 @@ pub enum Problem {
     /// clearing pass cuts the edge, `M − P·tan(α/2)` with a V-walled
     /// edge), is narrower than the tool, so a cut-out along its outer edge
     /// (#461) would cut into the plug's wall. An error.
+    #[error(
+        "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; {}, or use a narrower end mill",
+        cut_out_room(*.margin_mm, *.needed_mm, *.at_boundary)
+    )]
     InlayCutOutNoRoom {
         /// The operation.
         operation: OperationId,
@@ -883,6 +1069,9 @@ pub enum Problem {
     /// A male Inlay with a drawn boundary has `margin_mm` or
     /// `outline_rounding_mm` set (format 26, #449): the boundary replaces
     /// both, so the value does nothing. A warning, at the field.
+    #[error(
+        "operation `{name}` (`{operation}`) draws its male's edge with a boundary, so {field} does nothing; the boundary replaces both margin_mm and outline_rounding_mm. Set {field} to null, or empty the boundary list to use it"
+    )]
     InlayMarginIgnored {
         /// The operation.
         operation: OperationId,
@@ -893,6 +1082,9 @@ pub enum Problem {
     },
     /// An Inlay's `boundary` lists an id that is no instance (format 26,
     /// #449). An error, at the entry.
+    #[error(
+        "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, which is no instance of the project; list the id of a drawn shape that is in it"
+    )]
     InlayBoundaryUnknown {
         /// The operation.
         operation: OperationId,
@@ -906,6 +1098,9 @@ pub enum Problem {
     /// An Inlay's boundary instance has a profile that is not a closed
     /// outline (format 26, #449): an open profile is an error, not
     /// skipped. At the entry.
+    #[error(
+        "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, whose profile {profile} is not a closed outline; a boundary must be closed, so close that profile or list another shape"
+    )]
     InlayBoundaryOpen {
         /// The operation.
         operation: OperationId,
@@ -920,6 +1115,9 @@ pub enum Problem {
     },
     /// An Inlay's boundary instance is also one of its targets (format 26,
     /// #449). An error, at the entry.
+    #[error(
+        "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, which is also one of its targets; the design cannot be its own boundary, so draw a separate shape round it"
+    )]
     InlayBoundaryIsTarget {
         /// The operation.
         operation: OperationId,
@@ -934,6 +1132,9 @@ pub enum Problem {
     /// the design lies outside it (format 26, #449): the plug's wall would
     /// have no band beyond it. The point is the worst one, on the design
     /// after near parts are merged. An error, at `boundary`.
+    #[error(
+        "operation `{name}` (`{operation}`) has a boundary that touches or crosses its design, or leaves part of it outside: the worst point is at ({x_mm:.3}, {y_mm:.3}), {distance_mm:.3} mm past the boundary's edge; the design must lie strictly inside the boundary, so draw the boundary wider there"
+    )]
     InlayBoundaryCrossesDesign {
         /// The operation.
         operation: OperationId,
@@ -949,6 +1150,9 @@ pub enum Problem {
     /// A boundary instance none of whose shapes holds any part of the
     /// design (format 26, #449). It still counts in the union. A warning,
     /// at the entry.
+    #[error(
+        "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}` (`{instance_name}`), but no part of the design is inside it; it still widens the band, so remove it if you did not mean that"
+    )]
     InlayBoundaryEmpty {
         /// The operation.
         operation: OperationId,
@@ -964,6 +1168,9 @@ pub enum Problem {
     /// A boundary shape has a hole (format 26, #449): board standing in
     /// the band would hold the plug off the female (#484), so the band
     /// ignores it. A warning, at the entry.
+    #[error(
+        "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}` (`{instance_name}`), whose profile {profile} is a hole; the band ignores holes, since board left standing in it would hold the plug off the female, so the hole is cut as band too"
+    )]
     InlayBoundaryHoleIgnored {
         /// The operation.
         operation: OperationId,
@@ -980,6 +1187,9 @@ pub enum Problem {
     },
     /// A Photo V-Carve's `line_angle_deg` is not in [0, 180) (format 27;
     /// capability 47). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has line_angle_deg {line_angle_deg}; the grooves' angle is 0 degrees or more and less than 180"
+    )]
     PhotoLineAngleRange {
         /// The operation.
         operation: OperationId,
@@ -990,6 +1200,9 @@ pub enum Problem {
     },
     /// A Photo V-Carve's `line_spacing_fraction` is not above 0 (format
     /// 27). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has line_spacing_fraction {line_spacing_fraction}; the spacing of the grooves is a fraction of a groove's width, above 0"
+    )]
     PhotoLineSpacingPositive {
         /// The operation.
         operation: OperationId,
@@ -1000,6 +1213,9 @@ pub enum Problem {
     },
     /// A Photo V-Carve's `line_spacing_fraction` is below 1, so its
     /// grooves overlap at full depth (format 27). A warning.
+    #[error(
+        "operation `{name}` (`{operation}`) has line_spacing_fraction {line_spacing_fraction}, less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them; use 1 or more to keep the ridges"
+    )]
     PhotoLinesOverlap {
         /// The operation.
         operation: OperationId,
@@ -1010,6 +1226,9 @@ pub enum Problem {
     },
     /// A Photo V-Carve's `sample_mm` is not above 0 (format 27). An
     /// error.
+    #[error(
+        "operation `{name}` (`{operation}`) has sample_mm {sample_mm} mm; the distance between samples along a groove is above 0"
+    )]
     PhotoSamplePositive {
         /// The operation.
         operation: OperationId,
@@ -1020,6 +1239,9 @@ pub enum Problem {
     },
     /// A Photo V-Carve's `stepover_retract_mm` is not above 0 (format
     /// 27). An error.
+    #[error(
+        "operation `{name}` (`{operation}`) has stepover_retract_mm {stepover_retract_mm} mm; the lift between grooves is above 0"
+    )]
     PhotoRetractPositive {
         /// The operation.
         operation: OperationId,
@@ -1030,6 +1252,7 @@ pub enum Problem {
     },
     /// A Photo V-Carve's `image` names no bitmap of the project (format
     /// 27). An error.
+    #[error("operation `{operation}` carves bitmap `{bitmap}`, which does not exist")]
     PhotoUnknownBitmap {
         /// The operation.
         operation: OperationId,
@@ -1041,6 +1264,11 @@ pub enum Problem {
     /// A bitmap's footprint does not have its picture's proportions:
     /// `height_mm / width_mm` is off `height_px / width_px` by more than
     /// 1e-6, so the picture would be stretched (format 27). An error.
+    #[error(
+        "bitmap `{name}` (`{bitmap}`) is {width_mm} × {height_mm} mm, which is not the shape of its {width_px} × {height_px} px picture; set height_mm to {} mm, or width_mm to {} mm, so the picture is not stretched",
+        scaled_mm(*.width_mm, *.height_px, *.width_px),
+        scaled_mm(*.height_mm, *.width_px, *.height_px)
+    )]
     BitmapFootprintAspect {
         /// The bitmap.
         bitmap: BitmapId,
@@ -1057,6 +1285,9 @@ pub enum Problem {
     },
     /// A bitmap's `width_px` × `height_px` is not its PNG's size, read
     /// from the PNG's header (format 27). An error.
+    #[error(
+        "bitmap `{name}` (`{bitmap}`) says it is {width_px} × {height_px} px, but its PNG is {png_width_px} × {png_height_px} px; set width_px and height_px to the PNG's size"
+    )]
     BitmapPixelsMismatch {
         /// The bitmap.
         bitmap: BitmapId,
@@ -1074,6 +1305,9 @@ pub enum Problem {
     /// A bitmap's PNG is not 8-bit grayscale, read from its header
     /// (format 27): DreamCarve wrote it, so a hand edit is the only way.
     /// An error.
+    #[error(
+        "the PNG of bitmap `{name}` (`{bitmap}`) is {bit_depth}-bit {colour}, not 8-bit grayscale; import the picture again so that DreamCarve converts it"
+    )]
     BitmapNotGrayscale8 {
         /// The bitmap.
         bitmap: BitmapId,
@@ -1085,11 +1319,15 @@ pub enum Problem {
         bit_depth: u8,
     },
     /// Two bitmaps share an id (format 27). An error.
+    #[error("bitmap id `{id}` is used twice")]
     DuplicateBitmapId {
         /// The id used twice.
         id: BitmapId,
     },
     /// A bitmap's `width_px` or `height_px` is 0 (format 27). An error.
+    #[error(
+        "bitmap `{name}` (`{bitmap}`) is {width_px} × {height_px} px; a picture has at least one pixel each way"
+    )]
     BitmapEmpty {
         /// The bitmap.
         bitmap: BitmapId,
@@ -1103,6 +1341,9 @@ pub enum Problem {
     /// A bitmap's `width_px` or `height_px` is above
     /// [`MAX_BITMAP_SIDE_PX`] (format 27; phase 3 security review M4). An
     /// error.
+    #[error(
+        "bitmap `{name}` (`{bitmap}`) is {width_px} × {height_px} px; a picture is at most {limit_px} px on a side, so scale it down before adding it"
+    )]
     BitmapTooLarge {
         /// The bitmap.
         bitmap: BitmapId,
@@ -1117,6 +1358,9 @@ pub enum Problem {
     },
     /// A bitmap's `width_mm` or `height_mm` is not above 0 (format 27;
     /// security review M4). An error.
+    #[error(
+        "bitmap `{name}` (`{bitmap}`) has {field} {value} mm; a picture's footprint has a width and a height above 0"
+    )]
     BitmapFootprintPositive {
         /// The bitmap.
         bitmap: BitmapId,
@@ -1130,6 +1374,7 @@ pub enum Problem {
     /// A bitmap's `png_base64` is not base64 or does not start with a PNG
     /// header (format 27, #644). [`crate::load`] refuses such a file, so
     /// only a project built in code gets here. An error.
+    #[error("the picture of bitmap `{name}` (`{bitmap}`) cannot be read: {reason}")]
     BitmapUnreadable {
         /// The bitmap.
         bitmap: BitmapId,
@@ -1625,770 +1870,109 @@ fn unset_unit(field: &str) -> &'static str {
     }
 }
 
-impl fmt::Display for Problem {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DefinitionKeyMismatch { key, id } => {
-                write!(f, "definition keyed `{key}` has id `{id}`")
-            }
-            Self::DuplicateInstanceId { id } => write!(f, "instance id `{id}` is used twice"),
-            Self::DuplicateToolId { id } => write!(f, "tool id `{id}` is used twice"),
-            Self::DuplicateOperationId { id } => write!(f, "operation id `{id}` is used twice"),
-            Self::DanglingDefinition {
-                instance,
-                definition,
-            } => write!(
-                f,
-                "instance `{instance}` places definition `{definition}`, which does not exist"
-            ),
-            Self::DanglingTool { operation, tool } => write!(
-                f,
-                "operation `{operation}` uses tool `{tool}`, which does not exist"
-            ),
-            Self::DanglingInstance {
-                operation,
-                instance,
-            } => write!(
-                f,
-                "operation `{operation}` targets instance `{instance}`, which does not exist"
-            ),
-            Self::DuplicateTabId { id } => write!(f, "two tabs have the id `{id}`"),
-            Self::TabDanglingInstance { tab, instance } => write!(
-                f,
-                "tab `{tab}` is on instance `{instance}`, which does not exist"
-            ),
-            Self::TabProfileMissing {
-                tab,
-                instance,
-                profile,
-                count,
-            } => write!(
-                f,
-                "tab `{tab}` is on profile {profile} of instance `{instance}`, whose definition has {count} profile(s), numbered from 0"
-            ),
+/// How [`Problem::CutterNotFlat`] names the cut and says why it needs a
+/// flat end mill: a male Inlay's cut-out, or else an offset Profile or a
+/// Pocket.
+fn flat_cut(field: &str) -> (&'static str, &'static str) {
+    if field == "tool" {
+        (
+            "cuts with",
+            "an Inside, Outside, Left or Right Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size",
+        )
+    } else {
+        (
+            "cuts its plug's cut-out with",
+            "the cut-out runs through the board in the band's flat floor, which only a flat end mill cuts with a straight wall at every depth",
+        )
+    }
+}
 
-            Self::OutOfRange {
-                field,
-                value,
-                expected,
-            } => write!(f, "{field} is {value}, expected {expected}"),
-            Self::NonFinite { field } => write!(f, "{field} is not a finite number"),
-            Self::OperationDisabled { operation } => {
-                write!(
-                    f,
-                    "operation `{operation}` is disabled and will not be exported"
-                )
-            }
-            Self::ToolValueUnset { tool, name, field } => write!(
-                f,
-                "tools[{tool}].{field} is not set ({}) for tool `{name}`",
-                unset_unit(field)
-            ),
-            Self::UnusedTool { tool, name } => write!(
-                f,
-                "tool `{tool}` (`{name}`) is defined but not used by any enabled operation"
-            ),
-            Self::StockThicknessUnset => write!(f, "{STOCK_THICKNESS} is not set (mm)"),
-            Self::OperationValueUnset {
-                operation,
-                name,
-                field,
-            } => write!(
-                f,
-                "operations[{operation}].{field} is not set ({}) for operation `{name}`",
-                unset_unit(field)
-            ),
-            Self::ToolOutOfRange {
-                tool,
-                name,
-                field,
-                value,
-                expected,
-            } => write!(
-                f,
-                "tool `{name}` (`{tool}`): {field} is {value}, expected {expected}"
-            ),
-            Self::OpenProfile {
-                definition,
-                name,
-                profile,
-            } => write!(
-                f,
-                "`{name}` (definition `{definition}`, profile {profile}) is an open path and no operation cuts it; only an On line, Left or Right Profile or an Engrave cuts an open path"
-            ),
-            Self::UnsafeFileExtension { extension } => write!(
-                f,
-                "the post-processor's file extension `{}` is not allowed: it must be 1 to {MAX_FILE_EXTENSION_CHARS} letters or digits and not `dcv`",
-                extension.escape_default()
-            ),
-            Self::ToolChangeModeNeedsM6 { post } => write!(
-                f,
-                "tool_change_mode is \"m6\", but post-processor `{post}` has no M6 in its tool change, so it cannot change tools within one program; use \"separate_programs\""
-            ),
-            Self::StepDownAboveDiameter {
-                operation,
-                name,
-                tool_name,
-                step_down_mm,
-                diameter_mm,
-                ..
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) cuts {step_down_mm} mm per pass, deeper than the {diameter_mm} mm diameter of tool `{tool_name}`; passes that deep can break the bit, so use a step-down of at most {diameter_mm} mm"
-            ),
-            Self::CutterNotFlat {
-                operation,
-                name,
-                tool,
-                tool_name,
-                cutter,
-                field,
-            } if *field != "tool" => write!(
-                f,
-                "operation `{name}` (`{operation}`) cuts its plug's cut-out with tool `{tool_name}` (`{tool}`), {cutter}; the cut-out runs through the board in the band's flat floor, which only a flat end mill cuts with a straight wall at every depth. Use an end mill"
-            ),
-            Self::CutterNotFlat {
-                operation,
-                name,
-                tool,
-                tool_name,
-                cutter,
-                ..
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; an Inside, Outside, Left or Right Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
-            ),
-            Self::OperationHasNoTargets { operation, name } => write!(
-                f,
-                "operation `{name}` (`{operation}`) is enabled but has no targets, so it would cut nothing; add targets or disable it"
-            ),
-            Self::SpindleSpeedHigh { tool, name, rpm } => write!(
-                f,
-                "tool `{name}` (`{tool}`) is set to {rpm} RPM, faster than the {MAX_RPM} RPM a hobby spindle or router turns; check it for a typo"
-            ),
-            Self::PlungeAboveFeed {
-                tool,
-                name,
-                plunge_mm_min,
-                feed_mm_min,
-            } => write!(
-                f,
-                "tool `{name}` (`{tool}`) plunges at {plunge_mm_min} mm/min, faster than it cuts ({feed_mm_min} mm/min); a plunge rate is usually well below the feed rate, so check the two are not swapped"
-            ),
-            Self::LargeDiameter {
-                tool,
-                name,
-                diameter_mm,
-            } => write!(
-                f,
-                "tool `{name}` (`{tool}`) is {diameter_mm} mm in diameter, larger than the {MAX_TOOL_DIAMETER_MM} mm of a hobby router bit; check it for a typo"
-            ),
-            Self::DuplicateToolNumber {
-                tool,
-                name,
-                number,
-                other,
-            } => write!(
-                f,
-                "tool `{name}` (`{tool}`) and tool `{other}` would both be T{number} in the program; a tool with no `number` is its position in the list, so give one of them another number"
-            ),
-            Self::RestOfInvalid {
-                operation,
-                name,
-                rest_of,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) rests on `{rest_of}`, which is not an earlier enabled Pocket with the same targets; rest machining clears what such a Pocket left"
-            ),
-            Self::LastPassStockToLeave {
-                operation,
-                name,
-                tool_name,
-                stock_to_leave_mm,
-                diameter_mm,
-                limit_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has last_pass.stock_to_leave_mm {stock_to_leave_mm} mm with tool `{tool_name}` ({diameter_mm} mm); it must be more than 0 and at most {limit_mm:.3} mm, a third of the bit's diameter, as VCarve advises"
-            ),
-            Self::LastPassNeedsSide {
-                operation,
-                name,
-                side,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the stock to leave off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line",
-                match side {
-                    Side::OnLine => "on the line",
-                    Side::Left => "to the left of open paths",
-                    Side::Right => "to the right of open paths",
-                    Side::Inside => "inside",
-                    Side::Outside => "outside",
-                }
-            ),
-            Self::LastPassThickerThanStepDown {
-                operation,
-                name,
-                thickness_mm,
-                step_down_mm,
-                step_down_field,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has last_pass.thickness_mm {thickness_mm} mm, more than its {step_down_mm} mm step-down ({step_down_field}); the last pass would cut that deep in one go. Make it at most the step-down, or set it to null for the usual last pass"
-            ),
-            Self::BorePitchOverStepDown {
-                operation,
-                name,
-                pitch_mm,
-                step_down_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has pitch_mm {pitch_mm} mm, more than its tool's {step_down_mm} mm step-down; each turn of the helix would cut deeper than a pass. Make it at most the step-down, or set it to null to use the step-down"
-            ),
-            Self::FlattenToleranceRange {
-                flatten_tolerance_mm,
-            } => write!(
-                f,
-                "{FLATTEN_TOLERANCE} is {flatten_tolerance_mm} mm, above the {MAX_FLATTEN_TOLERANCE_MM} mm limit; the safety checks allow the program that far off the true curves, so a coarser tolerance could hide a cut through a wall. Use at most {MAX_FLATTEN_TOLERANCE_MM} mm"
-            ),
-            Self::VCarveNeedsVBit {
-                operation,
-                name,
-                tool,
-                tool_name,
-                cutter,
-                photo,
-            } => {
-                write!(
-                    f,
-                    "operation `{name}` (`{operation}`) carves with tool `{tool_name}` (`{tool}`), {cutter}; "
-                )?;
-                let tapered = *cutter == "a tapered ball nose";
-                match (tapered, photo) {
-                    (true, true) => write!(
-                        f,
-                        "a Photo V-Carve needs a V-bit; a tapered ball nose is not supported there"
-                    ),
-                    (false, true) => write!(
-                        f,
-                        "a Photo V-Carve's depth follows the angle of a V-bit, so use a V-bit"
-                    ),
-                    (_, false) => write!(
-                        f,
-                        "a carve's depth follows the bit's profile, so it needs a V-bit or a tapered ball nose; use a V-bit or a tapered ball nose"
-                    ),
-                }
-            }
-            Self::TaperedBallNoseRange {
-                tool,
-                name,
-                field,
-                value,
-                expected,
-            } => write!(
-                f,
-                "tool `{name}` (`{tool}`): {field} is {value}, expected {expected}"
-            ),
-            Self::VBitAngleRange {
-                tool,
-                name,
-                included_angle_deg,
-            } => write!(
-                f,
-                "tool `{name}` (`{tool}`) has an included angle of {included_angle_deg} degrees; a V-Carve, an Inlay, a Photo V-Carve or a countersink needs a V-bit angle above 0 and below 180 degrees to work out its depth"
-            ),
-            Self::VBitConeExceeded {
-                operation,
-                name,
-                tool_name,
-                engagement_mm,
-                cone_height_mm,
-                from_stock_top,
-                field,
-                limit,
-            } => {
-                if *limit != CuttingLimit::Cone {
-                    // Slice 27c (#679): a tapered ball nose's cutting height.
-                    write!(
-                        f,
-                        "operation `{name}` (`{operation}`) engages tool `{tool_name}`, a tapered ball nose, "
-                    )?;
-                    if *from_stock_top {
-                        write!(f, "from the stock top, ")?;
-                    }
-                    return match limit {
-                        CuttingLimit::CuttingDiameter { diameter_mm } => write!(
-                            f,
-                            "engaged {engagement_mm:.3} mm, past {cone_height_mm:.3} mm, where it reaches its {diameter_mm:.3} mm cutting diameter; above that the bit is a cylinder, whose walls follow no carve, so use a shallower depth"
-                        ),
-                        _ => write!(
-                            f,
-                            "engaged {engagement_mm:.3} mm, past the bit's {cone_height_mm:.3} mm flutes; above them the shank rubs, so use a shallower depth or a bit with longer flutes"
-                        ),
-                    };
-                }
-                write!(
-                    f,
-                    "operation `{name}` (`{operation}`) engages tool `{tool_name}` {engagement_mm} mm deep"
-                )?;
-                if *from_stock_top && *field == INLAY_PLUG_DEPTH {
-                    write!(
-                        f,
-                        " from the stock top (its start plane, depth_mm − glue_gap_mm below the stock top, plus its plug_depth_mm; the plug above the start plane is never cleared)"
-                    )?;
-                } else if *from_stock_top {
-                    // A Photo V-Carve's depth is its `max_depth_mm` (#648).
-                    let own = match *field {
-                        COUNTERSINK_DIAMETER => "its countersink's depth",
-                        "max_depth_mm" => "its max_depth_mm",
-                        _ => "its flat depth",
-                    };
-                    write!(
-                        f,
-                        " from the stock top (its start depth, which no Pocket or V-Carve floor of the project clears, plus {own})"
-                    )?;
-                }
-                write!(
-                    f,
-                    ", but the bit's cone is only {cone_height_mm:.3} mm tall; below that the shank cuts, so use a shallower depth or a wider bit"
-                )
-            }
-            Self::ClearingNeedsFlatDepth { operation, name } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has clearing passes but no flat_depth_mm; with no flat floor there is nothing for them to clear, so set a flat depth or remove the passes"
-            ),
-            Self::ClearingNeedsEndMill {
-                operation,
-                name,
-                pass,
-                tool,
-                tool_name,
-                cutter,
-            } => write!(
-                f,
-                "clearing pass {pass} of operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; a clearing pass is cut as a Pocket, which only a flat end mill cuts to size. Use an end mill"
-            ),
-            Self::ClearingDanglingTool {
-                operation,
-                pass,
-                tool,
-            } => write!(
-                f,
-                "clearing pass {pass} of operation `{operation}` uses tool `{tool}`, which does not exist"
-            ),
-            Self::ClearingNotDescending {
-                operation,
-                name,
-                pass,
-                tool_name,
-                diameter_mm,
-                previous_tool_name,
-                previous_diameter_mm,
-            } => write!(
-                f,
-                "clearing pass {pass} of operation `{name}` (`{operation}`) uses tool `{tool_name}` ({diameter_mm} mm), wider than the pass before it (`{previous_tool_name}`, {previous_diameter_mm} mm); it still runs, but list the largest tool first so each pass clears only what the one before could not reach"
-            ),
-            Self::StartDepthNegative {
-                operation,
-                name,
-                start_depth_mm,
-                ..
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has start_depth_mm {start_depth_mm} mm; the start plane is a depth below the stock top, 0 or more"
-            ),
-            Self::StartDepthUncleared {
-                operation,
-                name,
-                start_depth_mm,
-                footprint,
-                ..
-            } => {
-                let what = match footprint {
-                    StartFootprint::Targets => "its targets",
-                    StartFootprint::BitAtEachHole => "the whole of its V-bit at each hole",
-                    StartFootprint::Picture => "its picture's footprint",
-                };
-                write!(
-                    f,
-                    "operation `{name}` (`{operation}`) starts {start_depth_mm} mm below the stock top, but no enabled Pocket, nor the flat floor of an enabled V-Carve, before it contains {what}; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true"
-                )
-            }
-            Self::CountersinkNeedsVBit {
-                operation,
-                name,
-                tool,
-                tool_name,
-                cutter,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) countersinks with tool `{tool_name}` (`{tool}`), {cutter}; a countersink's depth follows the angle of a V-bit, so use a V-bit"
-            ),
-            Self::CountersinkDiameterPositive {
-                operation,
-                name,
-                diameter_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has a countersink diameter_mm of {diameter_mm} mm; the mouth must be wider than 0"
-            ),
-            Self::CountersinkMouthExceedsTool {
-                operation,
-                name,
-                tool_name,
-                diameter_mm,
-                tool_diameter_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) asks for a {diameter_mm} mm countersink, wider than the {tool_diameter_mm} mm tool `{tool_name}`; past its diameter a V-bit has no cutting edge, so use a mouth at most the bit's diameter or a wider bit"
-            ),
-            Self::InlayGlueGapNotBelowDepth {
-                operation,
-                name,
-                glue_gap_mm,
-                depth_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has glue_gap_mm {glue_gap_mm} mm, not below its depth_mm {depth_mm} mm; the male starts depth_mm − glue_gap_mm below the stock top, so its plug would have no wall to seat. Make the glue gap smaller than the depth (0 or 0.25 mm to start)"
-            ),
-            Self::InlayMarginPositive {
-                operation,
-                name,
-                margin_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) is a male inlay with margin_mm {margin_mm} mm; its surround is carved that far beyond the design, so it must be above 0 (5 to 7.5 mm leaves room to clamp the plug board)"
-            ),
-            Self::InlayOutlineRounding {
-                operation,
-                name,
-                rounding_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has outline_rounding_mm {rounding_mm} mm; the male's band is rounded by that radius, so it must be above 0. Set it to null for no rounding, or to a radius such as 10"
-            ),
-            Self::InlayPlugBaseThin {
-                operation,
-                name,
-                floor_depth_mm,
-                thickness_mm,
-                base_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) cuts its plug's surround {floor_depth_mm} mm below the male board's top, leaving {base_mm} mm of the {thickness_mm} mm male board under it, less than {INLAY_MIN_PLUG_BASE_MM} mm; the base may flex or crack when the plug is pressed into the glue. Use a thicker male board, or a smaller depth_mm or plug_depth_mm"
-            ),
-            Self::InlayGlueGapBelowBall {
-                operation,
-                name,
-                glue_gap_mm,
-                tangent_height_mm,
-                lift_mm,
-                wall_gap_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has glue_gap_mm {glue_gap_mm} mm, below its tapered ball nose's tangent height {tangent_height_mm:.3} mm, so the plug's top edge rides on the pocket's rounded floor: it stands about {lift_mm:.3} mm proud with its walls {wall_gap_mm:.3} mm open at the surface. Set glue_gap_mm to at least {tangent_height_mm:.3} mm, and test-fit a coupon first"
-            ),
-            Self::InlayPlugDepthBelowBall {
-                operation,
-                name,
-                plug_depth_mm,
-                tangent_height_mm,
-                wall_gap_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has plug_depth_mm {plug_depth_mm} mm, below its tapered ball nose's tangent height {tangent_height_mm:.3} mm, so the plug's wall just below the surface is cut by the ball, up to {wall_gap_mm:.3} mm narrower than the pocket. Set plug_depth_mm to at least {tangent_height_mm:.3} mm"
-            ),
-            Self::InlayMaleBoardSize {
-                operation,
-                name,
-                field,
-                value_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has male_board.{field} {value_mm} mm; the male board's size must be above 0. Set it to null to use the stock's"
-            ),
-            Self::InlayMaleBoardThickness {
-                operation,
-                name,
-                thickness_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has male_board.thickness_mm {thickness_mm} mm; measure the male board and set its thickness, above 0"
-            ),
-            Self::InlayMaleBoardsDiffer {
-                operation,
-                name,
-                first,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) cuts its male on a male_board other than operation `{first}`'s; every Inlay of a project cuts its male on the one male board, so give them the same male_board"
-            ),
-            Self::InlayCutOutNoRoom {
-                operation,
-                name,
-                tool_name,
-                diameter_mm,
-                margin_mm,
-                needed_mm,
-                at_boundary,
-            } => {
-                if *at_boundary {
-                    write!(
-                        f,
-                        "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; the drawn boundary is only {margin_mm:.3} mm from the design at its narrowest, so that floor is narrower than the tool and the cut-out would cut into the plug's wall. Draw the boundary at least {needed_mm:.3} mm from the design all round, or use a narrower end mill"
-                    )
-                } else {
-                    write!(
-                        f,
-                        "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; with margin_mm {margin_mm} mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall. Raise margin_mm to at least {needed_mm:.3} mm, or use a narrower end mill"
-                    )
-                }
-            }
-            Self::InlayMarginIgnored {
-                operation,
-                name,
-                field,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) draws its male's edge with a boundary, so {field} does nothing; the boundary replaces both margin_mm and outline_rounding_mm. Set {field} to null, or empty the boundary list to use it"
-            ),
-            Self::InlayBoundaryUnknown {
-                operation,
-                name,
-                index,
-                instance,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, which is no instance of the project; list the id of a drawn shape that is in it"
-            ),
-            Self::InlayBoundaryOpen {
-                operation,
-                name,
-                index,
-                instance,
-                profile,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, whose profile {profile} is not a closed outline; a boundary must be closed, so close that profile or list another shape"
-            ),
-            Self::InlayBoundaryIsTarget {
-                operation,
-                name,
-                index,
-                instance,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, which is also one of its targets; the design cannot be its own boundary, so draw a separate shape round it"
-            ),
-            Self::InlayBoundaryCrossesDesign {
-                operation,
-                name,
-                x_mm,
-                y_mm,
-                distance_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has a boundary that touches or crosses its design, or leaves part of it outside: the worst point is at ({x_mm:.3}, {y_mm:.3}), {distance_mm:.3} mm past the boundary's edge; the design must lie strictly inside the boundary, so draw the boundary wider there"
-            ),
-            Self::InlayBoundaryEmpty {
-                operation,
-                name,
-                index,
-                instance,
-                instance_name,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}` (`{instance_name}`), but no part of the design is inside it; it still widens the band, so remove it if you did not mean that"
-            ),
-            Self::InlayBoundaryHoleIgnored {
-                operation,
-                name,
-                index,
-                instance,
-                instance_name,
-                profile,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}` (`{instance_name}`), whose profile {profile} is a hole; the band ignores holes, since board left standing in it would hold the plug off the female, so the hole is cut as band too"
-            ),
-            Self::PhotoLineAngleRange {
-                operation,
-                name,
-                line_angle_deg,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has line_angle_deg {line_angle_deg}; the grooves' angle is 0 degrees or more and less than 180"
-            ),
-            Self::PhotoLineSpacingPositive {
-                operation,
-                name,
-                line_spacing_fraction,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has line_spacing_fraction {line_spacing_fraction}; the spacing of the grooves is a fraction of a groove's width, above 0"
-            ),
-            Self::PhotoLinesOverlap {
-                operation,
-                name,
-                line_spacing_fraction,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has line_spacing_fraction {line_spacing_fraction}, less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them; use 1 or more to keep the ridges"
-            ),
-            Self::PhotoSamplePositive {
-                operation,
-                name,
-                sample_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has sample_mm {sample_mm} mm; the distance between samples along a groove is above 0"
-            ),
-            Self::PhotoRetractPositive {
-                operation,
-                name,
-                stepover_retract_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) has stepover_retract_mm {stepover_retract_mm} mm; the lift between grooves is above 0"
-            ),
-            Self::PhotoUnknownBitmap {
-                operation, bitmap, ..
-            } => write!(
-                f,
-                "operation `{operation}` carves bitmap `{bitmap}`, which does not exist"
-            ),
-            Self::BitmapFootprintAspect {
-                bitmap,
-                name,
-                width_mm,
-                height_mm,
-                width_px,
-                height_px,
-            } => {
-                let fitting_height_mm = width_mm * f64::from(*height_px) / f64::from(*width_px);
-                let fitting_width_mm = height_mm * f64::from(*width_px) / f64::from(*height_px);
-                write!(
-                    f,
-                    "bitmap `{name}` (`{bitmap}`) is {width_mm} × {height_mm} mm, which is not the shape of its {width_px} × {height_px} px picture; set height_mm to {fitting_height_mm} mm, or width_mm to {fitting_width_mm} mm, so the picture is not stretched"
-                )
-            }
-            Self::BitmapPixelsMismatch {
-                bitmap,
-                name,
-                width_px,
-                height_px,
-                png_width_px,
-                png_height_px,
-            } => write!(
-                f,
-                "bitmap `{name}` (`{bitmap}`) says it is {width_px} × {height_px} px, but its PNG is {png_width_px} × {png_height_px} px; set width_px and height_px to the PNG's size"
-            ),
-            Self::BitmapNotGrayscale8 {
-                bitmap,
-                name,
-                colour,
-                bit_depth,
-            } => write!(
-                f,
-                "the PNG of bitmap `{name}` (`{bitmap}`) is {bit_depth}-bit {colour}, not 8-bit grayscale; import the picture again so that DreamCarve converts it"
-            ),
-            Self::DuplicateBitmapId { id } => write!(f, "bitmap id `{id}` is used twice"),
-            Self::BitmapEmpty {
-                bitmap,
-                name,
-                width_px,
-                height_px,
-            } => write!(
-                f,
-                "bitmap `{name}` (`{bitmap}`) is {width_px} × {height_px} px; a picture has at least one pixel each way"
-            ),
-            Self::BitmapTooLarge {
-                bitmap,
-                name,
-                width_px,
-                height_px,
-                limit_px,
-            } => write!(
-                f,
-                "bitmap `{name}` (`{bitmap}`) is {width_px} × {height_px} px; a picture is at most {limit_px} px on a side, so scale it down before adding it"
-            ),
-            Self::BitmapFootprintPositive {
-                bitmap,
-                name,
-                field,
-                value,
-            } => write!(
-                f,
-                "bitmap `{name}` (`{bitmap}`) has {field} {value} mm; a picture's footprint has a width and a height above 0"
-            ),
-            Self::BitmapUnreadable {
-                bitmap,
-                name,
-                reason,
-            } => write!(
-                f,
-                "the picture of bitmap `{name}` (`{bitmap}`) cannot be read: {reason}"
-            ),
-            Self::CountersinkIgnoresToolWidth { operation, name } => write!(
-                f,
-                "operation `{name}` (`{operation}`) countersinks, so allow_tool_wider_than_hole has no effect: a countersink's V-bit is wider than the hole by design, and a hole at least as wide as the mouth is skipped instead; set it to false"
-            ),
-            Self::HelixNeedsWasteSide { operation, name } => write!(
-                f,
-                "operation `{name}` (`{operation}`) cuts on the line or beside an open path but asks for a helix entry; a helix sits in material the cut removes, and such a cut removes only its kerf. Use \"plunge\" or a ramp"
-            ),
-            Self::CannedCyclesUnsupported { post } => write!(
-                f,
-                "use_canned_cycles is true, but post-processor `{post}` has no canned cycles, so Drill cannot write them; set it to false"
-            ),
-            Self::DrillCutterUnusual {
-                operation,
-                name,
-                tool,
-                tool_name,
-                cutter,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) drills with tool `{tool_name}` (`{tool}`), {cutter}, which makes a cone rather than a flat-bottomed hole; a drill or an end mill is usual"
-            ),
-            Self::ReliefNeedsStepDown {
-                operation,
-                name,
-                tool,
-                tool_name,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) asks for corner relief, but tool `{tool_name}` (`{tool}`) has no step_down_mm, which the relief pass steps down at; the relief is skipped until it is set"
-            ),
-            Self::EngraveDeeperThanCone {
-                operation,
-                name,
-                tool_name,
-                depth_mm,
-                cone_height_mm,
-            } => write!(
-                f,
-                "operation `{name}` (`{operation}`) engraves {depth_mm} mm deep with tool `{tool_name}`, whose cone is only {cone_height_mm:.3} mm tall; below that the shank cuts, so use a shallower depth or a wider bit"
-            ),
-            Self::ClearanceBelowSafeZ {
-                operation,
-                name,
-                clearance_mm,
-                safe_z_mm,
-            } => write!(
-                f,
-                "{CLEARANCE} is {clearance_mm} mm, below the {safe_z_mm} mm safe_z_mm of operation `{name}` (`{operation}`); links between parts would run lower than its links between passes, so raise the clearance to at least {safe_z_mm} mm"
-            ),
-            Self::MachineZNotBelowHome { machine_z_mm } => write!(
-                f,
-                "{MACHINE_Z} is {machine_z_mm} mm, which is not below 0 as the program writes it; grblHAL and GRBL, and LinuxCNC as its configuration tools set it up, home Z at the top of its travel, where machine Z is 0 or just below, so the lift must be below 0, at least the homing pull-off below it"
-            ),
-            Self::MachineZNeedsG53 { post } => write!(
-                f,
-                "{MACHINE_Z} is set, but post-processor `{post}` does not document a machine-coordinate move (G53), so the lift cannot be written; set it to null"
-            ),
+/// Where a Profile cuts, as [`Problem::LastPassNeedsSide`] says it.
+const fn side_cut(side: Side) -> &'static str {
+    match side {
+        Side::OnLine => "on the line",
+        Side::Left => "to the left of open paths",
+        Side::Right => "to the right of open paths",
+        Side::Inside => "inside",
+        Side::Outside => "outside",
+    }
+}
+
+/// What [`Problem::VCarveNeedsVBit`] tells the user to cut with instead of
+/// `cutter`.
+fn carving_bit_advice(cutter: &str, photo: bool) -> &'static str {
+    let tapered = cutter == "a tapered ball nose";
+    match (tapered, photo) {
+        (true, true) => "a Photo V-Carve needs a V-bit; a tapered ball nose is not supported there",
+        (false, true) => "a Photo V-Carve's depth follows the angle of a V-bit, so use a V-bit",
+        (_, false) => {
+            "a carve's depth follows the bit's profile, so it needs a V-bit or a tapered ball nose; use a V-bit or a tapered ball nose"
         }
     }
+}
+
+/// The rest of [`Problem::VBitConeExceeded`]'s message after the tool's
+/// name: how deep the bit engages, from where, and the height it passes.
+fn cone_exceeded(
+    engagement_mm: f64,
+    cone_height_mm: f64,
+    from_stock_top: bool,
+    field: &str,
+    limit: &CuttingLimit,
+) -> String {
+    let from_top = if from_stock_top {
+        "from the stock top, "
+    } else {
+        ""
+    };
+    match limit {
+        CuttingLimit::CuttingDiameter { diameter_mm } => format!(
+            ", a tapered ball nose, {from_top}engaged {engagement_mm:.3} mm, past {cone_height_mm:.3} mm, where it reaches its {diameter_mm:.3} mm cutting diameter; above that the bit is a cylinder, whose walls follow no carve, so use a shallower depth"
+        ),
+        CuttingLimit::Flutes => format!(
+            ", a tapered ball nose, {from_top}engaged {engagement_mm:.3} mm, past the bit's {cone_height_mm:.3} mm flutes; above them the shank rubs, so use a shallower depth or a bit with longer flutes"
+        ),
+        CuttingLimit::Cone => {
+            let counted_from = if !from_stock_top {
+                String::new()
+            } else if field == INLAY_PLUG_DEPTH {
+                " from the stock top (its start plane, depth_mm − glue_gap_mm below the stock top, plus its plug_depth_mm; the plug above the start plane is never cleared)".to_owned()
+            } else {
+                let own = match field {
+                    COUNTERSINK_DIAMETER => "its countersink's depth",
+                    "max_depth_mm" => "its max_depth_mm",
+                    _ => "its flat depth",
+                };
+                format!(
+                    " from the stock top (its start depth, which no Pocket or V-Carve floor of the project clears, plus {own})"
+                )
+            };
+            format!(
+                " {engagement_mm} mm deep{counted_from}, but the bit's cone is only {cone_height_mm:.3} mm tall; below that the shank cuts, so use a shallower depth or a wider bit"
+            )
+        }
+    }
+}
+
+/// Why [`Problem::InlayCutOutNoRoom`]'s floor is too narrow and what to
+/// widen: the drawn boundary, or else the margin.
+fn cut_out_room(margin_mm: f64, needed_mm: f64, at_boundary: bool) -> String {
+    if at_boundary {
+        format!(
+            "the drawn boundary is only {margin_mm:.3} mm from the design at its narrowest, so that floor is narrower than the tool and the cut-out would cut into the plug's wall. Draw the boundary at least {needed_mm:.3} mm from the design all round"
+        )
+    } else {
+        format!(
+            "with margin_mm {margin_mm} mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall. Raise margin_mm to at least {needed_mm:.3} mm"
+        )
+    }
+}
+
+/// A bitmap's side that fits `side_mm` of the other one, for a picture
+/// `to_px` along this side and `from_px` along the other
+/// ([`Problem::BitmapFootprintAspect`]).
+fn scaled_mm(side_mm: f64, to_px: u32, from_px: u32) -> f64 {
+    side_mm * f64::from(to_px) / f64::from(from_px)
 }
 
 /// Checks `project` and returns every problem found, errors and warnings,
