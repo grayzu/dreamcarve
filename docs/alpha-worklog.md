@@ -45,11 +45,13 @@ Status is one of: todo, doing, done, owner (waits for the maintainer).
 | --- | --- | --- |
 | A1 | An Inlay's schema error names its field (GitHub #712; review 1.3) | done |
 | A2 | A clipped Inlay cut-out places the tabs it was asked for (#710; review 1.13) | done |
-| A3 | The safety pass fails closed on a lookup miss (#711; review 1.1) | doing |
+| A3 | The safety pass fails closed on a lookup miss (#711; review 1.1): 102 sites audited, 31 failed open; the audit table is in `docs/specs/phase-1/design.md` | done |
 | A4 | Boundary sweep: the plug 0.182 mm proud at lettering seed 0x47 (#713) | doing |
 | A5 | Import robustness: DXF stitch and dedupe budget, warning names, read caps, control characters, `init` no-overwrite (review 1.5, 1.6, 1.8, 1.9, 1.12) | done |
-| A6 | `Rates` keeps feed and plunge; cuts outside a span refused (review 1.7, 1.10; with A3). The digest hashing bitmaps (1.4) and the wall-clock assertions in dc-import and photo (1.11) are done; dc-gcode's `s17_check_is_fast_on_the_sign` and `s9_check_is_fast_*` still assert time | doing |
-| A7 | A generator's lookup miss is an internal-defect error, not a skipped pass (review 1.2): the 2.5D generators first, then V-carve, Inlay and dc-geometry | doing |
+| A6 | `Rates` keeps feed and plunge; a cut outside every operation is refused; the digest hashes bitmaps; wall-clock assertions removed from dc-import and photo (review 1.4, 1.7, 1.10, 1.11). Still open: dc-gcode's `s17_check_is_fast_on_the_sign` and `s9_check_is_fast_*` assert time | done |
+| A7 | A generator's lookup miss is an internal-defect error, `CamError::Internal`, not a skipped pass (review 1.2). Done for the 2.5D generators (about 100 lookups now error, 55 removed). Still to do: `pocket/rings.rs` `RingTree`, `vcarve*`, `inlay.rs`, `relief.rs`, `photo.rs`, dc-geometry | doing |
+
+| A8 | A tab at the end of an open path on a Left or Right Profile: the safety pass's tab spine there fails a property seed (kept in `crates/dc-gcode/proptest-regressions/properties.txt`). Either the generator plunges into a tab at an open path's end or the spine measures the span differently; `docs/specs/phase-3/design.md` has the seed | todo |
 
 Notes from the fixes:
 
@@ -64,6 +66,12 @@ Notes from the fixes:
   operation that reads it on every snapshot. Not measured on a large
   picture; revisit with review item 3.3.
 - D2: the CLI's preview palette now equals the light Viewport set.
+- A3: review item 1.10 was real. A post-processor footer of `G1 Z-1 F5000`
+  exported: a plunge into the stock at 5000 mm/min. Any `G1`, `G2` or `G3`
+  outside every operation is now `ExportError::CutOutsideOperation`. The
+  bundled definitions have no such line, so no program changed.
+- A7: no golden or expected program changed, and no test met the new
+  error, so no dropped pass was found in the 2.5D generators.
 
 ### B. Phase 3
 
