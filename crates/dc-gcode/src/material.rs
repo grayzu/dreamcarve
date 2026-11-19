@@ -490,10 +490,6 @@ pub(crate) enum Material {
     /// a run whose label or tool the operation does not have: no cut is in
     /// the material, fail-closed.
     Unresolved,
-    /// Tests of the other rules on hand-written programs: S9 is not
-    /// checked.
-    #[cfg(test)]
-    Unchecked,
 }
 
 /// One region, its outline segments, the corners a relief notch may cut
@@ -2668,10 +2664,6 @@ pub(crate) fn check(
     tolerances: Tolerances,
     span: &OpSpan<'_>,
 ) -> Result<(), ExportError> {
-    #[cfg(test)]
-    if matches!(span.material, Material::Unchecked) {
-        return Ok(());
-    }
     // S18 holds every line of a countersink's span, not only its cuts.
     if let Material::Countersink(sink) = span.material {
         return sink.check(blocks, post, transform, span);
@@ -2761,8 +2753,6 @@ pub(crate) fn check(
             }
         }
         let inside = path.is_some_and(|path| match span.material {
-            #[cfg(test)]
-            Material::Unchecked => true,
             Material::Unresolved => false,
             Material::Inside {
                 areas,

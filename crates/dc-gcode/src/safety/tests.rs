@@ -162,6 +162,42 @@ fn one_cut(z: f64) -> Toolpath {
     }
 }
 
+/// The material of a span in a test of another rule on a hand-written
+/// program. S9 is not run on such a span: the test calls [`check_rules`]
+/// or [`check_but_material`], which read nothing of a material but S1's
+/// floor, and every material but a cut-out's leaves that to the
+/// operation.
+static NO_MATERIAL: Material = Material::Unresolved;
+
+/// The whole safety pass on `text` ([`check_parsed`]), for the program's
+/// extents.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the program, how it was written, and what it was written for, each needed"
+)]
+fn check(
+    text: &str,
+    post: &PostProcessor,
+    transform: &MachineTransform,
+    stock: &Stock,
+    stock_thickness_mm: f64,
+    tolerances: Tolerances,
+    heights: ProgramHeights,
+    spans: &[OpSpan<'_>],
+) -> Result<Extents, ExportError> {
+    check_parsed(
+        text,
+        post,
+        transform,
+        stock,
+        stock_thickness_mm,
+        tolerances,
+        heights,
+        spans,
+    )
+    .map(|(extents, _)| extents)
+}
+
 fn emit_one(
     project: &Project,
     op: &dc_project::ProfileOp,
@@ -217,7 +253,7 @@ fn check_text_lifting(
         op: &op,
         tool: &tool,
         toolpath: &toolpath,
-        material: &Material::Unchecked,
+        material: &NO_MATERIAL,
         tabs: &[],
         lines: 1..lines,
     }];
@@ -375,7 +411,7 @@ fn rapid_into_the_stock_is_still_rejected() {
             op: &first,
             tool: &tool,
             toolpath: &toolpath,
-            material: &Material::Unchecked,
+            material: &NO_MATERIAL,
             tabs: &[],
             lines: 1..10,
         },
@@ -383,7 +419,7 @@ fn rapid_into_the_stock_is_still_rejected() {
             op: &second,
             tool: &tool,
             toolpath: &toolpath,
-            material: &Material::Unchecked,
+            material: &NO_MATERIAL,
             tabs: &[],
             lines: 10..text.lines().count() + 1,
         },
@@ -513,7 +549,7 @@ fn check_text_for(
         op: &op,
         tool: &tool,
         toolpath: &toolpath,
-        material: &Material::Unchecked,
+        material: &NO_MATERIAL,
         tabs: &[],
         lines: 1..lines,
     }];
@@ -1419,11 +1455,11 @@ fn check_against_in(
         op: &op,
         tool: &tool,
         toolpath,
-        material: &Material::Unchecked,
+        material: &NO_MATERIAL,
         tabs: &[],
         lines: 1..text.lines().count() + 1,
     }];
-    check(
+    check_but_material(
         text,
         &post,
         &transform,
@@ -1717,7 +1753,7 @@ fn reordered_operations_fail_s6() {
                 op: &first,
                 tool: &tool,
                 toolpath: &a,
-                material: &Material::Unchecked,
+                material: &NO_MATERIAL,
                 tabs: &[],
                 lines: 6..10,
             },
@@ -1725,12 +1761,12 @@ fn reordered_operations_fail_s6() {
                 op: &second,
                 tool: &tool,
                 toolpath: &b,
-                material: &Material::Unchecked,
+                material: &NO_MATERIAL,
                 tabs: &[],
                 lines: 10..text.lines().count() + 1,
             },
         ];
-        check(
+        check_but_material(
             text,
             &post,
             &transform,
@@ -1810,13 +1846,29 @@ fn flattened_arc_passes() {
 }
 
 /// Mutation guard, #60: an emitter that writes every arc the other way
-/// round fails its own safety pass.
+/// round fails its own safety pass. The mutant is the emitter given a
+/// definition with its two arc commands exchanged: the pass reads `G2`
+/// and `G3` as the controller does, whatever the definition calls them.
 #[test]
 fn flipped_arcs_fail_emit() {
     let (project, op, tool) = fixture();
-    crate::emit::FLIP_ARCS.set(true);
-    let result = emit_one(&project, &op, &tool, line_then_arc());
-    crate::emit::FLIP_ARCS.set(false);
+    let mut flipped = project.post_processor.resolve().unwrap();
+    std::mem::swap(
+        &mut flipped.motion.cw_arc_command,
+        &mut flipped.motion.ccw_arc_command,
+    );
+    let result = emit_with(
+        &project,
+        &flipped,
+        &[(
+            Operation::Profile(op.clone()),
+            tool.clone(),
+            line_then_arc(),
+        )
+            .into()],
+        "2026-10-15",
+    )
+    .map(|(p, _)| p.text);
     assert!(
         matches!(result, Err(ExportError::MotionMismatch { index: 3, .. })),
         "{result:?}"
@@ -5452,7 +5504,7 @@ fn check_heights(
         op: &op,
         tool: &tool,
         toolpath: &toolpath,
-        material: &Material::Unchecked,
+        material: &NO_MATERIAL,
         tabs: &[],
         lines: op_lines,
     }];

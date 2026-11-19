@@ -120,43 +120,14 @@ pub(crate) struct Tolerances {
 }
 
 /// Checks `text`, emitted with `post` and `transform` for the operations
-/// in `spans`, against S1–S7, S9, S10, S12 and S16, and returns the
-/// program's extents. `heights` are the project's clearance height and
-/// tool-change machine Z (S2, S16).
+/// in `spans`, against the rules of the pass (module docs), and returns
+/// the program's extents with the blocks it parsed into, so the emitter
+/// reads its pauses without parsing the program again. `heights` are the
+/// project's clearance height and tool-change machine Z (S2, S16).
 ///
 /// # Errors
 ///
 /// The first violation found, as the matching [`ExportError`].
-#[cfg(test)]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the program, how it was written, and what it was written for, each needed"
-)]
-pub(crate) fn check(
-    text: &str,
-    post: &PostProcessor,
-    transform: &MachineTransform,
-    stock: &Stock,
-    stock_thickness_mm: f64,
-    tolerances: Tolerances,
-    heights: ProgramHeights,
-    spans: &[OpSpan<'_>],
-) -> Result<Extents, ExportError> {
-    check_parsed(
-        text,
-        post,
-        transform,
-        stock,
-        stock_thickness_mm,
-        tolerances,
-        heights,
-        spans,
-    )
-    .map(|(extents, _)| extents)
-}
-
-/// `check` (test builds only), also returning the blocks the program parsed into, so the
-/// emitter reads its pauses without parsing the program again (#71).
 #[allow(
     clippy::too_many_arguments,
     reason = "the program, how it was written, and what it was written for, each needed"
@@ -171,6 +142,42 @@ pub(crate) fn check_parsed(
     heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<(Extents, Vec<Block>), ExportError> {
+    let blocks = check_but_material(
+        text,
+        post,
+        transform,
+        stock,
+        stock_thickness_mm,
+        tolerances,
+        heights,
+        spans,
+    )?;
+    // S9: every cut stays in its operation's own material; S17 and S18
+    // hold a V-bit's run and a countersink there too.
+    for span in spans {
+        material::check(&blocks, post, transform, tolerances, span)?;
+    }
+    Ok((extents(&blocks, transform.output_units()), blocks))
+}
+
+/// Every rule of [`check_parsed`] but those that hold a cut to its
+/// operation's material ([`material::check`]). Nothing here reads a
+/// span's `material` but for S1's floor. Returns the blocks `text` parsed
+/// into.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the program, how it was written, and what it was written for, each needed"
+)]
+fn check_but_material(
+    text: &str,
+    post: &PostProcessor,
+    transform: &MachineTransform,
+    stock: &Stock,
+    stock_thickness_mm: f64,
+    tolerances: Tolerances,
+    heights: ProgramHeights,
+    spans: &[OpSpan<'_>],
+) -> Result<Vec<Block>, ExportError> {
     let blocks = check_rules(
         text,
         post,
@@ -186,12 +193,7 @@ pub(crate) fn check_parsed(
     }
     // S7: every cut stays on the stock.
     check_on_stock(&blocks, post, transform, stock, stock_thickness_mm, spans)?;
-    // S9: every cut stays in its operation's own material; S17 and S18
-    // hold a V-bit's run and a countersink there too.
-    for span in spans {
-        material::check(&blocks, post, transform, tolerances, span)?;
-    }
-    Ok((extents(&blocks, transform.output_units()), blocks))
+    Ok(blocks)
 }
 
 /// The lowest and highest value a program reaches on one machine axis,
