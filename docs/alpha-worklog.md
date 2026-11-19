@@ -105,11 +105,25 @@ Notes from the fixes:
 | --- | --- | --- |
 | D1 | The redesign brief, `docs/specs/phase-4/redesign.md`: principles, the window, the steps, tokens, components | done |
 | D2 | Theme tokens and widgets: dark default, teal accent, cards, pills | done |
-| D3 | The shell: icon rail, steps, start screen | todo |
-| D4 | The steps' panels (Design, Stock, Tools, Operations, Export), warnings, viewport overlays | todo |
+| D3 | The shell: `dc_app::steps`, the header, the rail, the step panel, the Inspector, the start screen; capabilities 50, 50a, 50b rewritten | done |
+| D4 | Export inlined into its step, the Viewport's floating controls, the drawer and sheets restyled. Also from the D3 review: a blank project shows "1 error" in the status bar and on the Warnings badge; with By depth on and the Inspector open at 1280 px the fitted stock is small; stale comments in dc-app still name the toolbar and the CAM panel; the snapshot pair needs re-rendering on Linux | todo |
 | D5 | Window tests and snapshots for the new shell | todo |
 
-| D6 | Wire the features built headless into the new window (contracts below) | todo |
+| D6 | Wire the features built headless into the new window (contracts below) | doing |
+
+Where things plug in after D3: the step panel is `panels/side.rs`
+`step()`, matching on `Step`; the Inspector is `inspecting()` returning
+`Inspecting::{Shapes, Tabs, Tool, Operation}` and `body()` drawing it (a
+picture's Properties is a new variant on Design); the Export step is
+`panels/export_step.rs` and `panels::project::output`; tool fields are
+`tools::tool_fields`; the floating pill is `viewport::tools_pill`.
+
+D3 changed these step rules from the brief, all for good reason: a blank
+project has no marks; Export needs attention only when an operation is
+enabled; an unused tool without rates leaves Tools complete; marks hold
+still while toolpaths regenerate; rail buttons are 56 px wide so
+"Operations" fits; panels no longer collapse to strips (View ▸ Step Panel
+hides the step panel).
 
 #### What the window must draw for slice C1 (pictures)
 
