@@ -2056,6 +2056,37 @@ mod tests {
         );
         let one = [(shape(0), around), (shape(1), island), (shape(0), inside)];
         assert_eq!(nested_pockets(&regions, &one), Ok(Vec::new()));
+        // Code review finding 1.2: a pocket whose outline no shape names
+        // used to be left out, so it could be cut before the pocket round
+        // its island; now it is a defect.
+        assert_eq!(
+            nested_pockets(&regions, &two[..1]),
+            Err(CamError::internal(
+                "a region's outline is of no target shape"
+            ))
+        );
+    }
+
+    /// Code review finding 1.2: a ring tree has its root, and the root's
+    /// children are its nodes. Without them the entries used to be given
+    /// no region to enter in, and plunged.
+    #[test]
+    fn entry_regions_of_a_broken_tree_are_an_internal_defect() {
+        let root = region_of(&[rect_100x50()], Transform::IDENTITY);
+        let mut tree = RingTree::build(root, 2.0, 3.0, 0.01, MAX_RINGS).expect("a ring tree");
+        assert!(entry_regions(&tree, WallRings::Omitted).is_ok());
+        tree.nodes.truncate(1);
+        assert_eq!(
+            entry_regions(&tree, WallRings::Omitted),
+            Err(CamError::internal(
+                "a ring tree's root has a child it lacks"
+            ))
+        );
+        tree.nodes.clear();
+        assert_eq!(
+            entry_regions(&tree, WallRings::Last),
+            Err(CamError::internal("a ring tree has no root"))
+        );
     }
 
     /// A 10 mm square inside a 30 mm circular island inside the rect is a

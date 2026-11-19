@@ -1370,10 +1370,11 @@ pub(crate) fn first_descent_outside(
 /// descents are checked by [`first_descent_outside`].
 pub(crate) fn without_descents(toolpath: &Toolpath) -> Toolpath {
     let mut moves = toolpath.moves.clone();
-    for (i, w) in toolpath.moves.windows(2).enumerate() {
+    // Each move after the first, with the move before it and itself.
+    let pairs = toolpath.moves.windows(2);
+    for (slot, w) in moves.iter_mut().skip(1).zip(pairs) {
         if let [from, mv] = w
             && is_descent_move(from.to, mv)
-            && let Some(slot) = moves.get_mut(i + 1)
         {
             *slot = Move::rapid(mv.to);
         }

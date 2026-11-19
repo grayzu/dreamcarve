@@ -193,9 +193,11 @@ pub fn place_shared(
             let Some((q, _)) = path.point_at(along_mm) else {
                 continue;
             };
-            let Some(centre) = definition_point(project, shape, q) else {
-                continue;
-            };
+            // The shape was placed by its instance to be cut, so the
+            // instance is there and its transform has an inverse.
+            let centre = definition_point(project, shape, q).ok_or_else(|| {
+                CamError::internal("a tab's shape has no instance to place the tab in").for_op(op)
+            })?;
             let tab = PlacedTab {
                 id: TabId::new(format!("tab{next}")),
                 instance: shape.instance.clone(),
@@ -261,9 +263,10 @@ pub fn place_on_outlines(
             continue;
         }
         done.push(shape);
-        let Some(outline) = definition_profile(project, shape) else {
-            continue;
-        };
+        // The shape is one the Profile cuts, so the project has it.
+        let outline = definition_profile(project, shape).ok_or_else(|| {
+            CamError::internal("a shape a Profile cuts is not in the project").for_op(op)
+        })?;
         let length_mm = outline.length_mm();
         for d in at_mm {
             let at_mm = if outline.is_closed() {

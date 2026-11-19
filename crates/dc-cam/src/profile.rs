@@ -14,6 +14,8 @@
 //! contours are counter-clockwise, holes clockwise, a positive bulge is a
 //! counter-clockwise arc, and the direction rule is [`traversal_is_ccw`].
 
+#[cfg(test)]
+mod defect_tests;
 mod entries;
 mod last_pass;
 mod reached;
@@ -125,15 +127,23 @@ enum Role {
 /// is the hole itself.
 ///
 /// Inside and Outside are relative to the part (the region's area), so a
-/// hole is offset the opposite way to its outer.
-fn placement(side: Side, role: Role) -> (Offset, Wall) {
+/// hole is offset the opposite way to its outer. Left and Right cut no
+/// closed outline (#207), and their closed targets are set aside before
+/// any is placed: [`CamError::Internal`] for one, which would otherwise
+/// be cut on its line.
+fn placement(side: Side, role: Role) -> Result<(Offset, Wall), CamError> {
     match (side, role) {
-        (Side::Outside, Role::Outer) | (Side::Inside, Role::Hole) => (Offset::Grow, Wall::Outside),
-        (Side::Outside, Role::Hole) | (Side::Inside, Role::Outer) => (Offset::Shrink, Wall::Inside),
-        (Side::OnLine, Role::Outer) => (Offset::None, Wall::Outside),
-        (Side::OnLine, Role::Hole) => (Offset::None, Wall::Inside),
-        // Never asked: Left and Right cut no closed outline (#207).
-        (Side::Left | Side::Right, _) => (Offset::None, Wall::Outside),
+        (Side::Outside, Role::Outer) | (Side::Inside, Role::Hole) => {
+            Ok((Offset::Grow, Wall::Outside))
+        }
+        (Side::Outside, Role::Hole) | (Side::Inside, Role::Outer) => {
+            Ok((Offset::Shrink, Wall::Inside))
+        }
+        (Side::OnLine, Role::Outer) => Ok((Offset::None, Wall::Outside)),
+        (Side::OnLine, Role::Hole) => Ok((Offset::None, Wall::Inside)),
+        (Side::Left | Side::Right, _) => Err(CamError::internal(
+            "a Left or Right Profile was asked to cut a closed outline",
+        )),
     }
 }
 
@@ -1142,7 +1152,7 @@ fn centre_paths<'s>(
             .map(|(h, shape)| (h, shape, Role::Hole))
             .chain(std::iter::once(outer));
         for (contour, shape, role) in ordered {
-            let (how, wall) = placement(op.side, role);
+            let (how, wall) = placement(op.side, role)?;
             let centres = match how {
                 Offset::Grow => offset(contour, radius_mm),
                 Offset::Shrink => offset(contour, -radius_mm),
