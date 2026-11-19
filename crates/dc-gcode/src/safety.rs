@@ -29,12 +29,12 @@
 //! - how the definition is read: [`changes_tools_in_program`],
 //!   [`controller_sets_units`], [`code_words`].
 //!
-//! Its own: the reader ([`crate::parse`], standard G-code whatever the
-//! definition says), the modal rules (safe Z, depth, feeds, spindle,
-//! setup), S6's matching, S7, and the material each operation may cut
-//! ([`crate::material`], from the project). The simulator tools
-//! (`tools/rs274-motion`, `tools/grbl-sim-motion`, `tools/linuxcnc-sim`)
-//! are the check that shares none of this.
+//! Its own: the reader ([`crate::parse`], standard G-code, the
+//! definition asked only for a cycle's re-entry gap), the modal rules
+//! (safe Z, depth, feeds, spindle, setup), S6's matching, S7, and the
+//! material each operation may cut ([`crate::material`], from the
+//! project). The simulator tools (`tools/rs274-motion` and its like) hold
+//! the reader to a controller's own interpreter, which shares none of it.
 //!
 //! Every cut belongs to an operation: S3's rates, S6, S7's tool radius,
 //! S9 and S10 all hold a cut by the operation whose lines it is on, so a
