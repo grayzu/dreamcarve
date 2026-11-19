@@ -10,7 +10,7 @@
 use dc_geometry::GeometryError;
 use dc_job::JobError;
 use dc_project::{
-    InstanceId, LoadError, OperationId, PostProcessorError, SaveError, TabId, ToolId,
+    BitmapId, InstanceId, LoadError, OperationId, PostProcessorError, SaveError, TabId, ToolId,
 };
 
 /// Why the app refused what it was asked.
@@ -60,6 +60,12 @@ pub enum CommandError {
     UnknownTab {
         /// The id that was named.
         id: TabId,
+    },
+    /// The project has no bitmap with this id.
+    #[error("the project has no picture `{id}`")]
+    UnknownBitmap {
+        /// The id that was named.
+        id: BitmapId,
     },
     /// Something was added under an id the project already uses.
     #[error("the project already has {kind} `{id}`")]

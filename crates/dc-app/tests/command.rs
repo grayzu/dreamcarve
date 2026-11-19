@@ -21,9 +21,10 @@ use std::f64::consts::FRAC_PI_2;
 use dc_app::test_support::Harness;
 use dc_app::{Command, CommandError, Strings};
 use dc_geometry::Transform;
+use dc_job::picture::PictureSize;
 use dc_project::{
-    Heights, InstanceId, MachineOrigin, Operation, OperationId, OriginXy, OriginZ, ParkXy,
-    PlacedTab, PostProcessorRef, Project, Stock, TabId, TabShape, Tool, ToolId, Units,
+    BitmapId, Heights, InstanceId, MachineOrigin, Operation, OperationId, OriginXy, OriginZ,
+    ParkXy, PlacedTab, PostProcessorRef, Project, Stock, TabId, TabShape, Tool, ToolId, Units,
 };
 
 use common::{plaque, svg_drawing};
@@ -86,6 +87,25 @@ fn new_tab() -> PlacedTab {
     }
 }
 
+/// *Add picture* on `tests/fixtures/photo/gradient.png` at 80 mm wide.
+fn import_gradient() -> Command {
+    let bytes = common::read(&common::fixture("photo/gradient.png"));
+    let (pixels, _) =
+        dc_import::bitmap::import(&bytes, dc_import::ImageFormat::Png).expect("it decodes");
+    Command::ImportPicture {
+        name: "gradient.png".into(),
+        pixels: std::sync::Arc::new(pixels),
+        size: PictureSize::Width { width_mm: 80.0 },
+    }
+}
+
+/// The plaque with the gradient picture on it, as bitmap `b1`.
+fn plaque_with_picture() -> Project {
+    import_gradient()
+        .apply(&plaque())
+        .expect("the picture imports")
+}
+
 /// The name of a `Command` variant, exhaustively: a variant added without
 /// a case in [`every_command`] fails to compile here.
 fn kind(command: &Command) -> &'static str {
@@ -102,6 +122,10 @@ fn kind(command: &Command) -> &'static str {
         Command::UpdateTool(_) => "UpdateTool",
         Command::DeleteTool(_) => "DeleteTool",
         Command::ImportDrawing { .. } => "ImportDrawing",
+        Command::ImportPicture { .. } => "ImportPicture",
+        Command::SetBitmapFlags { .. } => "SetBitmapFlags",
+        Command::RenameBitmap { .. } => "RenameBitmap",
+        Command::DeleteBitmaps(_) => "DeleteBitmaps",
         Command::TransformInstances { .. } => "TransformInstances",
         Command::RotateInstances { .. } => "RotateInstances",
         Command::FlipInstances { .. } => "FlipInstances",
@@ -130,6 +154,7 @@ fn kind(command: &Command) -> &'static str {
 fn every_command() -> Vec<(Project, Command)> {
     let plaque = plaque();
     let with_tabs = plaque_with_tabs();
+    let with_picture = plaque_with_picture();
     let first_tab = with_tabs.tabs[0].clone();
     let post = &plaque.post_processor;
     let mut t9 = tool(&plaque, "t2").clone();
@@ -207,6 +232,26 @@ fn every_command() -> Vec<(Project, Command)> {
                 drawing: svg_drawing("sign"),
                 name: "sign.svg".into(),
             },
+        ),
+        (plaque.clone(), import_gradient()),
+        (
+            with_picture.clone(),
+            Command::SetBitmapFlags {
+                ids: vec![BitmapId::new("b1")],
+                visible: Some(false),
+                locked: Some(true),
+            },
+        ),
+        (
+            with_picture.clone(),
+            Command::RenameBitmap {
+                id: BitmapId::new("b1"),
+                name: "ramp".into(),
+            },
+        ),
+        (
+            with_picture,
+            Command::DeleteBitmaps(vec![BitmapId::new("b1")]),
         ),
         (
             plaque.clone(),
@@ -445,6 +490,32 @@ fn labels_name_the_thing() {
         }),
         "Switch post-processor to grbl"
     );
+
+    // A picture's steps name the file it came from, then the bitmap.
+    assert_eq!(label(import_gradient()), "Import gradient.png");
+    let before = plaque_with_picture();
+    let label = |command: Command| {
+        let after = command
+            .apply(&before)
+            .unwrap_or_else(|e| panic!("{}: {e}", kind(&command)));
+        command.label(&strings, &before, &after)
+    };
+    let b1 = || vec![BitmapId::new("b1")];
+    let flags = |visible, locked| Command::SetBitmapFlags {
+        ids: b1(),
+        visible,
+        locked,
+    };
+    assert_eq!(label(flags(Some(false), None)), "Hide “gradient”");
+    assert_eq!(label(flags(None, Some(true))), "Lock “gradient”");
+    assert_eq!(
+        label(Command::RenameBitmap {
+            id: BitmapId::new("b1"),
+            name: "ramp".into(),
+        }),
+        "Rename “gradient”"
+    );
+    assert_eq!(label(Command::DeleteBitmaps(b1())), "Delete “gradient”");
 }
 
 /// Acceptance 66: a locked instance refuses each transform with a message

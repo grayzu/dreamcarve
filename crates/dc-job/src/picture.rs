@@ -88,7 +88,40 @@ pub fn bitmap(
     size: PictureSize,
     corner: Point,
 ) -> Result<Bitmap, JobError> {
-    let (width_mm, height_mm) = size.footprint_mm(pixels.width_px, pixels.height_px)?;
+    let (width_mm, height_mm) = footprint_at(pixels.width_px, pixels.height_px, size, corner)?;
+    Ok(Bitmap {
+        id,
+        name: name.to_owned(),
+        width_px: pixels.width_px,
+        height_px: pixels.height_px,
+        x_mm: corner.x,
+        y_mm: corner.y,
+        width_mm,
+        height_mm,
+        visible: true,
+        locked: false,
+        png_base64: dc_import::bitmap::stored(pixels)?,
+    })
+}
+
+/// The footprint, `(width_mm, height_mm)`, [`bitmap`] gives a `width_px ×
+/// height_px` picture at `size` with its bottom-left corner at `corner`,
+/// checked as [`bitmap`] checks it, from the pixel counts alone: no
+/// picture is encoded, so the app's Add picture sheet can ask on every
+/// change of the size (functional spec, phase 4, capability 56).
+///
+/// # Errors
+///
+/// [`JobError::PictureSize`] for a size that is not a positive length and
+/// [`JobError::PictureOutOfRange`] for a footprint reaching past
+/// [`MAX_COORDINATE_MM`].
+pub fn footprint_at(
+    width_px: u32,
+    height_px: u32,
+    size: PictureSize,
+    corner: Point,
+) -> Result<(f64, f64), JobError> {
+    let (width_mm, height_mm) = size.footprint_mm(width_px, height_px)?;
     let within = |v: f64| v.is_finite() && v.abs() <= MAX_COORDINATE_MM;
     if ![
         corner.x,
@@ -107,19 +140,7 @@ pub fn bitmap(
             limit_mm: MAX_COORDINATE_MM,
         });
     }
-    Ok(Bitmap {
-        id,
-        name: name.to_owned(),
-        width_px: pixels.width_px,
-        height_px: pixels.height_px,
-        x_mm: corner.x,
-        y_mm: corner.y,
-        width_mm,
-        height_mm,
-        visible: true,
-        locked: false,
-        png_base64: dc_import::bitmap::stored(pixels)?,
-    })
+    Ok((width_mm, height_mm))
 }
 
 /// `project` with the picture `pixels` appended as a new bitmap: the next

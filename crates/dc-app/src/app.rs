@@ -23,7 +23,7 @@ use crate::editor::targets::Editing;
 use crate::error::CommandError;
 use crate::generation::{Generation, Job, JobResult, SnapshotId, Work};
 use crate::history::LabelledHistory;
-use crate::import::DrawingImport;
+use crate::import::{DrawingImport, Dropped, FileKind, PictureImport, Purpose};
 use crate::prefs::Prefs;
 use crate::scene::{Scene, TargetMarks};
 use crate::selection::Selection;
@@ -284,6 +284,103 @@ impl App {
         self.reset(project);
         self.note_import(sheet);
         Ok(())
+    }
+
+    /// Adds the picture `sheet` shows to the project as its next bitmap,
+    /// at the stock's bottom-left corner, as one undo step (*Import
+    /// photo.png*): the bitmap `dreamcarve image add` adds (functional
+    /// spec, capability 56, acceptance 65). What decoding converted (a
+    /// colour picture's grayscale) becomes a note in the Warnings panel
+    /// ([`App::notes`]). The selection stays: a picture is not a shape.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::NotImportable`] with the sheet's reason when its
+    /// *Import* is disabled, and [`CommandError::Job`] if the picture
+    /// cannot be stored; nothing changes.
+    pub fn import_picture(&mut self, sheet: &PictureImport) -> Result<String, CommandError> {
+        let command = sheet.command().ok_or_else(|| CommandError::NotImportable {
+            reason: sheet.blocked(&self.strings).unwrap_or_default(),
+        })?;
+        let label = self.run(command)?;
+        self.note_picture(sheet);
+        Ok(label)
+    }
+
+    /// Replaces the project with a new one round the picture `sheet`
+    /// shows, as *New from picture…* does (functional spec, capability
+    /// 51): what `dreamcarve init` builds for a picture, named by the
+    /// file's stem, on grblHAL at its latest version in millimetres: the
+    /// stock sized round the picture with `init`'s margin, the bitmap, the
+    /// 60° V-bit and one Photo V-Carve with `init`'s defaults. The history
+    /// is cleared and the project has no file yet, as after *New*; what
+    /// decoding converted becomes its notes.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::NotImportable`] when the sheet's *Import* is
+    /// disabled, and [`CommandError::Job`] when `init` would refuse the
+    /// picture; nothing changes.
+    pub fn new_from_picture(&mut self, sheet: &PictureImport) -> Result<(), CommandError> {
+        let not_importable = || CommandError::NotImportable {
+            reason: sheet.blocked(&self.strings).unwrap_or_default(),
+        };
+        let pixels = sheet.pixels().ok_or_else(not_importable)?;
+        let size = sheet.size().ok_or_else(not_importable)?;
+        let post_processor = dc_project::latest_definition(DEFAULT_POST_ID)?.default_ref();
+        let project =
+            dc_job::project_from::picture(sheet.stem(), pixels, size, post_processor, Units::Mm)?;
+        self.reset(project);
+        self.note_picture(sheet);
+        Ok(())
+    }
+
+    /// What decoding the picture converted, as the Warnings panel's notes.
+    fn note_picture(&mut self, sheet: &PictureImport) {
+        for note in sheet.notes(&self.strings) {
+            self.add_note(note);
+        }
+    }
+
+    /// A file dropped on the window, `bytes` read from `path` by the shell
+    /// (functional spec, capabilities 51, 55 and 56), by its kind
+    /// ([`FileKind::of`]): a `.dcv` opens, as [`App::open`]; a drawing or
+    /// a picture changes nothing yet and returns the model of the sheet
+    /// the window shows, to add it to the open project. The shell asks
+    /// about unsaved changes before it passes a project here.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::NotImportable`] naming the file when it is none of
+    /// those, and [`CommandError::Load`] when a `.dcv` is not a project;
+    /// the app keeps the project it had.
+    pub fn drop_file(&mut self, path: &Path, bytes: Vec<u8>) -> Result<Dropped, CommandError> {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match FileKind::of(&name) {
+            Some(FileKind::Project) => self
+                .open(&bytes, Some(path.to_path_buf()))
+                .map(Dropped::Project),
+            Some(FileKind::Drawing(format)) => Ok(Dropped::Drawing(Box::new(DrawingImport::open(
+                format,
+                &name,
+                bytes,
+                Purpose::Import,
+            )))),
+            Some(FileKind::Picture(format)) => Ok(Dropped::Picture(Box::new(PictureImport::open(
+                format,
+                &name,
+                &bytes,
+                Purpose::Import,
+            )))),
+            None => Err(CommandError::NotImportable {
+                reason: self
+                    .strings
+                    .fmt(StrKey::AppMessageDroppedUnknown, &[("name", &name)]),
+            }),
+        }
     }
 
     /// The importer's warnings as the Warnings panel's notes

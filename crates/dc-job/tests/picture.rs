@@ -197,6 +197,81 @@ fn picture_size_must_be_a_positive_length() {
     );
 }
 
+/// The app's Add picture sheet asks whether a size can be placed on every
+/// change of it, so the answer must not cost an encoded picture: the
+/// footprint `image add` would place and the stock `init` would size are
+/// each read from the pixel counts alone, and each refuses exactly as the
+/// function that builds the bitmap does.
+#[test]
+fn placement_is_checked_without_encoding_the_picture() {
+    let pixels = gradient();
+    let (w, h) = (pixels.width_px, pixels.height_px);
+    let plaque = load_dcv(&repo_root().join("tests/fixtures/plaque.dcv"));
+    let limit = dc_geometry::MAX_COORDINATE_MM;
+    let cases = [
+        (
+            PictureSize::Width { width_mm: 60.0 },
+            Point::new(20.0, 30.0),
+        ),
+        (
+            PictureSize::Height { height_mm: 25.0 },
+            Point::new(0.0, 0.0),
+        ),
+        (PictureSize::Width { width_mm: 0.0 }, Point::new(0.0, 0.0)),
+        (
+            PictureSize::Height {
+                height_mm: f64::NAN,
+            },
+            Point::new(0.0, 0.0),
+        ),
+        (
+            PictureSize::Width { width_mm: 60.0 },
+            Point::new(limit, 0.0),
+        ),
+        (PictureSize::Width { width_mm: limit }, Point::new(0.0, 0.0)),
+        (
+            PictureSize::Width {
+                width_mm: limit * 2.0,
+            },
+            Point::new(0.0, 0.0),
+        ),
+    ];
+    for (size, corner) in cases {
+        let placed = picture_into(&plaque, "g", &pixels, size, corner).map(|(project, id)| {
+            let bitmap = project.bitmaps.iter().find(|b| b.id == id).unwrap();
+            (bitmap.width_mm, bitmap.height_mm)
+        });
+        let checked = dc_job::picture::footprint_at(w, h, size, corner);
+        assert_eq!(
+            checked.as_ref().map_err(ToString::to_string),
+            placed.as_ref().map_err(ToString::to_string),
+            "{size:?} at {corner:?}: image add"
+        );
+
+        let built = project_from::picture("g", &pixels, size, post(), Units::Mm);
+        let fit = project_from::picture_stock(w, h, size);
+        match (&built, &fit) {
+            (Ok(project), Ok(fit)) => {
+                assert_eq!(
+                    (project.stock.width_mm, project.stock.height_mm),
+                    (fit.width_mm, fit.height_mm),
+                    "{size:?}: init's stock"
+                );
+                let bitmap = &project.bitmaps[0];
+                assert_eq!(
+                    Point::new(bitmap.x_mm, bitmap.y_mm),
+                    fit.shift.apply(Point::new(0.0, 0.0)),
+                    "{size:?}: init's corner"
+                );
+            }
+            (Err(built), Err(fit)) => {
+                assert_eq!(built.to_string(), fit.to_string(), "{size:?}: init");
+            }
+            other => panic!("{size:?}: init and its check disagree: {other:?}"),
+        }
+    }
+}
+
 /// `image add`'s library half: a picture 60 mm wide at (20, 30) is the
 /// next bitmap, `b1` then `b2`, with the footprint 20..80 × 30..60 mm; the
 /// project's own content is untouched. The proportions are the pixels',

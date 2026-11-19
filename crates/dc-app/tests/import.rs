@@ -9,6 +9,12 @@
 //! tolerance and the layers. What it imports is what the importer returns
 //! for those options, placed as drawn, as one undo step, and its notes
 //! reach the warnings once.
+//!
+//! The picture half (capability 56, acceptance 65): the Add picture
+//! sheet's model decodes the bytes with `dc_import::bitmap`, takes a
+//! width or a height with the other following the pixels, and imports the
+//! bitmap `dreamcarve image add` adds. A file dropped on the window opens
+//! the sheet for its kind, or the project.
 
 #![allow(
     clippy::panic,
@@ -20,12 +26,20 @@
 
 mod common;
 
-use dc_app::import::{DrawingFormat, DrawingImport, Purpose};
+use std::path::Path;
+
+use dc_app::import::{
+    DrawingFormat, DrawingImport, Dropped, FileKind, PictureImport, PictureSide, Purpose,
+};
 use dc_app::test_support::Harness;
-use dc_app::{App, Command, Selection};
-use dc_import::{DxfImportOptions, DxfUnits, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM};
+use dc_app::{App, Command, CommandError, Selection, Strings};
+use dc_geometry::Point;
+use dc_import::{
+    DxfImportOptions, DxfUnits, ImageFormat, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM,
+};
 use dc_job::Drawing;
-use dc_project::{Stock, Units};
+use dc_job::picture::{PictureSize, picture_into};
+use dc_project::{BitmapId, Grayscale, Stock, Units};
 
 use common::{fixture, read};
 
@@ -322,16 +336,362 @@ fn one_import_is_one_undo_step() {
     assert_eq!(harness.app.project(), &after);
 }
 
+/// The Add picture sheet over `tests/fixtures/<path>`.
+fn picture(path: &str, purpose: Purpose) -> PictureImport {
+    let file = fixture(path);
+    let name = file.file_name().unwrap().to_string_lossy().into_owned();
+    PictureImport::open(picture_format(&file), &name, &read(&file), purpose)
+}
+
+/// The picture format `file`'s extension names.
+fn picture_format(file: &Path) -> ImageFormat {
+    file.extension()
+        .and_then(|e| ImageFormat::from_extension(&e.to_string_lossy()))
+        .expect("a picture's extension")
+}
+
+/// What `dc_import::bitmap::import` decodes `tests/fixtures/<path>` to:
+/// the pixels `dreamcarve image add` places, and its warnings.
+fn decoded(path: &str) -> (Grayscale, Vec<ImportWarning>) {
+    let file = fixture(path);
+    dc_import::bitmap::import(&read(&file), picture_format(&file)).expect("the fixture decodes")
+}
+
 /// Acceptance 65: importing `fixtures/photo/gradient.png` at width 100
 /// adds the bitmap `image add --width 100` adds, at the origin, with the
-/// grayscale note for a colour file.
+/// grayscale note for a colour file. The project is otherwise as it was,
+/// the file the app saves is the one `image add` writes, and a second
+/// picture takes the next id.
 #[test]
-#[ignore = "needs phase 3.5's Bitmap (format 27); see #544"]
 fn picture_at_width_equals_image_add() {
-    // The picture half of slice 6 waits for `dc_project::Bitmap`, which
-    // phase 3.5 added with format 27 (#644), and for
-    // `dc_job::project_from::picture` and `Command::ImportPicture` (#544).
-    panic!("Import picture is not built: the picture importer is not built yet");
+    let strings = Strings::default();
+    let mut sheet = picture("photo/gradient.png", Purpose::Import);
+    assert_eq!(sheet.format(), ImageFormat::Png);
+    assert_eq!(sheet.name(), "gradient.png");
+    assert_eq!(sheet.stem(), "gradient");
+    assert_eq!(sheet.size_px(), Some((64, 32)));
+    assert!(sheet.warnings().is_empty(), "a gray picture needs no note");
+    sheet.set_width_mm(100.0);
+    assert_eq!(sheet.blocked(&strings), None);
+
+    let mut harness = Harness::open(&read(&fixture("plaque.dcv"))).expect("the plaque opens");
+    let before = harness.app.project().clone();
+    let notes_before = harness.app.notes().to_vec();
+    let label = harness
+        .app
+        .import_picture(&sheet)
+        .expect("the picture imports");
+    assert_eq!(label, "Import gradient.png");
+
+    // `image add plaque.dcv gradient.png --width 100`: the decoded
+    // picture, named by the file's stem, at 0,0
+    // (`crates/dreamcarve/src/image.rs`).
+    let (pixels, _) = decoded("photo/gradient.png");
+    let (expected, id) = picture_into(
+        &before,
+        "gradient",
+        &pixels,
+        PictureSize::Width { width_mm: 100.0 },
+        Point::new(0.0, 0.0),
+    )
+    .expect("image add places it");
+    assert_eq!(id, BitmapId::new("b1"));
+    let project = harness.app.project().clone();
+    assert_eq!(project, expected, "the project `image add` writes");
+    assert_eq!(
+        dc_project::save(&project).unwrap(),
+        dc_project::save(&expected).unwrap(),
+        "byte for byte"
+    );
+    let bitmap = project.bitmaps.last().expect("a bitmap");
+    assert_eq!(
+        (bitmap.x_mm, bitmap.y_mm, bitmap.width_mm, bitmap.height_mm),
+        (0.0, 0.0, 100.0, 50.0),
+        "at the origin, 100 mm wide, the height from the pixels"
+    );
+    assert_eq!((bitmap.width_px, bitmap.height_px), (64, 32));
+    assert!(bitmap.visible && !bitmap.locked);
+    assert_eq!(bitmap.pixels().expect("the stored picture"), pixels);
+    assert_eq!(project.stock, before.stock, "the stock is left alone");
+    assert_eq!(project.instances, before.instances);
+    assert_eq!(project.operations, before.operations);
+    assert_eq!(harness.app.notes(), notes_before, "nothing to note");
+
+    // A colour file: the note `image add` prints (`warning: <code>:
+    // <message>`), in the sheet before the import and in the Warnings
+    // panel's notes after it, once, under the file's name.
+    let mut colour = picture("photo/colour.jpg", Purpose::Import);
+    assert_eq!(colour.format(), ImageFormat::Jpeg);
+    assert_eq!(colour.warnings(), [ImportWarning::ImageColourConverted]);
+    colour.set_height_mm(20.0);
+    harness
+        .app
+        .import_picture(&colour)
+        .expect("the colour picture imports");
+    let (gray, warnings) = decoded("photo/colour.jpg");
+    assert_eq!(warnings, [ImportWarning::ImageColourConverted]);
+    let noted: Vec<String> = harness
+        .app
+        .notes()
+        .iter()
+        .skip(notes_before.len())
+        .cloned()
+        .collect();
+    assert_eq!(
+        noted,
+        [format!(
+            "colour.jpg: image_colour_converted: {}",
+            ImportWarning::ImageColourConverted
+        )]
+    );
+    let (expected, id) = picture_into(
+        &project,
+        "colour",
+        &gray,
+        PictureSize::Height { height_mm: 20.0 },
+        Point::new(0.0, 0.0),
+    )
+    .unwrap();
+    assert_eq!(id, BitmapId::new("b2"), "the next free id");
+    assert_eq!(harness.app.project(), &expected);
+}
+
+/// Capability 56: the sheet asks for the width *or* the height, in
+/// millimetres here (the window converts from the project's units), and
+/// the other follows the pixels; *Import* is disabled until one is typed,
+/// and with a size no picture can have.
+#[test]
+fn picture_size_follows_the_pixels() {
+    let strings = Strings::default();
+    let mut sheet = picture("photo/gradient.png", Purpose::Import);
+    assert_eq!(sheet.size(), None, "no size is invented");
+    assert_eq!(sheet.footprint_mm(), None);
+    assert!(sheet.command().is_none(), "Import is disabled");
+    assert_eq!(
+        sheet.blocked(&strings).as_deref(),
+        Some("Type the picture's width or its height")
+    );
+
+    sheet.set_width_mm(100.0);
+    assert_eq!(sheet.side(), PictureSide::Width);
+    assert_eq!(sheet.size(), Some(PictureSize::Width { width_mm: 100.0 }));
+    assert_eq!(sheet.footprint_mm(), Some((100.0, 50.0)));
+    assert_eq!(sheet.blocked(&strings), None);
+    assert!(sheet.command().is_some());
+
+    sheet.set_height_mm(30.0);
+    assert_eq!(sheet.side(), PictureSide::Height);
+    assert_eq!(sheet.size(), Some(PictureSize::Height { height_mm: 30.0 }));
+    assert_eq!(sheet.footprint_mm(), Some((60.0, 30.0)));
+    // What the command carries is what `image add --height 30` places.
+    let (pixels, _) = decoded("photo/gradient.png");
+    match sheet.command().expect("Import is enabled") {
+        Command::ImportPicture {
+            name,
+            pixels: carried,
+            size,
+        } => {
+            assert_eq!(name, "gradient.png");
+            assert_eq!(*carried, pixels);
+            assert_eq!(size, PictureSize::Height { height_mm: 30.0 });
+        }
+        other => panic!("not a picture import: {other:?}"),
+    }
+
+    // A size that is no length is the refusal `image add` prints.
+    for bad in [0.0, -5.0, f64::NAN, f64::INFINITY] {
+        sheet.set_width_mm(bad);
+        let refusal = PictureSize::Width { width_mm: bad }
+            .footprint_mm(64, 32)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(sheet.blocked(&strings), Some(refusal), "{bad}");
+        assert!(sheet.command().is_none(), "{bad}");
+        assert_eq!(sheet.footprint_mm(), None, "{bad}");
+    }
+    // A footprint past the coordinate limit is `image add`'s refusal too.
+    sheet.set_width_mm(1.0e9);
+    let refusal = picture_into(
+        &App::new_project().unwrap(),
+        "gradient",
+        &pixels,
+        PictureSize::Width { width_mm: 1.0e9 },
+        Point::new(0.0, 0.0),
+    )
+    .unwrap_err()
+    .to_string();
+    assert_eq!(sheet.blocked(&strings), Some(refusal));
+    assert!(sheet.command().is_none());
+
+    sheet.clear_size();
+    assert_eq!(sheet.size(), None);
+    assert!(sheet.blocked(&strings).is_some());
+}
+
+/// A file that is not the picture its name says is the importer's refusal,
+/// which `image add` prints after `cannot import <file>: `; the sheet
+/// shows it, nothing imports, and the app refuses with the same reason.
+#[test]
+fn unreadable_picture_blocks_with_the_cli_message() {
+    let strings = Strings::default();
+    let png = read(&fixture("photo/gradient.png"));
+    let cases: [(&str, ImageFormat, Vec<u8>); 2] = [
+        ("gradient.jpg", ImageFormat::Jpeg, png),
+        ("notes.png", ImageFormat::Png, b"not a picture".to_vec()),
+    ];
+    for (name, format, bytes) in cases {
+        let refusal = dc_import::bitmap::import(&bytes, format)
+            .unwrap_err()
+            .to_string();
+        let mut sheet = PictureImport::open(format, name, &bytes, Purpose::Import);
+        assert_eq!(sheet.size_px(), None, "{name}");
+        assert_eq!(sheet.blocked(&strings), Some(refusal.clone()), "{name}");
+        sheet.set_width_mm(100.0);
+        assert_eq!(
+            sheet.blocked(&strings),
+            Some(refusal.clone()),
+            "{name}: a size does not make it readable"
+        );
+        assert!(sheet.command().is_none(), "{name}");
+
+        let mut harness = empty();
+        let before = harness.app.project().clone();
+        match harness.app.import_picture(&sheet) {
+            Err(CommandError::NotImportable { reason }) => assert_eq!(reason, refusal, "{name}"),
+            other => panic!("{name}: expected a refusal, got {other:?}"),
+        }
+        assert_eq!(harness.app.project(), &before, "{name}");
+        assert!(!harness.app.can_undo(), "{name}");
+    }
+}
+
+/// One picture import is one undo step, labelled with the file's name;
+/// undo returns the project as it was, redo brings the bitmap back. The
+/// shapes selected stay selected: a picture is not a shape.
+#[test]
+fn one_picture_import_is_one_undo_step() {
+    let mut harness = Harness::open(&read(&fixture("plaque.dcv"))).expect("the plaque opens");
+    let before = harness.app.project().clone();
+    let selected = Selection::Instances(vec![before.instances[0].id.clone()]);
+    harness.app.select(selected.clone());
+    let mut sheet = picture("photo/gradient.png", Purpose::Import);
+    sheet.set_width_mm(40.0);
+    harness
+        .app
+        .import_picture(&sheet)
+        .expect("the picture imports");
+    let after = harness.app.project().clone();
+    assert_eq!(after.bitmaps.len(), before.bitmaps.len() + 1);
+    assert_eq!(harness.app.selection(), &selected);
+    assert_eq!(harness.app.undo_label(), Some("Import gradient.png"));
+    assert!(harness.app.is_dirty());
+
+    assert_eq!(harness.app.undo().as_deref(), Some("Import gradient.png"));
+    assert_eq!(harness.app.project(), &before, "one step undoes the import");
+    assert!(!harness.app.can_undo(), "and it was the only step");
+    assert_eq!(harness.app.redo().as_deref(), Some("Import gradient.png"));
+    assert_eq!(harness.app.project(), &after);
+}
+
+/// Capabilities 51, 55 and 56: what a file dropped on the window is, by
+/// its name, and what the app makes of it. A `.dcv` opens, a drawing
+/// opens the Add drawing sheet's model, a picture the Add picture sheet's,
+/// each to import into the open project; anything else is refused with a
+/// message naming the file, and nothing changes.
+#[test]
+fn a_dropped_file_opens_its_sheet_or_the_project() {
+    assert_eq!(FileKind::of("plaque.dcv"), Some(FileKind::Project));
+    assert_eq!(
+        FileKind::of("sign.svg"),
+        Some(FileKind::Drawing(DrawingFormat::Svg))
+    );
+    assert_eq!(
+        FileKind::of("PLAQUE.DXF"),
+        Some(FileKind::Drawing(DrawingFormat::Dxf))
+    );
+    assert_eq!(
+        FileKind::of("photo.png"),
+        Some(FileKind::Picture(ImageFormat::Png))
+    );
+    for name in ["photo.jpg", "photo.JPEG"] {
+        assert_eq!(
+            FileKind::of(name),
+            Some(FileKind::Picture(ImageFormat::Jpeg)),
+            "{name}"
+        );
+    }
+    for name in ["notes.txt", "README", "plaque.dcv.bak", "svg"] {
+        assert_eq!(FileKind::of(name), None, "{name}");
+    }
+
+    let drop = |harness: &mut Harness, path: &str| {
+        let file = fixture(path);
+        harness.app.drop_file(&file, read(&file))
+    };
+    let mut harness = empty();
+    let untouched = harness.app.project().clone();
+
+    for path in ["sign.svg", "plaque.dxf"] {
+        match drop(&mut harness, path).expect("a drawing's sheet") {
+            Dropped::Drawing(sheet) => {
+                assert_eq!(sheet.name(), path);
+                assert_eq!(sheet.purpose(), Purpose::Import);
+                assert_eq!(*sheet, self::sheet(path), "{path}: File ▸ Add's sheet");
+                assert!(sheet.command().is_some(), "{path}: ready to import");
+            }
+            other => panic!("{path}: not a drawing's sheet: {other:?}"),
+        }
+        assert_eq!(harness.app.project(), &untouched, "{path}: nothing yet");
+    }
+
+    for path in ["photo/gradient.png", "photo/colour.jpg"] {
+        match drop(&mut harness, path).expect("a picture's sheet") {
+            Dropped::Picture(sheet) => {
+                assert_eq!(sheet.purpose(), Purpose::Import);
+                assert_eq!(*sheet, picture(path, Purpose::Import), "{path}");
+                assert!(sheet.size_px().is_some(), "{path}: decoded");
+                assert_eq!(sheet.size(), None, "{path}: the size is the user's");
+            }
+            other => panic!("{path}: not a picture's sheet: {other:?}"),
+        }
+        assert_eq!(harness.app.project(), &untouched, "{path}: nothing yet");
+        assert!(!harness.app.can_undo(), "{path}");
+    }
+
+    let file = fixture("plaque.dcv");
+    match drop(&mut harness, "plaque.dcv").expect("the project opens") {
+        Dropped::Project(opened) => assert!(
+            opened
+                .problems
+                .iter()
+                .all(|p| p.severity() != dc_project::Severity::Error)
+        ),
+        other => panic!("not a project: {other:?}"),
+    }
+    assert_eq!(harness.app.project(), &common::plaque());
+    assert_eq!(harness.app.source(), Some(file.as_path()));
+    assert!(!harness.app.is_dirty() && !harness.app.can_undo());
+
+    // Not a file DreamCarve reads, and a `.dcv` that is not a project:
+    // refused, the open project kept.
+    let plaque = harness.app.project().clone();
+    match harness
+        .app
+        .drop_file(Path::new("notes.txt"), b"hello".to_vec())
+    {
+        Err(CommandError::NotImportable { reason }) => {
+            assert!(reason.contains("notes.txt"), "{reason}");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(matches!(
+        harness
+            .app
+            .drop_file(Path::new("broken.dcv"), b"not json".to_vec()),
+        Err(CommandError::Load(_))
+    ));
+    assert_eq!(harness.app.project(), &plaque);
+    assert_eq!(harness.app.source(), Some(file.as_path()));
 }
 
 /// Slice 35 (#627), capability 55 and acceptance 103: the sheet's preview

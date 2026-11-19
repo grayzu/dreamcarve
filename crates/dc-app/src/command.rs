@@ -14,6 +14,7 @@
 //! point in definition space. `TransformInstances` applies its delta about
 //! the selection's joint bounding-box centre, as capability 58 says.
 
+mod bitmaps;
 mod instances;
 mod operations;
 
@@ -21,11 +22,14 @@ pub(crate) use instances::{
     about, bounds as selection_bounds, centre, copy_name, find as find_instance, next_free_id,
 };
 
+use std::sync::Arc;
+
 use dc_geometry::{Transform, approx_eq};
 use dc_job::Drawing;
+use dc_job::picture::PictureSize;
 use dc_project::{
-    Heights, InstanceId, MachineOrigin, Operation, OperationId, PlacedTab, PostProcessorRef,
-    Project, Stock, TabId, Tool, ToolId, Units, switch_post,
+    BitmapId, Grayscale, Heights, InstanceId, MachineOrigin, Operation, OperationId, PlacedTab,
+    PostProcessorRef, Project, Stock, TabId, Tool, ToolId, Units, switch_post,
 };
 
 use crate::arrange::Flip;
@@ -85,6 +89,38 @@ pub enum Command {
         /// The drawing's file name.
         name: String,
     },
+    /// Append a picture as the next bitmap, at the stock's bottom-left
+    /// corner, as `dreamcarve image add` adds it (capability 56). The
+    /// bitmap is named by the file's stem.
+    ImportPicture {
+        /// The picture's file name, for the label.
+        name: String,
+        /// The picture decoded to the grayscale a bitmap stores, shared
+        /// with the sheet that decoded it.
+        pixels: Arc<Grayscale>,
+        /// The footprint's width or height; the other follows the pixels.
+        size: PictureSize,
+    },
+    /// Set the `visible` and `locked` flags given on bitmaps (a Pictures
+    /// row's eye and padlock, capability 57).
+    SetBitmapFlags {
+        /// The bitmaps.
+        ids: Vec<BitmapId>,
+        /// The new `visible`, when it changes.
+        visible: Option<bool>,
+        /// The new `locked`, when it changes.
+        locked: Option<bool>,
+    },
+    /// Rename a bitmap.
+    RenameBitmap {
+        /// The bitmap.
+        id: BitmapId,
+        /// Its new name.
+        name: String,
+    },
+    /// Remove bitmaps. A Photo V-Carve that carved one stays, and
+    /// validation says its picture is gone (capability 56).
+    DeleteBitmaps(Vec<BitmapId>),
     /// Apply `delta` to each instance about the selection's joint
     /// bounding-box centre. Refused when any instance is locked.
     TransformInstances {
@@ -266,6 +302,18 @@ impl Command {
             Self::ImportDrawing { drawing, .. } => {
                 next = dc_job::drawing_into(project, drawing.clone()).0;
             }
+            Self::ImportPicture { name, pixels, size } => {
+                next = bitmaps::import(project, name, pixels, *size)?;
+            }
+            Self::SetBitmapFlags {
+                ids,
+                visible,
+                locked,
+            } => bitmaps::set_flags(&mut next, ids, *visible, *locked)?,
+            Self::RenameBitmap { id, name } => {
+                bitmaps::find_mut(&mut next, id)?.name.clone_from(name);
+            }
+            Self::DeleteBitmaps(ids) => bitmaps::delete(&mut next, ids)?,
             Self::TransformInstances { ids, delta } => {
                 next = instances::transform(project, ids, *delta)?;
             }
@@ -435,9 +483,25 @@ impl Command {
                     .map_or_else(|| id.as_str().to_owned(), |t| t.name.clone());
                 with_subject(StrKey::CommandLabelDeleteTool, &one(strings, &name))
             }
-            Self::ImportDrawing { name, .. } => {
+            Self::ImportDrawing { name, .. } | Self::ImportPicture { name, .. } => {
                 strings.fmt(StrKey::CommandLabelImport, &[("name", name)])
             }
+            Self::SetBitmapFlags {
+                ids,
+                visible,
+                locked,
+            } => with_subject(
+                flags_key(*visible, *locked),
+                &bitmaps::subject(strings, before, ids),
+            ),
+            Self::RenameBitmap { id, .. } => with_subject(
+                StrKey::CommandLabelRename,
+                &bitmaps::subject(strings, before, std::slice::from_ref(id)),
+            ),
+            Self::DeleteBitmaps(ids) => with_subject(
+                StrKey::CommandLabelDelete,
+                &bitmaps::subject(strings, before, ids),
+            ),
             Self::TransformInstances { ids, delta } => {
                 let key = match instances::classify(*delta) {
                     instances::TransformKind::Move => StrKey::CommandLabelMove,
@@ -473,16 +537,7 @@ impl Command {
                 ids,
                 visible,
                 locked,
-            } => {
-                let key = match (visible, locked) {
-                    (Some(true), None) => StrKey::CommandLabelShow,
-                    (Some(false), None) => StrKey::CommandLabelHide,
-                    (None, Some(true)) => StrKey::CommandLabelLock,
-                    (None, Some(false)) => StrKey::CommandLabelUnlock,
-                    _ => StrKey::CommandLabelSetFlags,
-                };
-                with_subject(key, &subject_of(ids))
-            }
+            } => with_subject(flags_key(*visible, *locked), &subject_of(ids)),
             Self::RenameInstance { id, .. } => with_subject(
                 StrKey::CommandLabelRename,
                 &subject_of(std::slice::from_ref(id)),
@@ -564,6 +619,18 @@ impl Command {
             }
             Self::FitStockToShapes { .. } => plain(StrKey::CommandLabelFitStock),
         }
+    }
+}
+
+/// The label of a change of the `visible` and `locked` flags: *Show*,
+/// *Hide*, *Lock* or *Unlock* for one flag, else *Set flags of*.
+const fn flags_key(visible: Option<bool>, locked: Option<bool>) -> StrKey {
+    match (visible, locked) {
+        (Some(true), None) => StrKey::CommandLabelShow,
+        (Some(false), None) => StrKey::CommandLabelHide,
+        (None, Some(true)) => StrKey::CommandLabelLock,
+        (None, Some(false)) => StrKey::CommandLabelUnlock,
+        _ => StrKey::CommandLabelSetFlags,
     }
 }
 
