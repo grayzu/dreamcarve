@@ -92,8 +92,7 @@ pub(super) fn check_run(
     let post = project.post_processor.resolve().unwrap();
     let transform = MachineTransform::new(project, &post).unwrap();
     let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
-    let material = Material::of_run(project, op, label, tool, dc_project::Board::Female);
-    let tabs = material::tab_spines(project, op);
+    let (material, tabs) = Material::held_run(project, op, label, tool, dc_project::Board::Female);
     let toolpath = Toolpath::default();
     let span = OpSpan {
         op,

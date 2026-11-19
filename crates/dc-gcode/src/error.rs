@@ -331,6 +331,19 @@ pub enum ExportError {
         /// The active feed, mm/min.
         feed_mm_min: f64,
     },
+    /// A cutting move (`G1`, `G2` or `G3`) is on a line of no operation
+    /// (review 1.10): there is no toolpath to read it back against (S6),
+    /// no material to hold it to (S9), and no tool whose rates and radius
+    /// S3, S7 and S10 could check it by. DreamCarve writes every cut
+    /// inside its operation's lines, so only a post-processor
+    /// definition's header or footer line can be one.
+    #[error(
+        "emitted line {line} cuts outside every operation, so no rule can hold it to a toolpath, a material or a tool"
+    )]
+    CutOutsideOperation {
+        /// 1-based line number in the program.
+        line: usize,
+    },
     /// S4: a cutting move happens while the spindle is off or without a
     /// speed.
     #[error("emitted line {line} cuts while the spindle is not running")]
@@ -536,6 +549,18 @@ pub enum ExportError {
         /// Index of the first toolpath move not reproduced; the number of
         /// moves if extra motion follows the last.
         index: usize,
+    },
+    /// The safety pass could not finish one of its own checks: a lookup
+    /// into data the pass built itself missed (code review 1.1, #711;
+    /// `crate::material`'s module docs, "Fail closed"). A defect in
+    /// DreamCarve, never in the project. A check that could not be
+    /// finished has not passed, so no program is produced.
+    #[error(
+        "the safety pass could not finish its own check ({check}); this is a defect in DreamCarve, not in the project, and no program was written"
+    )]
+    SafetyCheckDefect {
+        /// The rule and what missed, in words.
+        check: &'static str,
     },
     /// #283: the project's clearance height is below an operation's safe
     /// Z, so a link between parts would run lower than one between passes.

@@ -4151,9 +4151,33 @@ against the male board.
   board's edge leaves of one outline, which the pass finds itself, take
   it between them. So both hold a clipped cut-out to the tabs asked
   for, not to that many on every piece
-  (`safety::clipped_cut_out_with_tabs_passes_safety`). S9 builds a tab's
-  spine on a closed outline only, as for a Profile, so it does not hold
-  a plunge off a tab on an open piece. It never calls a generator
+  (`safety::clipped_cut_out_with_tabs_passes_safety`). A tab on an open
+  piece is held as one on a closed outline is: S9 builds its spine along
+  the piece (the piece and its open offsets by the tool radius,
+  `dc_geometry::offset_open`), and measures a plunge's distance from the
+  tab's centre along the piece only, never from one end round to the
+  other as on a closed path. A plunge on a piece at a tab below its top
+  is refused (`safety::cut_out_plunge_into_a_tab_on_an_open_piece_fails`;
+  `material::tab_span_does_not_wrap_round_an_open_path`). Before this
+  S9 built a spine on a closed outline only, as for a Profile, so no
+  plunge on an open piece was held off a tab. The same spine now holds
+  a tab on an open path of an On line Profile (#175), which was not
+  held either; an inside or outside Profile cuts closed outlines only,
+  so a tab on an open one is none of its. **Not held yet: a tab on an
+  open path of a Left or Right Profile (#207).** The same spine built
+  there (the path and `offset_open` of it by the radius both ways)
+  refuses a generated program:
+  `properties::random_valid_left_right_profiles_never_panic_and_pass_safety`,
+  proptest seed `cc 7dd67ad2d74ba6340ee0c59b55e268e11c5b74bfe36de91c7feabf6296bf3e2b`,
+  a Right Profile through 22.5 mm stock with a 2.58 mm bit, a 1° ramp
+  and one smooth tab 1 mm wide asked for at distance 0, fails S9 at a
+  plunge (`OffMaterial`, line 950). What it needs before S9 can hold it:
+  whether the generator plunges below the tab's top inside its span at
+  the end of an open path, or the spine measures the span along
+  `offset_open`'s path where the generator measures it along its own
+  tool path (the two differ near the path's ends, where the offset is
+  trimmed); then the spine's paths for a Left or Right Profile are the
+  path offset to its cut side only. It never calls a generator
   (`s17_uses_no_generator`).
 - **S18, countersink.** For a Drill whose cycle is a countersink: every
   cut (`G1` with Z motion) in its span is vertical, at a target circle's

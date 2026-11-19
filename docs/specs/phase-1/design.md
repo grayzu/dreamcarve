@@ -578,6 +578,16 @@ Inputs: project, op. Output: toolpath in project space.
    anywhere in the program whose end is its start within half a unit in
    the last written place is a full circle to the controller and fails
    as `ExportError::FullCircleArc`, so S7 and the extents never see one.
+   Every cut belongs to an operation (code review 1.10): a `G1`, `G2` or
+   `G3` on a line outside every operation's lines fails as
+   `ExportError::CutOutsideOperation { line }`. S3's tool rates, S6, S7's
+   tool radius, S9 and S10 hold a cut by the operation whose lines it is
+   on, so such a cut was held only to S1, S4 and a positive feed. The
+   emitter writes none; only a definition's header or footer line could
+   (`emit::a_cut_outside_every_operation_is_refused`: a footer that
+   plunged into the stock at five times the tool's feed before its `M5`
+   exported). A rapid there is still held to S2 at the highest safe Z of
+   the program.
    `M6` and `M61` are accepted only from a definition whose tool change has
    `M6` and whose tool-change mode is `"m6"`. A violation is
    `ExportError`, never a warning.
@@ -590,6 +600,110 @@ Inputs: project, op. Output: toolpath in project space.
    reaches, in its own units: every known end point of every move, and the
    axis extremes of every arc (from I/J, or the centre GRBL computes from
    R), so it can be wider than the X and Y words (#62).
+
+#### The safety pass fails closed (code review 1.1, #711)
+
+The safety pass is the last thing between a program and a machine, so a
+check that cannot be finished has not passed. The workspace lint warns
+on indexing, so the pass reads its own data with `.get(..)` and a
+fallback, and an empty fallback under `.all(..)` is a pass. Three forms
+replace that, in this order of preference:
+
+1. **No lookup.** The data is held where it is used, so there is nothing
+   to miss: each `Loop` owns its edges, `walls_allow` takes the whole
+   area, a `Choice` holds its toolpath move.
+2. **Project data that does not resolve is `Material::Unresolved`.** The
+   operation has no material, so every cut of it is
+   `ExportError::OffMaterial`. This was already the model for targets; it
+   now covers a run's tabs too (`Material::held_run`).
+3. **A lookup into the pass's own data that misses is
+   `ExportError::SafetyCheckDefect { check }`,** which stops export and
+   says the defect is DreamCarve's, not the project's.
+
+A move whose position is not known is refused by the rule that needs the
+position, never passed by it.
+
+The audit covered every `unwrap_or_default()`, `unwrap_or(..)`,
+`map_or(..)` default, `is_some_and`/`is_none_or` on a lookup, `.ok()` and
+`let Some(..) = .. else` in `dc-gcode/src/safety.rs`, `material.rs` and
+`material/{cone,countersink,photo}.rs`: 102 sites, 31 of which failed
+open (a row that groups several says how many). "Open" means a miss made the check pass; "closed" that it failed
+or made the rule stricter; "not a miss" that the `None` is a value of
+the domain (no last pass, arc fitting off), not a failed lookup. None of
+the open sites was reachable from a project but one, a tab on an open
+outline: each range, index and option is built by the code that reads
+it. No program that passed
+before fails now, bar a cut outside every operation (1.10).
+
+S6 and the modal rules (`safety.rs`):
+
+| Site | Before | Now |
+| --- | --- | --- |
+| `Matching::view`, `motions.get(cursor..).unwrap_or_default()` | Open: a place past the last line read as "no line left", so a move could match by no line | `Matching::lines`, `split_at_checked`: `SafetyCheckDefect` |
+| `Matching::finished`, the same lookup under `.all(is_retract)` | Open: past the end, "every line left is a retract" | The same `lines`: `SafetyCheckDefect` |
+| `Matching::search`, `moves.get(index)` after a step that covered more moves than are left | Open: read as "every move matched" | `Matching::advance` refuses the step: `SafetyCheckDefect` |
+| `Matching::advance`, `cursor + step.lines` unchecked | Open, with the two above | Refused with the step |
+| `first_step`, a dwell's `cursor.checked_sub(1).and_then(motions.get)` | Open: past the end, a dwell matched any earlier `G4` | `View::taken.last()`: `None` only when no line is taken |
+| `Matching::view`, `index.checked_sub(1).and_then(moves.get)` | Closed: no start, so no arc and no fitted run matches | `split_at_checked`: `SafetyCheckDefect` past the end, `None` only for the first move |
+| `search`, `moves.get(choice.at.index).map(other_steps).unwrap_or_default()` | Closed: nothing else to try | No lookup: the `Choice` holds its move |
+| `advance`, `moves.get(index)` for the last straight cut | Neither: kept the cut before | No lookup: takes the move |
+| `view`, tolerance `map_or(EPS_MM, ..)` | Closed: the tightest | Unchanged |
+| `search`, first cursor `position(..).unwrap_or(len)` | Not a miss: every line is a retract | Unchanged |
+| `first_step`, a dwell's `before`, `map_or(usize::MAX, ..)` | Not a miss: no line follows | Unchanged |
+| `match_rapid`, `match_rapid_on_the_way`, `rest.get(1)` (2) | Not a miss: no second line | Unchanged |
+| `walk_fitted_arc`, `pieces.get(..)?`, `moves.get(index..)?`, `.get(piece + 1..).is_some_and` (6) | Closed: no fitted run | Unchanged |
+| `descent_rate_mm_min`, `mv.feed.unwrap_or(0.0)` | Open: a falling cut with no feed fell at 0 mm/min, under every plunge rate (S3 refused it first) | `f64::INFINITY`: over every plunge rate |
+| `check_descent_rate`, `tool.plunge_mm_min.unwrap_or(0.0)` | Closed: a limit of 0 | Unchanged |
+| `check_feed`, `check_descent_rate`, `limits.tool` is `None` (2) | Open: skipped (1.10) | `CutOutsideOperation` before them; they take the operation and tool |
+| `check_on_stock`, `limits.tool.map_or(0.0, ..)` | Open: a point (1.10) | `CutOutsideOperation` |
+| `RouterPauses::cut`, `tool: Option` | Closed: no tool is a first cut | Takes the tool |
+| `check_on_stock`, `groove_radius_mm(..).unwrap_or(full_mm)` | Closed: the full radius | Unchanged |
+| `check_rules`, `rpm.is_none_or(..)`, `router.z_mm` unknown (2) | Closed: not running, not at safe Z | Unchanged |
+| An arc's `i.unwrap_or(0.0)`, `j.unwrap_or(0.0)` (5, and `material::project_path`) | Not a miss: the controller reads an absent word as 0 | Unchanged |
+| `arc_fit_mm.unwrap_or(0.0)` (2), `clearance_z_mm.unwrap_or(NEG_INFINITY)`, `cut_to..map_or(z_mm, ..)`, `next_dwell.unwrap_or(..)` (5) | Not a miss: the option is unset | Unchanged |
+| `check_depth`, `descent_rate_mm_min`, an unknown Z (2) | Not a lookup: S2 and S4 need a known Z before an XY rapid, a stop, a spindle start and so any cut | Unchanged |
+
+S9 and its rules (`material.rs`, `material/*.rs`):
+
+| Site | Before | Now |
+| --- | --- | --- |
+| `walls_allow`, `edges.get(scope).unwrap_or_default()` under `.all` | Open: a scope outside the area was "clear of every wall" | No lookup: no scope, every edge of the area |
+| `Notch::allows`, `scope.contains` | Closed: no corner, no notch | No scope |
+| `is_lap`, `edges.get(l.edges).unwrap_or_default()` | Closed: on no loop | No lookup: `Loop::edges` is the loop's own |
+| `on_own_line`, the same | Closed: on no line | No lookup |
+| `open_paths_of`, `region_index.and_then(regions.get)` | Open: a held path with no line beside it to keep the band from | No lookup: the region is kept with its place |
+| `areas_of`, bounds `unwrap_or_else(origin)` | Open: an outside Profile's cut passed an area without edges by, and so did a cone's walls | `EVERYWHERE`: near every cut |
+| `corners_of`, `segments.get(before) else continue` | Closed: no corner | No lookup: each segment zipped with the one before |
+| `corners_of`, `point_at` `else continue`; `areas_of`, `alone: nest(..).ok()` (2) | Closed: no corner; no lap on that loop | Unchanged |
+| `in_regions`, `areas.get(i)` `else false` | Closed | Unchanged |
+| `regions_of`, `placed`, `male_design`, `Sink::of`, `Picture::of`, `inlay_cone`, `floor_of`, `cut_out_material`, a Left or Right Profile's tool (9) | Closed: `Unresolved` | Unchanged |
+| `cleared_start_plane(..).is_some_and` (3) | Closed: engaged from the stock top | Unchanged |
+| `MaleGeometry::of`, `merged_design`, `carve_bit_of(..).map_or(tolerance, ..)` (2) | Neither: a coarser outline; no caller reaches it without the bit | `?`: `Unresolved` |
+| `male_band_on_board`, `band_edge_of(..).unwrap_or_else(rounded_band)` | Open: held to the margin's band where the drawn one did not resolve; `male_band` resolves it first | `?`: `Unresolved` |
+| `trench_rule`, no stock thickness | Open: the trench rule left out | `Unresolved` |
+| `tab_spines`, the tool, or the depth or thickness, missing (2) | Open: no tabs | `None`: `Unresolved` |
+| `tab_spines`, `place(..).ok()..unwrap_or_default()` | Open: no tabs of a request that cannot be placed | `None` |
+| `tab_spines`, a tab's instance, definition, profile, transform or contour (5 `?` in a `filter_map`) | Open: the tab dropped | `None`; a tab on an open outline an On line Profile cuts has a spine along it (`docs/specs/phase-3/design.md`, "S9, an Inlay cut-out"), which is the one site a project could reach: a clipped cut-out's tabs. Still open: a tab on an open path of a Left or Right Profile, which that section says is not held yet |
+| `run_tab_spines`, `.unwrap_or_default()` | Open in itself; `cut_out_material` was `Unresolved` for the same cause | `None` |
+| `cut_out_placed`, `place_shared(..).ok()` | Open: no tab placed | `None` |
+| `TabSpine::cuts_into`, `nearest_point` `else false`; the stock path's `is_some_and` (2) | Open: not on that path | The cut goes below the tab |
+| `TabSpine::cuts_material`, `nearest_point(lap, ..)?` | Open: that tab holds no lap up | Refuses the plunge |
+| `split_lap`, `if let Some(piece) = sub_segment(..)` | Open for a piece held high, closed for a low one | Returns `false`; the plunge is refused |
+| `keeps_tabs`, a coordinate not known | Open in itself: S9 refused an unknown XY, not an unknown Z | `false` |
+| `Trench::allows`, a coordinate not known | The same | `false` |
+| `Trench::allows`, `point_at(s).map_or(path.end, ..)` | Neither: the end stood in | Not in a trench |
+| `Trench::on_earlier`, `cells.get`, `cuts.get(i)` (2) | Closed: no earlier cut | Unchanged |
+| `check`, `path.is_some_and`, `z_mm.is_some_and`, `selves..map_or(empty)` (3) | Closed: off the material | Unchanged |
+| `trench.is_none_or`, `notch.is_some_and`, `steps.is_some_and`, `own.is_none_or`, `last_pass..map_or(0.0, ..)`, `stock_paths..unwrap_or_default()`, `sub_segment`'s bulge (7) | Not a miss: the rule is not the operation's | Unchanged |
+| `points_of`, `map_or(path.start, ..)` | Not a miss: a path with no length has its middle at its start | Unchanged |
+| `countersink`, `photo`: an unknown Z (`is_none_or(below)`, `else Err`), `at_a_centre` `else false` (5) | Closed | Unchanged |
+
+Tests: `material::walls_allow_holds_a_cut_to_every_edge_of_the_area`
+(the issue's `walls_allow_refuses_a_scope_outside_the_area` failed
+against the old signature and cannot be written against the new one),
+`safety::matching_is_not_finished_past_the_end`, and one
+`<function>_fails_closed_on_<what misses>` for each open site a test
+can reach.
 
 ### SVG import (dc-import::svg)
 
