@@ -6376,6 +6376,93 @@ mod tests {
         );
     }
 
+    /// S9 holds a plunge off a tab on an open path of a Left or Right
+    /// Profile (#207), which it did not: a spine was built for a tab on a
+    /// closed outline and on an open path cut On line only. The sample
+    /// with an open line from (10, 60) to (70, 60), its 6.35 mm bit, and
+    /// one tab 6 mm wide whose top is 2 mm above the stock bottom (Z −4)
+    /// asked for 30 mm along the line, or at its first vertex. The bit
+    /// runs 3.175 mm to the cut side of the line, and the tab is centred
+    /// on that path: at (40, 63.175) Left, (40, 56.825) Right. Its
+    /// stretch is 6.175 mm either side of the centre.
+    ///
+    /// The generated program passes. A hand-written plunge on the bit's
+    /// path passes at the tab's centre down to its top and fails 1 mm
+    /// below it; 5 mm along it fails too, to the stock bottom over a rect
+    /// tab and 0.1 mm above it on a smooth tab's slope, where it may go
+    /// to 0.571 mm above the bottom and passes 1 mm above it; 8 mm along
+    /// it is clear and passes to the stock bottom. The same holds at a
+    /// tab asked for at the line's first vertex, where the path starts.
+    #[test]
+    fn left_right_plunge_into_a_tab_on_an_open_path_fails_s9() {
+        let with_tab = |side: dc_project::Side, shape: dc_project::TabShape, at_mm: f64| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                def.profiles = vec![dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(0.0, 50.0),
+                        dc_geometry::Vertex::line(60.0, 50.0),
+                    ],
+                    false,
+                )];
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = side;
+            if let Some(tabs) = &mut op.tabs {
+                tabs.placement = dc_project::TabPlacement::AtDistances {
+                    distances_mm: vec![at_mm],
+                };
+                tabs.shape = shape;
+            }
+            let op = op.clone();
+            (project, op)
+        };
+        let plunge = |x: f64, y: f64, z: f64| {
+            format!("G21 G90\nG54\nG0 Z5\nX{x} Y{y}\nG1 Z{z} F300\nG0 Z5\n")
+        };
+        for (side, y) in [
+            (dc_project::Side::Left, 63.175),
+            (dc_project::Side::Right, 56.825),
+        ] {
+            for shape in [dc_project::TabShape::Rect, dc_project::TabShape::Smooth] {
+                for at_mm in [30.0, 0.0] {
+                    let case = format!("{side:?}, a {shape:?} tab at {at_mm} mm");
+                    let (project, op) = with_tab(side, shape, at_mm);
+                    let (toolpath, _) = generate_profile(&project, &op).unwrap();
+                    let op = Operation::Profile(op);
+                    emit(
+                        &project,
+                        &[(op.clone(), project.tools[0].clone(), toolpath).into()],
+                        "2026-11-18",
+                    )
+                    .unwrap_or_else(|e| panic!("{case}: {e}"));
+                    let passes = |x: f64, z: f64| {
+                        check_material_text(&plunge(x, y, z), &project, &op)
+                            .unwrap_or_else(|e| panic!("{case}: a plunge at X{x} to Z{z}: {e}"));
+                    };
+                    let fails = |x: f64, z: f64| {
+                        let err = check_material_text(&plunge(x, y, z), &project, &op).unwrap_err();
+                        assert!(
+                            matches!(&err, ExportError::OffMaterial { op: at, line: 5 } if at == op.id()),
+                            "{case}: a plunge at X{x} to Z{z}: {err:?}"
+                        );
+                    };
+                    let centre = 10.0 + at_mm;
+                    passes(centre, -4.0);
+                    fails(centre, -5.0);
+                    match shape {
+                        dc_project::TabShape::Rect => fails(centre + 5.0, -6.0),
+                        dc_project::TabShape::Smooth => {
+                            fails(centre + 5.0, -5.9);
+                            passes(centre + 5.0, -5.0);
+                        }
+                    }
+                    passes(centre + 8.0, -6.0);
+                }
+            }
+        }
+    }
+
     /// #342: S9 holds a Left or Right cut out of the strip a line keeps,
     /// bounded by the normals through its end vertices, whatever the
     /// offset does there. The sample with a 30° V notch, tip at (50, 50),

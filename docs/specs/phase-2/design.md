@@ -1282,7 +1282,21 @@ cut direction and cut side.
   centres from the first vertex as drawn whichever end the cut starts
   at, spans cut short at the ends instead of wrapping; a tab over the
   start of the cut plunges with `EntryFallback` (the start of an open
-  path cannot move). Leads and corner relief: none, as every On line
+  path cannot move). A smooth span an end cuts short has no slope at
+  that end: it holds the tab top right to the end of the path, as a
+  rect span does and as a stock path's stretch does (#311), so a lap
+  that starts there comes down onto the tab (#337) and one that ends
+  there ends on it. (changed 2026-11-18, found by the Left and Right
+  property's seed `cc 7dd67ad2…`: the slope, half the tab's width, was
+  laid inside what the end left of the span, from the path's end. A
+  pass was then at its own depth at the end of the path, within the
+  tool radius of the tab's centre or on the tab's slope, and cut the
+  tab through: a tab asked for at distance 0 was not left at all. The
+  same held Left and Right (#207) and for a cut-out's open pieces
+  (#495). `tabs::smooth_span_cut_short_by_an_open_end_holds_its_top_there`,
+  `profile::smooth_tab_cut_short_by_an_open_paths_end_is_not_cut_through`,
+  `profile::smooth_tab_at_an_open_paths_start_is_come_down_onto`.)
+  Leads and corner relief: none, as every On line
   Profile (`LeadDropped (on_line)`, `ReliefSkipped`). S9 holds a cut on
   an open target to that path, as an Engrave's. Validation's
   `OpenProfile` is not reported for a definition an enabled On line

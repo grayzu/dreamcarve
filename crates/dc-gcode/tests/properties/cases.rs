@@ -1163,6 +1163,78 @@ fn left_open_path_last_pass_plunge_exports() {
     exports(&left_open_path_last_pass_plunge());
 }
 
+/// `project` (one of [`open_line_smooth_tab_at_its_first_vertex`]'s)
+/// exports, and no feed move ends below the tab's top within the tool
+/// radius of the tab's centre along the line, where the tab top is held:
+/// the tab is left standing.
+fn assert_tab_at_the_first_vertex_stands(project: &Project) -> Vec<Warning> {
+    let warnings = exports(project);
+    let Operation::Profile(op) = &project.operations[0] else {
+        unreachable!("the case's operation is a Profile");
+    };
+    let top_z_mm = op.tabs.as_ref().expect("the case asks for a tab").height_mm;
+    let radius_mm = project.tools[0].diameter_mm / 2.0;
+    let (toolpath, _) = generate_profile(project, op).expect("the case generates");
+    let over_tab: Vec<_> = toolpath
+        .moves
+        .iter()
+        .filter(|m| !matches!(m.kind, MoveKind::Rapid) && m.to.x <= 100.0 + radius_mm - 1e-9)
+        .collect();
+    assert!(!over_tab.is_empty(), "the cut reaches the first vertex");
+    for mv in over_tab {
+        assert!(
+            mv.to.z >= top_z_mm - 1e-9,
+            "a cut to {:?} is below the tab top {top_z_mm} within {radius_mm} mm of its centre",
+            mv.to
+        );
+    }
+    warnings
+}
+
+/// The seed `cc 7dd67ad2…` of
+/// `random_valid_left_right_profiles_never_panic_and_pass_safety`,
+/// reduced: a Right Profile of a 15 mm open line with a 1° ramp and one
+/// smooth tab at distance 0, where the conventional cut starts. The tab
+/// is centred on the bit's path at its first point, (100, 38.711), and
+/// its top, 1.127 mm, is held for the 1.289 mm tool radius along the path
+/// from there. The generator laid the tab's 0.5 mm slope from the path's
+/// start instead, so the passes at Z 0.143 and 0 plunged at the tab's
+/// centre to their own depth, 0.984 and 1.127 mm below its top, and cut
+/// it through. S9, once it held a tab on an open path of a Left or Right
+/// Profile, refused the first of those plunges (`OffMaterial`). The ramp
+/// has no room on the tab, so each of those passes plunges onto it.
+#[test]
+fn right_open_path_smooth_tab_at_its_start_exports() {
+    let project =
+        open_line_smooth_tab_at_its_first_vertex(Side::Right, Entry::Ramp { angle_deg: 1.0 });
+    let warnings = assert_tab_at_the_first_vertex_stands(&project);
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.code() == WarningCode::EntryFallback),
+        "{warnings:?}"
+    );
+}
+
+/// The same tab on the same line cut On line, plunged: S9 already held a
+/// tab on an open path of an On line Profile, and refused this plunge at
+/// the tab's centre.
+#[test]
+fn on_line_open_path_smooth_tab_at_its_start_exports() {
+    let project = open_line_smooth_tab_at_its_first_vertex(Side::OnLine, Entry::Plunge);
+    assert_tab_at_the_first_vertex_stands(&project);
+}
+
+/// The same tab on the line cut Left, which a conventional cut runs from
+/// its last vertex (#287), so the tab is where the cut ends. The lap
+/// sloped down to its own depth at the tab's centre there, which is no
+/// plunge, so S9 passed it; the tab was cut through all the same.
+#[test]
+fn left_open_path_smooth_tab_at_its_end_exports() {
+    let project = open_line_smooth_tab_at_its_first_vertex(Side::Left, Entry::Plunge);
+    assert_tab_at_the_first_vertex_stands(&project);
+}
+
 /// #358 case 2: a 19.09 mm deep Inside Profile of a 13.6 × 20.3 mm
 /// rectangle with one 1.38 × 12.96 mm rect tab, by a 7.78 mm tool in
 /// 1.44 mm steps, helixed, pass first, with a 1.00 mm last pass
@@ -1986,5 +2058,62 @@ fn dogbone_pocket_round_a_rotated_rect_island() -> Project {
     tool.rpm = Some(19_460);
     tool.step_down_mm = Some(1.966_932_363_821_013);
     tool.step_over_fraction = Some(0.658_471_849_221_687_6);
+    project
+}
+
+/// The seed `cc 7dd67ad2…` of
+/// `random_valid_left_right_profiles_never_panic_and_pass_safety`,
+/// reduced to one open path, one tab and one tool: a 15 mm line cut on
+/// `side`, conventional, through 22.53 mm stock with a 2.58 mm bit and
+/// `entry`, with one smooth tab 1 mm wide and 1.13 mm tall asked for at
+/// distance 0, the line's first vertex.
+fn open_line_smooth_tab_at_its_first_vertex(side: Side, entry: Entry) -> Project {
+    let Operation::Profile(op) = sample_project().operations[0].clone() else {
+        unreachable!("the sample's operation is a Profile");
+    };
+    let thickness_mm = 22.532_649_936_269_03;
+    let op = ProfileOp {
+        side,
+        depth_mm: Some(thickness_mm),
+        step_down_mm: None,
+        direction: CutDirection::Conventional,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 1.0,
+        tabs: Some(TabSpec {
+            placement: TabPlacement::AtDistances {
+                distances_mm: vec![0.0],
+            },
+            width_mm: 1.0,
+            height_mm: 1.126_632_496_813_451_6,
+            shape: TabShape::Smooth,
+            on_holes: false,
+            avoid_corners: false,
+        }),
+        machining_order: MachiningOrder::FullDepthFirst,
+        entry,
+        lead: None,
+        corner_relief: CornerRelief::None,
+        last_pass: None,
+        start: StartAt::Auto,
+        ..op
+    };
+    let line = Polyline::new(
+        vec![Vertex::new(0.0, 0.0, 0.0), Vertex::new(15.0, 0.0, 0.0)],
+        false,
+    );
+    let mut project = case(
+        vec![line],
+        Transform::translate(100.0, 40.0),
+        thickness_mm,
+        Operation::Profile(op),
+    );
+    project.display_units = Units::Mm;
+    set_tool(
+        &mut project,
+        2.577_585_532_342_892_4,
+        (4_344.165_131_010_363, 262.886_218_841_482_5, 16_613),
+        1.722_310_957_118_915_2,
+        0.488_809_758_186_837_03,
+    );
     project
 }

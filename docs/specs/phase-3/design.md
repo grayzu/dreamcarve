@@ -4195,22 +4195,46 @@ against the male board.
   plunge on an open piece was held off a tab. The same spine now holds
   a tab on an open path of an On line Profile (#175), which was not
   held either; an inside or outside Profile cuts closed outlines only,
-  so a tab on an open one is none of its. **Not held yet: a tab on an
-  open path of a Left or Right Profile (#207).** The same spine built
-  there (the path and `offset_open` of it by the radius both ways)
-  refuses a generated program:
+  so a tab on an open one is none of its. A tab on an open path of a
+  Left or Right Profile (#207) is held too, along the path offset to
+  its cut side alone: `offset_open` by the radius, to the left or the
+  right looking from the first vertex to the last, which is the
+  generator's own path and `side_profile`'s, and with a last pass the
+  stock path, `offset_open` by `r + a` the same way. The bit runs
+  nowhere else beside such a path, and a tab its request lays is
+  centred on that offset, so the span is measured along the path the
+  generator laid it on. A plunge there below a tab's top inside its
+  span is refused, and one at its top or clear of the span passes
+  (`safety::left_right_plunge_into_a_tab_on_an_open_path_fails_s9`,
+  rect and smooth, mid-path and at the path's first vertex;
+  `material::tab_spine_on_an_open_path_of_a_left_or_right_profile_is_on_its_cut_side`).
+  (changed 2026-11-18. The spine first built there refused a generated
+  program:
   `properties::random_valid_left_right_profiles_never_panic_and_pass_safety`,
   proptest seed `cc 7dd67ad2d74ba6340ee0c59b55e268e11c5b74bfe36de91c7feabf6296bf3e2b`,
   a Right Profile through 22.5 mm stock with a 2.58 mm bit, a 1° ramp
-  and one smooth tab 1 mm wide asked for at distance 0, fails S9 at a
-  plunge (`OffMaterial`, line 950). What it needs before S9 can hold it:
-  whether the generator plunges below the tab's top inside its span at
-  the end of an open path, or the spine measures the span along
-  `offset_open`'s path where the generator measures it along its own
-  tool path (the two differ near the path's ends, where the offset is
-  trimmed); then the spine's paths for a Left or Right Profile are the
-  path offset to its cut side only. It never calls a generator
-  (`s17_uses_no_generator`).
+  and one smooth tab 1 mm wide asked for at distance 0, failed S9 at a
+  plunge (`OffMaterial`, line 950). The spine measured as the generator
+  lays out, and the generator was wrong. The tab is centred on the
+  bit's path at its first point, and its 1.127 mm top is held for the
+  1.289 mm radius along the path from there. The last two passes
+  plunged at that point to Z 0.143 and 0, which is 0.984 and 1.127 mm
+  below the top: `Tabs::layout_open` cut the span short at the path's
+  end and then laid the smooth tab's 0.5 mm slope inside what was left
+  of it, from the path's end, so the lap started at its own depth at
+  the tab's centre and the tab was cut through. An On line Profile cut
+  the same, and S9, which already held its tab, refused it. A Left or
+  Right path cut from its other end sloped down to its depth at the
+  end of the path, which is no plunge, so S9 passed that; the tab was
+  cut through all the same. A smooth span an end of an open path cuts
+  short now holds its top right to that end
+  (`docs/specs/phase-2/design.md`, "On line Profile of an open path"),
+  so the lap comes down onto the tab. The seed is kept and replayed,
+  and reduced to a 15 mm line in
+  `properties::cases::right_open_path_smooth_tab_at_its_start_exports`,
+  with `on_line_open_path_smooth_tab_at_its_start_exports` and
+  `left_open_path_smooth_tab_at_its_end_exports`.) It never calls a
+  generator (`s17_uses_no_generator`).
 - **S18, countersink.** For a Drill whose cycle is a countersink: every
   cut (`G1` with Z motion) in its span is vertical, at a target circle's
   centre, from at most the retract plane to exactly `start_plane − D /

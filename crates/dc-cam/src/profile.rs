@@ -4939,6 +4939,108 @@ mod tests {
         }
     }
 
+    /// The lowest a cut may go `along_mm` along a path from the centre of
+    /// one of [`tab_at`]'s smooth tabs and leave the tab standing: the
+    /// tab top within the tool radius of the centre, then down to the
+    /// stock bottom over half the tab's 8 mm (the last pass's slope; an
+    /// earlier pass's is higher).
+    fn smooth_tab_floor_mm(along_mm: f64) -> f64 {
+        let f = ((along_mm.abs() - R_MM) / 4.0).clamp(0.0, 1.0);
+        TAB_TOP_MM * (1.0 - f)
+    }
+
+    /// A smooth tab whose span an end of an open path cuts short is held
+    /// to that end: no room is left for its slope there, so the cut keeps
+    /// the tab top right to the end, as a rect tab's does and as a stock
+    /// path's stretch does (#311). The 100 mm line, cut On line, Left and
+    /// Right, from either end, with one smooth tab 8 mm wide and 3 mm
+    /// tall centred 0, 2, 5, 96 and 99 mm along it: its span is 7.175 mm
+    /// either side of the centre, so each runs past an end. No feed move
+    /// goes below the tab anywhere along it.
+    ///
+    /// Before, the slope was laid inside what was left of the span, from
+    /// the path's end: the lap started (or ended) at the pass depth at
+    /// the end of the path, the tab's centre for one at 0 mm, and the
+    /// plunge there went through the tab to the stock bottom.
+    #[test]
+    fn smooth_tab_cut_short_by_an_open_paths_end_is_not_cut_through() {
+        let p = line_project();
+        for side in [Side::OnLine, Side::Left, Side::Right] {
+            for direction in [CutDirection::Conventional, CutDirection::Climb] {
+                for at_mm in [0.0, 2.0, 5.0, 96.0, 99.0] {
+                    let case = format!("{side:?}, {direction:?}, a tab at {at_mm} mm");
+                    let mut op = profile_op(&p, side, direction);
+                    op.tabs = Some(tab_at(at_mm, TabShape::Smooth));
+                    let (tp, _) = generate(&p, &op);
+                    let mut over_tab = false;
+                    for w in tp.moves.windows(2) {
+                        let (from, mv) = (w[0].to, w[1]);
+                        if mv.is_rapid() {
+                            continue;
+                        }
+                        // Every move here is straight: the path is a line.
+                        assert_eq!(mv.kind, MoveKind::Linear, "{case}");
+                        for k in 0..=16 {
+                            let t = f64::from(k) / 16.0;
+                            let x = from.x + (mv.to.x - from.x) * t;
+                            let z = from.z + (mv.to.z - from.z) * t;
+                            let floor = smooth_tab_floor_mm(x - 20.0 - at_mm);
+                            over_tab |= floor > 0.0 && z < TAB_TOP_MM + TOL;
+                            assert!(
+                                z >= floor - TOL,
+                                "{case}: a cut from {from:?} to {:?} is at Z {z} at X {x}, \
+                                 below the tab at {floor}",
+                                mv.to
+                            );
+                        }
+                    }
+                    assert!(over_tab, "{case}: no pass reaches the tab");
+                }
+            }
+        }
+    }
+
+    /// The numbers of the case above that the safety pass refused (S9, a
+    /// plunge into a tab): a Right Profile of the line, conventional, so
+    /// cut from its first vertex at (20, 20 − r), with a smooth tab at
+    /// 0 mm. The passes at Z 2 and 0 are below the 3 mm tab top. Each
+    /// comes straight down at the path's start only to the tab top, holds
+    /// it for a tool radius, and slopes down over the next 4 mm.
+    #[test]
+    fn smooth_tab_at_an_open_paths_start_is_come_down_onto() {
+        let p = line_project();
+        let mut op = profile_op(&p, Side::Right, CutDirection::Conventional);
+        op.tabs = Some(tab_at(0.0, TabShape::Smooth));
+        let (tp, _) = generate(&p, &op);
+        let start = Point::new(20.0, 20.0 - R_MM);
+        let plunges = plunges_below_top(&tp);
+        assert!(!plunges.is_empty());
+        for (from, mv) in &plunges {
+            assert!(from.xy().distance_to(start) <= TOL, "{from:?}");
+            assert!(
+                mv.to.z >= TAB_TOP_MM - TOL,
+                "a plunge at the tab's centre ends at Z {}, below its top",
+                mv.to.z
+            );
+        }
+        let (held, length_mm) = held_at_tab_top(&tp);
+        // Two passes, each holding the top from the start for a radius.
+        assert_approx_eq!(length_mm, 2.0 * R_MM, 1e-6);
+        for (a, b) in held {
+            assert_approx_eq!(a.x.min(b.x), 20.0, TOL);
+            assert_approx_eq!(a.x.max(b.x), 20.0 + R_MM, TOL);
+        }
+        // Down the slope to each pass's depth, 4 mm on.
+        for z in [2.0, 0.0] {
+            let foot = tp.moves.windows(2).any(|w| {
+                (w[0].to.z - TAB_TOP_MM).abs() <= TOL
+                    && (w[1].to.z - z).abs() <= TOL
+                    && (w[1].to.x - (20.0 + R_MM + 4.0)).abs() <= TOL
+            });
+            assert!(foot, "the pass at Z {z} slopes down off the tab");
+        }
+    }
+
     // ── #207: Left and Right of an open path ──
 
     /// The 6.35 mm tool's radius.

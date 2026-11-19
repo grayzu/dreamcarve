@@ -401,6 +401,11 @@ the tab.
   and height, so it holds less. Make it wider or taller if the part is
   heavy.
 
+On an open path the stretch stops at the path's ends. A smooth tab whose
+stretch an end cuts short has no ramp at that end: the bit holds the tab
+top right to the end of the path, as it does for a rect tab, and a pass
+that starts there comes straight down onto the tab top.
+
 The coaster's tabs are 8 mm wide and 3 mm tall, in the quick start's
 11.8 mm plywood: each pass deeper than 3 mm above the stock bottom rises to
 Z 3 mm over each tab. With work zero at the stock top, that is Z −8.8 in

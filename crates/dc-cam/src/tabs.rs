@@ -158,8 +158,8 @@ pub(crate) enum PathEnds {
     /// run through it.
     Closed,
     /// An open path, tabs measured from its first vertex as drawn and
-    /// each span cut short at its ends (#175). `reversed`: it is cut from
-    /// its last vertex.
+    /// each span cut short at its ends (#175), where it holds its top
+    /// right to the end. `reversed`: it is cut from its last vertex.
     Open {
         /// The path is cut from its last vertex.
         reversed: bool,
@@ -234,7 +234,9 @@ impl Tabs {
     /// open path ([`PathEnds::Open`], #175) they are measured from its
     /// first vertex as drawn and cut short at its ends; `reversed`, the
     /// path is cut from its last vertex, and the spans are measured from
-    /// there, so the tabs stay where they were drawn.
+    /// there, so the tabs stay where they were drawn. A smooth span an
+    /// end cuts short has no slope at that end: it holds the tab top
+    /// right to it, as a rect span does.
     pub(crate) fn layout(
         &self,
         cuts: &[TabCut],
@@ -299,11 +301,22 @@ impl Tabs {
             .iter()
             .map(|cut| {
                 let half = (cut.width_mm + self.diameter_mm) / 2.0;
-                Raw::of(
-                    cut,
-                    (cut.centre_mm - half).max(0.0),
-                    (cut.centre_mm + half).min(l),
-                )
+                let (from_mm, to_mm) = (cut.centre_mm - half, cut.centre_mm + half);
+                let mut span = Raw::of(cut, from_mm.max(0.0), to_mm.min(l));
+                // An end of the path cuts the span short: no room is left
+                // for a smooth tab's slope there, so it holds its top
+                // right to that end, as a stock path's stretch does
+                // (#311, `last_pass::raised_span`). A slope laid inside
+                // what is left would start at the pass depth at the
+                // path's end, within the tool radius of the tab's centre
+                // or on its slope, and cut the tab through.
+                if from_mm < -EPS_MM {
+                    span.ramp_in_mm = 0.0;
+                }
+                if to_mm > l + EPS_MM {
+                    span.ramp_out_mm = 0.0;
+                }
+                span
             })
             .collect();
         spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
@@ -313,7 +326,7 @@ impl Tabs {
             match merged.last_mut() {
                 Some(last) if span.start_mm <= last.end_mm + EPS_MM => {
                     overlap = true;
-                    last.absorb(&span);
+                    last.absorb_open(&span);
                 }
                 _ => merged.push(span),
             }
@@ -680,10 +693,11 @@ struct Span {
     shape: TabShape,
     /// The length a smooth span rises over at its start: half the width
     /// of its first tab, so the bridge left is a triangle that wide at its
-    /// base.
+    /// base. 0 where an end of an open path cuts the span short: it holds
+    /// its top from that end ([`Tabs::layout`]).
     ramp_in_mm: f64,
     /// The length a smooth span falls over at its end: half the width of
-    /// its last tab.
+    /// its last tab; 0 where an end of an open path cuts it short.
     ramp_out_mm: f64,
 }
 
@@ -728,6 +742,25 @@ impl Raw {
         self.top_z_mm = self.top_z_mm.max(next.top_z_mm);
         if next.shape == TabShape::Rect {
             self.shape = TabShape::Rect;
+        }
+    }
+
+    /// [`Raw::absorb`] on an open path, where a span an end of the path
+    /// cuts short holds its top right to that end (a ramp of no length,
+    /// [`Tabs::layout`]): of two spans that start together, or end
+    /// together, the merged span keeps the shorter ramp, so the one held
+    /// to the end stays held whichever was laid first.
+    fn absorb_open(&mut self, next: &Raw) {
+        let starts_with = next.start_mm <= self.start_mm + EPS_MM;
+        let ends_with = (next.end_mm - self.end_mm).abs() <= EPS_MM;
+        let ramp_in_mm = self.ramp_in_mm.min(next.ramp_in_mm);
+        let ramp_out_mm = self.ramp_out_mm.min(next.ramp_out_mm);
+        self.absorb(next);
+        if starts_with {
+            self.ramp_in_mm = ramp_in_mm;
+        }
+        if ends_with {
+            self.ramp_out_mm = ramp_out_mm;
         }
     }
 
@@ -790,7 +823,7 @@ fn merge_open(mut spans: Vec<Raw>) -> Vec<Raw> {
     let mut merged: Vec<Raw> = Vec::new();
     for span in spans {
         match merged.last_mut() {
-            Some(last) if span.start_mm <= last.end_mm + EPS_MM => last.absorb(&span),
+            Some(last) if span.start_mm <= last.end_mm + EPS_MM => last.absorb_open(&span),
             _ => merged.push(span),
         }
     }
@@ -3220,6 +3253,65 @@ mod tests {
             let half_mm = (2.0 + DIAMETER_MM) / 2.0;
             assert_approx_eq!(lo, 35.0 + 42.65 - half_mm, 1e-3);
             assert_approx_eq!(hi, 35.0 + 42.65 + half_mm, 1e-3);
+        }
+    }
+
+    /// A smooth span an end of an open path cuts short holds the tab top
+    /// right to that end (`layout_open`): the path leaves no room for the
+    /// slope there. A 4 mm tab cut with a 6 mm bit raises 5 mm either side
+    /// of its centre: the top for the 3 mm radius, then down over 2 mm.
+    /// Laid at 0, 1 and 4 mm along a 50 mm open path, its span runs past
+    /// the path's start; at 49 mm, past its end; at 5 mm it fits, and
+    /// keeps both slopes. `reversed`, the path is cut from its last
+    /// vertex, and the layout is measured from there.
+    ///
+    /// Before, the slope was laid inside what the end left of the span,
+    /// so a pass was at its own depth at the path's end, at or beside the
+    /// tab's centre, and cut the tab through.
+    #[test]
+    fn smooth_span_cut_short_by_an_open_end_holds_its_top_there() {
+        let tabs = Tabs::new(3.0, 6.0, 0.01);
+        let cut = |centre_mm: f64| TabCut {
+            centre_mm,
+            width_mm: 4.0,
+            top_z_mm: 3.0,
+            shape: TabShape::Smooth,
+        };
+        // (centre, [(distance along the path as drawn, Z of a pass at 0)]).
+        // A span is asked just inside the path's end it is held to: it is
+        // half open, so the far end of the path as cut is past it.
+        let cases: [(f64, &[(f64, f64)]); 5] = [
+            (0.0, &[(0.001, 3.0), (3.0, 3.0), (4.0, 1.5), (5.5, 0.0)]),
+            (1.0, &[(0.001, 3.0), (4.0, 3.0), (5.0, 1.5), (6.5, 0.0)]),
+            // The path's start is on the tab's slope: held, so no lower.
+            (4.0, &[(0.001, 3.0), (7.0, 3.0), (8.0, 1.5), (9.5, 0.0)]),
+            (
+                49.0,
+                &[(43.5, 0.0), (45.0, 1.5), (46.0, 3.0), (49.999, 3.0)],
+            ),
+            (
+                5.0,
+                &[(0.0, 0.0), (1.0, 1.5), (2.0, 3.0), (8.0, 3.0), (9.0, 1.5)],
+            ),
+        ];
+        for reversed in [false, true] {
+            for (centre_mm, expected) in cases {
+                let (layout, overlapped) =
+                    tabs.layout(&[cut(centre_mm)], 50.0, PathEnds::Open { reversed });
+                assert!(!overlapped);
+                for &(drawn_mm, z_mm) in expected {
+                    let along_mm = if reversed { 50.0 - drawn_mm } else { drawn_mm };
+                    assert_approx_eq!(layout.z_at_mm(along_mm, 0.0), z_mm, TOL);
+                }
+            }
+        }
+        // A span that starts with one the end cuts short is held with it,
+        // whichever is laid first.
+        for cuts in [[cut(1.0), cut(5.0)], [cut(5.0), cut(1.0)]] {
+            let (layout, overlapped) = tabs.layout(&cuts, 50.0, PathEnds::Open { reversed: false });
+            assert!(overlapped);
+            assert_approx_eq!(layout.z_at_mm(0.0, 0.0), 3.0, TOL);
+            assert_approx_eq!(layout.z_at_mm(9.0, 0.0), 1.5, TOL);
         }
     }
 
