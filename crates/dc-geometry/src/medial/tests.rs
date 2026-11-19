@@ -1544,3 +1544,79 @@ fn neck_mm_ignores_corners_and_wide_shapes() {
     let resolved = resolution(&notch).expect("a resolution");
     assert_eq!(neck_mm(&notch, resolved.step_mm, TOL), None, "notch");
 }
+
+// ---------------------------------------------------------------------------
+// Short dead ends (#713)
+// ---------------------------------------------------------------------------
+
+/// A 30 × 24 mm band round two islands, as a male Inlay's drawn boundary
+/// round two letters. The first is a block with a keyhole: a counter 0.8 mm
+/// wide and 3 mm tall, open at the block's foot through a slot 0.44 mm wide
+/// and 0.35 mm long between two feet, whose undersides slope up and away
+/// from the slot's mouth at y = 10. The second, a 2 mm square, hangs
+/// 0.7 mm lower, 2.3 mm to the left.
+fn band_round_a_slot() -> Region {
+    let top = 10.35;
+    let keyhole = vec![
+        Point::new(14.78, 10.0),
+        Point::new(13.0, 10.3),
+        Point::new(13.0, 15.0),
+        Point::new(17.0, 15.0),
+        Point::new(17.0, 10.3),
+        Point::new(15.22, 10.0),
+        Point::new(15.22, top),
+        Point::new(15.4, top),
+        Point::new(15.4, top + 3.0),
+        Point::new(14.6, top + 3.0),
+        Point::new(14.6, top),
+        Point::new(14.78, top),
+    ];
+    region(
+        &rect_loop(0.0, 0.0, 30.0, 24.0),
+        &[keyhole, rect_loop(10.5, 9.3, 2.0, 2.0)],
+    )
+}
+
+/// #713: with [`CornerReach::Every`] the axis down a slot shorter than five
+/// steps reaches the slot's mouth. The band of [`band_round_a_slot`] is
+/// sampled every 0.15 mm, its short side over 160, though its slot is
+/// 0.35 mm long. Out of the mouth the axis is equidistant from the two
+/// feet's corners and, 4.8 mm on, the square's; those three lie within 35°
+/// as seen from there, so the contact-spread filter drops that node and the
+/// slot's axis is a dead end 0.67 mm long, under the five steps that keep a
+/// dead end from spur pruning (#511). Its two nodes in the slot, 0.12 mm
+/// apart with the slot's clearance, 0.22 mm, were pruned as spurs, and the
+/// slot's walls stood up to 0.080 mm beyond every medial disc: a male
+/// Inlay left the wood there, and its plug stood proud on it (lettering
+/// `0x47` in a drawn boundary, 0.182 mm). The walls, sampled every
+/// 0.0175 mm, are now reached within 0.02 mm by the nodes themselves.
+/// Upstream's reach ([`medial_axis`]) is unchanged.
+#[test]
+fn short_dead_end_down_a_slot_reaches_its_mouth() {
+    let r = band_round_a_slot();
+    let step_mm = resolution(&r).expect("a resolution").step_mm;
+    assert_approx_eq!(step_mm, 0.15, 1e-12);
+    let graph = medial_axis_with(&r, step_mm, TOL, EVERY);
+    let mut worst = (f64::NEG_INFINITY, Point::new(0.0, 0.0));
+    for k in 0..=20 {
+        let y = 10.0 + 0.35 * f64::from(k) / 20.0;
+        for x in [14.78, 15.22] {
+            let p = Point::new(x, y);
+            let gap_mm = reach_gap_of(&graph, p);
+            if gap_mm > worst.0 {
+                worst = (gap_mm, p);
+            }
+        }
+    }
+    assert!(
+        worst.0 <= 0.02,
+        "the slot's wall at {:?} is {:.4} mm beyond every medial disc",
+        worst.1,
+        worst.0
+    );
+    assert_eq!(
+        medial_axis(&r, step_mm, TOL),
+        medial_axis_with(&r, step_mm, TOL, CornerReach::Upstream),
+        "upstream's reach is upstream's"
+    );
+}
