@@ -33,6 +33,7 @@
 //! [`crate::tabs::PathTabs::stretches_mm`] gives, and the cutter keeps
 //! off it when its centre is two radii from that stretch.
 
+use crate::error::{CamError, at, at_mut};
 use crate::footprint::footprint_at;
 use crate::pocket::rings::inset_region;
 use crate::toolpath::{Move, Toolpath};
@@ -51,6 +52,9 @@ pub(super) const WALL_SLACK_MM: f64 = 1e-4;
 /// How far the frame of an outside path's domain reaches beyond its
 /// bounds, in tool diameters (upstream `OUTSIDE_DOMAIN_REACH_DIAMETERS`).
 pub(super) const OUTSIDE_REACH_DIAMETERS: f64 = 3.5;
+
+/// What [`domains`] reports for a path whose region is not there.
+const NO_REGION: &str = "a Profile path cuts the wall of a region the Profile does not have";
 
 /// The target regions grown for one stock to leave (#284): the stock to leave, each
 /// region grown by the reach plus it, and the bounds of each.
@@ -71,6 +75,8 @@ pub(super) struct WallPath<'a> {
 /// The waste domain of each of `paths`, in order: tool-centre regions
 /// (mm, Y-up) for a Profile on `side` of `regions` with a tool of radius
 /// `radius_mm`, booleans at `tolerance_mm`. On line has none.
+/// [`CamError::Internal`] for a path whose region is not one of
+/// `regions`, which would get no domain and so a plunge for its entry.
 pub(super) fn domains(
     side: Side,
     regions: &[Region],
@@ -78,17 +84,15 @@ pub(super) fn domains(
     stock: &Stock,
     radius_mm: f64,
     tolerance_mm: f64,
-) -> Vec<Vec<Region>> {
+) -> Result<Vec<Vec<Region>>, CamError> {
     if !side.has_waste_area() {
-        return paths.iter().map(|_| Vec::new()).collect();
+        return Ok(paths.iter().map(|_| Vec::new()).collect());
     }
     let reach = radius_mm - WALL_SLACK_MM;
     // Each region's kerf, and its bounds for cheap culling.
     let mut kerfs: Vec<Vec<Region>> = vec![Vec::new(); regions.len()];
     for p in paths {
-        if let Some(k) = kerfs.get_mut(p.region) {
-            k.extend(band(p.path, radius_mm, tolerance_mm));
-        }
+        at_mut(&mut kerfs, p.region, NO_REGION)?.extend(band(p.path, radius_mm, tolerance_mm));
     }
     let kerf_bounds: Vec<Option<Rect>> = kerfs.iter().map(|k| bounds_of(k)).collect();
     // Each region grown by the reach plus each stock to leave a path has
@@ -134,18 +138,24 @@ pub(super) fn domains(
                     .flat_map(|(_, (k, _))| k.iter().cloned())
                     .collect()
             };
-            match side {
+            Ok(match side {
                 Side::Inside => {
-                    let slot = stocks_to_leave
+                    let region = at(regions, p.region, NO_REGION)?;
+                    // Every path's stock to leave was listed above.
+                    let k = stocks_to_leave
                         .iter()
                         .position(|a| approx_eq(*a, p.stock_to_leave_mm, EPS_MM))
-                        .map_or(usize::MAX, |k| k * regions.len() + p.region);
-                    if let Some(Some(cached)) = inside_cache.get(slot) {
-                        return cached.clone();
+                        .ok_or_else(|| {
+                            CamError::internal("a Profile path's stock to leave was not listed")
+                        })?;
+                    let cached = at_mut(
+                        &mut inside_cache,
+                        k * regions.len() + p.region,
+                        "a Profile path's inside domain has no cache slot",
+                    )?;
+                    if let Some(cached) = cached {
+                        return Ok(cached.clone());
                     }
-                    let Some(region) = regions.get(p.region) else {
-                        return Vec::new();
-                    };
                     let area = inset_region(region, reach + p.stock_to_leave_mm, tolerance_mm);
                     let clip = others(bounds_of(&area));
                     let domain = if clip.is_empty() {
@@ -153,17 +163,17 @@ pub(super) fn domains(
                     } else {
                         difference(&area, &clip, tolerance_mm)
                     };
-                    if let Some(cached) = inside_cache.get_mut(slot) {
-                        *cached = Some(domain.clone());
-                    }
+                    *cached = Some(domain.clone());
                     domain
                 }
                 Side::Outside => {
+                    // Nothing of the stock is left round the path, or
+                    // what is left bounds no area: no domain.
                     let Some(frame) = outside_frame(p.path, stock, radius_mm) else {
-                        return Vec::new();
+                        return Ok(Vec::new());
                     };
                     let Some(frame_region) = rect_region(frame) else {
-                        return Vec::new();
+                        return Ok(Vec::new());
                     };
                     let mut clip: Vec<Region> = grown
                         .iter()
@@ -176,7 +186,7 @@ pub(super) fn domains(
                     difference(&[frame_region], &clip, tolerance_mm)
                 }
                 Side::OnLine | Side::Left | Side::Right => Vec::new(),
-            }
+            })
         })
         .collect()
 }

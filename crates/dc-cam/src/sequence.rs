@@ -368,7 +368,11 @@ impl Shapes {
                     })?;
                 return Err(CamError::ContainmentCycle { shape: stuck });
             };
-            let shape = at(&self.shapes, index, "the walk chose a shape it does not have")?;
+            let shape = at(
+                &self.shapes,
+                index,
+                "the walk chose a shape it does not have",
+            )?;
             let passes_done = at_mut(&mut done, index, "the walk chose a shape it does not count")?;
             let from = *passes_done;
             let emitted = match order {

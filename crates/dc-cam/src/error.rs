@@ -1174,10 +1174,7 @@ pub(crate) fn at_mut<'a, T>(
 
 /// [`CamError::Internal`]'s text.
 fn internal_message(op: Option<&OperationId>, what: &str) -> String {
-    let subject = op.map_or_else(
-        || "a toolpath".to_owned(),
-        |op| format!("operation `{op}`"),
-    );
+    let subject = op.map_or_else(|| "a toolpath".to_owned(), |op| format!("operation `{op}`"));
     format!(
         "{subject} could not be generated because of a defect in DreamCarve, not in the project: {what}; no toolpath was produced; please report this as a bug"
     )

@@ -27,7 +27,7 @@ use crate::block::CutBlock;
 use crate::entry::{
     self, CutSide, EntryKind, EntryTool, EntryWarnings, FallbackReason, MIN_BOUNDARY_SAFETY_MM,
 };
-use crate::error::{CamError, FeedField, ShapeRef};
+use crate::error::{CamError, FeedField, ShapeRef, at, at_mut};
 use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadWarnings};
 use crate::overlap::{CutPath, overlap_warnings, region_holds_path, within};
 use crate::relief;
@@ -343,6 +343,16 @@ pub(crate) fn generate_profile_below(
     op: &ProfileOp,
     start_depth_mm: f64,
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
+    profile_below(project, op, start_depth_mm).map_err(|e| e.for_op(&op.id))
+}
+
+/// [`generate_profile_below`], before a defect it finds
+/// ([`CamError::Internal`]) names `op`.
+fn profile_below(
+    project: &Project,
+    op: &ProfileOp,
+    start_depth_mm: f64,
+) -> Result<(Toolpath, Vec<Warning>), CamError> {
     let tool = project
         .tools
         .iter()
@@ -446,8 +456,8 @@ pub(crate) fn generate_profile_below(
     )?;
     // #285: an explicit start re-seams each closed path, and its stock to leave
     // twin, nearest the start point, before the tabs are laid on it.
-    let (placed, fixed) = start::seat(project, op, placed);
-    let walls: Vec<(Wall, usize)> = placed.iter().map(|c| (c.wall, c.region)).collect();
+    let (placed, fixed) = start::seat(project, op, placed)?;
+    let walls: Vec<(Wall, Option<usize>)> = placed.iter().map(|c| (c.wall, c.region)).collect();
     let holes: Vec<bool> = placed.iter().map(|c| c.hole).collect();
     let mut twins: Vec<Option<Polyline>> = Vec::with_capacity(placed.len());
     let mut paths: Vec<(Polyline, &ShapeRef)> = Vec::with_capacity(placed.len());
@@ -512,7 +522,9 @@ pub(crate) fn generate_profile_below(
     // outline's. Each part path, and further down each one's stock to leave
     // twin, rises over the tabs the other part paths' last passes leave,
     // standing from their floor (`reached`).
-    let floor_z_mm = pass_z.last().copied().unwrap_or(0.0);
+    let floor_z_mm = *pass_z
+        .last()
+        .ok_or_else(|| CamError::internal("a Profile has no pass, so no floor"))?;
     let sources: Vec<(Polyline, Option<PathTabs>)> = paths
         .iter()
         .zip(&layouts)
@@ -540,34 +552,53 @@ pub(crate) fn generate_profile_below(
     if let Some(stock_to_leave_mm) = stock_to_leave_mm {
         // The tabs each last pass leaves stand from its floor.
         for (i, twin) in twins.into_iter().enumerate() {
-            let (Some(twin), Some((path, shape)), Some(wall), Some(layout)) =
-                (twin, paths.get(i), walls.get(i), layouts.get(i))
-            else {
+            // A path with no stock path is cut as it is on every pass.
+            let Some(twin) = twin else {
                 continue;
             };
-            let carried = layout.as_ref().map(|(l, overlapped)| {
-                let own = last_pass::twin_tabs(path, l, &twin, radius_mm, floor_z_mm);
-                let raised = over_reached(i, &twin, &own).unwrap_or(own);
-                (raised, *overlapped)
-            });
-            let (shape, wall) = (*shape, *wall);
-            if let Some(slot) = twin_of.get_mut(i) {
-                *slot = Some(paths.len());
-            }
+            let (path, shape) = at(&paths, i, "a stock path's part path is missing")?;
+            let wall = *at(&walls, i, "a stock path's part path has no wall")?;
+            let layout = at(
+                &layouts,
+                i,
+                "a stock path's part path has no tab layout slot",
+            )?;
+            let carried = match layout {
+                Some((l, overlapped)) => {
+                    let own = last_pass::twin_tabs(path, l, &twin, radius_mm, floor_z_mm);
+                    // No tab of another path in reach: its own, as carried.
+                    let raised = over_reached(i, &twin, &own).unwrap_or(own);
+                    Some((raised, *overlapped))
+                }
+                None => None,
+            };
+            let shape = *shape;
+            *at_mut(
+                &mut twin_of,
+                i,
+                "a part path has no slot for its stock path",
+            )? = Some(paths.len());
             paths.push((twin, shape));
             walls.push(wall);
             layouts.push(carried);
             stocks_to_leave.push(stock_to_leave_mm);
             reversed.push(false);
-            let own = fixed.get(i).copied().unwrap_or(false);
+            let own = *at(
+                &fixed,
+                i,
+                "a part path does not say whether its start is set",
+            )?;
             fixed.push(own);
         }
     }
     if reverse_last {
-        for i in 0..n {
-            let (Some((path, _)), Some(layout)) = (paths.get_mut(i), layouts.get_mut(i)) else {
-                continue;
-            };
+        // The part paths come first, `n` of them, one layout and flag each.
+        let part_paths = paths
+            .iter_mut()
+            .zip(layouts.iter_mut())
+            .zip(reversed.iter_mut())
+            .take(n);
+        for (((path, _), layout), flag) in part_paths {
             // #311: an open path's last pass runs from its other end,
             // where the earlier passes end, its tabs measured from there.
             let back = if path.is_closed() {
@@ -577,15 +608,13 @@ pub(crate) fn generate_profile_below(
             };
             if let Some((l, _)) = layout {
                 *l = if path.is_closed() {
-                    last_pass::carry_reversed(path, l, &back)
+                    last_pass::carry_reversed(path, l, &back)?
                 } else {
                     l.reversed_open()
                 };
             }
             *path = back;
-            if let Some(flag) = reversed.get_mut(i) {
-                *flag = true;
-            }
+            *flag = true;
         }
     }
     let quantum_mm = project
@@ -629,7 +658,7 @@ pub(crate) fn generate_profile_below(
     }
     // The waste domains, which the entries and the leads both use.
     let domains = if lead.is_some() || !matches!(op.entry, Entry::Plunge) {
-        wall_domains(&setup)
+        wall_domains(&setup)?
     } else {
         Vec::new()
     };
@@ -638,8 +667,12 @@ pub(crate) fn generate_profile_below(
     // the twin.
     let mut part_of: Vec<Option<usize>> = vec![None; paths.len()];
     for (i, twin) in twin_of.iter().enumerate() {
-        if let Some(slot) = twin.and_then(|t| part_of.get_mut(t)) {
-            *slot = Some(i);
+        if let Some(t) = *twin {
+            *at_mut(
+                &mut part_of,
+                t,
+                "a stock path has no slot for its part path",
+            )? = Some(i);
         }
     }
     let mut lead_warnings = LeadWarnings::default();
@@ -670,29 +703,43 @@ pub(crate) fn generate_profile_below(
         .zip(&fixed)
         .map(|(lead, fixed)| lead.is_some() || *fixed)
         .collect();
-    let mut seams = tab_seams(&setup, &domains, &kept);
+    let mut seams = tab_seams(&setup, &domains, &kept)?;
     // #339: a closed part path whose seam is free starts within a step
     // of where its twin starts, where the last pass enters from the
     // twin's kerf: as it is when it already does, else at its point
     // nearest there.
     for (i, twin) in twin_of.iter().enumerate() {
-        let (Some(t), Some((path, _))) = (*twin, paths.get(i)) else {
+        // A path with no stock path keeps its seam.
+        let Some(t) = *twin else {
             continue;
         };
-        if kept.get(i).copied().unwrap_or(true) || !path.is_closed() {
+        let (path, _) = at(&paths, i, "a part path with a stock path is missing")?;
+        if *at(
+            &kept,
+            i,
+            "a part path does not say whether its seam is kept",
+        )? || !path.is_closed()
+        {
             continue;
         }
-        let twin_start = paths.get(t).and_then(|(twin, _)| {
-            seams.get(t).copied().flatten().map_or_else(
-                || twin.vertices().first().map(|v| v.point()),
-                |s| lead::reseam(twin, s).vertices().first().map(|v| v.point()),
-            )
-        });
-        let own_start = seams.get(i).copied().flatten().map_or_else(
+        let (twin, _) = at(&paths, t, "a part path's stock path is missing")?;
+        let twin_seam_mm = *at(&seams, t, "a stock path has no seam slot")?;
+        let own_seam_mm = *at(&seams, i, "a part path has no seam slot")?;
+        // Only a path with a stock path is here, so the Profile leaves stock.
+        let stock_to_leave_mm = stock_to_leave_mm.ok_or_else(|| {
+            CamError::internal("a path has a stock path, but the Profile leaves no stock")
+        })?;
+        // `None` for a path with no vertex or no length, which has no
+        // start to step from.
+        let twin_start = twin_seam_mm.map_or_else(
+            || twin.vertices().first().map(|v| v.point()),
+            |s| lead::reseam(twin, s).vertices().first().map(|v| v.point()),
+        );
+        let own_start = own_seam_mm.map_or_else(
             || path.vertices().first().map(|v| v.point()),
             |s| path.point_at(s).map(|(p, _)| p),
         );
-        let reach_mm = last_pass::step_reach_mm(tool.diameter_mm, stock_to_leave_mm.unwrap_or(0.0));
+        let reach_mm = last_pass::step_reach_mm(tool.diameter_mm, stock_to_leave_mm);
         if let (Some(at), Some(own)) = (twin_start, own_start)
             && own.distance_to(at) <= reach_mm
         {
@@ -702,9 +749,7 @@ pub(crate) fn generate_profile_below(
             .and_then(|at| nearest_point(path, at))
             .map(|near| near.along_mm)
             .filter(|&d| d > EPS_MM && d < path.length_mm() - EPS_MM);
-        if let Some(slot) = seams.get_mut(i) {
-            *slot = seam_mm;
-        }
+        *at_mut(&mut seams, i, "a part path has no seam slot")? = seam_mm;
     }
     let (paths, layouts): (Vec<(Polyline, &ShapeRef)>, Vec<PathLayout>) = paths
         .iter()
@@ -725,25 +770,24 @@ pub(crate) fn generate_profile_below(
         layouts: &layouts,
         ..setup
     };
+    // Where each path's entries end: its start, or its lead's staging
+    // point on the passes the lead serves.
     let targets: Vec<Targets> = paths
         .iter()
         .zip(&leads)
         .map(|((path, _), led)| {
-            let start = path
-                .vertices()
-                .first()
-                .map_or(Point::new(0.0, 0.0), |v| v.point());
+            let start = path_start(path)?;
             let staging = led.as_ref().map(|l| l.lead_in.staging());
-            Targets {
+            Ok(Targets {
                 plain: staging.unwrap_or(start),
                 tabbed: led
                     .as_ref()
                     .filter(|l| l.below_tabs)
                     .map_or(start, |l| l.lead_in.staging()),
-            }
+            })
         })
-        .collect();
-    let entries = path_entries(&setup, &domains, &targets);
+        .collect::<Result<_, CamError>>()?;
+    let entries = path_entries(&setup, &domains, &targets)?;
     let mut entry_warnings = EntryWarnings::default();
     let mut blocks = Vec::with_capacity(n * pass_z.len());
     // The part's path each block cuts, for naming contours in cut order.
@@ -764,80 +808,75 @@ pub(crate) fn generate_profile_below(
         tolerance_mm: project.flatten_tolerance_mm,
         regions: &regions,
     };
-    let path_at = |k: usize| {
-        let ((path, shape), layout) = (paths.get(k)?, layouts.get(k)?);
-        Some(PassPath {
+    // Path `k` with everything a pass cuts it by. Each list has one entry
+    // per path, but `domains`, which is empty when nothing asks for a
+    // waste domain (a plunge with no lead; On line, Left and Right).
+    let path_at = |k: usize| -> Result<PassPath<'_>, CamError> {
+        let (path, shape) = at(&paths, k, "a pass has no path to cut")?;
+        Ok(PassPath {
             path,
             shape,
-            layout,
-            lead: leads.get(k).and_then(Option::as_ref),
-            entry: entries.get(k).and_then(Option::as_ref),
+            layout: at(&layouts, k, "a path a pass cuts has no tab layout slot")?,
+            lead: at(&leads, k, "a path a pass cuts has no lead slot")?.as_ref(),
+            entry: at(&entries, k, "a path a pass cuts has no entry slot")?.as_ref(),
             domain: domains.get(k),
-            tool: entries::tool_for(&setup, k),
+            tool: entries::tool_for(&setup, k)?,
         })
     };
-    for i in 0..n {
+    for (i, twin) in twin_of.iter().copied().enumerate() {
         // The entry the previous pass cut, which this pass's follows.
         let mut previous: Option<CutEntry> = None;
-        let twin = twin_of.get(i).copied().flatten();
+        let shape = at(&paths, i, "a part path is missing")?.1;
         for (pass, &z_mm) in pass_z.iter().enumerate() {
-            let block = match (twin, path_at(i)) {
+            let block = match twin {
                 // #339: the last pass enters from its twin's kerf.
-                (Some(t), Some(own)) if pass == last_index => {
-                    let Some(twin_path) = path_at(t) else {
-                        continue;
-                    };
+                Some(t) if pass == last_index => {
                     let entered = last_pass_block(
                         &ctx,
                         &LastPassPaths {
-                            own,
-                            twin: twin_path,
+                            own: path_at(i)?,
+                            twin: path_at(t)?,
                             reverse: reverse_last,
                             domain: domains.get(i),
-                            stock_to_leave_mm: stock_to_leave_mm.unwrap_or(0.0),
+                            stock_to_leave_mm: stock_to_leave_mm.ok_or_else(|| {
+                                CamError::internal(
+                                    "a path has a stock path, but the Profile leaves no stock",
+                                )
+                            })?,
                         },
                         pass,
                         z_mm,
                         &mut previous,
                         &mut entry_warnings,
                     )?;
-                    if entered.lead_dropped
-                        && let Some((_, shape)) = paths.get(i)
-                    {
+                    if entered.lead_dropped {
                         lead_warnings.record_dropped(shape, DropReason::NoRoom);
                     }
-                    if let (Some(rho), Some((_, shape))) = (entered.tight_mm, paths.get(i)) {
-                        match tight_arcs.iter_mut().find(|(s, _)| s == *shape) {
+                    if let Some(rho) = entered.tight_mm {
+                        match tight_arcs.iter_mut().find(|(s, _)| s == shape) {
                             Some((_, tightest)) => *tightest = tightest.min(rho),
-                            None => tight_arcs.push(((*shape).clone(), rho)),
+                            None => tight_arcs.push((shape.clone(), rho)),
                         }
                     }
-                    if let (Some(bend), Some((_, shape))) = (entered.bend, paths.get(i)) {
-                        match bends.iter_mut().find(|(s, _)| s == *shape) {
+                    if let Some(bend) = entered.bend {
+                        match bends.iter_mut().find(|(s, _)| s == shape) {
                             Some((_, tightest)) if tightest.edge_ratio < bend.edge_ratio => {
                                 *tightest = bend;
                             }
                             Some(_) => {}
-                            None => bends.push(((*shape).clone(), bend)),
+                            None => bends.push((shape.clone(), bend)),
                         }
                     }
                     entered.block
                 }
                 // #284: every pass but the last cuts the stock to leave twin.
-                (_, own) => {
-                    let p = match twin {
-                        Some(t) => path_at(t),
-                        None => own,
-                    };
-                    match p {
-                        Some(p) => {
-                            pass_block(&ctx, &p, pass, z_mm, &mut previous, &mut entry_warnings)?
-                                .map(|(block, _)| block)
-                        }
-                        None => None,
-                    }
+                _ => {
+                    let p = path_at(twin.unwrap_or(i))?;
+                    pass_block(&ctx, &p, pass, z_mm, &mut previous, &mut entry_warnings)?
+                        .map(|(block, _)| block)
                 }
             };
+            // A path with no vertex has no block.
             if let Some(block) = block {
                 blocks.push(block);
                 block_paths.push(i);
@@ -873,7 +912,7 @@ pub(crate) fn generate_profile_below(
     if let Some(lead) = lead {
         warnings.extend(lead_warnings.into_warnings(&op.id, lead));
     }
-    let containment = containment_pairs(&regions, &shapes);
+    let containment = containment_pairs(&regions, &shapes)?;
     let mut input = SequenceInput {
         blocks,
         order: op.machining_order,
@@ -894,29 +933,43 @@ pub(crate) fn generate_profile_below(
     let cut_order = plan(&input)?;
     let mut path_order: Vec<usize> = Vec::with_capacity(n);
     for index in cut_order {
-        if let Some(&path_index) = block_paths.get(index)
-            && !path_order.contains(&path_index)
-        {
+        let path_index = *at(
+            &block_paths,
+            index,
+            "the cut order names a block of no path",
+        )?;
+        if !path_order.contains(&path_index) {
             path_order.push(path_index);
         }
     }
-    // Paths the plan never reached (none in practice) keep their place.
+    // A path with no vertex has no block, so the plan never reached it:
+    // it keeps its place.
     for index in 0..n {
         if !path_order.contains(&index) {
             path_order.push(index);
         }
     }
+    // D6: paths in cut order, so the warnings follow it; each part path's
+    // stock to leave twin, cut before it, with it (#284).
+    let mut cut_paths: Vec<CutPath<'_>> = Vec::with_capacity(paths.len());
     for (cut_index, &path_index) in path_order.iter().enumerate() {
-        let (Some((path, shape)), Some(Some((_, overlapped)))) =
-            (paths.get(path_index), layouts.get(path_index))
-        else {
+        let (path, shape) = at(&paths, path_index, "the cut order names a missing path")?;
+        cut_paths.push((path, Some(*shape)));
+        if let Some(t) = *at(&twin_of, path_index, "a part path has no stock path slot")? {
+            let (twin, shape) = at(&paths, t, "a part path's stock path is missing")?;
+            cut_paths.push((twin, Some(*shape)));
+        }
+        // A path with no tabs has neither warning.
+        let layout = at(&layouts, path_index, "a path has no tab layout slot")?;
+        let Some((_, overlapped)) = layout else {
             continue;
         };
         let length_mm = path.length_mm();
         if *overlapped {
             warnings.push(overlap_warning(&op.id, cut_index, Some(shape), length_mm));
         }
-        if let Some(Some((reduced, widths_mm))) = reductions.get(path_index) {
+        let reduction = at(&reductions, path_index, "a path has no tab reduction slot")?;
+        if let Some((reduced, widths_mm)) = reduction {
             warnings.push(coverage_warning(
                 &op.id,
                 cut_index,
@@ -927,14 +980,6 @@ pub(crate) fn generate_profile_below(
             ));
         }
     }
-    // D6: paths in cut order, so the warnings follow it; each part path's
-    // stock to leave twin, cut before it, with it (#284).
-    let cut_paths: Vec<CutPath<'_>> = path_order
-        .iter()
-        .flat_map(|&i| std::iter::once(i).chain(twin_of.get(i).copied().flatten()))
-        .filter_map(|i| paths.get(i))
-        .map(|(path, shape)| (path, Some(*shape)))
-        .collect();
     // #207: a Left or Right cut that comes within the radius of another
     // line, D6's condition, was refused above (`check_kept_sides`).
     if !op.side.is_open_path_side() {
@@ -955,11 +1000,22 @@ pub(crate) fn generate_profile_below(
     // cut from inside its lap (#193). With a last pass stock to leave only the
     // last pass runs on the part's paths, so it opens every notch's column
     // and cuts every level (#284).
+    // The part paths, the first `n`, that cut a region's wall: relief
+    // looks each region's paths up by its index, and an open path bounds
+    // no region.
+    let mut relief_paths = Vec::with_capacity(n);
+    let mut relief_walls = Vec::with_capacity(n);
+    for ((path, shape), (wall, region)) in paths.iter().zip(&walls).take(n) {
+        if let Some(region) = region {
+            relief_paths.push((path.clone(), *shape));
+            relief_walls.push((*wall, *region));
+        }
+    }
     let geometry = relief::ProfileGeometry {
         regions: &regions,
         shapes: &shapes,
-        paths: paths.get(..n).unwrap_or_default(),
-        walls: walls.get(..n).unwrap_or_default(),
+        paths: &relief_paths,
+        walls: &relief_walls,
         only_pass: stock_to_leave_mm.map(|_| last_index),
     };
     let notches = relief::profile_notches(
@@ -1021,13 +1077,13 @@ fn target_geometry(
             index,
             duplicate_of,
         } = warning;
-        if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
-        {
-            warnings.push(Warning::DuplicateShapeDropped {
-                shape: dropped.clone(),
-                duplicate_of: kept.clone(),
-            });
-        }
+        // `nest` numbers the contours as it was given them, one a shape.
+        let (dropped, _) = at(&shapes, index, "a duplicate contour is of no shape")?;
+        let (kept, _) = at(&shapes, duplicate_of, "a duplicated contour is of no shape")?;
+        warnings.push(Warning::DuplicateShapeDropped {
+            shape: dropped.clone(),
+            duplicate_of: kept.clone(),
+        });
     }
     // #221: an open path drawn twice is cut once, as a closed shape is.
     // #207: drawn the other way, its left is the other side, so under Left
@@ -1044,8 +1100,9 @@ struct CentrePath<'s> {
     shape: &'s ShapeRef,
     /// The wall it cuts.
     wall: Wall,
-    /// The index of its region.
-    region: usize,
+    /// The index of its region; `None` for an open path, which bounds
+    /// none.
+    region: Option<usize>,
     /// The shape is a hole.
     hole: bool,
     /// #284: the stock path the passes before the last cut instead,
@@ -1079,9 +1136,11 @@ fn centre_paths<'s>(
     let radius_mm = tool.diameter_mm / 2.0;
     let mut placed: Vec<CentrePath<'s>> = Vec::new();
     for (region_index, region) in regions.iter().enumerate() {
-        let ordered = hole_shapes(region, shapes)
+        let outer = (region.outer(), region_outer(region, shapes)?, Role::Outer);
+        let ordered = hole_shapes(region, shapes)?
+            .into_iter()
             .map(|(h, shape)| (h, shape, Role::Hole))
-            .chain(outer_shape(region, shapes).map(|shape| (region.outer(), shape, Role::Outer)));
+            .chain(std::iter::once(outer));
         for (contour, shape, role) in ordered {
             let (how, wall) = placement(op.side, role);
             let centres = match how {
@@ -1154,7 +1213,7 @@ fn centre_paths<'s>(
                 path: orient(c),
                 shape,
                 wall,
-                region: region_index,
+                region: Some(region_index),
                 hole: role == Role::Hole,
                 twin: twin.map(orient),
             }));
@@ -1235,7 +1294,7 @@ fn centre_paths<'s>(
                 path: as_cut(path),
                 shape,
                 wall: Wall::Outside,
-                region: regions.len(),
+                region: None,
                 hole: false,
                 twin: twin.map(as_cut),
             });
@@ -1253,6 +1312,9 @@ fn centre_paths<'s>(
     placed.sort_by_key(|c| drawing_index(c.shape));
     Ok(placed)
 }
+
+/// What [`plan_tabs`] reports for a path with no entry in `holes`.
+const NO_HOLE_FLAG: &str = "a Profile path does not say whether it is cut round a hole";
 
 /// The tabs a Profile cuts on each of its tool-centre paths (#105,
 /// ADR-0005), in path order.
@@ -1299,7 +1361,8 @@ pub(crate) struct TabPlan {
 /// the cutter would cut into the tab, and when the cut goes below the
 /// tab's top. A tab farther from every path, or taller than the cut is
 /// deep, is not crossed. Fails with [`CamError::InvalidTab`] for a crossed tab whose
-/// width or height is not a positive number.
+/// width or height is not a positive number, and with
+/// [`CamError::Internal`] when `holes` is not one per path.
 fn plan_tabs(
     project: &Project,
     op: &ProfileOp,
@@ -1319,16 +1382,16 @@ fn plan_tabs(
             }
         }
     };
-    let fitter = Tabs::new(
-        request.map_or(0.0, Request::top_z_mm),
-        diameter_mm,
-        tolerance_mm,
-    );
+    // The request's tabs are fitted at its own height; no request, none.
+    let request = request.map(|r| (r, Tabs::new(r.top_z_mm(), diameter_mm, tolerance_mm)));
     let mut requested = Vec::with_capacity(paths.len());
     let mut reductions = Vec::with_capacity(paths.len());
     let mut on_corners = Vec::with_capacity(paths.len());
-    for ((path, _), &hole) in paths.iter().zip(holes) {
-        let Some(request) = request.filter(|r| !hole || r.on_holes()) else {
+    for (j, (path, _)) in paths.iter().enumerate() {
+        let hole = *at(holes, j, NO_HOLE_FLAG)?;
+        // No request, or one that leaves holes alone: no tab asked here.
+        let Some((request, fitter)) = request.as_ref().filter(|(r, _)| !hole || r.on_holes())
+        else {
             requested.push(Vec::new());
             reductions.push(None);
             on_corners.push(Vec::new());
@@ -1340,7 +1403,7 @@ fn plan_tabs(
         } else {
             Least::One
         };
-        let fit = request.fit(&fitter, path, ends_of(path), least);
+        let fit = request.fit(fitter, path, ends_of(path), least);
         requested.push(fit.cuts);
         reductions.push(fit.reduced.map(|r| (r, vec![request.width_mm(); r.asked])));
         on_corners.push(fit.on_corners_mm);
@@ -1385,7 +1448,12 @@ fn plan_tabs(
         // tab of where the tab meets the outline: a tab placed from
         // another Profile's path sits a tool radius off it.
         let foot = crate::placed_tabs::outline_foot(project, tab).unwrap_or(point);
-        let reach_mm = nearest_point(path, foot).map_or(f64::INFINITY, |n| n.gap_mm);
+        // The path has a point nearest the tab, so one nearest its foot.
+        let reach_mm = nearest_point(path, foot)
+            .ok_or_else(|| {
+                CamError::internal("a path nearest a tab has no point nearest the tab's foot")
+            })?
+            .gap_mm;
         if reach_mm > radius_mm + tab.width_mm / 2.0 + EPS_MM {
             continue;
         }
@@ -1397,16 +1465,14 @@ fn plan_tabs(
         } else {
             path.length_mm() - near.along_mm
         };
-        if let Some(cuts) = placed.get_mut(j) {
-            cuts.push(TabCut {
-                centre_mm,
-                width_mm: tab.width_mm,
-                top_z_mm: tab.height_mm,
-                shape: tab.shape,
-            });
-        }
+        at_mut(&mut placed, j, "a path a tab is cut on has no slot for it")?.push(TabCut {
+            centre_mm,
+            width_mm: tab.width_mm,
+            top_z_mm: tab.height_mm,
+            shape: tab.shape,
+        });
         crossed.push(tab.id.clone());
-        if holes.get(j).copied().unwrap_or(false) {
+        if *at(holes, j, NO_HOLE_FLAG)? {
             // #302: the tab says whether it holds the slug. A format 14
             // tab does not; only `place` with `on_holes` put one on this
             // path round a hole, so one still on it was asked for (#300).
@@ -1416,7 +1482,8 @@ fn plan_tabs(
     }
 
     let tops_z_mm: Vec<f64> = request
-        .map(Request::top_z_mm)
+        .as_ref()
+        .map(|(r, _)| r.top_z_mm())
         .into_iter()
         .chain(placed.iter().flatten().map(|c| c.top_z_mm))
         .collect();
@@ -1425,23 +1492,24 @@ fn plan_tabs(
         Tabs::new(top_z_mm, diameter_mm, tolerance_mm)
     });
     let mut layouts = Vec::with_capacity(paths.len());
-    for (j, (path, _)) in paths.iter().enumerate() {
+    // One of each list per path, built above.
+    let per_path = paths
+        .iter()
+        .zip(&placed)
+        .zip(&requested)
+        .zip(reductions.iter_mut());
+    for ((((path, _), own), asked), slot) in per_path {
         let Some(tabs) = &tabs else {
             layouts.push(None);
             continue;
         };
-        let own = placed.get(j).map_or(&[][..], Vec::as_slice);
-        let mut cuts = requested.get(j).cloned().unwrap_or_default();
+        let mut cuts = asked.clone();
         cuts.extend_from_slice(own);
         let length_mm = path.length_mm();
         let (layout, overlapped) = tabs.layout(&cuts, length_mm, ends_of(path));
         // Placed tabs are cut as placed: a layout that covers more than
         // half the path warns, with nothing cut down.
-        if let Some(slot) = reductions.get_mut(j)
-            && slot.is_none()
-            && !own.is_empty()
-            && layout.covered_mm() > length_mm / 2.0 + EPS_MM
-        {
+        if slot.is_none() && !own.is_empty() && layout.covered_mm() > length_mm / 2.0 + EPS_MM {
             let n = layout.tab_count();
             *slot = Some((
                 Reduced {
@@ -1486,6 +1554,12 @@ pub(crate) struct OpTabs {
 /// when the tool or the targets cannot be cut; feeds, depths and the
 /// stock need not be set.
 pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError> {
+    op_tabs_unnamed(project, op).map_err(|e| e.for_op(&op.id))
+}
+
+/// [`op_tabs`], before a defect it finds ([`CamError::Internal`]) names
+/// `op`.
+fn op_tabs_unnamed(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError> {
     let tool = project
         .tools
         .iter()
@@ -1528,7 +1602,7 @@ pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamEr
         &mut ignored,
     )?;
     // #285: tabs a request lays count from the start point.
-    let (centres, _) = start::seat(project, op, centres);
+    let (centres, _) = start::seat(project, op, centres)?;
     let holes: Vec<bool> = centres.iter().map(|c| c.hole).collect();
     let paths: Vec<(Polyline, &ShapeRef)> =
         centres.into_iter().map(|c| (c.path, c.shape)).collect();
@@ -1606,7 +1680,8 @@ pub(super) fn check_band(
         // Left and Right cut no closed outline (#207).
         Side::Outside | Side::Left | Side::Right => return Ok(()),
     };
-    for (line, b) in region_shapes(region, shapes).filter(|(l, _)| *l != contour) {
+    let others = region_shapes(region, shapes)?;
+    for (line, b) in others.into_iter().filter(|(l, _)| *l != contour) {
         if !centres
             .iter()
             .any(|c| within(c.polyline(), line.polyline(), reach_mm))
@@ -1930,21 +2005,30 @@ fn check_open_bands(
     let diameter_mm = tool.diameter_mm;
     let reach_mm = MEETING_REACH_DIAMETERS * diameter_mm;
     let tolerance_mm = tolerance_mm.max(EPS_MM);
-    let held: Vec<Option<usize>> = open
+    // The region that holds each open path, with its index; `None` for a
+    // path no region holds, which D6 looks at.
+    let held: Vec<Option<(usize, &Region)>> = open
         .iter()
-        .map(|(_, path)| regions.iter().position(|r| region_holds_path(r, path)))
+        .map(|(_, path)| {
+            regions
+                .iter()
+                .enumerate()
+                .find(|(_, r)| region_holds_path(r, path))
+        })
         .collect();
     let drawn = |s: &ShapeRef| (op.targets.iter().position(|t| *t == s.instance), s.profile);
-    for (index, ((shape, path), region_index)) in open.iter().zip(&held).enumerate() {
-        let Some(region) = region_index.and_then(|i| regions.get(i)) else {
+    for (index, ((shape, path), holder)) in open.iter().zip(&held).enumerate() {
+        let Some((region_index, region)) = *holder else {
             continue;
         };
-        let lines = region_shapes(region, shapes).map(|(c, shape)| (shape, c.polyline()));
+        let lines = region_shapes(region, shapes)?
+            .into_iter()
+            .map(|(c, shape)| (shape, c.polyline()));
         let later = open
             .iter()
             .zip(&held)
             .skip(index + 1)
-            .filter(|(_, h)| **h == *region_index)
+            .filter(|(_, h)| h.is_some_and(|(i, _)| i == region_index))
             .map(|((s, p), _)| (s, p));
         for (other, line) in lines.chain(later) {
             if !within(path, line, diameter_mm) {
@@ -1995,7 +2079,7 @@ fn contour_block(
     pass_z: &[f64],
     safe_z_mm: f64,
     rates: LapRates,
-) -> CutBlock {
+) -> Result<CutBlock, CamError> {
     let descent = if (lap.start_z_mm - z_mm).abs() > EPS_MM {
         vec![Move::linear(
             Point3::new(start.x, start.y, lap.start_z_mm),
@@ -2012,11 +2096,9 @@ fn contour_block(
     // ended there, so the descent never goes below that height at the
     // start: it would plunge into the tab. The lap comes down off the tab
     // at the tab's end, as every lap does.
-    let descent_from_z_mm = pass
-        .checked_sub(1)
-        .and_then(|k| pass_z.get(k).copied())
-        .map_or(safe_z_mm, |above| above.max(lap.start_z_mm));
-    CutBlock {
+    let descent_from_z_mm =
+        pass_above_z_mm(pass_z, pass)?.map_or(safe_z_mm, |above| above.max(lap.start_z_mm));
+    Ok(CutBlock {
         shape: shape.clone(),
         pass,
         z_mm,
@@ -2030,7 +2112,30 @@ fn contour_block(
         frees: pass + 1 == pass_z.len() && z_mm <= EPS_MM,
         cleared: None,
         group: 0,
-    }
+    })
+}
+
+/// The Z of the pass above pass `pass` of `pass_z`, mm, where the tool is
+/// when `pass` begins; `None` for the first pass, which begins at safe Z.
+/// [`CamError::Internal`] for a pass past the last, whose descent would
+/// otherwise start at safe Z as a first pass's does.
+fn pass_above_z_mm(pass_z: &[f64], pass: usize) -> Result<Option<f64>, CamError> {
+    let Some(above) = pass.checked_sub(1) else {
+        return Ok(None);
+    };
+    at(pass_z, above, "a pass after the first has no pass above it")
+        .copied()
+        .map(Some)
+}
+
+/// Where the tool-centre `path` starts. Every path a Profile cuts has a
+/// vertex: [`CamError::Internal`] for one with none, which has nowhere
+/// to aim an entry.
+fn path_start(path: &Polyline) -> Result<Point, CamError> {
+    path.vertices()
+        .first()
+        .map(|v| v.point())
+        .ok_or_else(|| CamError::internal("a tool-centre path has no vertex to start at"))
 }
 
 /// What every pass block of an operation shares, for [`pass_block`].
@@ -2095,8 +2200,8 @@ fn pass_block(
     };
     let below_tabs = PassPath::below_tabs(ctx, z_mm);
     let led = p.lead.filter(|l| l.below_tabs || !below_tabs);
-    let led_block = led.and_then(|l| {
-        led_block(
+    let led_block = match led {
+        Some(l) => led_block(
             shape,
             pass,
             z_mm,
@@ -2105,11 +2210,12 @@ fn pass_block(
             ctx.pass_z,
             ctx.safe_z_mm,
             ctx.rates,
-        )
-    });
-    // A lead whose lap would start on a tab (never, since the arrival is
-    // kept off the tabs) is not cut, and nor is the entry planned for its
-    // staging point.
+        )?,
+        None => None,
+    };
+    // A lead whose lap would start on a tab is not cut, and nor is the
+    // entry planned for its staging point: the arrival is kept off the
+    // tabs, so this is for a lead planned where no tab stood.
     let entry_target_lost = led.is_some() && led_block.is_none();
     let is_led = led_block.is_some();
     let (mut block, on_tab, lap_start_z_mm) = match led_block {
@@ -2129,7 +2235,7 @@ fn pass_block(
                 ctx.pass_z,
                 ctx.safe_z_mm,
                 ctx.rates,
-            );
+            )?;
             (block, on_tab || entry_target_lost, lap_start_z_mm)
         }
     };
@@ -2279,7 +2385,7 @@ fn last_pass_block(
         });
     };
     // #335: its lap runs round inside arcs at the feed its edge needs.
-    let (tight_mm, bend) = own_edge_feeds(ctx, paths, &mut own_block, own_led);
+    let (tight_mm, bend) = own_edge_feeds(ctx, paths, &mut own_block, own_led)?;
     let radius_mm = own.tool.diameter_mm / 2.0;
     // #348: its lap comes off a rect tab taller than the step-down in
     // stages, each a step-down at most, running a radius along the lap
@@ -2290,7 +2396,7 @@ fn last_pass_block(
         ctx.step_down_mm,
         radius_mm,
         ctx.rates.plunge_mm_min,
-    );
+    )?;
     let slack_mm = ctx.tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
     // #339 review: the step is held to what it sweeps: the parts, not
     // the entries' waste domain or tab keep-outs, and the tabs'
@@ -2376,12 +2482,14 @@ fn last_pass_block(
 /// feed. Returns the tightest arc held at the floor, if any, and (#350)
 /// the tightest bend of straight cuts whose edge moves too fast
 /// (`last_pass::EdgeFeed::flattened_bend`), whose feed it leaves alone.
+/// [`CamError::Internal`] when the lap is not a run of the block's cuts,
+/// which would leave its feed as it is.
 fn own_edge_feeds(
     ctx: &PassCtx<'_>,
     paths: &LastPassPaths<'_>,
     block: &mut CutBlock,
     led: bool,
-) -> (Option<f64>, Option<last_pass::FlattenedBend>) {
+) -> Result<(Option<f64>, Option<last_pass::FlattenedBend>), CamError> {
     let edge = last_pass::EdgeFeed {
         wall_on_right: (ctx.op.direction == CutDirection::Climb) != paths.reverse,
         radius_mm: paths.own.tool.diameter_mm / 2.0,
@@ -2400,22 +2508,29 @@ fn own_edge_feeds(
         _ => n,
     };
     let begin = usize::from(led).min(end);
-    let start = begin
-        .checked_sub(1)
-        .and_then(|k| block.cuts.get(k))
-        .or(block.descent.last())
-        .map(|m| m.to);
-    let start_z_mm = start.map_or(block.z_mm, |p| p.z);
-    let Some(lap) = block.cuts.get_mut(begin..end) else {
-        return (None, None);
+    // Where the lap starts: where the lead-in arc before it ends, or
+    // the descent; `None` after a straight plunge, at the pass Z.
+    let lead_in = match begin.checked_sub(1) {
+        Some(k) => Some(at(
+            &block.cuts,
+            k,
+            "a led lap has no lead-in arc before it",
+        )?),
+        None => None,
     };
+    let start = lead_in.or(block.descent.last()).map(|m| m.to);
+    let start_z_mm = start.map_or(block.z_mm, |p| p.z);
+    let lap = block
+        .cuts
+        .get_mut(begin..end)
+        .ok_or_else(|| CamError::internal("a last pass's lap is not a run of its block's cuts"))?;
     // #350: its straight cuts keep the feed; a tight bend of them warns.
     let bend = match (start, lap.split_first()) {
         (Some(start), _) => edge.flattened_bend(lap, start),
         (None, Some((first, rest))) => edge.flattened_bend(rest, first.to),
         (None, None) => None,
     };
-    (edge.apply(lap, start_z_mm), bend)
+    Ok((edge.apply(lap, start_z_mm), bend))
 }
 
 /// A path's lead (`docs/specs/phase-2/design.md`, "Algorithms → Lead-in
@@ -2444,7 +2559,7 @@ struct LeadSetup<'a, 'b> {
     /// at all.
     fixed: &'a [bool],
     /// Each stock to leave twin's part path (#284), by index; `None` for a part
-    /// path. Missing entries are `None`.
+    /// path. One per path.
     part_of: &'a [Option<usize>],
 }
 
@@ -2465,24 +2580,32 @@ fn plan_leads(
     let mut out = Vec::with_capacity(setup.paths.len());
     let mut from: Option<Point> = None;
     for (i, (path, shape)) in setup.paths.iter().enumerate() {
+        // On line, Left and Right have no waste domain, so no lead.
         let Some(domain) = setup.domains.get(i) else {
             out.push(None);
             continue;
         };
         let d = setup.diameter_mm;
-        let at_start = setup.fixed.get(i).copied().unwrap_or(false);
+        let at_start = *at(
+            setup.fixed,
+            i,
+            "a Profile path does not say whether its start is set",
+        )?;
         // #339: a stock to leave twin is led in beside where its part path's
         // lead arrives, so the last pass, which enters from the twin, finds
-        // its lead's staging point beside the twin's.
-        let beside = setup
-            .part_of
-            .get(i)
-            .copied()
-            .flatten()
-            .filter(|_| !at_start)
-            .and_then(|part| out.get(part))
-            .and_then(Option::as_ref)
-            .map(|part: &PathLead| part.lead_in.arrival());
+        // its lead's staging point beside the twin's. A part path comes
+        // before its twin, so its lead is planned; it may have none.
+        let part = *at(
+            setup.part_of,
+            i,
+            "a Profile path does not say whether it is a stock path",
+        )?;
+        let beside = match part.filter(|_| !at_start) {
+            Some(part) => at(&out, part, "a stock path is led before its part path")?
+                .as_ref()
+                .map(|part: &PathLead| part.lead_in.arrival()),
+            None => None,
+        };
         let plan_in = |space: &Space| {
             let leads = DomainSpace::new(&space.domain, d, setup.tolerance_mm);
             if let Some(lead_in) =
@@ -2616,7 +2739,8 @@ fn check_lead_arc(
 /// path's own start, are moved with the seam so they stay where they are;
 /// they raise the lap and the overcut, never a lead arc. A lead-out after
 /// an overcut that ends raised (on a tab) is left off. `None` when the
-/// lap would start on a tab, or the path has no vertices.
+/// lap would start on a tab, or the path has no vertices;
+/// [`CamError::Internal`] as [`pass_above_z_mm`].
 #[allow(
     clippy::too_many_arguments,
     reason = "every argument is one fact about the pass; a struct would only rename them"
@@ -2630,13 +2754,15 @@ fn led_block(
     pass_z: &[f64],
     safe_z_mm: f64,
     rates: LapRates,
-) -> Option<CutBlock> {
+) -> Result<Option<CutBlock>, CamError> {
     let seam = &led.lead_in.seam;
     let reseamed = tabs.map(|(t, layout)| (t, layout.reseamed(led.lead_in.arrival_mm)));
     let tabs = reseamed.as_ref().map(|(t, layout)| (*t, layout));
-    let lap = lap_cuts(seam, z_mm, tabs, rates)?;
+    let Some(lap) = lap_cuts(seam, z_mm, tabs, rates) else {
+        return Ok(None);
+    };
     if (lap.start_z_mm - z_mm).abs() > EPS_MM {
-        return None;
+        return Ok(None);
     }
     let at = |p: Point, z: f64| Point3::new(p.x, p.y, z);
     let arc_move = |arc: &LeadArc, z: f64| Move {
@@ -2660,11 +2786,8 @@ fn led_block(
     }
     let staging = led.lead_in.staging();
     let exit = cuts.last().map_or(staging, |m| m.to.xy());
-    let descent_from_z_mm = pass
-        .checked_sub(1)
-        .and_then(|k| pass_z.get(k).copied())
-        .unwrap_or(safe_z_mm);
-    Some(CutBlock {
+    let descent_from_z_mm = pass_above_z_mm(pass_z, pass)?.unwrap_or(safe_z_mm);
+    Ok(Some(CutBlock {
         shape: shape.clone(),
         pass,
         z_mm,
@@ -2678,42 +2801,48 @@ fn led_block(
         frees: pass + 1 == pass_z.len() && z_mm <= EPS_MM,
         cleared: None,
         group: 0,
-    })
+    }))
 }
 
 /// The `(inner, encloser)` pairs `sequence` needs (invariant O1,
 /// `docs/research/toolpath-ordering.md`): every hole before its region's
 /// outer, and every region of depth 2 or more before the hole it sits in,
 /// so a part inside another part's hole is cut out before that hole frees
-/// the waste around it.
+/// the waste around it. `regions` are those `nest` returned for the
+/// contours of `shapes`, in order: [`CamError::Internal`] otherwise, where
+/// a pair left out would let a part be cut free before what is inside it.
 pub(crate) fn containment_pairs(
     regions: &[Region],
     shapes: &[(ShapeRef, Contour)],
-) -> Vec<(ShapeRef, ShapeRef)> {
+) -> Result<Vec<(ShapeRef, ShapeRef)>, CamError> {
     let mut pairs = Vec::new();
     for region in regions {
-        let Some(outer) = outer_shape(region, shapes) else {
-            continue;
-        };
-        for (_, hole) in hole_shapes(region, shapes) {
+        let outer = region_outer(region, shapes)?;
+        for (_, hole) in hole_shapes(region, shapes)? {
             pairs.push((hole.clone(), outer.clone()));
         }
+        // A region at depth 0 or 1 sits in no hole.
         let Some(parent_depth) = region.depth().checked_sub(2) else {
             continue;
         };
-        let Some(probe) = region.outer().polyline().vertices().first() else {
-            continue;
-        };
-        let enclosing_hole = regions
-            .iter()
-            .filter(|r| r.depth() == parent_depth)
-            .flat_map(|r| hole_shapes(r, shapes))
-            .find(|(hole, _)| contour_contains(hole, probe.point()));
-        if let Some((_, hole)) = enclosing_hole {
-            pairs.push((outer.clone(), hole.clone()));
+        let probe = region
+            .outer()
+            .polyline()
+            .vertices()
+            .first()
+            .ok_or_else(|| CamError::internal("a region's outline has no vertex"))?
+            .point();
+        for parent in regions.iter().filter(|r| r.depth() == parent_depth) {
+            let enclosing_hole = hole_shapes(parent, shapes)?
+                .into_iter()
+                .find(|(hole, _)| contour_contains(hole, probe));
+            if let Some((_, hole)) = enclosing_hole {
+                pairs.push((outer.clone(), hole.clone()));
+                break;
+            }
         }
     }
-    pairs
+    Ok(pairs)
 }
 
 /// True when `p` lies inside or on `contour`, whichever way it winds.
@@ -2760,7 +2889,9 @@ pub(crate) fn cut_outlines(project: &Project, op: &ProfileOp) -> Option<Vec<(Sha
 }
 
 /// The shape `region`'s outer came from, `region` being one that `nest`
-/// returned for the contours of `shapes`, in order.
+/// returned for the contours of `shapes`, in order; `None` for a region
+/// that is not. The generators here use [`region_outer`], which refuses
+/// that.
 pub(crate) fn outer_shape<'s>(
     region: &Region,
     shapes: &'s [(ShapeRef, Contour)],
@@ -2768,29 +2899,43 @@ pub(crate) fn outer_shape<'s>(
     shapes.get(region.outer_index()).map(|(s, _)| s)
 }
 
+/// [`outer_shape`] of a region that has one: [`CamError::Internal`] for a
+/// region whose outer is of no shape, which would otherwise not be cut.
+pub(crate) fn region_outer<'s>(
+    region: &Region,
+    shapes: &'s [(ShapeRef, Contour)],
+) -> Result<&'s ShapeRef, CamError> {
+    outer_shape(region, shapes)
+        .ok_or_else(|| CamError::internal("a region's outline is of no target shape"))
+}
+
 /// Each hole of `region` with the shape it came from, in hole order;
-/// `region` as for [`outer_shape`].
+/// `region` as for [`region_outer`], and [`CamError::Internal`] likewise
+/// for a hole of no shape, which would otherwise not be cut.
 pub(crate) fn hole_shapes<'r, 's>(
     region: &'r Region,
     shapes: &'s [(ShapeRef, Contour)],
-) -> impl Iterator<Item = (&'r Contour, &'s ShapeRef)> {
+) -> Result<Vec<(&'r Contour, &'s ShapeRef)>, CamError> {
     region
         .holes()
         .iter()
         .zip(region.hole_indices())
-        .filter_map(|(hole, &i)| shapes.get(i).map(|(s, _)| (hole, s)))
+        .map(|(hole, &i)| {
+            let (shape, _) = at(shapes, i, "a region's hole is of no target shape")?;
+            Ok((hole, shape))
+        })
+        .collect()
 }
 
 /// The outer of `region` then its holes, each with the shape it came
-/// from; `region` as for [`outer_shape`].
+/// from; `region` and the errors as for [`region_outer`].
 pub(crate) fn region_shapes<'r, 's>(
     region: &'r Region,
     shapes: &'s [(ShapeRef, Contour)],
-) -> impl Iterator<Item = (&'r Contour, &'s ShapeRef)> {
-    outer_shape(region, shapes)
-        .map(|s| (region.outer(), s))
-        .into_iter()
-        .chain(hole_shapes(region, shapes))
+) -> Result<Vec<(&'r Contour, &'s ShapeRef)>, CamError> {
+    let mut all = vec![(region.outer(), region_outer(region, shapes)?)];
+    all.extend(hole_shapes(region, shapes)?);
+    Ok(all)
 }
 
 /// The shape `contour`, as `nest` returned it, came from.

@@ -20,7 +20,7 @@ use crate::entry::{
     self, Descent, EntryDomain, EntryKind, EntryPlan, EntryTool, FallbackReason,
     MIN_BOUNDARY_SAFETY_MM, RAMP_MIN_LAST_DROP_MM, boundary_safety_mm, plan_at_wall,
 };
-use crate::error::{CamError, ShapeRef};
+use crate::error::{CamError, ShapeRef, at};
 use crate::footprint::footprint_at;
 use crate::lead::reseam;
 use crate::pocket::rings::inset_region;
@@ -36,8 +36,9 @@ pub(super) struct EntrySetup<'a, 'b> {
     pub regions: &'a [Region],
     /// Every tool-centre path, closed, with its shape, in drawing order.
     pub paths: &'a [(Polyline, &'b ShapeRef)],
-    /// The wall each path cuts and the index of its region.
-    pub walls: &'a [(Wall, usize)],
+    /// The wall each path cuts and the index of its region; `None` for an
+    /// open path, which bounds none.
+    pub walls: &'a [(Wall, Option<usize>)],
     pub layouts: &'a [Option<(PathTabs, bool)>],
     pub tabs: Option<&'a Tabs>,
     pub pass_z: &'a [f64],
@@ -47,12 +48,11 @@ pub(super) struct EntrySetup<'a, 'b> {
     pub entry_tool: &'a dyn Fn(Wall) -> EntryTool,
     pub tolerance_mm: f64,
     /// How much farther than the radius each path runs from its wall: a
-    /// last pass stock to leave (#284), 0 for the part's own path. Missing
-    /// entries are 0.
+    /// last pass stock to leave (#284), 0 for the part's own path. One per
+    /// path.
     pub stocks_to_leave: &'a [f64],
     /// The paths cut against `op.direction` (#284: a reversed last
-    /// pass), whose entries turn the other way. Missing entries are
-    /// false.
+    /// pass), whose entries turn the other way. One per path.
     pub reversed: &'a [bool],
 }
 
@@ -210,15 +210,17 @@ pub(super) fn reach_below_mm(d: &Descent, from_z_mm: f64, top_z_mm: f64, quantum
 
 /// The entry of each path of `setup`, in order: `None` for a plunge, which
 /// cuts as phase 1 did. Inside and Outside entries are placed in each
-/// path's `domains` (from [`wall_domains`]) at its `targets`.
+/// path's `domains` (from [`wall_domains`]) at its `targets`, one of each
+/// per path: [`CamError::Internal`] when one is missing, where a plunge
+/// would be cut instead of the entry asked for.
 pub(super) fn path_entries(
     setup: &EntrySetup<'_, '_>,
     domains: &[PathDomain],
     targets: &[Targets],
-) -> Vec<Option<PathEntry>> {
+) -> Result<Vec<Option<PathEntry>>, CamError> {
     let op = setup.op;
     let n = setup.paths.len();
-    match (op.side, &op.entry) {
+    Ok(match (op.side, &op.entry) {
         (_, Entry::Plunge) => (0..n).map(|_| None).collect(),
         // #207: Left and Right ramp along their offset path as On line
         // ramps along its line.
@@ -236,14 +238,17 @@ pub(super) fn path_entries(
                 })
             })
             .collect(),
-        // Refused before this is reached; a plunge if it ever is.
+        // `CamError::HelixNeedsWasteSide` refuses it before this.
         (Side::OnLine | Side::Left | Side::Right, Entry::Helix { .. }) => {
-            (0..n).map(|_| None).collect()
+            return Err(CamError::internal(
+                "a helix entry reached a Profile side with no waste to helix in",
+            ));
         }
         (Side::Inside | Side::Outside, _) => (0..n)
             .map(|i| {
-                let (domain, target) = (domains.get(i)?, targets.get(i)?);
-                let tool = tool_for(setup, i);
+                let domain = at(domains, i, "a Profile path has no waste domain")?;
+                let target = at(targets, i, "a Profile path has no entry target")?;
+                let tool = tool_for(setup, i)?;
                 let place = |space: &Space, at: Point| {
                     Box::new(plan_at_wall(&space.domain, &op.entry, at, &tool))
                 };
@@ -255,14 +260,14 @@ pub(super) fn path_entries(
                 let after_plain = tabbed
                     .as_ref()
                     .and_then(|(space, t)| follow_plain(&plain, t, &space.domain));
-                Some(PathEntry::Wall {
+                Ok(Some(PathEntry::Wall {
                     plain,
                     tabbed: tabbed.map(|(_, t)| t),
                     after_plain,
-                })
+                }))
             })
-            .collect(),
-    }
+            .collect::<Result<_, CamError>>()?,
+    })
 }
 
 /// #176: where each closed path of `setup` should start so its ramp or
@@ -277,28 +282,25 @@ pub(super) fn path_entries(
 /// the first where no pass below the tab top plunges wins. When none
 /// does, the start is kept and those passes plunge as before. One start
 /// serves every pass, and the tabs keep their distances from the
-/// original start ([`PathTabs::reseamed`]).
+/// original start ([`PathTabs::reseamed`]). `kept` and the layouts are
+/// one per path, and under Inside and Outside so are `domains`:
+/// [`CamError::Internal`] otherwise.
 pub(super) fn tab_seams(
     setup: &EntrySetup<'_, '_>,
     domains: &[PathDomain],
     kept: &[bool],
-) -> Vec<Option<f64>> {
-    let none = || setup.paths.iter().map(|_| None).collect();
+) -> Result<Vec<Option<f64>>, CamError> {
+    let none = || Ok(setup.paths.iter().map(|_| None).collect());
     let Some(tabs) = setup.tabs else {
         return none();
     };
-    let below: Vec<(f64, f64)> = setup
-        .pass_z
-        .iter()
-        .enumerate()
+    // Each pass below the tab top with the Z its descent starts at: the
+    // pass above's, or the start Z for the first.
+    let below: Vec<(f64, f64)> = std::iter::once(setup.start_z_mm)
+        .chain(setup.pass_z.iter().copied())
+        .zip(setup.pass_z)
         .filter(|(_, z)| **z < tabs.top_z_mm() - EPS_MM)
-        .map(|(k, z)| {
-            let from_z_mm = k
-                .checked_sub(1)
-                .and_then(|j| setup.pass_z.get(j).copied())
-                .unwrap_or(setup.start_z_mm);
-            (from_z_mm, *z)
-        })
+        .map(|(from_z_mm, z)| (from_z_mm, *z))
         .collect();
     if below.is_empty() || matches!(setup.op.entry, Entry::Plunge) {
         return none();
@@ -314,14 +316,24 @@ pub(super) fn tab_seams(
         .iter()
         .enumerate()
         .map(|(i, (path, _))| {
-            let layout = match setup.layouts.get(i) {
-                Some(Some((layout, _))) if path.is_closed() => layout,
-                _ => return None,
+            let layout = at(setup.layouts, i, "a Profile path has no tab layout slot")?;
+            let layout = match layout {
+                Some((layout, _)) if path.is_closed() => layout,
+                _ => return Ok(None),
             };
-            if kept.get(i).copied().unwrap_or(false) {
-                return None;
+            if *at(
+                kept,
+                i,
+                "a Profile path does not say whether its seam is kept",
+            )? {
+                return Ok(None);
             }
-            let tool = tool_for(setup, i);
+            let tool = tool_for(setup, i)?;
+            // Inside and Outside place the entry in the path's domain.
+            let domain = match along {
+                Some(_) => None,
+                None => Some(at(domains, i, "a Profile path has no waste domain")?),
+            };
             let fits = |seam_mm: f64| {
                 let moved = layout.reseamed(seam_mm);
                 if moved.clear_from_start_mm() <= EPS_MM {
@@ -346,22 +358,19 @@ pub(super) fn tab_seams(
                         })
                     }
                     None => {
-                        let (Some(space), Some(at)) = (
-                            domains.get(i).map(|d| d.for_pass(true)),
-                            seamed.vertices().first().map(|v| v.point()),
-                        ) else {
+                        // A path with no vertex has nowhere to enter.
+                        let (Some(domain), Some(at)) =
+                            (domain, seamed.vertices().first().map(|v| v.point()))
+                        else {
                             return false;
                         };
+                        let space = domain.for_pass(true);
                         let mut plan = plan_at_wall(&space.domain, &setup.op.entry, at, &tool);
                         // #352: after passes above the tab top, a ramp
                         // follows their line.
                         if above && matches!(setup.op.entry, Entry::Ramp { .. }) {
-                            let Some(plain) = domains
-                                .get(i)
-                                .map(|d| plan_at_wall(&d.plain.domain, &setup.op.entry, at, &tool))
-                            else {
-                                return false;
-                            };
+                            let plain =
+                                plan_at_wall(&domain.plain.domain, &setup.op.entry, at, &tool);
                             match follow_plain(&plain, &plan, &space.domain) {
                                 Some(follow) => plan = *follow,
                                 None => return false,
@@ -374,24 +383,31 @@ pub(super) fn tab_seams(
                 }
             };
             if fits(0.0) {
-                return None;
+                return Ok(None);
             }
             let length_mm = layout.length_mm();
-            layout
+            Ok(layout
                 .gaps_mm()
                 .into_iter()
                 .map(|(start_mm, gap_mm)| (start_mm + gap_mm / 2.0).rem_euclid(length_mm))
-                .find(|&seam_mm| fits(seam_mm))
+                .find(|&seam_mm| fits(seam_mm)))
         })
         .collect()
 }
 
 /// The entry tool of path `i`: cutting the other way on a reversed path
-/// (#284).
-pub(super) fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
-    let wall = setup.walls.get(i).map_or(Wall::Outside, |(w, _)| *w);
-    let tool = (setup.entry_tool)(wall);
-    if setup.reversed.get(i).copied().unwrap_or(false) {
+/// (#284). [`CamError::Internal`] for a path `setup` holds no wall or
+/// direction for, where the tool of an outside wall cutting forwards
+/// would enter the wrong way.
+pub(super) fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> Result<EntryTool, CamError> {
+    let (wall, _) = at(setup.walls, i, "a Profile path has no wall")?;
+    let tool = (setup.entry_tool)(*wall);
+    let reversed = at(
+        setup.reversed,
+        i,
+        "a Profile path does not say which way it is cut",
+    )?;
+    Ok(if *reversed {
         EntryTool {
             direction: match tool.direction {
                 CutDirection::Climb => CutDirection::Conventional,
@@ -401,30 +417,38 @@ pub(super) fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
         }
     } else {
         tool
-    }
+    })
 }
 
 /// Inside and Outside: each path's waste domain ([`waste::domains`]) and,
 /// when some pass is below the tab top, that domain less every path's tab
 /// keep-outs ([`waste::tab_keep_out`]). Empty for On line, Left and
-/// Right, which have no waste area.
-pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
+/// Right, which have no waste area. Every path of an Inside or Outside
+/// Profile cuts a region's wall and has a stock to leave:
+/// [`CamError::Internal`] otherwise.
+pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Result<Vec<PathDomain>, CamError> {
     if !setup.op.side.has_waste_area() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let radius_mm = tool_for(setup, 0).diameter_mm / 2.0;
+    // The diameter is the same on either wall and either way round, so
+    // no path need be there to ask it of.
+    let radius_mm = (setup.entry_tool)(Wall::Outside).diameter_mm / 2.0;
     let tolerance_mm = setup.tolerance_mm;
-    let wall_paths: Vec<WallPath<'_>> = setup
-        .paths
-        .iter()
-        .zip(setup.walls)
-        .enumerate()
-        .map(|(i, ((path, _), (_, region)))| WallPath {
+    let mut wall_paths: Vec<WallPath<'_>> = Vec::with_capacity(setup.paths.len());
+    for (i, (path, _)) in setup.paths.iter().enumerate() {
+        let (_, region) = at(setup.walls, i, "a Profile path has no wall")?;
+        wall_paths.push(WallPath {
             path,
-            region: *region,
-            stock_to_leave_mm: setup.stocks_to_leave.get(i).copied().unwrap_or(0.0),
-        })
-        .collect();
+            region: region.ok_or_else(|| {
+                CamError::internal("a path of an Inside or Outside Profile cuts no region's wall")
+            })?,
+            stock_to_leave_mm: *at(
+                setup.stocks_to_leave,
+                i,
+                "a Profile path has no stock to leave",
+            )?,
+        });
+    }
     let domains = waste::domains(
         setup.op.side,
         setup.regions,
@@ -432,7 +456,7 @@ pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
         setup.stock,
         radius_mm,
         tolerance_mm,
-    );
+    )?;
     // Tabs stand below their top: keep the entries off all of them.
     let keep_out: Vec<Region> = match setup.tabs {
         Some(tabs) if setup.pass_z.iter().any(|z| *z < tabs.top_z_mm() - EPS_MM) => setup
@@ -452,17 +476,17 @@ pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
         .into_iter()
         .enumerate()
         .map(|(i, regions)| {
-            let diameter_mm = tool_for(setup, i).diameter_mm;
+            let diameter_mm = tool_for(setup, i)?.diameter_mm;
             let space = |regions: Vec<Region>| Space {
                 domain: EntryDomain::new(&regions, diameter_mm, tolerance_mm),
                 regions,
             };
             let tabbed = (!keep_out.is_empty())
                 .then(|| space(difference(&regions, &keep_out, tolerance_mm)));
-            PathDomain {
+            Ok(PathDomain {
                 plain: space(regions),
                 tabbed,
-            }
+            })
         })
         .collect()
 }
@@ -662,13 +686,23 @@ impl PathEntry {
         else {
             return Ok(());
         };
-        let (Some(mv), start) = (
-            descent.moves.get(i),
-            i.checked_sub(1)
-                .and_then(|k| descent.moves.get(k))
-                .map_or(from, |m| m.to),
-        ) else {
-            return Ok(());
+        // The move that leaves the domain, and where it starts: where the
+        // move before it ends, or the descent's start for the first.
+        let mv = at(
+            &descent.moves,
+            i,
+            "the descent move found outside its domain is not in the descent",
+        )?;
+        let start = match i.checked_sub(1) {
+            Some(k) => {
+                at(
+                    &descent.moves,
+                    k,
+                    "the descent move found outside its domain has none before it",
+                )?
+                .to
+            }
+            None => from,
         };
         Err(off_material(
             op,

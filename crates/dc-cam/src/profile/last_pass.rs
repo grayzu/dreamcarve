@@ -340,7 +340,7 @@ pub(super) fn check_neighbours(
                 .vertices()
                 .first()
                 .is_some_and(|v| other_region.contains_point(v.point()));
-        for (line, other) in region_shapes(other_region, shapes) {
+        for (line, other) in region_shapes(other_region, shapes)? {
             if !inside && !within(twin, line.polyline(), radius_mm) {
                 continue;
             }
@@ -467,13 +467,21 @@ fn cuts_only_corners(
     // stretch that reaches either end is no corner: the stock path
     // stops short of the end, which the last pass would cut whole.
     let closed = path.is_closed();
-    let order: Vec<usize> = if closed {
+    // The samples in scan order: after the one beside the stock path and
+    // round to it, or from the start to the end.
+    let scan: Vec<(f64, Vec2)> = if closed {
         let Some(beside) = samples.iter().position(|(gap_mm, _)| !away(*gap_mm)) else {
             return false;
         };
-        (1..=n).map(|offset| (beside + offset) % n).collect()
+        samples
+            .iter()
+            .cycle()
+            .skip(beside + 1)
+            .take(n)
+            .copied()
+            .collect()
     } else {
-        (0..n).collect()
+        samples.clone()
     };
     if !closed {
         // The stretches at the ends: no corners, so no thicker than a
@@ -487,10 +495,7 @@ fn cuts_only_corners(
         }
     }
     let mut stretch: Option<Departure> = None;
-    for k in order {
-        let Some(&(gap_mm, heading)) = samples.get(k) else {
-            continue;
-        };
+    for (gap_mm, heading) in scan {
         if away(gap_mm) {
             let d = stretch.get_or_insert(Departure {
                 thickest_mm: 0.0,
@@ -952,12 +957,22 @@ pub(super) fn reversed_from_start(path: &Polyline) -> Polyline {
 /// `layout`, the tabs of the closed `path`, carried onto `back`, the same
 /// path run the other way ([`reversed_from_start`]), so they stay where
 /// they are ([`PathTabs::carried`]): a distance along `path` lands where
-/// `back` passes its point.
-pub(super) fn carry_reversed(path: &Polyline, layout: &PathTabs, back: &Polyline) -> PathTabs {
+/// `back` passes its point. A layout is carried only between paths with
+/// a length, on which every distance has a point and that point a
+/// nearest one on `back`: [`CamError::Internal`] otherwise, where the tab
+/// would be carried to the path's start.
+pub(super) fn carry_reversed(
+    path: &Polyline,
+    layout: &PathTabs,
+    back: &Polyline,
+) -> Result<PathTabs, CamError> {
     let along = |distance_mm: f64| {
         path.point_at(distance_mm)
             .and_then(|(p, _)| nearest_point(back, p))
-            .map_or(0.0, |n| n.along_mm)
+            .map(|n| n.along_mm)
+            .ok_or_else(|| {
+                CamError::internal("a tab's end has no point on its path run the other way")
+            })
     };
     layout.carried(back.length_mm(), along, true, 0.0)
 }
@@ -1298,18 +1313,15 @@ fn raised_runs(
     floor_z_mm: f64,
     closed: bool,
 ) -> Vec<RaisedSpan> {
-    let up = |k: usize| {
-        need.get(k)
-            .and_then(|(_, n)| *n)
-            .filter(|(h, _, _)| *h > floor_z_mm + EPS_MM)
-    };
+    let up = |sample: &Need| sample.1.is_some_and(|(h, _, _)| h > floor_z_mm + EPS_MM);
     let n = need.len();
     // Start at a sample that stands clear, so no run wraps the scan; an
     // open path's scan runs from its start, and ends any run at its end.
     let first_clear = if closed {
-        (0..n).find(|&k| up(k).is_none())
+        need.iter().position(|sample| !up(sample))
     } else {
-        (0..n).any(|k| up(k).is_none()).then_some(n - 1)
+        // The last sample, which a path with a clear sample has.
+        need.iter().any(|sample| !up(sample)).then(|| n - 1)
     };
     let Some(first_clear) = first_clear else {
         let top = need
@@ -1331,18 +1343,30 @@ fn raised_runs(
         }];
     };
     let mut spans = Vec::new();
-    let mut run: Vec<usize> = Vec::new();
-    for offset in 1..=n {
-        let k = (first_clear + offset) % n;
-        if up(k).is_some() {
-            run.push(k);
+    let mut run: Vec<Need> = Vec::new();
+    // The samples after the clear one, round to it.
+    let scan = need
+        .iter()
+        .enumerate()
+        .cycle()
+        .skip(first_clear + 1)
+        .take(n);
+    for (k, sample) in scan {
+        if up(sample) {
+            run.push(*sample);
             if closed || k + 1 < n {
                 continue;
             }
         }
-        if !run.is_empty() {
+        // No raised sample since the last clear one: no stretch.
+        if let (Some(first), Some(last)) = (run.first(), run.last()) {
             spans.push(raised_span(
-                need, &run, length_mm, step_mm, floor_z_mm, closed,
+                &run,
+                (first.0, last.0),
+                length_mm,
+                step_mm,
+                floor_z_mm,
+                closed,
             ));
             run.clear();
         }
@@ -1350,20 +1374,18 @@ fn raised_runs(
     spans
 }
 
-/// The raised stretch over the samples `run` of `need`, in order along
-/// the path (possibly through its start, when `closed`), for
-/// [`raised_runs`]. An open path's stretch stops at its ends.
+/// The raised stretch over the samples `run`, in order along the path
+/// (possibly through its start, when `closed`), the first and the last
+/// `first` and `last` mm along it, for [`raised_runs`]. An open path's
+/// stretch stops at its ends.
 fn raised_span(
-    need: &[Need],
-    run: &[usize],
+    run: &[Need],
+    (first, last): (f64, f64),
     length_mm: f64,
     step_mm: f64,
     floor_z_mm: f64,
     closed: bool,
 ) -> RaisedSpan {
-    let at = |k: usize| need.get(k).map_or(0.0, |(d, _)| *d);
-    let first = run.first().map_or(0.0, |&k| at(k));
-    let last = run.last().map_or(first, |&k| at(k));
     // #311 review: a stretch an open path's end cuts short has no room for
     // its ramp there, so it holds the top right to that end.
     let at_start = !closed && first - step_mm <= EPS_MM;
@@ -1379,15 +1401,13 @@ fn raised_span(
     };
     let samples: Vec<(f64, f64)> = run
         .iter()
-        .filter_map(|&k| need.get(k).and_then(|(_, n)| n.map(|(h, _, _)| (at(k), h))))
+        .filter_map(|(d, n)| n.map(|(h, _, _)| (*d, h)))
         .collect();
     let top = run
         .iter()
-        .filter_map(|&k| need.get(k).and_then(|(_, n)| n.map(|(_, t, _)| t)))
+        .filter_map(|(_, n)| n.map(|(_, t, _)| t))
         .fold(floor_z_mm, f64::max);
-    let smooth = run
-        .iter()
-        .all(|&k| need.get(k).is_none_or(|(_, n)| n.is_none_or(|(_, _, s)| s)));
+    let smooth = run.iter().all(|(_, n)| n.is_none_or(|(_, _, s)| s));
     if !smooth || top <= floor_z_mm + EPS_MM {
         return RaisedSpan {
             start_mm,

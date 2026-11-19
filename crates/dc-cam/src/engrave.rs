@@ -57,6 +57,12 @@ pub fn generate_engrave(
     project: &Project,
     op: &EngraveOp,
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
+    engrave(project, op).map_err(|e| e.for_op(&op.id))
+}
+
+/// [`generate_engrave`], before a defect it finds
+/// ([`CamError::Internal`]) names `op`.
+fn engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>), CamError> {
     let tool = project
         .tools
         .iter()
@@ -105,18 +111,23 @@ pub fn generate_engrave(
 
     let mut warnings = Vec::new();
     let paths = resolve_targets(project, op, &mut warnings)?;
-    let containment = closed_containment(&paths);
+    let containment = closed_containment(&paths)?;
 
     let mut blocks = Vec::with_capacity(paths.len() * pass_z.len());
     for (shape, path) in &paths {
         let closed = path.is_closed();
         let backwards = path.reversed();
+        // The Z of the pass above, where the tool is when a pass begins.
+        let mut above_z_mm: Option<f64> = None;
         for (pass, &z_mm) in pass_z.iter().enumerate() {
             let reverse = !closed && op.alternate_direction && pass % 2 == 1;
             let traced = if reverse { &backwards } else { path };
-            let Some(entry) = traced.vertices().first().map(|v| v.point()) else {
-                continue;
-            };
+            // `resolve_targets` kept only paths of two distinct points.
+            let entry = traced
+                .vertices()
+                .first()
+                .map(|v| v.point())
+                .ok_or_else(|| CamError::internal("an engraved path has no vertex to start at"))?;
             let cuts: Vec<Move> = traced
                 .segments()
                 .filter(|s| s.start.distance_to(s.end) > EPS_MM)
@@ -132,11 +143,8 @@ pub fn generate_engrave(
             // path cut back and forth. Then the descent starts at the
             // previous pass Z; otherwise the sequencer retracts first.
             let stays_down = closed || op.alternate_direction;
-            let descent_from_z_mm = pass
-                .checked_sub(1)
-                .filter(|_| stays_down)
-                .and_then(|k| pass_z.get(k).copied())
-                .unwrap_or(safe_z_mm);
+            let descent_from_z_mm = above_z_mm.filter(|_| stays_down).unwrap_or(safe_z_mm);
+            above_z_mm = Some(z_mm);
             blocks.push(CutBlock {
                 shape: shape.clone(),
                 pass,
@@ -247,8 +255,10 @@ fn has_two_distinct_points(path: &Polyline) -> bool {
 /// is not a valid contour (it crosses itself, or encloses no area) is
 /// engraved as drawn but takes no part either; and when the closed paths
 /// cross one another, which engraving allows, there is no nesting to
-/// order by, so none is applied.
-fn closed_containment(paths: &[(ShapeRef, Polyline)]) -> Vec<(ShapeRef, ShapeRef)> {
+/// order by, so none is applied. Fails as [`containment_pairs`] does.
+fn closed_containment(
+    paths: &[(ShapeRef, Polyline)],
+) -> Result<Vec<(ShapeRef, ShapeRef)>, CamError> {
     let closed: Vec<(ShapeRef, Contour)> = paths
         .iter()
         .filter(|(_, p)| p.is_closed())
@@ -257,7 +267,7 @@ fn closed_containment(paths: &[(ShapeRef, Polyline)]) -> Vec<(ShapeRef, ShapeRef
     let contours: Vec<Contour> = closed.iter().map(|(_, c)| c.clone()).collect();
     match nest(contours) {
         Ok((regions, _)) => containment_pairs(&regions, &closed),
-        Err(_) => Vec::new(),
+        Err(_) => Ok(Vec::new()),
     }
 }
 

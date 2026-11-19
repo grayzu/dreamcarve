@@ -23,60 +23,68 @@ use super::CentrePath;
 use dc_geometry::{Point, Polyline, nearest_point};
 use dc_project::{ProfileOp, Project, StartAt};
 
-use crate::error::ShapeRef;
+use crate::error::{CamError, ShapeRef};
 use crate::lead::reseam_at;
 
 /// `placed`, each closed path (and its stock to leave twin) re-seamed nearest
 /// the start `op` sets, with which of them it set: every closed path for
 /// [`StartAt::FirstVertex`] and [`StartAt::Near`], none for
-/// [`StartAt::Auto`], which keeps today's paths.
+/// [`StartAt::Auto`], which keeps today's paths. Fails as [`target`]
+/// does.
 pub(super) fn seat<'s>(
     project: &Project,
     op: &ProfileOp,
     placed: Vec<CentrePath<'s>>,
-) -> (Vec<CentrePath<'s>>, Vec<bool>) {
+) -> Result<(Vec<CentrePath<'s>>, Vec<bool>), CamError> {
     let mut fixed = Vec::with_capacity(placed.len());
-    let seated = placed
-        .into_iter()
-        .map(|c| {
-            let target = c
-                .path
-                .is_closed()
-                .then(|| target(project, op.start, c.shape))
-                .flatten();
-            fixed.push(target.is_some());
-            match target {
-                Some(at) => CentrePath {
-                    path: seamed(&c.path, at),
-                    twin: c.twin.map(|twin| seamed(&twin, at)),
-                    ..c
-                },
-                None => c,
-            }
-        })
-        .collect();
-    (seated, fixed)
+    let mut seated = Vec::with_capacity(placed.len());
+    for c in placed {
+        let target = if c.path.is_closed() {
+            target(project, op.start, c.shape)?
+        } else {
+            None
+        };
+        fixed.push(target.is_some());
+        seated.push(match target {
+            Some(at) => CentrePath {
+                path: seamed(&c.path, at),
+                twin: c.twin.map(|twin| seamed(&twin, at)),
+                ..c
+            },
+            None => c,
+        });
+    }
+    Ok((seated, fixed))
 }
 
 /// The point a closed path of `shape` starts nearest for `start`: the
 /// shape's first vertex as drawn, placed by its instance's transform, or
-/// the given point. `None` for [`StartAt::Auto`], or when the shape is not
-/// in the project.
-fn target(project: &Project, start: StartAt, shape: &ShapeRef) -> Option<Point> {
+/// the given point. `None` for [`StartAt::Auto`]. `shape` is one the
+/// Profile's targets were resolved to, so it is in the project with a
+/// first vertex: [`CamError::Internal`] otherwise, where the path would
+/// keep its own start and the start the user set be ignored.
+fn target(project: &Project, start: StartAt, shape: &ShapeRef) -> Result<Option<Point>, CamError> {
     match start {
-        StartAt::Auto => None,
-        StartAt::Near { x_mm, y_mm } => Some(Point::new(x_mm, y_mm)),
+        StartAt::Auto => Ok(None),
+        StartAt::Near { x_mm, y_mm } => Ok(Some(Point::new(x_mm, y_mm))),
         StartAt::FirstVertex => {
-            let instance = project.instances.iter().find(|i| i.id == shape.instance)?;
-            let first = project
-                .definitions
-                .get(&instance.definition)?
-                .profiles
-                .get(shape.profile)?
-                .vertices()
-                .first()?
-                .point();
-            Some(instance.transform.apply(first))
+            let drawn = project
+                .instances
+                .iter()
+                .find(|i| i.id == shape.instance)
+                .and_then(|instance| {
+                    let first = project
+                        .definitions
+                        .get(&instance.definition)?
+                        .profiles
+                        .get(shape.profile)?
+                        .vertices()
+                        .first()?;
+                    Some(instance.transform.apply(first.point()))
+                });
+            drawn.map(Some).ok_or_else(|| {
+                CamError::internal("a shape a Profile cuts has no first vertex in the project")
+            })
         }
     }
 }
