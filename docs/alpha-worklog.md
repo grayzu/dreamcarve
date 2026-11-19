@@ -43,11 +43,11 @@ Status is one of: todo, doing, done, owner (waits for the maintainer).
 
 | Slice | What | Status |
 | --- | --- | --- |
-| A1 | An Inlay's schema error names its field (GitHub #712; review 1.3) | todo |
-| A2 | A clipped Inlay cut-out places the tabs it was asked for (#710; review 1.13) | todo |
+| A1 | An Inlay's schema error names its field (GitHub #712; review 1.3) | doing |
+| A2 | A clipped Inlay cut-out places the tabs it was asked for (#710; review 1.13) | doing |
 | A3 | The safety pass fails closed on a lookup miss (#711; review 1.1) | todo |
-| A4 | Boundary sweep: the plug 0.182 mm proud at lettering seed 0x47 (#713) | todo |
-| A5 | Import robustness: DXF stitch and dedupe budget, warning names, read caps, control characters, `init` no-overwrite (review 1.5, 1.6, 1.8, 1.9, 1.12) | todo |
+| A4 | Boundary sweep: the plug 0.182 mm proud at lettering seed 0x47 (#713) | doing |
+| A5 | Import robustness: DXF stitch and dedupe budget, warning names, read caps, control characters, `init` no-overwrite (review 1.5, 1.6, 1.8, 1.9, 1.12) | doing |
 | A6 | The digest hashes bitmaps; `Rates` keeps feed and plunge; cuts outside a span refused; wall-clock assertions removed (review 1.4, 1.7, 1.10, 1.11) | todo |
 | A7 | A generator's lookup miss is an internal-defect error, not a skipped pass (review 1.2) | todo |
 
@@ -71,7 +71,7 @@ Status is one of: todo, doing, done, owner (waits for the maintainer).
 
 | Slice | What | Status |
 | --- | --- | --- |
-| D1 | Experience spec, second edition: the design language and the step flow | todo |
+| D1 | The redesign brief, `docs/specs/phase-4/redesign.md`: principles, the window, the steps, tokens, components | done |
 | D2 | Theme tokens and widgets: dark default, teal accent, cards, pills | todo |
 | D3 | The shell: icon rail, steps, start screen | todo |
 | D4 | The steps' panels (Design, Stock, Tools, Operations, Export), warnings, viewport overlays | todo |
