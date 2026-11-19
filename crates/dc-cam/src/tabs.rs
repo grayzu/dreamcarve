@@ -532,7 +532,8 @@ impl Request {
                     let mut along_mm = d.rem_euclid(total_mm);
                     for (i, (piece, &length_mm)) in on.iter_mut().zip(lengths_mm).enumerate() {
                         // Rounding may leave a distance just past the
-                        // last piece: it is that piece's end.
+                        // last piece: it stays on that piece, which
+                        // takes it modulo its own length.
                         if along_mm < length_mm || i == last {
                             piece.push(along_mm.min(length_mm));
                             break;
