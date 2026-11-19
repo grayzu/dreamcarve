@@ -32,9 +32,9 @@ of H, are in three bands; each width is listed once per kind:
 
 No width sits on a swept value, so a flatten tolerance cannot move a mark
 across a threshold. The serif tips and the D's counter are in the letters
-themselves; the tests check that the counter survives and that the letters
-change by the smoothing alone. The file's header lists every mark (kind,
-band, centre, widest point), which the test reads.
+themselves; the test checks that the counter survives and that the drawing
+changes by at most 0.1 % of its box at the two defaults. The file's header
+lists every mark (kind, band, centre, widest point), which the test reads.
 
 ## The sweep
 
@@ -44,11 +44,14 @@ Rerun it with
 cargo test -p dc-import --lib print_the_sweep -- --ignored --nocapture
 ```
 
-after `node --experimental-strip-types tools/parity/prep-fixture.ts` (the
-output is byte-identical run to run). The tests
+after `node --experimental-strip-types tools/parity/prep-fixture.ts`, which
+needs Node 22.6 or newer and nothing installed (or `npx tsx` on an older
+Node). Its output is byte-identical run to run, so `git status` shows no
+change to the fixtures. The tests
 `prep::defaults::fixtures_keep_their_intent_at_the_defaults` and
 `prep::defaults::defaults_are_the_smallest_grid_values_that_pass` hold the
-constants to it.
+constants to it: moving either constant to a neighbouring swept value fails
+at least one of them.
 
 ### `min_detail`, on `speckled-dc.svg` (smoothing off)
 
@@ -73,13 +76,13 @@ never touches line art that is thicker than it.
 
 ### `smooth`, on `jagged-dc.svg` (`--min-detail 0`)
 
-| `--smooth` % | vertices removed | changed area, % of the design's box | passes |
-| --- | --- | --- | --- |
-| 0 | 0.0 % | 0 | no |
-| 0.02 | 54.2 % | 0.024 | no, under 80 % |
-| **0.05** | 89.1 % | 0.077 | **yes** |
-| 0.1 | 95.0 % | 0.117 | no, over 0.1 % |
-| 0.2 | 96.5 % | 0.254 | no, over 0.1 % |
+| `--smooth` % | vertices removed | changed area, % of the design's box | % of the ink | passes |
+| --- | --- | --- | --- | --- |
+| 0 | 0.0 % | 0 | 0 | no |
+| 0.02 | 54.2 % | 0.024 | 0.056 | no, under 80 % |
+| **0.05** | 89.1 % | 0.077 | 0.177 | **yes** |
+| 0.1 | 95.0 % | 0.117 | 0.268 | no, over 0.1 % |
+| 0.2 | 96.5 % | 0.254 | 0.585 | no, over 0.1 % |
 
 A value passes when at least 80 % of the vertices go, every output vertex is
 within `eps` (the value, in mm) of the input outline, and the changed area
@@ -89,6 +92,27 @@ keeps it as a guard on the simplifier. The smallest passing value is 0.05,
 which is also at most half of the chosen `--min-detail`, so the two never
 fight (`prep_smooth_exceeds_detail`).
 
+The spec's "0.1 % of the design" is scored against the design's box (its
+height by its width). That reading decides the result. The letters' ink is
+43 % of the box, and against the ink's own area (the last column, reported
+and not scored) 0.05 changes 0.18 % and no swept value passes: 0.02 removes
+too few vertices and 0.05 changes too much.
+
+### Both defaults together
+
+The sweep takes each value with the other step off. `image-prep` runs both,
+so the pinning test also runs each fixture at `--min-detail 0.2 --smooth
+0.05`, against itself with both off:
+
+| Fixture | pieces | holes | dropped | filled | vertices removed | changed area, % of the box | % of the ink |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `speckled-dc.svg` | 11 | 10 | 8 | 8 | 68.2 % | 0.072 | 0.165 |
+| `jagged-dc.svg` | 2 | 1 | 0 | 0 | 89.1 % | 0.077 | 0.177 |
+
+On `speckled-dc.svg` the sixteen noise marks go and every other mark stays
+(a mark is still decided by the threshold alone with the smoothing on), and
+the D's counter stays. On `jagged-dc.svg` the threshold drops nothing.
+
 ## Result
 
 | Flag | Default | Source |
@@ -96,7 +120,36 @@ fight (`prep_smooth_exceeds_detail`).
 | `--min-detail` | 0.2 % of the design's height | smallest swept value that clears the noise band and keeps the intended detail |
 | `--smooth` | 0.05 % of the design's height | smallest swept value that removes 80 % of the jitter within 0.1 % of changed area |
 
-The proposals of functional open questions 16 and 17 stand. The values
-are confirmed on the maintainer's own traced art (issue #599), which is run
-with the proposal and its neighbours and reported on the issue, never
-committed.
+The proposals of functional open questions 16 and 17 stand on the synthetic
+fixtures. The constants, the specs, the book and the command's help all say
+0.2 and 0.05.
+
+## Still to confirm
+
+The two values are calibrated on the synthetic fixtures only. Step 4 of the
+procedure, the maintainer's run on their own traced art (never committed),
+has not been done, so 0.2 and 0.05 are still proposals (issue #599). From
+the repository root, with `art` set to where the art is, outside the
+repository:
+
+```sh
+art=~/art/eagle.svg
+out=$(dirname "$art")/prep-check
+mkdir "$out"
+for t in 0.1 0.2 0.3; do for s in 0.02 0.05 0.1; do
+  cargo run -q -p dreamcarve -- image-prep "$art" --min-detail $t --smooth $s -o "$out/eagle-$t-$s.svg"
+done; done
+```
+
+`image-prep` never overwrites a file, so remove `prep-check` before a
+second run. In each run look at the `Dropped:` line and the
+`prep_speck_dropped` and `prep_hole_filled` warnings (how many went, and
+the widest of them): at 0.2, is anything gone that the art means to keep,
+and at 0.1 are specks left? Then lay each written SVG over the original: at
+0.05, are the staircases gone with the corners and thin tips still as
+drawn, is 0.1 visibly rounder, is 0.02 still jagged? Do not judge by the
+`Narrowest gap` line: on these fixtures it moves between 0.19 and 3.0 mm
+with the `--smooth` value for the same letters. The defaults stand if 0.2
+and 0.05 clear the specks, lose nothing meant to be kept and leave the
+edges true. Otherwise the constants, the specs and the book move to the
+neighbour that does.

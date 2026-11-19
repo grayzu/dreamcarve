@@ -24,10 +24,11 @@ pub use run::{PrepMode, PrepOptions, Prepared, flatten_tolerance_mm, prepare};
 pub use write::write_svg;
 
 /// The default minimum detail, percent of the design's height (functional
-/// 49d). Calibrated by slice 21f (`tests/fixtures/prep/README.md`; open
-/// question 16); the maintainer confirms it on their own art. Pieces
-/// and holes whose widest point is under this share of the height are
-/// reported by `feature_below_size`.
+/// 49d). Calibrated by slice 21f on synthetic fixtures
+/// (`tests/fixtures/prep/README.md`; open question 16); the maintainer's
+/// run on their own art is still to come ("Still to confirm" there).
+/// Pieces and holes whose widest point is under this share of the height
+/// are reported by `feature_below_size`.
 pub const DEFAULT_MIN_DETAIL_PCT: f64 = 0.2;
 /// The default `--smooth`, percent of the design's height (open question
 /// 17). Calibrated by the same sweep; held at most half of
@@ -115,7 +116,9 @@ mod tests {
     /// is the fifty outlines, without the 77 specks that lie clear of
     /// them, smoothed to under a tenth of the vertices that went in.
     /// (This was a 60 s wall-clock bound, review 1.11; a size is the same
-    /// on every machine.)
+    /// on every machine. Issue #599 lists it under its first name,
+    /// `prep::runs_in_seconds_on_traced_scale_art`: the same test, renamed
+    /// when the clock came out of it.)
     #[test]
     fn traced_scale_art_prepares_within_its_own_size() {
         let art = traced_scale_art();
