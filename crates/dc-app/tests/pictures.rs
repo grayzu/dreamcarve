@@ -36,6 +36,7 @@ use dc_app::viewport::pick::{self, Hit, PICK_TOLERANCE_PX};
 use dc_app::{App, ClickMode, Command, CommandError, Selection, pictures};
 use dc_geometry::{Point, Rect, Vec2};
 use dc_import::ImageFormat;
+use dc_job::picture::PictureSize;
 use dc_project::{BitmapId, Operation, Stock, Units};
 
 use common::{fixture, plaque, read};
@@ -856,6 +857,189 @@ fn moving_a_picture_is_one_undo_step_and_takes_its_grooves_along() {
         pictures::move_by(&locked, &one, 1.0, 1.0).is_ok(),
         "the unlocked one still moves"
     );
+}
+
+/// Slice 15 (#544); capabilities 56 and 58: one picture's W or H can be
+/// retyped, and the other side follows the pixels, as at import, so the
+/// picture is never stretched: the proportion link is always closed. The
+/// footprint keeps its centre, as a shape's does. A resize is one undo
+/// step named for the picture; a locked picture refuses it, a size that
+/// is not a positive length is refused, and several pictures have no one
+/// size to type. The Photo V-Carve that carves the picture regenerates.
+#[test]
+fn resizing_a_picture_keeps_its_proportions_and_its_centre() {
+    let mut harness = two_pictures_ready();
+    harness.generate();
+    let op1 = harness.app.project().operations[0].id().clone();
+    let before = harness.app.project().clone();
+    let one = [b("b1")];
+    let props = pictures::properties(&before, &one).expect("b1");
+    for field in properties::FIELDS {
+        assert!(!pictures::read_only(&props, field), "{field:?}");
+    }
+
+    // Typed W: 100 × 50 at (10, 10) becomes 50 × 25 about (60, 35).
+    let typed =
+        properties::parse(&props.placement, Field::W, "50", Units::Mm, true).expect("a length");
+    assert_eq!(
+        typed,
+        Edit::W {
+            mm: 50.0,
+            uniform: true
+        }
+    );
+    let command = pictures::edit(&before, &one, typed).expect("a resize");
+    assert_eq!(
+        command,
+        Command::ResizeBitmap {
+            id: b("b1"),
+            size: PictureSize::Width { width_mm: 50.0 },
+        }
+    );
+    assert_eq!(
+        harness.run(command).expect("it resizes"),
+        "Resize “gradient”"
+    );
+    let resized = harness.app.project().bitmaps[0].clone();
+    assert_eq!((resized.width_mm, resized.height_mm), (50.0, 25.0));
+    assert_eq!((resized.x_mm, resized.y_mm), (35.0, 22.5));
+    assert_eq!(
+        dc_project::Bitmap {
+            x_mm: 10.0,
+            y_mm: 10.0,
+            width_mm: 100.0,
+            height_mm: 50.0,
+            ..resized
+        },
+        before.bitmaps[0],
+        "its pixels, name and flags are untouched"
+    );
+    assert_eq!(harness.app.project().bitmaps[1], before.bitmaps[1]);
+    assert!(
+        !harness.app.validation().has_errors(),
+        "the footprint keeps the pixels' proportions: {:?}",
+        harness.app.validation().errors
+    );
+    assert!(
+        !harness.app.generation().is_current(&op1),
+        "its carve is stale"
+    );
+    harness.generate();
+    assert!(harness.app.generation().is_current(&op1));
+
+    // Typed H, the link drawn open or not: the width follows.
+    let typed = Edit::H {
+        mm: 10.0,
+        uniform: false,
+    };
+    let command = pictures::edit(harness.app.project(), &one, typed).expect("a resize");
+    assert_eq!(
+        command,
+        Command::ResizeBitmap {
+            id: b("b1"),
+            size: PictureSize::Height { height_mm: 10.0 },
+        }
+    );
+    harness.run(command).expect("it resizes");
+    let small = harness.app.project().bitmaps[0].clone();
+    assert_eq!((small.width_mm, small.height_mm), (20.0, 10.0));
+    assert_eq!((small.x_mm, small.y_mm), (50.0, 30.0));
+    // A percentage of the size it has, as a shape's W takes.
+    let props = pictures::properties(harness.app.project(), &one).expect("b1");
+    let typed = properties::parse(&props.placement, Field::W, "250 %", Units::Mm, true)
+        .expect("a percentage");
+    let command = pictures::edit(harness.app.project(), &one, typed).expect("a resize");
+    harness.run(command).expect("it resizes");
+    let again = harness.app.project().bitmaps[0].clone();
+    assert_eq!((again.width_mm, again.height_mm), (50.0, 25.0));
+    assert_eq!((again.x_mm, again.y_mm), (35.0, 22.5));
+    // A width the pixels do not divide evenly still validates.
+    let command = pictures::resize(
+        harness.app.project(),
+        &b("b1"),
+        PictureSize::Width { width_mm: 33.3 },
+    )
+    .expect("a resize");
+    harness.run(command).expect("it resizes");
+    let odd = harness.app.project().bitmaps[0].clone();
+    assert_eq!((odd.width_mm, odd.height_mm), (33.3, 16.65));
+    assert!(!harness.app.validation().has_errors());
+    // The size it has is no step.
+    assert!(matches!(
+        pictures::edit(
+            harness.app.project(),
+            &one,
+            Edit::W {
+                mm: 33.3,
+                uniform: true
+            }
+        ),
+        Err(CommandError::NothingToDo)
+    ));
+    for _ in 0..4 {
+        harness.app.undo().expect("a resize to undo");
+    }
+    assert_eq!(harness.app.project(), &before, "four steps, four undos");
+
+    // Not a size, or past the coordinate limit: refused, nothing changes.
+    for bad in [0.0, -5.0, f64::NAN, f64::INFINITY, 1e12] {
+        let size = PictureSize::Width { width_mm: bad };
+        assert!(
+            matches!(
+                pictures::resize(&before, &b("b1"), size),
+                Err(CommandError::Job(_))
+            ),
+            "{bad}"
+        );
+        let refused = harness.run(Command::ResizeBitmap { id: b("b1"), size });
+        assert!(refused.is_err(), "{bad}: {refused:?}");
+    }
+    assert!(matches!(
+        pictures::resize(&before, &b("b9"), PictureSize::Width { width_mm: 5.0 }),
+        Err(CommandError::UnknownBitmap { id }) if id == b("b9")
+    ));
+    assert_eq!(harness.app.project(), &before);
+
+    // Several pictures: W and H are shown, not typed.
+    let both = [b("b1"), b("b2")];
+    let joint = pictures::properties(&before, &both).expect("both");
+    assert!(!pictures::read_only(&joint, Field::X));
+    assert!(pictures::read_only(&joint, Field::W));
+    assert!(pictures::read_only(&joint, Field::H));
+    assert!(matches!(
+        pictures::edit(
+            &before,
+            &both,
+            Edit::W {
+                mm: 50.0,
+                uniform: true
+            }
+        ),
+        Err(CommandError::FieldRefused { .. })
+    ));
+
+    // Locked: read-only, and refused naming it.
+    harness
+        .run(Command::SetBitmapFlags {
+            ids: one.to_vec(),
+            visible: None,
+            locked: Some(true),
+        })
+        .expect("locks");
+    let locked = harness.app.project().clone();
+    let props = pictures::properties(&locked, &one).expect("b1");
+    assert!(pictures::read_only(&props, Field::W));
+    let size = PictureSize::Width { width_mm: 50.0 };
+    let refusal = pictures::resize(&locked, &b("b1"), size).expect_err("it is locked");
+    assert_eq!(refusal.to_string(), "picture “gradient” is locked");
+    assert!(matches!(
+        harness.run(Command::ResizeBitmap {
+            id: b("b1"),
+            size
+        }),
+        Err(CommandError::PictureLocked { names }) if names == ["gradient"]
+    ));
+    assert_eq!(harness.app.project(), &locked);
 }
 
 /// Slice 15 (#544); capability 67: a Photo V-Carve's target is its

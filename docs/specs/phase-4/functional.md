@@ -242,18 +242,23 @@ folder are app preferences, kept outside the project.
     pixels, and reporting a colour-to-grayscale conversion as `image add`
     does. The picture shows on the Viewport as it does on screen, under the
     shapes, at its footprint. A bitmap is a row in the Design Tree with a
-    name, visibility and lock, moves like a shape, and does not rotate,
-    scale or mirror in this phase (phase 3 decision). It is deleted like a
+    name, visibility and lock, moves like a shape, and does not rotate
+    or mirror in this phase (phase 3 decision). It is never stretched,
+    since its footprint keeps the picture's proportions: one picture's W
+    or H can be retyped in Properties, the other side following the
+    pixels as it does at import, about the footprint's centre; no handle
+    scales it. It is deleted like a
     shape; a Photo V-Carve that loses its picture says so. A picture is
     selected from its row, or by a click inside its footprint where no
     shape, tab or toolpath takes the click (it is under all of them), the
     topmost where two overlap. Pictures are selected on their own, as
     tabs are. Properties shows a selected picture's X, Y, W and H (its
     footprint; several pictures' joint box), its size in pixels,
-    read-only, and the Photo V-Carves that carve it; X and Y are typed, W
-    and H are not. A move is one undo step named for the picture, a locked
-    picture refuses it, and the Photo V-Carve that carves the picture
-    regenerates with its grooves moved.
+    read-only, and the Photo V-Carves that carve it; X and Y are typed
+    for any selection of pictures, W and H for one picture, with the
+    proportion link always closed. A move or a resize is one undo step
+    named for the picture, a locked picture refuses both, and the Photo
+    V-Carve that carves the picture regenerates over its new footprint.
 57. **Design Tree** (`01-workspace.svg`, left). One row per feature
     instance, in file order, with: an eye (visible), a padlock (locked),
     a **shape glyph** that says what the shape is (a closed outline, a
@@ -946,7 +951,9 @@ folder are app preferences, kept outside the project.
 - Drawing or editing shape geometry: lines, rectangles, circles, text,
   node editing, fillets, booleans, offsets, joining open paths, snapping,
   alignment, distribution, arrays, folders, construction geometry (phase 5).
-- Rotating, scaling or mirroring a picture (phase 3 decision; revisit in 5).
+- Rotating or mirroring a picture, or stretching it out of its pixels'
+  proportions (phase 3 decision; revisit in 5). Its size can be retyped
+  (56).
 - 3D preview and material-removal simulation (phase 6).
 - Machine-definition editing (ADR-0004: definitions are bundled); a
   post-processor converter (phase 8). Editing library tools in place is

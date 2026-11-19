@@ -127,6 +127,7 @@ fn kind(command: &Command) -> &'static str {
         Command::RenameBitmap { .. } => "RenameBitmap",
         Command::DeleteBitmaps(_) => "DeleteBitmaps",
         Command::MoveBitmaps { .. } => "MoveBitmaps",
+        Command::ResizeBitmap { .. } => "ResizeBitmap",
         Command::TransformInstances { .. } => "TransformInstances",
         Command::RotateInstances { .. } => "RotateInstances",
         Command::FlipInstances { .. } => "FlipInstances",
@@ -255,11 +256,18 @@ fn every_command() -> Vec<(Project, Command)> {
             Command::DeleteBitmaps(vec![BitmapId::new("b1")]),
         ),
         (
-            with_picture,
+            with_picture.clone(),
             Command::MoveBitmaps {
                 ids: vec![BitmapId::new("b1")],
                 dx_mm: 12.345_678_9,
                 dy_mm: -3.0,
+            },
+        ),
+        (
+            with_picture,
+            Command::ResizeBitmap {
+                id: BitmapId::new("b1"),
+                size: PictureSize::Height { height_mm: 33.3 },
             },
         ),
         (
@@ -532,6 +540,13 @@ fn labels_name_the_thing() {
             dy_mm: 0.0,
         }),
         "Move “gradient”"
+    );
+    assert_eq!(
+        label(Command::ResizeBitmap {
+            id: BitmapId::new("b1"),
+            size: PictureSize::Width { width_mm: 40.0 },
+        }),
+        "Resize “gradient”"
     );
 }
 

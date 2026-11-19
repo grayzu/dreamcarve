@@ -4,7 +4,8 @@
 //! The commands on a project's bitmaps (functional spec, capabilities 56
 //! and 57): a picture imported as `dreamcarve image add` adds it, and a
 //! Pictures row's eye, padlock, name and *Delete*; and a picture moved as
-//! a shape is (slice 15, #544; capability 58).
+//! a shape is, or its size retyped with its proportions kept (slice 15,
+//! #544; capability 58).
 
 use dc_geometry::{MAX_COORDINATE_MM, approx_eq};
 use dc_job::JobError;
@@ -125,6 +126,66 @@ pub(super) fn move_by(
     for bitmap in project.bitmaps.iter_mut().filter(|b| ids.contains(&b.id)) {
         (bitmap.x_mm, bitmap.y_mm) = moved(bitmap.x_mm, bitmap.y_mm, dx_mm, dy_mm);
     }
+    Ok(())
+}
+
+/// The footprint `bitmap` has at `size` about its own centre: its
+/// bottom-left corner's `(x_mm, y_mm)`, then `(width_mm, height_mm)`, the
+/// side not given following the pixels as at import
+/// ([`PictureSize::footprint_mm`]), each rounded as a stored length is.
+fn resized(bitmap: &Bitmap, size: PictureSize) -> Result<[f64; 4], CommandError> {
+    let (width_mm, height_mm) = size.footprint_mm(bitmap.width_px, bitmap.height_px)?;
+    let centre_x_mm = bitmap.x_mm + bitmap.width_mm / 2.0;
+    let centre_y_mm = bitmap.y_mm + bitmap.height_mm / 2.0;
+    let x_mm = round_length_mm(centre_x_mm - width_mm / 2.0);
+    let y_mm = round_length_mm(centre_y_mm - height_mm / 2.0);
+    in_range(x_mm, y_mm, width_mm, height_mm)?;
+    Ok([x_mm, y_mm, width_mm, height_mm])
+}
+
+/// Whether `ResizeBitmap` can set bitmap `id` to `size`, and the
+/// footprint it then has ([`resized`]): the project has it, it is not
+/// locked, the size is a positive length within the coordinate limit, and
+/// it is not the size it has.
+fn resize_to(
+    project: &Project,
+    id: &BitmapId,
+    size: PictureSize,
+) -> Result<[f64; 4], CommandError> {
+    let bitmap = find(project, id)?;
+    refuse_locked(project, std::slice::from_ref(id))?;
+    let to = resized(bitmap, size)?;
+    let [_, _, width_mm, height_mm] = to;
+    if approx_eq(width_mm, bitmap.width_mm, NO_MOVE_MM)
+        && approx_eq(height_mm, bitmap.height_mm, NO_MOVE_MM)
+    {
+        return Err(CommandError::NothingToDo);
+    }
+    Ok(to)
+}
+
+/// Whether `ResizeBitmap` can set bitmap `id` to `size` ([`resize_to`]).
+pub(crate) fn check_resize(
+    project: &Project,
+    id: &BitmapId,
+    size: PictureSize,
+) -> Result<(), CommandError> {
+    resize_to(project, id, size).map(|_| ())
+}
+
+/// `ResizeBitmap`: bitmap `id` at `size` about its centre, its pixels
+/// untouched ([`resize_to`]).
+pub(super) fn resize(
+    project: &mut Project,
+    id: &BitmapId,
+    size: PictureSize,
+) -> Result<(), CommandError> {
+    let [x_mm, y_mm, width_mm, height_mm] = resize_to(project, id, size)?;
+    let bitmap = find_mut(project, id)?;
+    bitmap.x_mm = x_mm;
+    bitmap.y_mm = y_mm;
+    bitmap.width_mm = width_mm;
+    bitmap.height_mm = height_mm;
     Ok(())
 }
 

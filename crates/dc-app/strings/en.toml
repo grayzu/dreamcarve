@@ -33,6 +33,8 @@ update_tool = "Edit tool {subject}"
 delete_tool = "Delete tool {subject}"
 import = "Import {name}"
 move = "Move {subject}"
+# Slice 15 (#544): a picture's W or H retyped; it is never stretched.
+resize = "Resize {subject}"
 rotate = "Rotate {subject}"
 scale = "Scale {subject}"
 mirror = "Mirror {subject}"

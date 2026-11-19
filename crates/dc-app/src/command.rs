@@ -18,7 +18,7 @@ mod bitmaps;
 mod instances;
 mod operations;
 
-pub(crate) use bitmaps::check_move as check_bitmap_move;
+pub(crate) use bitmaps::{check_move as check_bitmap_move, check_resize as check_bitmap_resize};
 pub(crate) use instances::{
     about, bounds as selection_bounds, centre, copy_name, find as find_instance, next_free_id,
 };
@@ -132,6 +132,16 @@ pub enum Command {
         dx_mm: f64,
         /// How far along Y, mm (Y-up).
         dy_mm: f64,
+    },
+    /// Set a bitmap's footprint to a width or a height, the other side
+    /// following the pixels as at import, about the footprint's centre
+    /// (capabilities 56 and 58): a picture's W or H typed in Properties.
+    /// Refused when it is locked.
+    ResizeBitmap {
+        /// The bitmap.
+        id: BitmapId,
+        /// The footprint's new width or height.
+        size: PictureSize,
     },
     /// Apply `delta` to each instance about the selection's joint
     /// bounding-box centre. Refused when any instance is locked.
@@ -329,6 +339,7 @@ impl Command {
             Self::MoveBitmaps { ids, dx_mm, dy_mm } => {
                 bitmaps::move_by(&mut next, ids, *dx_mm, *dy_mm)?;
             }
+            Self::ResizeBitmap { id, size } => bitmaps::resize(&mut next, id, *size)?,
             Self::TransformInstances { ids, delta } => {
                 next = instances::transform(project, ids, *delta)?;
             }
@@ -520,6 +531,10 @@ impl Command {
             Self::MoveBitmaps { ids, .. } => with_subject(
                 StrKey::CommandLabelMove,
                 &bitmaps::subject(strings, before, ids),
+            ),
+            Self::ResizeBitmap { id, .. } => with_subject(
+                StrKey::CommandLabelResize,
+                &bitmaps::subject(strings, before, std::slice::from_ref(id)),
             ),
             Self::TransformInstances { ids, delta } => {
                 let key = match instances::classify(*delta) {

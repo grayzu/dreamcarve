@@ -231,7 +231,7 @@ the code they test.
 | `editor/clearing.rs`, `editor/summary.rs` | A carve's clearing-pass list as one block (add, delete, reorder, each one undo step), and each closed editor group's one-line summary, built from the same rows the fields draw. |
 | `project.rs` | The Project panel's model: stock, origin, heights and post-processor fields, the command each typed value becomes and the message located on it. |
 | `tree.rs`, `properties.rs`, `arrange.rs`, `mixed.rs` | The Design Tree's rows; the Properties panel's placement fields; the Arrange actions (rotate, flip, centre); the value a multi-selection shows, or *Mixed*. |
-| `pictures.rs` | A picture selected and placed: the Properties of the selected pictures (their footprint as a shape's X, Y, W and H, the pixel size, the Photo V-Carves that carve them) and the move a typed value, a drag or a nudge is. |
+| `pictures.rs` | A picture selected and placed: the Properties of the selected pictures (their footprint as a shape's X, Y, W and H, the pixel size, the Photo V-Carves that carve them), the move a typed value, a drag or a nudge is, and the resize one picture's typed W or H is, its proportions kept. |
 | `scene.rs`, `viewport/` | The Scene, the read model the Viewport draws, rebuilt per snapshot or result, never per frame; the camera, picking, grid, transform handles, direction arrows and tab marks as pure functions on it. |
 | `warnings.rs`, `status.rs` | The Warnings panel's rows, each the line `dreamcarve check` prints; the status bar's cells as data. |
 | `onboarding.rs` | The empty state's example thumbnails, drawn from the examples' own shapes. |

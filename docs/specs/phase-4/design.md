@@ -184,6 +184,7 @@ pub enum Command {
     SetBitmapFlags { ids: Vec<BitmapId>, visible: Option<bool>, locked: Option<bool> },
     RenameBitmap { id: BitmapId, name: String }, DeleteBitmaps(Vec<BitmapId>),
     MoveBitmaps { ids: Vec<BitmapId>, dx_mm: f64, dy_mm: f64 },   // refused when any is locked
+    ResizeBitmap { id: BitmapId, size: PictureSize },             // about its centre; the other side follows the pixels
     TransformInstances { ids: Vec<InstanceId>, delta: Transform },   // about the selection's centre
     SetInstanceFlags { ids: Vec<InstanceId>, visible: Option<bool>, locked: Option<bool> },
     RenameInstance { id: InstanceId, name: String }, DuplicateInstances(Vec<InstanceId>), DeleteInstances(Vec<InstanceId>),
@@ -266,7 +267,8 @@ changes it; `pick::picture_under` is the picture a click selects when
 Properties panel a `properties::Placement`, so a picture's X, Y, W and H
 are a shape's fields, with its pixel size beside them; `pictures::edit`
 and `pictures::move_by` return the `MoveBitmaps` a typed value, a drag or
-a nudge is. The selected pictures and the picked picture are kept beside
+a nudge is, and `pictures::edit` and `pictures::resize` the `ResizeBitmap`
+one picture's typed W or H is. The selected pictures and the picked picture are kept beside
 `Selection` and `Hit` until the window is wired for them; they are the
 variants `Selection::Bitmaps` and `Hit::Bitmap`. A Photo V-Carve's
 Picture row is likewise a `FieldKind::Choice` with no fixed options
@@ -712,7 +714,7 @@ carries. The CLI's existing tests are the regression net for slice 1.
 - `editor::fields_table_matches_the_records` (acc 73, table-driven over every kind), `editor::set_and_get_by_key_path_round_trip`, `editor::tool_derived_defaults_show_the_tools_value_and_write_null`, `editor::located_warning_matches_its_row`.
 - `operations::add_targets_the_selection_with_cli_defaults` (acc 72), `operations::add_menu_partitions_by_eligibility`, `operations::reorder_enable_duplicate` (acc 74), `operations::delete_keeps_placed_tabs`.
 - `editor::clearing_list_orders_and_warns` (acc 75), `editor::inlay_both_boards` (acc 76, after #498), `editor::photo_v_carve_fields` (acc 77, after 3.5), `editor::drill_cycle_fields_follow_the_cycle`, `editor::profile_tab_request_and_place_tabs` (acc 78).
-- Slice 15, a picture selected and placed: `editor::photo_needs_a_picture_target`, `pictures::a_click_inside_a_footprint_picks_the_picture_under_everything_else`, `pictures::a_picture_is_selected_from_its_row_or_the_viewport`, `pictures::a_pictures_properties_are_its_position_size_and_pixels`, `pictures::moving_a_picture_is_one_undo_step_and_takes_its_grooves_along`, `pictures::a_photo_v_carves_picture_is_marked_as_its_target`, `pictures::a_bitmap_rows_menu_adds_a_photo_v_carve_on_it`.
+- Slice 15, a picture selected and placed: `editor::photo_needs_a_picture_target`, `pictures::a_click_inside_a_footprint_picks_the_picture_under_everything_else`, `pictures::a_picture_is_selected_from_its_row_or_the_viewport`, `pictures::a_pictures_properties_are_its_position_size_and_pixels`, `pictures::moving_a_picture_is_one_undo_step_and_takes_its_grooves_along`, `pictures::resizing_a_picture_keeps_its_proportions_and_its_centre`, `pictures::a_photo_v_carves_picture_is_marked_as_its_target`, `pictures::a_bitmap_rows_menu_adds_a_photo_v_carve_on_it`.
 
 **Export (slice 18)**
 - `export::plan_waits_for_generation`, `export::plan_lists_programs_as_the_cli_prints_them`, `export::board_tick_filters_without_saving` (acc 76, 85), `export::errors_disable_warnings_do_not` (acc 84), `export::override_not_saved` (acc 85), `export::preview_svg_equals_the_cli` (acc 83).

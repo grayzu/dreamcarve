@@ -15,21 +15,26 @@
 //! size in pixels, read-only ([`pixels_text`]), and, as *Targeted by*, the
 //! Photo V-Carves that carve it. Several pictures show their joint box.
 //!
-//! A picture "moves like a shape, and does not rotate, scale or mirror"
-//! (capability 56): typing X or Y, dragging it or nudging it is one
-//! [`Command::MoveBitmaps`] ([`edit`], [`move_by`]); W and H are shown
-//! and not typed ([`read_only`]). A locked picture refuses, and the
-//! refusal names it. The Photo V-Carve that carves a picture reads its
-//! footprint, so it regenerates when the picture moves.
+//! A picture moves like a shape (capability 56): typing X or Y, dragging
+//! it or nudging it is one [`Command::MoveBitmaps`] ([`edit`],
+//! [`move_by`]). It does not rotate or mirror, and it is never stretched:
+//! one picture's W or H can be retyped, and the other side follows its
+//! pixels, as at import, about the footprint's centre
+//! ([`Command::ResizeBitmap`], [`resize`]), so the proportion link is
+//! always closed. Several pictures have no one size to type
+//! ([`read_only`]). A locked picture refuses both, and the refusal names
+//! it. The Photo V-Carve that carves a picture reads its footprint, so it
+//! regenerates when the picture moves or changes size.
 //!
 //! The selection, the click that makes it and the rows' menu are
 //! [`crate::App::click_picture`], [`crate::viewport::pick::picture_under`]
 //! and [`crate::tree::bitmap_menu`].
 
 use dc_geometry::{Point, Rect};
+use dc_job::picture::PictureSize;
 use dc_project::{Bitmap, BitmapId, Operation, Project};
 
-use crate::command::{Command, check_bitmap_move};
+use crate::command::{Command, check_bitmap_move, check_bitmap_resize};
 use crate::error::CommandError;
 use crate::mixed::common_bool;
 use crate::properties::{Edit, Field, Placement};
@@ -147,11 +152,14 @@ pub fn pixels_text(strings: &Strings, properties: &PictureProperties) -> Option<
 }
 
 /// Whether `field` is read-only: every field while a selected picture is
-/// locked, as a locked shape's are (capability 58); and W and H always,
-/// since a picture is not scaled (capability 56).
+/// locked, as a locked shape's are (capability 58); and W and H while
+/// several pictures are selected, since a size is one picture's
+/// (capability 56). The proportion link beside W and H is always closed
+/// for a picture, and is not a control.
 #[must_use]
 pub const fn read_only(properties: &PictureProperties, field: Field) -> bool {
-    properties.placement.any_locked || matches!(field, Field::W | Field::H)
+    properties.placement.any_locked
+        || (matches!(field, Field::W | Field::H) && properties.placement.count != 1)
 }
 
 /// The locked note's *Unlock*: one step unlocking the locked ones of
@@ -196,29 +204,56 @@ pub fn move_by(
     })
 }
 
-/// The command `edit`, typed into Properties, makes for the pictures
-/// `ids`: X or Y moves their joint footprint's left or bottom edge there
-/// ([`move_by`]).
+/// Picture `id` at `size`, a width or a height, as one command: the
+/// other side follows the pixels and the footprint keeps its centre.
 ///
 /// # Errors
 ///
-/// As [`move_by`], with [`CommandError::NothingToDo`] when the value is
-/// the current one; [`CommandError::FieldRefused`] for W or H, which
-/// [`read_only`] says are not typed.
+/// What [`Command::ResizeBitmap`] would refuse, found before it runs:
+/// [`CommandError::UnknownBitmap`], [`CommandError::PictureLocked`],
+/// [`CommandError::Job`] for a size that is not a positive length or a
+/// footprint past the coordinate limit, and [`CommandError::NothingToDo`]
+/// for the size it has (no undo step).
+pub fn resize(
+    project: &Project,
+    id: &BitmapId,
+    size: PictureSize,
+) -> Result<Command, CommandError> {
+    check_bitmap_resize(project, id, size)?;
+    Ok(Command::ResizeBitmap {
+        id: id.clone(),
+        size,
+    })
+}
+
+/// The command `edit`, typed into Properties, makes for the pictures
+/// `ids`: X or Y moves their joint footprint's left or bottom edge there
+/// ([`move_by`]); W or H resizes the one picture selected ([`resize`]).
+/// An edit's `uniform` is not read: a picture keeps its proportions
+/// whatever the link shows.
+///
+/// # Errors
+///
+/// As [`move_by`] and [`resize`], with [`CommandError::NothingToDo`]
+/// when the value is the current one; [`CommandError::FieldRefused`] for
+/// W or H with several pictures selected, which [`read_only`] says are
+/// not typed.
 pub fn edit(project: &Project, ids: &[BitmapId], edit: Edit) -> Result<Command, CommandError> {
     let Some(bounds) = bounds(project, ids) else {
         // Nothing selected, or an id the project lacks: `move_by` names it.
         return move_by(project, ids, 0.0, 0.0);
     };
-    match edit {
-        Edit::X { mm } => move_by(project, ids, mm - bounds.min.x, 0.0),
-        Edit::Y { mm } => move_by(project, ids, 0.0, mm - bounds.min.y),
-        Edit::W { .. } | Edit::H { .. } => Err(CommandError::FieldRefused {
-            field: match edit {
-                Edit::W { .. } => "width".to_owned(),
-                _ => "height".to_owned(),
-            },
-            reason: "a picture is not scaled".to_owned(),
+    let (field, size) = match edit {
+        Edit::X { mm } => return move_by(project, ids, mm - bounds.min.x, 0.0),
+        Edit::Y { mm } => return move_by(project, ids, 0.0, mm - bounds.min.y),
+        Edit::W { mm, .. } => ("width", PictureSize::Width { width_mm: mm }),
+        Edit::H { mm, .. } => ("height", PictureSize::Height { height_mm: mm }),
+    };
+    match ids {
+        [id] => resize(project, id, size),
+        _ => Err(CommandError::FieldRefused {
+            field: field.to_owned(),
+            reason: "several pictures are selected, and a size is one picture's".to_owned(),
         }),
     }
 }
