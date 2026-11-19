@@ -36,7 +36,7 @@ The app and the `dreamcarve tools` commands read and write the same file.
   list to one kind of cutter. A red dash marks a feed, plunge rate or RPM
   that is not set, and a ✓ marks a tool already in the open project.
 - **Editing.** Select a row to edit that tool in the right pane. There is
-  no Edit button. The fields are the ones the Tools tab shows for a
+  no Edit button. The fields are the ones the Tools step shows for a
   project tool. A field is saved to the library when you leave it. There
   is no undo for library edits, but *Revert changes* puts the selected
   tool back the way it was when you opened the sheet. A value the library
