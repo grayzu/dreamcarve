@@ -14,6 +14,7 @@
 [command.subject]
 one = "“{name}”"
 many = "{count} shapes"
+pictures = "{count} pictures"
 
 # The undo labels (functional spec, capability 52): the Edit menu shows
 # the step it would undo.
@@ -295,6 +296,7 @@ save_failed = "Cannot save {name}: {reason}"
 imported = "Imported {count} shapes from {name}"
 import_failed = "Cannot import {name}: {reason}"
 not_a_drawing = "{name} is not an SVG or DXF drawing"
+dropped_unknown = "{name} is not a project (.dcv), a drawing (.svg, .dxf) or a picture (.png, .jpg, .jpeg)"
 new_from_drawing = "Made a new project from {name}"
 prefs_failed = "Cannot save preferences: {reason}"
 about = "DreamCarve {version}"
@@ -921,6 +923,14 @@ add_one = "Add 1 shape"
 add_many = "Add {count} shapes"
 create = "Create project"
 note = "{name}: {note}"
+
+# The Add picture sheet's model (slice 6, #535; functional spec,
+# capabilities 51 and 56): why Import is disabled before a size is typed,
+# a conversion's note as `image add` prints it (its code, then its
+# message) under the file's name.
+[app.picture]
+size_missing = "Type the picture's width or its height"
+note = "{name}: {code}: {note}"
 
 # The Design Tree (slice 5, #534; functional spec, capability 57;
 # experience.md, sections 6 to 8): the sections, the rows' badges and

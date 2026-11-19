@@ -137,7 +137,16 @@ pub mod preview {               // moved from `crates/dreamcarve/src/preview.rs`
 pub mod project_from {          // moved from `crates/dreamcarve/src/init.rs`
     pub const STOCK_MARGIN_MM: f64;
     pub fn drawing(import: Drawing, post: PostProcessorRef, units: Units, with_defaults: bool) -> (Project, Vec<Warning>);
-    pub fn picture(bitmap: Bitmap, ...) -> (Project, Vec<Warning>);
+    pub fn picture(name: &str, pixels: &Grayscale, size: PictureSize, post: PostProcessorRef, units: Units) -> Result<Project, JobError>;
+    /// The stock `picture` sizes, checked as it checks, from the pixel counts alone (no picture encoded).
+    pub fn picture_stock(width_px: u32, height_px: u32, size: PictureSize) -> Result<StockFit, JobError>;
+}
+pub mod picture {
+    pub enum PictureSize { Width { width_mm: f64 }, Height { height_mm: f64 } }
+    /// `image add`: the picture appended as the next bitmap (functional 56).
+    pub fn picture_into(project: &Project, name: &str, pixels: &Grayscale, size: PictureSize, corner: Point) -> Result<(Project, BitmapId), JobError>;
+    /// The footprint `picture_into` gives, checked as it checks, from the pixel counts alone.
+    pub fn footprint_at(width_px: u32, height_px: u32, size: PictureSize, corner: Point) -> Result<(f64, f64), JobError>;
 }
 pub mod import {
     /// A drawing's definitions and instances appended to `project`, placed as drawn (functional 55).
@@ -170,7 +179,10 @@ pub enum Command {
     SetStock(Stock), SetOrigin(MachineOrigin), SetHeights(Heights), SetTolerances { flatten_mm: f64, arc_fit_mm: Option<f64> },
     SetDisplayUnits(Units), SwitchPost { id: String }, SetPostSettings(PostProcessorRef),
     AddTools(Vec<Tool>), UpdateTool(Tool), RemoveTool(ToolId),
-    ImportDrawing { drawing: Drawing, name: String }, ImportPicture { bitmap: Bitmap },
+    ImportDrawing { drawing: Drawing, name: String },
+    ImportPicture { name: String, pixels: Arc<Grayscale>, size: PictureSize },   // `picture_into` at the stock's corner; ids are `apply`'s
+    SetBitmapFlags { ids: Vec<BitmapId>, visible: Option<bool>, locked: Option<bool> },
+    RenameBitmap { id: BitmapId, name: String }, DeleteBitmaps(Vec<BitmapId>),
     TransformInstances { ids: Vec<InstanceId>, delta: Transform },   // about the selection's centre
     SetInstanceFlags { ids: Vec<InstanceId>, visible: Option<bool>, locked: Option<bool> },
     RenameInstance { id: InstanceId, name: String }, DuplicateInstances(Vec<InstanceId>), DeleteInstances(Vec<InstanceId>),
@@ -228,6 +240,23 @@ the male board's frame and mirrored outlines offset to the right of the
 stock by one stock-width plus 20 mm (display offset only; nothing in the
 file). It is rebuilt when the snapshot or a result changes, never per
 frame.
+
+A visible bitmap is a `SceneBitmap` (slice 6): its id, its footprint, its
+pixel size, its pixels (8-bit gray, top row first, shared between Scenes
+while the stored picture stands, so an edit elsewhere decodes nothing) and
+a key of the stored picture, under which the renderer caches its texture.
+`Scene::content_bounds` joins the shapes' box and the footprints.
+
+The import sheets' models are `dc_app::import` (slice 6). `DrawingImport`
+holds the bytes and the DXF options and reads again on every change.
+`PictureImport` decodes once and holds the width or the height typed, in
+millimetres; its `blocked` is the importer's refusal, the missing size, or
+the placement's refusal read from `dc_job`'s checks above. `FileKind::of`
+names a file's kind, and `App::drop_file` opens a dropped `.dcv` or
+returns the sheet's model for a drawing or a picture. `App::import_drawing`,
+`import_picture`, `new_from_drawing` and `new_from_picture` run a sheet.
+The Design Tree's Pictures rows are `tree::BitmapRow`s, listed with the
+rest by `Tree::rows`.
 
 ### Digest and staleness
 

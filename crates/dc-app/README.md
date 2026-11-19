@@ -19,7 +19,9 @@ actions that rotate, flip and centre the selection (`arrange`), the project
 tools' editing rules (`tools`), the Tool Library window's model
 (`library`, ported from PureCutCNC), the Import drawing sheet's model
 (`import`: the bytes the shell read, parsed by `dc-import` with the
-options the sheet shows), the Operations list with its Add menu and each
+options the sheet shows), the Add picture sheet's model beside it (the
+picture decoded once, and its width or height), what a dropped file
+becomes, the Operations list with its Add menu and each
 kind's new operation (`operations`), and the operation editor's table of
 rows per kind with its key-path edits (`editor`, the idea of
 PureCutCNC's `operationFields.ts`).

@@ -14,18 +14,87 @@
 //! The sheet imports into the open project ([`Purpose::Import`], through
 //! [`crate::App::import_drawing`]) or makes a new project from the drawing
 //! ([`Purpose::New`], [`crate::App::new_from_drawing`]).
+//!
+//! The Add picture sheet's model is [`PictureImport`] (capabilities 51 and
+//! 56): the picture decoded once to the grayscale a bitmap stores
+//! (`dc_import::bitmap`, as `dreamcarve image add` decodes it), and the one
+//! thing the sheet asks, the width *or* the height, with the other
+//! following the pixels. It adds a bitmap to the open project
+//! ([`crate::App::import_picture`]) or makes a new project round the
+//! picture ([`crate::App::new_from_picture`]).
+//!
+//! [`FileKind::of`] says what a file is by its name, and
+//! [`crate::App::drop_file`] what a file dropped on the window becomes
+//! ([`Dropped`]): the project opened, or the sheet for its kind.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
-use dc_geometry::{Polyline, Rect};
+use dc_geometry::{Point, Polyline, Rect};
 use dc_import::{
-    DxfImportOptions, DxfLayer, DxfUnits, ImportError, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM,
-    SvgImportOptions,
+    DxfImportOptions, DxfLayer, DxfUnits, ImageFormat, ImportError, ImportWarning,
+    JOIN_TOLERANCE_DEFAULT_MM, SvgImportOptions,
 };
+use dc_job::picture::PictureSize;
 use dc_job::{Drawing, JobError};
-use dc_project::Units;
+use dc_project::{Grayscale, Units};
 
+use crate::app::Opened;
 use crate::command::Command;
+use crate::strings::{StrKey, Strings};
+
+/// What a file is, by its name's extension in any case: what the window
+/// does with one dropped on it, passed on the command line or chosen
+/// (capabilities 51, 55 and 56).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileKind {
+    /// A `.dcv` project: it opens.
+    Project,
+    /// An `.svg` or `.dxf` drawing: the Add drawing sheet.
+    Drawing(DrawingFormat),
+    /// A `.png`, `.jpg` or `.jpeg` picture: the Add picture sheet.
+    Picture(ImageFormat),
+}
+
+impl FileKind {
+    /// The kind of the file named `name`, or `None` when its extension
+    /// names nothing DreamCarve reads.
+    #[must_use]
+    pub fn of(name: &str) -> Option<Self> {
+        // `.svg` alone is a hidden file with no extension, as a path
+        // reads it.
+        let (_, extension) = name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty())?;
+        if extension.eq_ignore_ascii_case("dcv") {
+            Some(Self::Project)
+        } else if extension.eq_ignore_ascii_case("svg") {
+            Some(Self::Drawing(DrawingFormat::Svg))
+        } else if extension.eq_ignore_ascii_case("dxf") {
+            Some(Self::Drawing(DrawingFormat::Dxf))
+        } else {
+            ImageFormat::from_extension(extension).map(Self::Picture)
+        }
+    }
+}
+
+/// What a file dropped on the window became ([`crate::App::drop_file`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Dropped {
+    /// A `.dcv`: the project is open, and this is what opening reported.
+    Project(Opened),
+    /// A drawing: the Add drawing sheet's model, for the window to show.
+    Drawing(Box<DrawingImport>),
+    /// A picture: the Add picture sheet's model, for the window to show.
+    Picture(Box<PictureImport>),
+}
+
+/// `name` without its last extension: a new project's name and a bitmap's,
+/// as `init` and `image add` name them from the file.
+pub(crate) fn stem(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem,
+        _ => name,
+    }
+}
 
 /// The drawing formats the sheet reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,10 +203,7 @@ impl DrawingImport {
     /// `init` names it.
     #[must_use]
     pub fn stem(&self) -> &str {
-        match self.name.rsplit_once('.') {
-            Some((stem, _)) if !stem.is_empty() => stem,
-            _ => &self.name,
-        }
+        stem(&self.name)
     }
 
     /// What *Import* does.
@@ -351,6 +417,229 @@ impl DrawingImport {
         }
     }
 }
+
+/// Which side of the picture the sheet's size gives; the other follows
+/// the pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PictureSide {
+    /// The footprint's width (`image add --width`).
+    Width,
+    /// The footprint's height (`image add --height`).
+    Height,
+}
+
+/// Why the Add picture sheet's *Import* is disabled.
+enum Refusal<'a> {
+    /// The file could not be decoded: the importer's message.
+    Unreadable(&'a str),
+    /// Neither the width nor the height is typed yet.
+    SizeMissing,
+    /// The size cannot be placed: `image add`'s refusal, or `init`'s.
+    Placement(JobError),
+}
+
+/// The Add picture sheet's state (capabilities 51 and 56): the picture,
+/// decoded once, and the size typed. A picture has no other option.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PictureImport {
+    format: ImageFormat,
+    name: String,
+    purpose: Purpose,
+    /// The picture as a bitmap stores it and what decoding converted, or
+    /// the importer's refusal.
+    read: Result<(Arc<Grayscale>, Vec<ImportWarning>), String>,
+    /// The side last typed.
+    side: PictureSide,
+    /// Its length, mm; `None` until one is typed. Never defaulted: the
+    /// file does not say how big the picture is on the stock.
+    size_mm: Option<f64>,
+}
+
+impl PictureImport {
+    /// The sheet over `bytes`, the file `name` (with its extension), a
+    /// picture in `format` ([`FileKind::of`] reads it from the name),
+    /// decoded at once as `image add` decodes it. The bytes are not kept.
+    /// Decoding a large picture takes a moment: the shell may open the
+    /// sheet on a worker thread.
+    #[must_use]
+    pub fn open(format: ImageFormat, name: &str, bytes: &[u8], purpose: Purpose) -> Self {
+        Self {
+            format,
+            name: name.to_owned(),
+            purpose,
+            read: dc_import::bitmap::import(bytes, format)
+                .map(|(pixels, warnings)| (Arc::new(pixels), warnings))
+                .map_err(|e| e.to_string()),
+            side: PictureSide::Width,
+            size_mm: None,
+        }
+    }
+
+    /// The file's format.
+    #[must_use]
+    pub fn format(&self) -> ImageFormat {
+        self.format
+    }
+
+    /// The file's name, with its extension, as the undo label names it.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The file's name without its extension: the bitmap's name, and a
+    /// new project's, as `image add` and `init` name them.
+    #[must_use]
+    pub fn stem(&self) -> &str {
+        stem(&self.name)
+    }
+
+    /// What *Import* does.
+    #[must_use]
+    pub fn purpose(&self) -> Purpose {
+        self.purpose
+    }
+
+    /// The picture as the bitmap will store it: 8-bit gray, top row
+    /// first, for the sheet's preview. `None` when the file could not be
+    /// decoded.
+    #[must_use]
+    pub fn pixels(&self) -> Option<&Arc<Grayscale>> {
+        self.read.as_ref().ok().map(|(pixels, _)| pixels)
+    }
+
+    /// The picture's size, `(width_px, height_px)`.
+    #[must_use]
+    pub fn size_px(&self) -> Option<(u32, u32)> {
+        self.pixels().map(|p| (p.width_px, p.height_px))
+    }
+
+    /// What decoding converted (16-bit samples, transparency, colour to
+    /// grayscale), in the importer's order: what `image add` warns of.
+    #[must_use]
+    pub fn warnings(&self) -> &[ImportWarning] {
+        self.read.as_ref().map_or(&[], |(_, warnings)| warnings)
+    }
+
+    /// [`PictureImport::warnings`] as the notes the Warnings panel lists
+    /// after the import, each under the file's name with its code, as
+    /// `image add` prints it: `photo.jpg: image_colour_converted: the
+    /// picture is in colour; …`. The sheet shows them before the import.
+    #[must_use]
+    pub fn notes(&self, strings: &Strings) -> Vec<String> {
+        self.warnings()
+            .iter()
+            .map(|warning| {
+                strings.fmt(
+                    StrKey::AppPictureNote,
+                    &[
+                        ("name", &self.name),
+                        ("code", warning.code()),
+                        ("note", &warning.to_string()),
+                    ],
+                )
+            })
+            .collect()
+    }
+
+    /// The side last typed; the width before any is.
+    #[must_use]
+    pub fn side(&self) -> PictureSide {
+        self.side
+    }
+
+    /// The size typed, as `image add` takes it; `None` until one is.
+    #[must_use]
+    pub fn size(&self) -> Option<PictureSize> {
+        let size_mm = self.size_mm?;
+        Some(match self.side {
+            PictureSide::Width => PictureSize::Width { width_mm: size_mm },
+            PictureSide::Height => PictureSize::Height { height_mm: size_mm },
+        })
+    }
+
+    /// Sets the footprint's width, mm; the height follows the pixels. A
+    /// width that is not a positive length is `image add`'s refusal,
+    /// shown as [`PictureImport::blocked`].
+    pub fn set_width_mm(&mut self, width_mm: f64) {
+        self.side = PictureSide::Width;
+        self.size_mm = Some(width_mm);
+    }
+
+    /// Sets the footprint's height, mm; the width follows the pixels.
+    pub fn set_height_mm(&mut self, height_mm: f64) {
+        self.side = PictureSide::Height;
+        self.size_mm = Some(height_mm);
+    }
+
+    /// Forgets the size, as when the field is emptied.
+    pub fn clear_size(&mut self) {
+        self.size_mm = None;
+    }
+
+    /// The footprint the picture gets, `(width_mm, height_mm)`: the side
+    /// typed and the other in the pixels' proportion, as
+    /// [`PictureSize::footprint_mm`] rounds it. `None` while *Import* is
+    /// disabled.
+    #[must_use]
+    pub fn footprint_mm(&self) -> Option<(f64, f64)> {
+        self.placed(self.purpose).ok()
+    }
+
+    /// Why *Import* is disabled: the importer's refusal of the file (the
+    /// message `image add` prints after `cannot import <file>: `), that no
+    /// size is typed yet, or the refusal of the size (`image add`'s for
+    /// the open project, `init`'s for a new one, whose stock is the
+    /// picture's with a margin). `None` when it is enabled.
+    #[must_use]
+    pub fn blocked(&self, strings: &Strings) -> Option<String> {
+        match self.placed(self.purpose) {
+            Ok(_) => None,
+            Err(Refusal::Unreadable(message)) => Some(message.to_owned()),
+            Err(Refusal::SizeMissing) => {
+                Some(strings.get(StrKey::AppPictureSizeMissing).to_owned())
+            }
+            Err(Refusal::Placement(error)) => Some(error.to_string()),
+        }
+    }
+
+    /// The command *Import* runs into the open project, when it is
+    /// enabled: one undo step, *Import photo.png*, adding the bitmap
+    /// `image add` adds at the stock's bottom-left corner.
+    #[must_use]
+    pub fn command(&self) -> Option<Command> {
+        self.placed(Purpose::Import).ok()?;
+        Some(Command::ImportPicture {
+            name: self.name.clone(),
+            pixels: Arc::clone(self.pixels()?),
+            size: self.size()?,
+        })
+    }
+
+    /// The footprint for `purpose`, checked as the function that will
+    /// place the picture checks it, from the pixel counts alone.
+    fn placed(&self, purpose: Purpose) -> Result<(f64, f64), Refusal<'_>> {
+        let (pixels, _) = self
+            .read
+            .as_ref()
+            .map_err(|message| Refusal::Unreadable(message))?;
+        let size = self.size().ok_or(Refusal::SizeMissing)?;
+        let (width_px, height_px) = (pixels.width_px, pixels.height_px);
+        match purpose {
+            Purpose::Import => {
+                dc_job::picture::footprint_at(width_px, height_px, size, PICTURE_CORNER)
+            }
+            Purpose::New => dc_job::project_from::picture_stock(width_px, height_px, size)
+                .and_then(|_| size.footprint_mm(width_px, height_px)),
+        }
+        .map_err(Refusal::Placement)
+    }
+}
+
+/// Where *Add picture* puts a picture's bottom-left corner, project mm:
+/// the stock's (capability 56, "at the origin"; `image add` without
+/// `--at`).
+pub(crate) const PICTURE_CORNER: Point = Point::new(0.0, 0.0);
 
 #[cfg(test)]
 mod tests {

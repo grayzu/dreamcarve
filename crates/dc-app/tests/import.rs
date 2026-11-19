@@ -29,7 +29,7 @@ mod common;
 use std::path::Path;
 
 use dc_app::import::{
-    DrawingFormat, DrawingImport, Dropped, FileKind, PictureImport, Purpose, Side,
+    DrawingFormat, DrawingImport, Dropped, FileKind, PictureImport, PictureSide, Purpose,
 };
 use dc_app::test_support::Harness;
 use dc_app::{App, Command, CommandError, Selection, Strings};
@@ -473,14 +473,14 @@ fn picture_size_follows_the_pixels() {
     );
 
     sheet.set_width_mm(100.0);
-    assert_eq!(sheet.side(), Side::Width);
+    assert_eq!(sheet.side(), PictureSide::Width);
     assert_eq!(sheet.size(), Some(PictureSize::Width { width_mm: 100.0 }));
     assert_eq!(sheet.footprint_mm(), Some((100.0, 50.0)));
     assert_eq!(sheet.blocked(&strings), None);
     assert!(sheet.command().is_some());
 
     sheet.set_height_mm(30.0);
-    assert_eq!(sheet.side(), Side::Height);
+    assert_eq!(sheet.side(), PictureSide::Height);
     assert_eq!(sheet.size(), Some(PictureSize::Height { height_mm: 30.0 }));
     assert_eq!(sheet.footprint_mm(), Some((60.0, 30.0)));
     // What the command carries is what `image add --height 30` places.

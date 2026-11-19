@@ -41,7 +41,11 @@
 //! [`Scene::targets_revision`] tells the renderer when to redraw the
 //! shapes for them.
 //!
-//! Not yet: bitmaps (no picture type before phase 3.5; slices 6 and 15).
+//! Every visible bitmap is in the Scene too (slice 6, #535; capability
+//! 56; [`SceneBitmap`]): its footprint in project space and its pixels,
+//! for the Viewport to draw as a textured quad under the shapes. The
+//! pixels are decoded when a bitmap's stored picture changes and shared
+//! between Scenes while it stands, so an edit elsewhere decodes nothing.
 
 use std::sync::Arc;
 
@@ -50,9 +54,11 @@ use dc_geometry::{
 };
 use dc_job::preview::{self, Marks};
 use dc_job::{EmitOp, MoveKind, Toolpath};
-use dc_project::{Board, InstanceId, Operation, OperationId, Project, TabId};
+use dc_project::{
+    Bitmap, BitmapId, Board, Grayscale, InstanceId, Operation, OperationId, Project, TabId,
+};
 
-use crate::generation::{Generation, SnapshotId};
+use crate::generation::{Fnv, Generation, SnapshotId};
 
 /// The tolerance the Scene flattens outlines to for picking and the
 /// marquee, mm: well under a pixel at any zoom a click is aimed at.
@@ -73,6 +79,81 @@ pub struct Shape {
     pub flat: Vec<Polyline>,
     /// The outlines' bounding box, mm; `None` when they have no vertex.
     pub bounds: Option<Rect>,
+}
+
+/// One visible bitmap, as the Viewport draws it under the shapes
+/// (capability 56): a textured quad over its footprint.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneBitmap {
+    /// The bitmap.
+    pub id: BitmapId,
+    /// Its name, for the status bar's hover readout.
+    pub name: String,
+    /// Locked, as its row's padlock shows.
+    pub locked: bool,
+    /// Its footprint in project space, mm, Y-up: `min` is the bottom-left
+    /// corner, `max` the top-right.
+    pub footprint: Rect,
+    /// The picture's width, pixels.
+    pub width_px: u32,
+    /// The picture's height, pixels.
+    pub height_px: u32,
+    /// The picture: 8-bit gray, 0 black to 255 white, row-major from the
+    /// **top** row, so row 0 lies along `footprint.max.y` and the last row
+    /// along `footprint.min.y`; the renderer's world-to-screen flip is the
+    /// only one. `None` when the stored picture cannot be decoded, which
+    /// validation reports; the footprint is still drawn.
+    pub pixels: Option<Arc<Grayscale>>,
+    /// A key of the stored picture (a hash of its text): it changes when
+    /// the picture does and on nothing else, so the renderer uploads a
+    /// texture once per key. Moving, renaming or locking the bitmap keeps
+    /// it.
+    pub picture: u64,
+}
+
+/// The visible bitmaps of `project`, in file order, the pixels of
+/// `previous` kept where the stored picture is the same.
+fn bitmaps(project: &Project, previous: &[SceneBitmap]) -> Vec<SceneBitmap> {
+    project
+        .bitmaps
+        .iter()
+        .filter(|b| b.visible)
+        .map(|bitmap| {
+            let picture = picture_key(bitmap);
+            let kept = previous
+                .iter()
+                .find(|p| p.id == bitmap.id && p.picture == picture)
+                .and_then(|p| p.pixels.as_ref());
+            SceneBitmap {
+                id: bitmap.id.clone(),
+                name: bitmap.name.clone(),
+                locked: bitmap.locked,
+                footprint: Rect {
+                    min: Point::new(bitmap.x_mm, bitmap.y_mm),
+                    max: Point::new(
+                        bitmap.x_mm + bitmap.width_mm,
+                        bitmap.y_mm + bitmap.height_mm,
+                    ),
+                },
+                width_px: bitmap.width_px,
+                height_px: bitmap.height_px,
+                pixels: kept
+                    .map(Arc::clone)
+                    .or_else(|| bitmap.pixels().ok().map(Arc::new)),
+                picture,
+            }
+        })
+        .collect()
+}
+
+/// The key of `bitmap`'s stored picture: its pixel size and its PNG's
+/// text, hashed.
+fn picture_key(bitmap: &Bitmap) -> u64 {
+    let mut hash = Fnv::new();
+    hash.bytes(&bitmap.width_px.to_le_bytes());
+    hash.bytes(&bitmap.height_px.to_le_bytes());
+    hash.bytes(bitmap.png_base64.as_bytes());
+    hash.0
 }
 
 /// The gap between the stock's right edge and the male board's left edge
@@ -283,6 +364,7 @@ pub struct Scene {
     targets: Option<TargetMarks>,
     targets_revision: u64,
     shapes: Vec<Shape>,
+    bitmaps: Vec<SceneBitmap>,
     tabs: Vec<TabMark>,
     operations: Vec<SceneOperation>,
     bounds: Option<Rect>,
@@ -533,6 +615,7 @@ impl Scene {
             targets: previous.targets.clone(),
             targets_revision: previous.targets_revision,
             shapes,
+            bitmaps: bitmaps(project, &previous.bitmaps),
             tabs,
             operations: operations(project, generation, &previous.operations),
             bounds,
@@ -618,6 +701,19 @@ impl Scene {
         self.shapes.iter().find(|s| s.instance == *id)
     }
 
+    /// The visible bitmaps in file order, drawn under the shapes
+    /// (capability 56): the last is drawn on top of the others.
+    #[must_use]
+    pub fn bitmaps(&self) -> &[SceneBitmap] {
+        &self.bitmaps
+    }
+
+    /// The visible bitmap `id`, if it is in the Scene.
+    #[must_use]
+    pub fn bitmap(&self, id: &BitmapId) -> Option<&SceneBitmap> {
+        self.bitmaps.iter().find(|b| b.id == *id)
+    }
+
     /// The placed tabs.
     #[must_use]
     pub fn tabs(&self) -> &[TabMark] {
@@ -688,6 +784,16 @@ impl Scene {
     #[must_use]
     pub fn shapes_bounds(&self) -> Option<Rect> {
         self.bounds
+    }
+
+    /// The joint box of every visible shape and every visible bitmap's
+    /// footprint, mm: what *Zoom to fit* frames besides the stock, so a
+    /// project of pictures alone has content.
+    #[must_use]
+    pub fn content_bounds(&self) -> Option<Rect> {
+        self.bitmaps
+            .iter()
+            .fold(self.bounds, |acc, b| Some(join(acc, b.footprint)))
     }
 
     /// The joint box of the visible shapes among `ids`, mm (Zoom to

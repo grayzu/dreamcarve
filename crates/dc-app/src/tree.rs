@@ -7,8 +7,10 @@
 //! else: the instances in file order, each with its eye, padlock, shape
 //! glyph (a closed outline, a circle or an open path: never a word, slice
 //! 25, #617), *linked* badge and the operations targeting it; then the
-//! placed tabs grouped by the outline they sit on; then the pictures, none
-//! until phase 3.5. An empty section is its header alone ([`Tree::lines`]).
+//! placed tabs grouped by the outline they sit on; then the pictures, one
+//! row per bitmap with its eye, its padlock and the Photo V-Carves that
+//! carve it (capability 56). An empty section is its header alone
+//! ([`Tree::rows`]).
 //! The shell draws the rows and turns a click, a menu item or a rename
 //! into the [`Command`] these functions return; the selection is the
 //! app's one [`Selection`](crate::Selection), shared with the Viewport.
@@ -19,7 +21,7 @@
 //! construction rows have no counterpart here.
 
 use dc_geometry::{Transform, as_circle};
-use dc_project::{FeatureDefinition, InstanceId, Operation, OperationId, Project, TabId};
+use dc_project::{BitmapId, FeatureDefinition, InstanceId, Operation, OperationId, Project, TabId};
 
 use crate::command::Command;
 use crate::editor::targets;
@@ -108,10 +110,33 @@ pub struct TabRow {
     pub tabs: Vec<TabId>,
 }
 
-/// A bitmap's row. Phase 3.5 brings the bitmap type; until then the
-/// Pictures section has no rows, and this type has no values.
+/// The placeholder a Pictures row was before the project had bitmaps: a
+/// type with no values, which the window's tree still matches on through
+/// [`Line::Picture`]. The rows are [`BitmapRow`]s, listed by
+/// [`Tree::rows`]; this type, [`Line`] and [`Tree::lines`] go when the
+/// window draws them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PictureRow {}
+
+/// One bitmap's row, in the Pictures section (capabilities 56 and 57).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitmapRow {
+    /// The bitmap.
+    pub id: BitmapId,
+    /// Its name: the picture file's stem, until it is renamed.
+    pub name: String,
+    /// The eye: drawn on the Viewport.
+    pub visible: bool,
+    /// The padlock.
+    pub locked: bool,
+    /// The picture's width, pixels.
+    pub width_px: u32,
+    /// The picture's height, pixels.
+    pub height_px: u32,
+    /// The Photo V-Carves that carve it, in project order: the row's
+    /// count, and its hover's list.
+    pub operations: Vec<OperationRef>,
+}
 
 /// The tree's three sections, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,7 +149,8 @@ pub enum Section {
     Pictures,
 }
 
-/// One line of the tree as the shell draws it, top to bottom.
+/// One line of the tree without its bitmaps ([`Tree::lines`]): what the
+/// window drew before the project had pictures. [`Row`] is the whole tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Line<'a> {
     /// A section's header, drawn whether or not it has rows.
@@ -133,8 +159,22 @@ pub enum Line<'a> {
     Shape(&'a ShapeRow),
     /// An outline's placed tabs.
     Tab(&'a TabRow),
-    /// A bitmap's row.
+    /// Never built: [`PictureRow`] has no values.
     Picture(&'a PictureRow),
+}
+
+/// One row of the tree as the shell draws it, top to bottom
+/// ([`Tree::rows`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Row<'a> {
+    /// A section's header, drawn whether or not it has rows.
+    Header(Section),
+    /// An instance's row.
+    Shape(&'a ShapeRow),
+    /// An outline's placed tabs.
+    Tab(&'a TabRow),
+    /// A bitmap's row.
+    Bitmap(&'a BitmapRow),
 }
 
 /// What a section header's eye and padlock show: the rows' common state,
@@ -155,8 +195,11 @@ pub struct Tree {
     /// The Tabs section: one row per outline with placed tabs, in the
     /// order of the instances, then of the outlines.
     pub tabs: Vec<TabRow>,
-    /// The Pictures section.
+    /// Always empty ([`PictureRow`]); the Pictures section's rows are
+    /// [`Tree::bitmaps`].
     pub pictures: Vec<PictureRow>,
+    /// The Pictures section: one row per bitmap, in file order.
+    pub bitmaps: Vec<BitmapRow>,
 }
 
 impl Tree {
@@ -219,10 +262,33 @@ impl Tree {
             }));
         }
 
+        let bitmaps = project
+            .bitmaps
+            .iter()
+            .map(|bitmap| BitmapRow {
+                id: bitmap.id.clone(),
+                name: bitmap.name.clone(),
+                visible: bitmap.visible,
+                locked: bitmap.locked,
+                width_px: bitmap.width_px,
+                height_px: bitmap.height_px,
+                operations: project
+                    .operations
+                    .iter()
+                    .filter(|op| matches!(op, Operation::PhotoVCarve(p) if p.image == bitmap.id))
+                    .map(|op| OperationRef {
+                        id: op.id().clone(),
+                        name: op.name().to_owned(),
+                    })
+                    .collect(),
+            })
+            .collect();
+
         Self {
             shapes,
             tabs,
             pictures: Vec::new(),
+            bitmaps,
         }
     }
 
@@ -240,9 +306,25 @@ impl Tree {
         self
     }
 
-    /// Every line, top to bottom: each section's header, then its rows.
-    /// An empty section is its header alone, with no *None* row
-    /// (capability 57).
+    /// Every row, top to bottom: each section's header, then its rows,
+    /// the bitmaps under the Pictures header. An empty section is its
+    /// header alone, with no *None* row (capability 57).
+    #[must_use]
+    pub fn rows(&self) -> Vec<Row<'_>> {
+        let mut rows =
+            Vec::with_capacity(3 + self.shapes.len() + self.tabs.len() + self.bitmaps.len());
+        rows.push(Row::Header(Section::Shapes));
+        rows.extend(self.shapes.iter().map(Row::Shape));
+        rows.push(Row::Header(Section::Tabs));
+        rows.extend(self.tabs.iter().map(Row::Tab));
+        rows.push(Row::Header(Section::Pictures));
+        rows.extend(self.bitmaps.iter().map(Row::Bitmap));
+        rows
+    }
+
+    /// [`Tree::rows`] without the bitmaps: each section's header, then
+    /// the shapes' and the tabs' rows. Kept for the window's tree until
+    /// it draws [`Tree::rows`].
     #[must_use]
     pub fn lines(&self) -> Vec<Line<'_>> {
         let mut lines = Vec::with_capacity(3 + self.shapes.len() + self.tabs.len());
@@ -264,10 +346,25 @@ impl Tree {
         }
     }
 
+    /// The Pictures header's eye and padlock.
+    #[must_use]
+    pub fn bitmaps_header(&self) -> SectionState {
+        SectionState {
+            visible: common_bool(&self.bitmaps, |r| Some(r.visible)),
+            locked: common_bool(&self.bitmaps, |r| Some(r.locked)),
+        }
+    }
+
     /// The row of instance `id`.
     #[must_use]
     pub fn shape(&self, id: &InstanceId) -> Option<&ShapeRow> {
         self.shapes.iter().find(|r| r.id == *id)
+    }
+
+    /// The row of bitmap `id`.
+    #[must_use]
+    pub fn bitmap(&self, id: &BitmapId) -> Option<&BitmapRow> {
+        self.bitmaps.iter().find(|r| r.id == *id)
     }
 
     /// Every instance from `from` to `to` inclusive, in row order: what a
@@ -439,6 +536,107 @@ pub fn toggle_locked(project: &Project, ids: &[InstanceId]) -> Option<Command> {
         MenuItem::Lock
     };
     menu_command(project, item, ids)
+}
+
+/// Whether every one of the bitmaps `ids` is visible, and whether every
+/// one is locked.
+fn all_bitmaps(project: &Project, ids: &[BitmapId]) -> (bool, bool) {
+    let chosen = || project.bitmaps.iter().filter(|b| ids.contains(&b.id));
+    (chosen().all(|b| b.visible), chosen().all(|b| b.locked))
+}
+
+/// The context menu of the Pictures rows `ids` (capabilities 56 and 57):
+/// Rename, Hide or Show (Show when any is hidden), Lock or Unlock (Unlock
+/// when every one is locked), Delete and Zoom to. A picture has no linked
+/// copy and is no operation's target, so a shape's other items are absent.
+#[must_use]
+pub fn bitmap_menu(project: &Project, ids: &[BitmapId]) -> Vec<MenuItem> {
+    let (visible, locked) = all_bitmaps(project, ids);
+    vec![
+        MenuItem::Rename,
+        if visible {
+            MenuItem::Hide
+        } else {
+            MenuItem::Show
+        },
+        if locked {
+            MenuItem::Unlock
+        } else {
+            MenuItem::Lock
+        },
+        MenuItem::Delete,
+        MenuItem::ZoomTo,
+    ]
+}
+
+/// The command `item` runs on the bitmaps `ids`; `None` for the items
+/// that are not a change to the project (Rename, which commits through
+/// [`rename_bitmap`], and Zoom to), for an item [`bitmap_menu`] does not
+/// offer, with nothing chosen, or when the project lacks one of `ids`.
+#[must_use]
+pub fn bitmap_menu_command(project: &Project, item: MenuItem, ids: &[BitmapId]) -> Option<Command> {
+    if ids.is_empty()
+        || !ids
+            .iter()
+            .all(|id| project.bitmaps.iter().any(|b| b.id == *id))
+    {
+        return None;
+    }
+    let ids = ids.to_vec();
+    let flags = |visible, locked| Command::SetBitmapFlags {
+        ids: ids.clone(),
+        visible,
+        locked,
+    };
+    match item {
+        MenuItem::Hide => Some(flags(Some(false), None)),
+        MenuItem::Show => Some(flags(Some(true), None)),
+        MenuItem::Lock => Some(flags(None, Some(true))),
+        MenuItem::Unlock => Some(flags(None, Some(false))),
+        MenuItem::Delete => Some(Command::DeleteBitmaps(ids)),
+        MenuItem::Rename
+        | MenuItem::ZoomTo
+        | MenuItem::Duplicate
+        | MenuItem::AddOperation
+        | MenuItem::AddTo
+        | MenuItem::RemoveFrom => None,
+    }
+}
+
+/// The eye of a Pictures row or of the section's header clicked: hide
+/// `ids` when every one is shown, else show them all.
+#[must_use]
+pub fn toggle_bitmap_visible(project: &Project, ids: &[BitmapId]) -> Option<Command> {
+    let item = if all_bitmaps(project, ids).0 {
+        MenuItem::Hide
+    } else {
+        MenuItem::Show
+    };
+    bitmap_menu_command(project, item, ids)
+}
+
+/// The padlock of a Pictures row or of the section's header clicked:
+/// unlock `ids` when every one is locked, else lock them all.
+#[must_use]
+pub fn toggle_bitmap_locked(project: &Project, ids: &[BitmapId]) -> Option<Command> {
+    let item = if all_bitmaps(project, ids).1 {
+        MenuItem::Unlock
+    } else {
+        MenuItem::Lock
+    };
+    bitmap_menu_command(project, item, ids)
+}
+
+/// An inline rename of a Pictures row committed: the typed name, trimmed,
+/// as one step; `None` when it is empty or unchanged.
+#[must_use]
+pub fn rename_bitmap(project: &Project, id: &BitmapId, typed: &str) -> Option<Command> {
+    let name = typed.trim();
+    let bitmap = project.bitmaps.iter().find(|b| b.id == *id)?;
+    (!name.is_empty() && name != bitmap.name).then(|| Command::RenameBitmap {
+        id: id.clone(),
+        name: name.to_owned(),
+    })
 }
 
 /// An inline rename committed (`experience.md`, section 8): the typed

@@ -158,17 +158,17 @@ pub fn execute(project: &Project, work: Work, date: &str, estimate: &EstimateCon
 /// straight into it. Its output is fixed by its definition, so a digest
 /// means the same on every build and Rust version (unlike `std`'s
 /// `DefaultHasher`, whose algorithm may change).
-struct Fnv(u64);
+pub(crate) struct Fnv(pub(crate) u64);
 
 impl Fnv {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0100_0000_01b3;
 
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self(Self::OFFSET)
     }
 
-    fn bytes(&mut self, bytes: &[u8]) {
+    pub(crate) fn bytes(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.0 ^= u64::from(*byte);
             self.0 = self.0.wrapping_mul(Self::PRIME);
