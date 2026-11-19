@@ -26,6 +26,7 @@
 
 use crate::block::CutBlock;
 use crate::entry::plunge_limited_feed_mm_min;
+use crate::error::CamError;
 use crate::tabs::LapRates;
 use crate::toolpath::{Move, MoveKind};
 use dc_geometry::{Arc, EPS_MM, Point, Point3};
@@ -208,34 +209,37 @@ fn stage_levels(pass_z: &[f64], top_z_mm: f64, floor_z_mm: f64, step_mm: f64) ->
 /// Every stage plunges at most `step_mm` below a layer the stage before
 /// cut, or the floor of the pass before, and every level move runs on the
 /// lap's own path where the lap cuts lower, so it cuts no tab.
+///
+/// The lap cuts on at the drop's foot after the tab, which is the run a
+/// stage levels along: [`CamError::Internal`] for a drop with no cut
+/// after it at its foot, which would otherwise be left as one plunge
+/// deeper than the step-down.
 pub(super) fn stage_tab_descents(
     block: &mut CutBlock,
     pass_z: &[f64],
     step_mm: f64,
     run_mm: f64,
     plunge_mm_min: f64,
-) {
+) -> Result<(), CamError> {
     let start_z_mm = block.descent.last().map_or(block.z_mm, |m| m.to.z);
     let start = Point3::new(block.entry.x, block.entry.y, start_z_mm);
     let legs = legs(start, &block.cuts);
     if !legs.iter().any(|l| l.drops_more_than(step_mm)) {
-        return;
+        return Ok(());
     }
     let mut cuts = Vec::with_capacity(block.cuts.len() + 8);
-    for (k, leg) in legs.iter().enumerate() {
+    let mut rest = legs.as_slice();
+    while let Some((leg, after)) = rest.split_first() {
+        rest = after;
         if !leg.drops_more_than(step_mm) {
             cuts.push(leg.mv);
             continue;
         }
         let floor_z_mm = leg.mv.to.z;
-        let ahead = legs
-            .get(k + 1..)
-            .map_or_else(Vec::new, |rest| level_run(rest, floor_z_mm, run_mm));
-        // Never empty: the lap cuts on at the drop's foot after the tab.
-        let Some(end) = ahead.last().map(|l| l.mv.to) else {
-            cuts.push(leg.mv);
-            continue;
-        };
+        let ahead = level_run(after, floor_z_mm, run_mm);
+        let end = ahead.last().map(|l| l.mv.to).ok_or_else(|| {
+            CamError::internal("a lap drops off a tab with no cut after it at the drop's foot")
+        })?;
         let back: Vec<Leg> = ahead.iter().rev().map(Leg::reversed).collect();
         let levels = stage_levels(pass_z, leg.from.z, floor_z_mm, step_mm);
         let mut at_drop = true;
@@ -251,6 +255,7 @@ pub(super) fn stage_tab_descents(
         }
     }
     block.cuts = cuts;
+    Ok(())
 }
 
 /// #348: the moves that take the tool from `target`, the start of the
@@ -376,7 +381,10 @@ mod tests {
             cleared: None,
             group: 0,
         };
-        stage_tab_descents(&mut block, &[8.0, 4.0, 0.0], 4.0, 3.0, 300.0);
+        assert_eq!(
+            stage_tab_descents(&mut block, &[8.0, 4.0, 0.0], 4.0, 3.0, 300.0),
+            Ok(())
+        );
         let ends: Vec<(f64, f64)> = block.cuts.iter().map(|m| (m.to.x, m.to.z)).collect();
         assert_eq!(
             ends,
@@ -388,6 +396,19 @@ mod tests {
                 (10.0, 0.0),
                 (40.0, 0.0)
             ]
+        );
+        // Code review finding 1.2: with nothing cut after the drop there
+        // is no run to level along. The drop used to be left as one
+        // plunge of 6 mm, deeper than the step-down; now it is refused.
+        block.cuts = vec![
+            level(10.0, 6.0),
+            Move::linear(Point3::new(10.0, 0.0, 0.0), 300.0),
+        ];
+        assert_eq!(
+            stage_tab_descents(&mut block, &[8.0, 4.0, 0.0], 4.0, 3.0, 300.0),
+            Err(CamError::internal(
+                "a lap drops off a tab with no cut after it at the drop's foot"
+            ))
         );
     }
 

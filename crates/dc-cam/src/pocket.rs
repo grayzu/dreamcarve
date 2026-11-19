@@ -27,12 +27,10 @@ pub mod rings;
 
 use crate::block::CutBlock;
 use crate::entry::{self, CutSide, EntryDomain, EntryPlan, EntryTool, EntryWarnings};
-use crate::error::{CamError, ShapeRef};
+use crate::error::{CamError, ShapeRef, at};
 use crate::footprint::footprint_at;
 use crate::passes::pass_z_mm;
-use crate::profile::{
-    contour_contains, crossing_error, hole_shapes, outer_shape, rates_of, resolve_targets,
-};
+use crate::profile::{contour_contains, crossing_error, rates_of, region_outer, resolve_targets};
 use crate::relief::{self, Site};
 use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
@@ -158,6 +156,12 @@ pub fn generate_pocket(
     project: &Project,
     op: &PocketOp,
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
+    pocket(project, op).map_err(|e| e.for_op(&op.id))
+}
+
+/// [`generate_pocket`], before a defect it finds ([`CamError::Internal`])
+/// names `op`.
+fn pocket(project: &Project, op: &PocketOp) -> Result<(Toolpath, Vec<Warning>), CamError> {
     let mut warnings = Vec::new();
     let setup = Setup::of(project, op, &mut warnings)?;
     let shapes = resolve_targets(project, &op.id, &op.targets, &mut warnings)?;
@@ -168,13 +172,13 @@ pub fn generate_pocket(
             index,
             duplicate_of,
         } = warning;
-        if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
-        {
-            warnings.push(Warning::DuplicateShapeDropped {
-                shape: dropped.clone(),
-                duplicate_of: kept.clone(),
-            });
-        }
+        // `nest` numbers the contours as it was given them, one a shape.
+        let (dropped, _) = at(&shapes, index, "a duplicate contour is of no shape")?;
+        let (kept, _) = at(&shapes, duplicate_of, "a duplicated contour is of no shape")?;
+        warnings.push(Warning::DuplicateShapeDropped {
+            shape: dropped.clone(),
+            duplicate_of: kept.clone(),
+        });
     }
     let toolpath = setup.cut(project, op, &regions, &shapes, &mut warnings)?;
     Ok((toolpath, warnings))
@@ -206,7 +210,9 @@ pub(crate) fn pocket_regions(
 ) -> Result<Toolpath, CamError> {
     let mut setup = Setup::of(project, op, warnings)?;
     setup.references.extend_from_slice(reached_by);
-    setup.cut(project, op, regions, shapes, warnings)
+    setup
+        .cut(project, op, regions, shapes, warnings)
+        .map_err(|e| e.for_op(&op.id))
 }
 
 /// What every region of a Pocket is cut with, checked before its targets
@@ -415,16 +421,15 @@ impl<'p> Setup<'p> {
         // Each region's cleared loops and tool-centre rings, for the relief.
         let mut sites: Vec<Site> = Vec::new();
         for region in regions {
-            let Some(shape) = outer_shape(region, shapes) else {
-                continue;
-            };
+            let shape = region_outer(region, shapes)?;
             warnings.extend(island_gap_warnings(op, tool, region, shapes, shape));
-            let cleared_from = allowed.len();
-            if op.stock_to_leave_mm > 0.0 {
-                allowed.extend(inset_region(region, op.stock_to_leave_mm, tolerance_mm));
+            // The material this region's cuts may reach.
+            let region_allowed = if op.stock_to_leave_mm > 0.0 {
+                inset_region(region, op.stock_to_leave_mm, tolerance_mm)
             } else {
-                allowed.push(region.clone());
-            }
+                vec![region.clone()]
+            };
+            allowed.extend(region_allowed.iter().cloned());
             // Design step 2: the tool centre stays `r + stock to leave` off every
             // wall and island.
             let tool_centre = inset_region(region, radius_mm + op.stock_to_leave_mm, tolerance_mm);
@@ -464,8 +469,7 @@ impl<'p> Setup<'p> {
             };
             centre_regions.extend(tool_centre.iter().cloned());
             if relief.is_some() {
-                let cleared = allowed.get(cleared_from..).unwrap_or(&[]);
-                sites.push(relief::pocket_site(cleared, &tool_centre, shape));
+                sites.push(relief::pocket_site(&region_allowed, &tool_centre, shape));
             }
             for root in tool_centre {
                 if let ClearanceStrategy::Raster { angle_deg } = op.strategy {
@@ -478,7 +482,7 @@ impl<'p> Setup<'p> {
                         direction: op.direction,
                     };
                     let paths =
-                        raster::region_paths(&root, root_index, &settings, &keep, &mut anchor)
+                        raster::region_paths(&root, root_index, &settings, &keep, &mut anchor)?
                             .ok_or_else(invalid_step_over)?;
                     // Raster lines reach the tool-centre region's edge at every
                     // wall pass, so the whole root is cleared each pass.
@@ -501,13 +505,14 @@ impl<'p> Setup<'p> {
                 }
                 let tree = RingTree::build(root, stepover_mm, radius_mm, tolerance_mm, MAX_RINGS)
                     .ok_or_else(invalid_step_over)?;
-                let domain = (op.entry != Entry::Plunge).then(|| {
-                    EntryDomain::new(&entry_regions(&tree, wall), tool.diameter_mm, tolerance_mm)
-                });
+                let domain = if op.entry == Entry::Plunge {
+                    None
+                } else {
+                    let regions = entry_regions(&tree, wall)?;
+                    Some(EntryDomain::new(&regions, tool.diameter_mm, tolerance_mm))
+                };
                 for ring in tree.walk_keeping(wall, &mut anchor, &keep) {
-                    let Some(node) = tree.nodes.get(ring.node) else {
-                        continue;
-                    };
+                    let node = at(&tree.nodes, ring.node, "a ring is of no node of its tree")?;
                     let plan = domain
                         .as_ref()
                         .map(|d| entry::plan(d, &op.entry, ring.start, &entry_tool));
@@ -528,15 +533,15 @@ impl<'p> Setup<'p> {
 
         let mut blocks = Vec::with_capacity(rings.len() * pass_z.len());
         let mut entry_warnings = EntryWarnings::default();
+        // The surface a pass starts above: the stock top, then the floor
+        // of the pass before.
+        let mut above_mm = thickness_mm;
         for (pass, &z_mm) in pass_z.iter().enumerate() {
             // #214: a ramp or helix starts the entry clearance above the stock
             // top, and on a later pass above the floor the pass before cleared
             // (the whole tool-centre region, every pass), not at safe Z.
-            let above_mm = pass
-                .checked_sub(1)
-                .and_then(|k| pass_z.get(k).copied())
-                .unwrap_or(thickness_mm);
             let descent_from_z_mm = entry::descent_start_z_mm(above_mm, safe_z_mm);
+            above_mm = z_mm;
             for (shape, path, cleared, plan) in &rings {
                 let Some(start) = path.vertices().first().map(|v| v.point()) else {
                     continue;
@@ -591,7 +596,7 @@ impl<'p> Setup<'p> {
             ),
             None => (Vec::new(), Vec::new()),
         };
-        let containment = nested_pockets(regions, shapes);
+        let containment = nested_pockets(regions, shapes)?;
         let input = SequenceInput {
             blocks,
             order: op.machining_order,
@@ -713,19 +718,27 @@ fn reference_of(project: &Project, op: &PocketOp) -> Result<Option<rest::Referen
 /// the wall pass omitted its children (not its residual nodes, which are
 /// then omitted too), so a descent from the previous pass
 /// Z never starts above the uncut band the omitted wall ring leaves.
-fn entry_regions(tree: &RingTree, wall: WallRings) -> Vec<Region> {
-    let Some(root) = tree.nodes.first() else {
-        return Vec::new();
-    };
+/// A tree has its root, and a node's children are nodes of the tree:
+/// [`CamError::Internal`] otherwise, where the entries would get a
+/// smaller domain or none, and plunge.
+fn entry_regions(tree: &RingTree, wall: WallRings) -> Result<Vec<Region>, CamError> {
+    let root = at(&tree.nodes, 0, "a ring tree has no root")?;
     match wall {
-        WallRings::Omitted => root
-            .children
-            .iter()
-            .filter_map(|&c| tree.nodes.get(c))
-            .filter(|n| !n.residual)
-            .map(|n| n.region.clone())
-            .collect(),
-        WallRings::First | WallRings::Last => vec![root.region.clone()],
+        WallRings::Omitted => {
+            let mut regions = Vec::with_capacity(root.children.len());
+            for &child in &root.children {
+                let node = at(
+                    &tree.nodes,
+                    child,
+                    "a ring tree's root has a child it lacks",
+                )?;
+                if !node.residual {
+                    regions.push(node.region.clone());
+                }
+            }
+            Ok(regions)
+        }
+        WallRings::First | WallRings::Last => Ok(vec![root.region.clone()]),
     }
 }
 
@@ -754,7 +767,14 @@ fn island_gap_warnings(
         tool_id: tool.id.clone(),
         diameter_mm: tool.diameter_mm,
     };
-    let holes: Vec<(&Contour, &ShapeRef)> = hole_shapes(region, shapes).collect();
+    // An island no shape names (a clearing pass's, `pocket_regions`) is
+    // not warned about.
+    let holes: Vec<(&Contour, &ShapeRef)> = region
+        .holes()
+        .iter()
+        .zip(region.hole_indices())
+        .filter_map(|(hole, &i)| shapes.get(i).map(|(s, _)| (hole, s)))
+        .collect();
     for (i, &(hole, island)) in holes.iter().enumerate() {
         let gap_mm = distance_mm(hole.polyline(), region.outer().polyline());
         if gap_mm < needed_mm - EPS_MM {
@@ -862,30 +882,41 @@ fn starting_at(path: &Polyline, start: Point) -> Polyline {
 /// user's Pocket names every region by its own outline, so this happens
 /// only for a clearing pass, whose floor pieces of one carved region
 /// share its shape (`vcarve::clearing` puts a piece after the
-/// piece round its island).
-fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(ShapeRef, ShapeRef)> {
+/// piece round its island). Every region's outline is one of `shapes`
+/// and has a vertex: [`CamError::Internal`] otherwise, where a pair left
+/// out would let the pocket inside be cut first.
+fn nested_pockets(
+    regions: &[Region],
+    shapes: &[(ShapeRef, Contour)],
+) -> Result<Vec<(ShapeRef, ShapeRef)>, CamError> {
     let mut pairs = Vec::new();
     for region in regions {
+        // A region at depth 0 or 1 is inside no island.
         let Some(parent_depth) = region.depth().checked_sub(2) else {
             continue;
         };
-        let (Some(inner), Some(probe)) = (
-            outer_shape(region, shapes),
-            region.outer().polyline().vertices().first(),
-        ) else {
-            continue;
-        };
+        let inner = region_outer(region, shapes)?;
+        let probe = region
+            .outer()
+            .polyline()
+            .vertices()
+            .first()
+            .ok_or_else(|| CamError::internal("a region's outline has no vertex"))?
+            .point();
         let around = regions
             .iter()
             .filter(|r| r.depth() == parent_depth)
-            .find(|r| r.holes().iter().any(|h| contour_contains(h, probe.point())));
-        if let Some(outer) = around.and_then(|r| outer_shape(r, shapes))
-            && outer != inner
-        {
+            .find(|r| r.holes().iter().any(|h| contour_contains(h, probe)));
+        // No island of that depth holds it: nothing to cut it after.
+        let Some(around) = around else {
+            continue;
+        };
+        let outer = region_outer(around, shapes)?;
+        if outer != inner {
             pairs.push((outer.clone(), inner.clone()));
         }
     }
-    pairs
+    Ok(pairs)
 }
 
 /// S9: the tool's footprint along `toolpath` lies in the pockets'
@@ -930,27 +961,37 @@ fn check_in_material(
                 .iter()
                 .find_map(|r| r.outer().polyline().vertices().first().map(|v| v.point()))
         });
+        // A cut outside the material is refused whether or not a pocket
+        // can be named for it; with none to name, the defect is said so.
         let named = regions
             .iter()
             .find(|r| probe.is_some_and(|p| contour_contains(r.outer(), p)))
             .or_else(|| regions.first())
-            .and_then(|r| outer_shape(r, shapes));
-        match named {
-            Some(shape) => Err(CamError::OffMaterial {
-                op: op.id.clone(),
-                shape: shape.clone(),
-                area_mm2: area,
-            }),
-            None => Ok(()),
-        }
+            .ok_or_else(|| {
+                CamError::internal("a Pocket with no region cuts outside its material")
+            })?;
+        Err(CamError::OffMaterial {
+            op: op.id.clone(),
+            shape: region_outer(named, shapes)?.clone(),
+            area_mm2: area,
+        })
     };
-    if let Some(i) = entry::first_descent_outside(toolpath, centre_regions, tolerance_mm)
-        && let (Some(from), Some(mv)) = (
-            i.checked_sub(1).and_then(|k| toolpath.moves.get(k)),
-            toolpath.moves.get(i),
-        )
-    {
-        // The one stray move's own footprint, to measure and name.
+    if let Some(i) = entry::first_descent_outside(toolpath, centre_regions, tolerance_mm) {
+        // The one stray move's own footprint, to measure and name. A
+        // descent starts where the move before it ends.
+        let mv = at(
+            &toolpath.moves,
+            i,
+            "the descent found outside the material is not in the toolpath",
+        )?;
+        let before = i
+            .checked_sub(1)
+            .ok_or_else(|| CamError::internal("a toolpath starts with a descent, from nowhere"))?;
+        let from = at(
+            &toolpath.moves,
+            before,
+            "the descent found outside the material has no move before it",
+        )?;
         let stray = Toolpath {
             moves: vec![Move::rapid(from.to), *mv],
         };
@@ -2009,9 +2050,43 @@ mod tests {
             (shape(1), island.clone()),
             (shape(2), inside.clone()),
         ];
-        assert_eq!(nested_pockets(&regions, &two), vec![(shape(0), shape(2))]);
+        assert_eq!(
+            nested_pockets(&regions, &two),
+            Ok(vec![(shape(0), shape(2))])
+        );
         let one = [(shape(0), around), (shape(1), island), (shape(0), inside)];
-        assert_eq!(nested_pockets(&regions, &one), Vec::new());
+        assert_eq!(nested_pockets(&regions, &one), Ok(Vec::new()));
+        // Code review finding 1.2: a pocket whose outline no shape names
+        // used to be left out, so it could be cut before the pocket round
+        // its island; now it is a defect.
+        assert_eq!(
+            nested_pockets(&regions, &two[..1]),
+            Err(CamError::internal(
+                "a region's outline is of no target shape"
+            ))
+        );
+    }
+
+    /// Code review finding 1.2: a ring tree has its root, and the root's
+    /// children are its nodes. Without them the entries used to be given
+    /// no region to enter in, and plunged.
+    #[test]
+    fn entry_regions_of_a_broken_tree_are_an_internal_defect() {
+        let root = region_of(&[rect_100x50()], Transform::IDENTITY);
+        let mut tree = RingTree::build(root, 2.0, 3.0, 0.01, MAX_RINGS).expect("a ring tree");
+        assert!(entry_regions(&tree, WallRings::Omitted).is_ok());
+        tree.nodes.truncate(1);
+        assert_eq!(
+            entry_regions(&tree, WallRings::Omitted),
+            Err(CamError::internal(
+                "a ring tree's root has a child it lacks"
+            ))
+        );
+        tree.nodes.clear();
+        assert_eq!(
+            entry_regions(&tree, WallRings::Last),
+            Err(CamError::internal("a ring tree has no root"))
+        );
     }
 
     /// A 10 mm square inside a 30 mm circular island inside the rect is a

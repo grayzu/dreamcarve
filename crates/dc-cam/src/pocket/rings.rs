@@ -630,11 +630,20 @@ pub fn split_at(path: &Polyline, at: Point) -> Polyline {
             }
             None => (0.0, 0.0),
         };
-        let mut out = vertices.to_vec();
-        if let Some(v) = out.get_mut(index) {
-            v.bulge = before;
+        // Segment `index` starts at vertex `index`, which carries its
+        // bulge: that vertex takes the first part's, and the new vertex
+        // after it the second's.
+        let mut out = Vec::with_capacity(vertices.len() + 1);
+        for (k, vertex) in vertices.iter().enumerate() {
+            let mut vertex = *vertex;
+            if k == index {
+                vertex.bulge = before;
+            }
+            out.push(vertex);
+            if k == index {
+                out.push(Vertex::new(at.x, at.y, after));
+            }
         }
-        out.insert((index + 1).min(out.len()), Vertex::new(at.x, at.y, after));
         return Polyline::new(out, path.is_closed());
     }
     path.clone()

@@ -57,34 +57,32 @@ use dc_project::{
 ///   only, not `generated`.
 #[must_use]
 pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning> {
-    let targets: Vec<Vec<(ShapeRef, Target)>> = generated
+    /// What the checks need of one generated operation.
+    struct Cut<'a> {
+        op: &'a Operation,
+        targets: Vec<(ShapeRef, Target)>,
+        frees: Freed,
+        deep: bool,
+    }
+    let cuts: Vec<Cut<'_>> = generated
         .iter()
-        .map(|(op, _)| targets_of(project, op))
-        .collect();
-    let freeing: Vec<Freed> = generated
-        .iter()
-        .map(|(op, toolpath)| freed_by(project, op, toolpath))
-        .collect();
-    let deep: Vec<bool> = generated
-        .iter()
-        .map(|(op, _)| cuts_deep(project, op))
+        .map(|(op, toolpath)| Cut {
+            op,
+            targets: targets_of(project, op),
+            frees: freed_by(project, op, toolpath),
+            deep: cuts_deep(project, op),
+        })
         .collect();
 
     let mut warnings = Vec::new();
-    for (j, (later, _)) in generated.iter().enumerate() {
-        let Some(shapes) = targets.get(j) else {
-            continue;
-        };
-        for (shape, target) in shapes {
-            for (i, (earlier, _)) in generated.iter().enumerate().take(j) {
-                let Some(frees) = freeing.get(i) else {
-                    continue;
-                };
-                let freed = targets.get(i).and_then(|outlines| {
-                    outlines.iter().find(|(s, o)| match o {
-                        Target::Outline(outline) => frees.has(s) && target.lies_inside(outline),
-                        Target::Path(_) => false,
-                    })
+    for (j, later_cut) in cuts.iter().enumerate() {
+        let later = later_cut.op;
+        for (shape, target) in &later_cut.targets {
+            for earlier_cut in cuts.iter().take(j) {
+                let (earlier, frees) = (earlier_cut.op, &earlier_cut.frees);
+                let freed = earlier_cut.targets.iter().find(|(s, o)| match o {
+                    Target::Outline(outline) => frees.has(s) && target.lies_inside(outline),
+                    Target::Path(_) => false,
                 });
                 if let Some((freed_shape, _)) = freed {
                     warnings.push(Warning::CutInsideFreedPart {
@@ -97,24 +95,23 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
                     // do not hold it.
                     continue;
                 }
-                if !deep.get(j).copied().unwrap_or(false) {
+                if !later_cut.deep {
                     continue;
                 }
-                let held = targets.get(i).and_then(|outlines| {
-                    outlines
-                        .iter()
-                        .filter_map(|(s, o)| match o {
-                            Target::Outline(outline)
-                                if frees.holds_by_tabs(s) && target.lies_inside(outline) =>
-                            {
-                                Some((s, outline.signed_area_mm2().abs()))
-                            }
-                            _ => None,
-                        })
-                        // Nested outlines round one target: the smallest is
-                        // the innermost, the piece the cut is on.
-                        .min_by(|a, b| a.1.total_cmp(&b.1))
-                });
+                let held = earlier_cut
+                    .targets
+                    .iter()
+                    .filter_map(|(s, o)| match o {
+                        Target::Outline(outline)
+                            if frees.holds_by_tabs(s) && target.lies_inside(outline) =>
+                        {
+                            Some((s, outline.signed_area_mm2().abs()))
+                        }
+                        _ => None,
+                    })
+                    // Nested outlines round one target: the smallest is
+                    // the innermost, the piece the cut is on.
+                    .min_by(|a, b| a.1.total_cmp(&b.1));
                 if let Some((held_shape, _)) = held {
                     warnings.push(Warning::CutInsideTabHeldPart {
                         op: later.id().clone(),

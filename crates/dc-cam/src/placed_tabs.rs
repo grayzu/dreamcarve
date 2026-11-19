@@ -25,7 +25,7 @@ use dc_project::{
     InstanceId, Operation, OperationId, PlacedTab, ProfileOp, Project, TabId, TabShape, TabSpec,
 };
 
-use crate::error::{CamError, ShapeRef};
+use crate::error::{CamError, ShapeRef, at, at_mut};
 use crate::profile::{OpTabs, op_tabs};
 use crate::tabs::{Fit, Least, PathEnds, Request, check_size, coverage_warning, overlap_warning};
 use crate::toolpath::Toolpath;
@@ -108,17 +108,36 @@ pub fn place_shared(
     let cut = op_tabs(project, &asking)?;
     // What the request lays on each tool path: for itself, then anew on
     // the pieces that share it.
-    let mut fits: Vec<Fit> = (0..cut.paths.len())
-        .map(|j| Fit {
-            cuts: cut.plan.requested.get(j).cloned().unwrap_or_default(),
-            reduced: cut
-                .plan
-                .request_reductions
-                .get(j)
-                .and_then(|r| r.as_ref().map(|(reduced, _)| *reduced)),
-            on_corners_mm: cut.plan.on_corners_mm.get(j).cloned().unwrap_or_default(),
-        })
-        .collect();
+    // The plan holds one of each per path: a path with none would get no
+    // tab, and its part come loose.
+    let named = |e: CamError| e.for_op(op);
+    let mut fits: Vec<Fit> = Vec::with_capacity(cut.paths.len());
+    for j in 0..cut.paths.len() {
+        let plan = &cut.plan;
+        let asked = at(
+            &plan.requested,
+            j,
+            "a path has no slot for the tabs asked of it",
+        );
+        let reduced = at(
+            &plan.request_reductions,
+            j,
+            "a path has no tab reduction slot",
+        );
+        let on_corners = at(
+            &plan.on_corners_mm,
+            j,
+            "a path has no slot for tabs on corners",
+        );
+        fits.push(Fit {
+            cuts: asked.map_err(named)?.clone(),
+            reduced: reduced
+                .map_err(named)?
+                .as_ref()
+                .map(|(reduced, _)| *reduced),
+            on_corners_mm: on_corners.map_err(named)?.clone(),
+        });
+    }
     share(op, spec, &cut, &profile.targets, pieces, &mut fits)?;
     let mut placement = Placement::default();
     let mut next = next_number(project);
@@ -126,7 +145,13 @@ pub fn place_shared(
         let length_mm = path.length_mm();
         // #302: a tab the request puts on a hole, which it does only with
         // `on_holes`, is there to hold the slug.
-        let holds_slug = spec.on_holes && cut.holes.get(j).copied().unwrap_or(false);
+        let on_hole = *at(
+            &cut.holes,
+            j,
+            "a path does not say whether it is cut round a hole",
+        )
+        .map_err(named)?;
+        let holds_slug = spec.on_holes && on_hole;
         if let Some(reduced) = fit.reduced {
             placement.warnings.push(coverage_warning(
                 op,
@@ -168,9 +193,11 @@ pub fn place_shared(
             let Some((q, _)) = path.point_at(along_mm) else {
                 continue;
             };
-            let Some(centre) = definition_point(project, shape, q) else {
-                continue;
-            };
+            // The shape was placed by its instance to be cut, so the
+            // instance is there and its transform has an inverse.
+            let centre = definition_point(project, shape, q).ok_or_else(|| {
+                CamError::internal("a tab's shape has no instance to place the tab in").for_op(op)
+            })?;
             let tab = PlacedTab {
                 id: TabId::new(format!("tab{next}")),
                 instance: shape.instance.clone(),
@@ -236,9 +263,10 @@ pub fn place_on_outlines(
             continue;
         }
         done.push(shape);
-        let Some(outline) = definition_profile(project, shape) else {
-            continue;
-        };
+        // The shape is one the Profile cuts, so the project has it.
+        let outline = definition_profile(project, shape).ok_or_else(|| {
+            CamError::internal("a shape a Profile cuts is not in the project").for_op(op)
+        })?;
         let length_mm = outline.length_mm();
         for d in at_mm {
             let at_mm = if outline.is_closed() {
@@ -272,14 +300,20 @@ pub fn place_on_outlines(
     let mut with = project.clone();
     with.tabs.extend(placement.tabs.iter().cloned());
     let laid = op_tabs(&with, &bare)?;
-    for (j, ((path, shape), layout)) in laid.paths.iter().zip(&laid.plan.layouts).enumerate() {
+    // One layout and one reduction per path, as `plan_tabs` builds them.
+    let per_path = laid
+        .paths
+        .iter()
+        .zip(&laid.plan.layouts)
+        .zip(&laid.plan.reductions);
+    for (j, (((path, shape), layout), reduction)) in per_path.enumerate() {
         let length_mm = path.length_mm();
         if layout.as_ref().is_some_and(|(_, overlapped)| *overlapped) {
             placement
                 .warnings
                 .push(overlap_warning(op, j, Some(shape), length_mm));
         }
-        if let Some(Some((reduced, widths_mm))) = laid.plan.reductions.get(j) {
+        if let Some((reduced, widths_mm)) = reduction {
             placement.warnings.push(coverage_warning(
                 op,
                 j,
@@ -302,8 +336,16 @@ pub fn place_on_outlines(
 pub fn place_requests(project: &Project) -> Result<(Project, Vec<Warning>), CamError> {
     let mut out = project.clone();
     let mut warnings = Vec::new();
+    // By index: each request is placed on the project as the requests
+    // before it left it.
     for i in 0..out.operations.len() {
-        let Some(Operation::Profile(op)) = out.operations.get(i) else {
+        let operation = at(
+            &out.operations,
+            i,
+            "an operation left the project being placed",
+        )?;
+        // Only an enabled Profile with a request has tabs to place.
+        let Operation::Profile(op) = operation else {
             continue;
         };
         let (Some(spec), true) = (op.tabs.clone(), op.enabled) else {
@@ -313,7 +355,13 @@ pub fn place_requests(project: &Project) -> Result<(Project, Vec<Warning>), CamE
         let placement = place(&out, &id, &spec)?;
         out.tabs.extend(placement.tabs);
         warnings.extend(placement.warnings);
-        if let Some(Operation::Profile(op)) = out.operations.get_mut(i) {
+        let placed = at_mut(
+            &mut out.operations,
+            i,
+            "a Profile whose tabs were placed left the project",
+        )
+        .map_err(|e| e.for_op(&id))?;
+        if let Operation::Profile(op) = placed {
             op.tabs = None;
         }
     }

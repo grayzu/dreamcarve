@@ -35,6 +35,7 @@
 
 use crate::warning::TabOnCornerReason as Stuck;
 use dc_geometry::{EPS_MM, Polyline};
+use std::cell::Cell;
 
 /// The least turn, degrees, within one bit diameter of path that makes a
 /// corner a tab moves off.
@@ -367,20 +368,28 @@ pub(super) fn avoid(
 ) -> (Vec<f64>, Vec<(usize, Stuck)>) {
     let n = centres_mm.len();
     let l = corners.length_mm;
-    let mut placed = centres_mm.to_vec();
+    // Each tab's centre as placed so far, in placement order. A cell, so
+    // a tab is moved while the others are read.
+    let placed: Vec<Cell<f64>> = centres_mm.iter().copied().map(Cell::new).collect();
     let mut blocked = Vec::new();
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| {
-        centres_mm
-            .get(a)
-            .zip(centres_mm.get(b))
-            .map_or(std::cmp::Ordering::Equal, |(x, y)| x.total_cmp(y))
-    });
+    // The tabs along the path: each one's index, centre as first placed,
+    // and place. The sort is stable, so equal centres keep their order.
+    let mut order: Vec<(usize, f64, &Cell<f64>)> = centres_mm
+        .iter()
+        .zip(&placed)
+        .enumerate()
+        .map(|(i, (&c, slot))| (i, c, slot))
+        .collect();
+    order.sort_by(|a, b| a.1.total_cmp(&b.1));
     let room = corners.has_room(stretch_mm);
-    for (rank, &i) in order.iter().enumerate() {
-        let Some(&c) = centres_mm.get(i) else {
-            continue;
-        };
+    // Each tab with the one before it and the one after it along the
+    // path, round it: on an open path the first has none before and the
+    // last none after, which `rank` tells.
+    let before = order.iter().cycle().skip(n.saturating_sub(1));
+    let after = order.iter().cycle().skip(1);
+    for ((rank, &(i, c, slot)), (&(_, prev, _), &(_, next, _))) in
+        order.iter().enumerate().zip(before.zip(after))
+    {
         if !corners.contains(c) {
             continue;
         }
@@ -388,15 +397,12 @@ pub(super) fn avoid(
             blocked.push((i, Stuck::Everywhere));
             continue;
         }
-        let original = |r: usize| order.get(r).and_then(|&j| centres_mm.get(j)).copied();
         // Half the gap to each neighbour, as placed before any tab moved;
         // on an open path, not so far that the stretch passes an end.
         let range = if corners.closed {
             let (back_mm, ahead_mm) = if n == 1 {
                 (l / 2.0, l / 2.0)
             } else {
-                let prev = original((rank + n - 1) % n).unwrap_or(c);
-                let next = original((rank + 1) % n).unwrap_or(c);
                 (
                     (c - prev).rem_euclid(l) / 2.0,
                     (next - c).rem_euclid(l) / 2.0,
@@ -404,17 +410,18 @@ pub(super) fn avoid(
             };
             (c - back_mm, c + ahead_mm)
         } else {
-            let back_mm = rank
-                .checked_sub(1)
-                .and_then(original)
-                .map_or(c, |prev| (c - prev) / 2.0);
-            let ahead_mm = original(rank + 1).map_or(l - c, |next| (next - c) / 2.0);
+            let back_mm = if rank == 0 { c } else { (c - prev) / 2.0 };
+            let ahead_mm = if rank + 1 == n {
+                l - c
+            } else {
+                (next - c) / 2.0
+            };
             let half_mm = stretch_mm / 2.0;
             ((c - back_mm).max(half_mm), (c + ahead_mm).min(l - half_mm))
         };
         let mut blocks = corners.near(c);
         // Every other tab's stretch, as placed so far, round the path.
-        for (j, &other) in placed.iter().enumerate() {
+        for (j, other) in placed.iter().map(Cell::get).enumerate() {
             if j == i {
                 continue;
             }
@@ -434,15 +441,11 @@ pub(super) fn avoid(
             .then(|| nearest_free(c, range, &blocks))
             .flatten();
         match to {
-            Some(to) => {
-                if let Some(slot) = placed.get_mut(i) {
-                    *slot = if corners.closed { to.rem_euclid(l) } else { to };
-                }
-            }
+            Some(to) => slot.set(if corners.closed { to.rem_euclid(l) } else { to }),
             None => blocked.push((i, Stuck::NoRoom)),
         }
     }
-    (placed, blocked)
+    (placed.iter().map(Cell::get).collect(), blocked)
 }
 
 /// The point of `range` nearest `c` that lies [`CLEAR_MM`] or more outside

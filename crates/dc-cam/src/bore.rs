@@ -99,6 +99,12 @@ struct Hole {
 /// leave the stock ([`CamError::OffStock`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamError> {
+    bore(project, op).map_err(|e| e.for_op(&op.id))
+}
+
+/// [`generate_bore`], before a defect it finds ([`CamError::Internal`])
+/// names `op`.
+fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamError> {
     let tool = project
         .tools
         .iter()
@@ -179,7 +185,7 @@ pub fn generate_bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Wa
     )?
     .last()
     .copied()
-    .unwrap_or(thickness_mm - depth_mm);
+    .ok_or_else(|| CamError::internal("a hole's checked depth has no pass"))?;
     let safe_z_mm = thickness_mm + op.safe_z_mm;
     let start_z_mm = descent_start_z_mm(thickness_mm, safe_z_mm);
     let tolerance_mm = project.flatten_tolerance_mm;

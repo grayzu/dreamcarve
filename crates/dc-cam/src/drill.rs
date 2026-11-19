@@ -36,7 +36,7 @@
 //! in Z at each centre, and distances are symmetric under the flip.
 
 use crate::block::CutBlock;
-use crate::error::{CamError, FeedField, ShapeRef};
+use crate::error::{CamError, FeedField, ShapeRef, at};
 use crate::passes::pass_z_mm;
 use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
@@ -166,6 +166,12 @@ pub fn generate_drill(
     project: &Project,
     op: &DrillOp,
 ) -> Result<(DrillToolpath, Vec<Warning>), CamError> {
+    drill(project, op).map_err(|e| e.for_op(&op.id))
+}
+
+/// [`generate_drill`], before a defect it finds ([`CamError::Internal`])
+/// names `op`.
+fn drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>), CamError> {
     let tool = project
         .tools
         .iter()
@@ -229,7 +235,7 @@ pub fn generate_drill(
     )?
     .last()
     .copied()
-    .unwrap_or(top_z_mm - depth_mm);
+    .ok_or_else(|| CamError::internal("a hole's checked depth has no pass"))?;
     let safe_z_mm = thickness_mm + op.safe_z_mm;
     let mut warnings = Vec::new();
     if op.retract_mm < 0.0 {
@@ -260,9 +266,10 @@ pub fn generate_drill(
             op.through_cut_allowance_mm,
         )?,
     };
-    if let Some(last) = levels.last_mut() {
-        *last = bottom_z_mm;
-    }
+    // The last level is the hole's bottom exactly.
+    *levels
+        .last_mut()
+        .ok_or_else(|| CamError::internal("a hole has no level to drill to"))? = bottom_z_mm;
     if let Some(peck_mm) = cycle.peck_mm
         && levels.len() == 1
     {
@@ -308,7 +315,7 @@ pub fn generate_drill(
             CutBlock {
                 shape: shape.clone(),
                 pass: 0,
-                z_mm: levels.last().copied().unwrap_or(top_z_mm),
+                z_mm: bottom_z_mm,
                 descent_from: *centre,
                 descent_from_z_mm: safe_z_mm,
                 // The rapid down to the retract plane, above the stock:
@@ -345,17 +352,23 @@ pub fn generate_drill(
     };
     let records = plan(&input)?
         .into_iter()
-        .filter_map(|i| input.blocks.get(i))
-        .map(|block| DrillHole {
-            centre: block.entry,
-            top_z_mm,
-            bottom_z_mm: block.z_mm,
-            retract_z_mm,
-            cycle: cycle.canned(dwell_s.is_some()),
-            peck_mm: cycle.peck_mm,
-            dwell_s,
+        .map(|i| {
+            let block = at(
+                &input.blocks,
+                i,
+                "the cut order names a hole that is not there",
+            )?;
+            Ok(DrillHole {
+                centre: block.entry,
+                top_z_mm,
+                bottom_z_mm: block.z_mm,
+                retract_z_mm,
+                cycle: cycle.canned(dwell_s.is_some()),
+                peck_mm: cycle.peck_mm,
+                dwell_s,
+            })
         })
-        .collect();
+        .collect::<Result<_, CamError>>()?;
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
     if let Some(overhang) = swept_bounds(&toolpath, tool.cut_radius_mm())

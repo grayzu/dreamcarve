@@ -879,14 +879,16 @@ impl PathTabs {
     /// its ramps swap too), widened by `widen_mm` at both ends, and its
     /// smooth ramps lengthened by as much, so that at every point it is
     /// at least as high as this one where it lands. Spans that then
-    /// overlap merge; spans that cover the path cover the other.
+    /// overlap merge; spans that cover the path cover the other. Fails as
+    /// `along` does, where a span landing anywhere else would leave its
+    /// tab to be cut through.
     pub(crate) fn carried(
         &self,
         length_mm: f64,
-        along: impl Fn(f64) -> f64,
+        along: impl Fn(f64) -> Result<f64, CamError>,
         reversed: bool,
         widen_mm: f64,
-    ) -> Self {
+    ) -> Result<Self, CamError> {
         let l = length_mm;
         let mut carried = Self {
             length_mm: l,
@@ -905,16 +907,16 @@ impl PathTabs {
                     ..*s
                 })
                 .collect();
-            return carried;
+            return Ok(carried);
         }
         let spans: Vec<Raw> = self
             .spans
             .iter()
             .map(|s| {
                 let (from_mm, to_mm) = if reversed {
-                    (along(s.end_mm()), along(s.start_mm))
+                    (along(s.end_mm())?, along(s.start_mm)?)
                 } else {
-                    (along(s.start_mm), along(s.end_mm()))
+                    (along(s.start_mm)?, along(s.end_mm())?)
                 };
                 let (ramp_in_mm, ramp_out_mm) = if reversed {
                     (s.ramp_out_mm, s.ramp_in_mm)
@@ -930,20 +932,20 @@ impl PathTabs {
                     run_mm -= l;
                 }
                 let start_mm = (from_mm - widen_mm).rem_euclid(l);
-                Raw {
+                Ok(Raw {
                     start_mm,
                     end_mm: start_mm + run_mm.max(0.0) + 2.0 * widen_mm,
                     top_z_mm: s.top_z_mm,
                     shape: s.shape,
                     ramp_in_mm: ramp_in_mm + widen_mm,
                     ramp_out_mm: ramp_out_mm + widen_mm,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<_, CamError>>()?;
         let (merged, _) = merge_closed(spans, l);
         carried.full = merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM);
         carried.spans = merged.iter().map(Raw::span).collect();
-        carried
+        Ok(carried)
     }
 
     /// The raised stretches `spans` on a path `length_mm` long, laid for

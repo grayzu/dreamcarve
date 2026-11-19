@@ -274,15 +274,12 @@ impl TurnScorer {
             .filter_map(|e| tangents(&e.segment).map(|t| (e, t)))
             .collect();
         let mut vertices = Vec::with_capacity(live.len());
-        for (k, (edge, (start, _))) in live.iter().enumerate() {
-            let previous = live
-                .get((k + live.len() - 1) % live.len().max(1))
-                .map(|(_, (_, end))| *end);
-            if let Some(incoming) = previous {
-                let turn = incoming.cross(*start).atan2(incoming.dot(*start)).abs();
-                if turn > LEAD_EPS {
-                    vertices.push((edge.start_mm, turn));
-                }
+        // Each live edge with the one before it, round the path.
+        let before = live.iter().cycle().skip(live.len().saturating_sub(1));
+        for ((edge, (start, _)), (_, (_, incoming))) in live.iter().zip(before) {
+            let turn = incoming.cross(*start).atan2(incoming.dot(*start)).abs();
+            if turn > LEAD_EPS {
+                vertices.push((edge.start_mm, turn));
             }
         }
         let arcs = live
@@ -598,17 +595,18 @@ pub(crate) fn reseam(path: &Polyline, distance_mm: f64) -> Polyline {
         )
 }
 
-/// `path` re-seamed `local_mm` along its segment `index`.
+/// `path` re-seamed `local_mm` along its segment `index`; unchanged when
+/// it has no such segment.
 pub(crate) fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polyline {
     let vertices = path.vertices();
     let n = vertices.len();
+    // The vertices from vertex `k` round to it, `k` counted round the path.
     let rotated = |k: usize| {
-        let k = k % n.max(1);
-        let mut out: Vec<Vertex> = vertices.get(k..).unwrap_or_default().to_vec();
-        out.extend_from_slice(vertices.get(..k).unwrap_or_default());
+        let out: Vec<Vertex> = vertices.iter().cycle().skip(k).take(n).copied().collect();
         Polyline::new(out, true)
     };
-    let Some(segment) = path.segments().nth(index) else {
+    // Segment `index` starts at vertex `index`, which carries its bulge.
+    let Some((segment, &own)) = path.segments().zip(vertices).nth(index) else {
         return path.clone();
     };
     let length_mm = segment.length_mm();
@@ -618,11 +616,9 @@ pub(crate) fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polylin
     if local_mm >= length_mm - EPS_MM {
         return rotated(index + 1);
     }
+    // A segment with no length has no point to split it at.
     let Some((split, _)) = segment.point_at(local_mm) else {
         return rotated(index);
-    };
-    let Some(&own) = vertices.get(index) else {
-        return path.clone();
     };
     let fraction = local_mm / length_mm;
     let mut out = Vec::with_capacity(n + 1);
@@ -631,8 +627,8 @@ pub(crate) fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polylin
         split.y,
         part_bulge(own.bulge, 1.0 - fraction),
     ));
-    out.extend_from_slice(vertices.get(index + 1..).unwrap_or_default());
-    out.extend_from_slice(vertices.get(..index).unwrap_or_default());
+    out.extend(vertices.iter().skip(index + 1));
+    out.extend(vertices.iter().take(index));
     out.push(Vertex::new(own.x, own.y, part_bulge(own.bulge, fraction)));
     Polyline::new(out, true)
 }
