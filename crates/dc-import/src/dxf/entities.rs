@@ -22,7 +22,7 @@
 //! counted; MINSERT arrays are expanded; a spline-fit POLYLINE drops its
 //! frame vertices; skipped entities are counted, not dropped.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, MAX_COORDINATE_MM, Point, Polyline, Transform,
@@ -33,7 +33,7 @@ use kurbo::{BezPath, PathEl, Shape as _};
 use super::document::{Block, Entity};
 use super::hatch::{self, Boundary, Edge, Failure};
 use super::spline::BSpline;
-use super::{HatchProblem, MAX_INSERT_DEPTH};
+use super::{HatchProblem, MAX_BLOCKS_NAMED, MAX_INSERT_DEPTH};
 use crate::ImportError;
 use crate::svg::{element_is_finite, element_is_within_limit, estimated_vertices};
 
@@ -122,6 +122,38 @@ const PLANAR_NORMAL_EPS: f64 = 1e-6;
 /// arcs and short polylines that arrays repeat.
 const MAX_VERTICES_PER_PLACEMENT: usize = 10;
 
+/// The distinct block names a warning is about, in the order first seen:
+/// the first [`MAX_BLOCKS_NAMED`] to report by name, the rest only
+/// counted. A name is looked up in a set as it arrives, so a drawing of
+/// many inserts costs a lookup each, not a scan of the names so far.
+#[derive(Debug, Default)]
+pub(super) struct Names {
+    seen: BTreeSet<String>,
+    named: Vec<String>,
+}
+
+impl Names {
+    fn note(&mut self, name: &str) {
+        if self.seen.contains(name) {
+            return;
+        }
+        self.seen.insert(name.to_owned());
+        if self.named.len() < MAX_BLOCKS_NAMED {
+            self.named.push(name.to_owned());
+        }
+    }
+
+    /// How many distinct names came after the ones kept.
+    pub(super) fn unnamed(&self) -> usize {
+        self.seen.len().saturating_sub(self.named.len())
+    }
+
+    /// The names kept, in the order first seen.
+    pub(super) fn named(&self) -> &[String] {
+        &self.named
+    }
+}
+
 /// Collects the shapes of a drawing, in document order.
 pub(super) struct Walker<'a> {
     blocks: BTreeMap<&'a str, &'a Block>,
@@ -145,10 +177,10 @@ pub(super) struct Walker<'a> {
     /// The same counts per layer, for the layer list
     /// ([`super::DxfLayer`]).
     pub skipped_per_layer: BTreeMap<String, BTreeMap<String, usize>>,
-    /// Blocks whose INSERT nested past [`MAX_INSERT_DEPTH`], in order.
-    pub too_deep: Vec<String>,
-    /// Blocks an INSERT named that the file does not define, in order.
-    pub missing: Vec<String>,
+    /// Blocks whose INSERT nested past [`MAX_INSERT_DEPTH`].
+    pub too_deep: Names,
+    /// Blocks an INSERT named that the file does not define.
+    pub missing: Names,
     /// HATCHes skipped because a boundary could not be read, in order.
     pub unreadable: Vec<UnreadableHatch>,
 }
@@ -171,8 +203,8 @@ impl<'a> Walker<'a> {
             shapes: Vec::new(),
             skipped: BTreeMap::new(),
             skipped_per_layer: BTreeMap::new(),
-            too_deep: Vec::new(),
-            missing: Vec::new(),
+            too_deep: Names::default(),
+            missing: Names::default(),
             unreadable: Vec::new(),
         }
     }
@@ -428,14 +460,14 @@ impl<'a> Walker<'a> {
     ) -> Result<(), ImportError> {
         let name = entity.text(2).unwrap_or_default();
         let Some(block) = self.blocks.get(name).copied() else {
-            self.missing.push(name.to_owned());
+            self.missing.note(name);
             return Ok(());
         };
         if !should_expand(entity.layer(), block) {
             return Ok(());
         }
         if depth > MAX_INSERT_DEPTH {
-            self.too_deep.push(block.name.clone());
+            self.too_deep.note(&block.name);
             return Ok(());
         }
         let Some(ocs) = self.ocs(entity, "INSERT", layer) else {

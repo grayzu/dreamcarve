@@ -20,7 +20,8 @@ pub mod svg;
 pub use bitmap::{BITMAP_PNG_COMPRESSION, ImageFormat};
 pub use dxf::{
     DxfImport, DxfImportOptions, DxfLayer, DxfReadError, DxfUnits, HatchProblem,
-    JOIN_TOLERANCE_DEFAULT_MM, MAX_HATCH_BOUNDARIES, MAX_HATCH_EDGES, MAX_INSERT_DEPTH, import_dxf,
+    JOIN_TOLERANCE_DEFAULT_MM, MAX_BLOCKS_NAMED, MAX_HATCH_BOUNDARIES, MAX_HATCH_EDGES,
+    MAX_INSERT_DEPTH, import_dxf,
 };
 pub use prep::walk::HiddenReason;
 pub use svg::{
@@ -271,9 +272,25 @@ pub enum ImportWarning {
         block: String,
     },
     /// An INSERT names a block the file does not define; it was skipped.
+    /// One warning per block, for the first [`dxf::MAX_BLOCKS_NAMED`] of
+    /// them.
     DxfBlockMissing {
         /// The missing block's name.
         block: String,
+    },
+    /// INSERTs of more undefined blocks than [`dxf::MAX_BLOCKS_NAMED`]
+    /// were skipped: the blocks past those named, counted
+    /// (`dxf_block_missing`).
+    DxfBlocksMissingUnnamed {
+        /// How many more distinct blocks.
+        count: usize,
+    },
+    /// More blocks than [`dxf::MAX_BLOCKS_NAMED`] nest past
+    /// [`MAX_INSERT_DEPTH`]: the blocks past those named, counted
+    /// (`dxf_insert_too_deep`).
+    DxfInsertsTooDeepUnnamed {
+        /// How many more distinct blocks.
+        count: usize,
     },
     /// A DXF from before R2007 is written in a code page DreamCarve has
     /// no table for, such as the multi-byte `ANSI_932` (Shift-JIS), and
@@ -494,8 +511,12 @@ impl ImportWarning {
             Self::EmptyPath { .. } => "svg_empty_path",
             Self::PhysicalSizeWithoutViewBox { .. } => "svg_physical_size_without_view_box",
             Self::DxfEntitiesSkipped { .. } => "dxf_entities_skipped",
-            Self::DxfInsertTooDeep { .. } => "dxf_insert_too_deep",
-            Self::DxfBlockMissing { .. } => "dxf_block_missing",
+            Self::DxfInsertTooDeep { .. } | Self::DxfInsertsTooDeepUnnamed { .. } => {
+                "dxf_insert_too_deep"
+            }
+            Self::DxfBlockMissing { .. } | Self::DxfBlocksMissingUnnamed { .. } => {
+                "dxf_block_missing"
+            }
             Self::DxfCodePageUnsupported { .. } => "dxf_code_page_unsupported",
             Self::DxfHatchUnreadable { .. } => "dxf_hatch_unreadable",
             Self::DxfHatchBoundaryDuplicate { .. } => "dxf_hatch_boundary_duplicate",
@@ -595,6 +616,13 @@ impl std::fmt::Display for ImportWarning {
             Self::DxfBlockMissing { block } => {
                 write!(f, "INSERT of undefined block `{block}` was skipped")
             }
+            Self::DxfBlocksMissingUnnamed { count } => {
+                write!(f, "INSERTs of {count} more undefined blocks were skipped")
+            }
+            Self::DxfInsertsTooDeepUnnamed { count } => write!(
+                f,
+                "{count} more blocks are inserted more than {MAX_INSERT_DEPTH} levels deep; the deeper levels were skipped"
+            ),
             Self::DxfCodePageUnsupported { code_page } => write!(
                 f,
                 "the drawing's text is in code page `{code_page}`, which DreamCarve cannot read; layer names were read as Windows-1252 and may show wrong characters"
@@ -799,6 +827,14 @@ mod warning {
             (
                 ImportWarning::DxfBlockMissing { block: "b".into() },
                 "dxf_block_missing",
+            ),
+            (
+                ImportWarning::DxfBlocksMissingUnnamed { count: 2 },
+                "dxf_block_missing",
+            ),
+            (
+                ImportWarning::DxfInsertsTooDeepUnnamed { count: 2 },
+                "dxf_insert_too_deep",
             ),
             (
                 ImportWarning::DxfCodePageUnsupported {

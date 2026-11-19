@@ -184,6 +184,14 @@ pub const JOIN_TOLERANCE_DEFAULT_MM: f64 = 0.01;
 /// block that inserts itself.
 pub const MAX_INSERT_DEPTH: usize = 12;
 
+/// How many distinct blocks [`ImportWarning::DxfBlockMissing`] names, and
+/// how many [`ImportWarning::DxfInsertTooDeep`] does. The blocks past it
+/// are counted in one warning each
+/// ([`ImportWarning::DxfBlocksMissingUnnamed`],
+/// [`ImportWarning::DxfInsertsTooDeepUnnamed`]): a drawing can name as
+/// many blocks as it has lines, and a report that long helps nobody.
+pub const MAX_BLOCKS_NAMED: usize = 20;
+
 /// The drawing units a DXF declares in `$INSUNITS`, among those DreamCarve
 /// scales from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,11 +387,23 @@ pub fn import_dxf(
     if !skipped.is_empty() {
         warnings.push(ImportWarning::DxfEntitiesSkipped { counts: skipped });
     }
-    for block in unique(walker.too_deep) {
-        warnings.push(ImportWarning::DxfInsertTooDeep { block });
+    for block in walker.too_deep.named() {
+        warnings.push(ImportWarning::DxfInsertTooDeep {
+            block: block.clone(),
+        });
     }
-    for block in unique(walker.missing) {
-        warnings.push(ImportWarning::DxfBlockMissing { block });
+    match walker.too_deep.unnamed() {
+        0 => {}
+        count => warnings.push(ImportWarning::DxfInsertsTooDeepUnnamed { count }),
+    }
+    for block in walker.missing.named() {
+        warnings.push(ImportWarning::DxfBlockMissing {
+            block: block.clone(),
+        });
+    }
+    match walker.missing.unnamed() {
+        0 => {}
+        count => warnings.push(ImportWarning::DxfBlocksMissingUnnamed { count }),
     }
     for hatch in walker.unreadable {
         warnings.push(ImportWarning::DxfHatchUnreadable {
@@ -606,17 +626,6 @@ fn insunits_name(code: i64) -> String {
         other => return format!("{other}, which DXF does not define"),
     };
     name.to_owned()
-}
-
-/// The first occurrence of each name, in order.
-fn unique(names: Vec<String>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::with_capacity(names.len());
-    for name in names {
-        if !out.contains(&name) {
-            out.push(name);
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -1150,6 +1159,88 @@ mod tests {
             .map(|p| p.bounds().unwrap().max.y)
             .fold(0.0, f64::max);
         assert_approx_eq!(top, MAX_INSERT_DEPTH as f64, TOL_MM);
+    }
+
+    /// An INSERT of the undefined block `name` on layer `0`.
+    fn insert_of(name: &str) -> String {
+        format!("0\nINSERT\n8\n0\n2\n{name}\n10\n0.0\n20\n0.0\n")
+    }
+
+    /// Review 1.12: each undefined block is warned about once, in the
+    /// order first inserted, however often it is inserted; past
+    /// [`MAX_BLOCKS_NAMED`] names the rest are counted in one warning, so
+    /// a file of many distinct names cannot flood the report.
+    #[test]
+    fn missing_blocks_are_named_once_and_the_rest_counted() {
+        let n = MAX_BLOCKS_NAMED + 5;
+        let entities: String = (0..n)
+            .chain(0..n)
+            .map(|i| insert_of(&format!("GONE{i}")))
+            .collect();
+        let (_, warnings) = import(dxf_with_blocks(&[], &entities).as_bytes());
+        let named: Vec<&str> = warnings
+            .iter()
+            .filter_map(|w| match w {
+                ImportWarning::DxfBlockMissing { block } => Some(block.as_str()),
+                _ => None,
+            })
+            .collect();
+        let expected: Vec<String> = (0..MAX_BLOCKS_NAMED).map(|i| format!("GONE{i}")).collect();
+        assert_eq!(named, expected);
+        let rest: Vec<_> = warnings
+            .iter()
+            .filter(|w| matches!(w, ImportWarning::DxfBlocksMissingUnnamed { .. }))
+            .collect();
+        assert_eq!(
+            rest,
+            [&ImportWarning::DxfBlocksMissingUnnamed { count: 5 }],
+            "{warnings:?}"
+        );
+        assert_eq!(
+            rest[0].to_string(),
+            "INSERTs of 5 more undefined blocks were skipped"
+        );
+    }
+
+    /// As many missing blocks as are named get no "more" warning.
+    #[test]
+    fn missing_blocks_up_to_the_cap_are_all_named() {
+        let entities: String = (0..MAX_BLOCKS_NAMED)
+            .map(|i| insert_of(&format!("GONE{i}")))
+            .collect();
+        let (_, warnings) = import(dxf_with_blocks(&[], &entities).as_bytes());
+        assert_eq!(warnings.len(), MAX_BLOCKS_NAMED, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .all(|w| matches!(w, ImportWarning::DxfBlockMissing { .. })),
+            "{warnings:?}"
+        );
+    }
+
+    /// The same cap for blocks inserted too deep: each of these blocks
+    /// inserts itself, so each passes the depth limit.
+    #[test]
+    fn too_deep_blocks_are_named_once_and_the_rest_counted() {
+        let n = MAX_BLOCKS_NAMED + 3;
+        let names: Vec<String> = (0..n).map(|i| format!("LOOP{i}")).collect();
+        let bodies: Vec<String> = names.iter().map(|name| insert_of(name)).collect();
+        let blocks: Vec<(&str, &str)> = names
+            .iter()
+            .zip(&bodies)
+            .map(|(name, body)| (name.as_str(), body.as_str()))
+            .collect();
+        let entities: String = names.iter().map(|name| insert_of(name)).collect();
+        let (_, warnings) = import(dxf_with_blocks(&blocks, &entities).as_bytes());
+        let named = warnings
+            .iter()
+            .filter(|w| matches!(w, ImportWarning::DxfInsertTooDeep { .. }))
+            .count();
+        assert_eq!(named, MAX_BLOCKS_NAMED, "{warnings:?}");
+        assert!(
+            warnings.contains(&ImportWarning::DxfInsertsTooDeepUnnamed { count: 3 }),
+            "{warnings:?}"
+        );
     }
 
     /// Model- and paper-space blocks, blocks named with a leading `_`, the
