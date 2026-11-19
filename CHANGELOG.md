@@ -424,6 +424,17 @@ phases bump the patch number.
 
 ### Fixed
 
+- **The toolpath preview marks a carve as a carve.** `--preview` and the
+  app's Viewport read every toolpath as level passes: a stretch that rose
+  above the last descent was a tab mark, and a descent that began at it
+  was a start circle. A carve changes depth all along its cut, so a Photo
+  V-Carve of 48 grooves drew 453 start circles and 88 tab marks, and a
+  V-Carve drew tab marks at its corners (98 on the sign's lettering).
+  Tab marks are now drawn only for a cut that leaves tabs, a Profile and
+  an Inlay's cut-out. A V-Carve, an Inlay's carve and a Photo V-Carve
+  have a start circle where the bit comes down into the work: one at the
+  start of each groove of a Photo V-Carve, and the same ones as before
+  for a V-Carve and an Inlay. No program changes.
 - **A clipped Inlay cut-out places the tabs it was asked for (#710).**
   Where a male's band runs past the board, its cut-out is cut in several
   stretches, from the board's edge to the board's edge, and each stretch
