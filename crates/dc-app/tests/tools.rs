@@ -719,3 +719,389 @@ fn export_refuses_a_new_tool_until_its_rates_are_set() {
         ready.findings.errors
     );
 }
+
+// #685 (phase 3.6's model in the app; functional 63, 64a and 66b): the
+// tapered ball nose in the tool editor.
+
+/// The tapered ball nose test part: `t2` and `t3` are tapered ball noses
+/// with a 6.35 mm cutting diameter (tips 2.286 mm and 0.762 mm, 6.7° per
+/// side, 19.05 mm of flute), `t3` the enabled Inlay's bit; `t1` is
+/// `init`'s placeholder, which nothing uses.
+fn tapered_bytes() -> Vec<u8> {
+    read(&fixture("dc-tbn.dcv"))
+}
+
+/// A tapered ball nose's three values: tip, taper, flute length.
+fn tapered(tool: &Tool) -> (Option<f64>, Option<f64>, Option<f64>) {
+    match tool.cutter {
+        ToolKind::TaperedBallNose {
+            tip_diameter_mm,
+            taper_angle_deg,
+            flute_length_mm,
+        } => (tip_diameter_mm, taper_angle_deg, flute_length_mm),
+        ref other => panic!("not a tapered ball nose: {other:?}"),
+    }
+}
+
+/// #685; capability 63: the type list offers the tapered ball nose, and a
+/// tool of that type has its own rows, tip diameter, taper (labelled per
+/// side) and flute length, after the type; Diameter keeps its label and
+/// is the cutting diameter. Choosing the type writes the cutter with
+/// nothing set (no value is invented, S20), and each typed value is one
+/// `UpdateTool`, so one undo step. A taper is degrees per side in (0°,
+/// 45°]; a blank field clears its value to `null`.
+#[test]
+fn tapered_ball_nose_editor_fields() {
+    let strings = dc_app::Strings::english();
+    assert_eq!(
+        KindChoice::ALL.last(),
+        Some(&KindChoice::TaperedBallNose),
+        "the dropdown offers it, after the kinds it had"
+    );
+    assert_eq!(
+        strings.get(KindChoice::TaperedBallNose.label()),
+        "Tapered ball nose"
+    );
+
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    let before = harness.app.project().clone();
+    let t2 = tool(&before, "t2").clone();
+    let common = [
+        ToolField::Diameter,
+        ToolField::Flutes,
+        ToolField::Feed,
+        ToolField::Plunge,
+        ToolField::Rpm,
+        ToolField::StepDown,
+        ToolField::StepOver,
+        ToolField::Number,
+        ToolField::Vendor,
+        ToolField::ProductId,
+    ];
+    let rows_of = |own: &[ToolField]| -> Vec<ToolField> {
+        [ToolField::Name]
+            .into_iter()
+            .chain(own.iter().copied())
+            .chain(common)
+            .collect()
+    };
+    assert_eq!(tools::fields(&t2), rows_of(&[]), "an end mill's rows");
+    assert_eq!(
+        tools::fields_for(KindChoice::VBit),
+        rows_of(&[ToolField::Angle])
+    );
+
+    // Choosing the type: the cutter with nothing set, one undo step.
+    let KindSwitch::Update(switched) = tools::set_kind(&t2, KindChoice::TaperedBallNose) else {
+        panic!("choosing the type changes an end mill");
+    };
+    assert_eq!(tapered(&switched), (None, None, None), "nothing invented");
+    assert_eq!(
+        Tool {
+            cutter: ToolKind::EndMill,
+            ..(*switched).clone()
+        },
+        t2,
+        "every other value kept"
+    );
+    harness.run(Command::UpdateTool(*switched)).unwrap();
+    let unset = tool(harness.app.project(), "t2").clone();
+    let own = [
+        ToolField::TipDiameter,
+        ToolField::Taper,
+        ToolField::FluteLength,
+    ];
+    assert_eq!(tools::fields(&unset), rows_of(&own));
+    assert_eq!(
+        tools::fields_for(KindChoice::TaperedBallNose),
+        rows_of(&own)
+    );
+    let labels: Vec<&str> = own.iter().map(|f| strings.get(f.label())).collect();
+    assert_eq!(labels, ["Tip diameter", "Taper per side", "Flute length"]);
+    assert_eq!(strings.get(ToolField::Diameter.label()), "Diameter");
+    assert_eq!(
+        own.map(ToolField::file_name),
+        [
+            "cutter.tapered_ball_nose.tip_diameter_mm",
+            "cutter.tapered_ball_nose.taper_angle_deg",
+            "cutter.tapered_ball_nose.flute_length_mm",
+        ],
+        "the file's names, as validation locates them"
+    );
+    for field in own {
+        assert_eq!(tools::field_text(&unset, field, Units::Mm), "", "{field:?}");
+    }
+
+    // Each value typed is one command, so one undo step.
+    let mut steps = vec![harness.app.project().clone()];
+    for (field, text) in [
+        (ToolField::TipDiameter, "0.03 in"),
+        (ToolField::Taper, "6.7°"),
+        (ToolField::FluteLength, "19.05"),
+    ] {
+        let current = tool(harness.app.project(), "t2").clone();
+        let next = tools::set_field(&current, field, text, Units::Mm).expect("a value");
+        harness.run(Command::UpdateTool(next)).unwrap();
+        steps.push(harness.app.project().clone());
+    }
+    let set = tool(harness.app.project(), "t2").clone();
+    let (tip, taper, flutes) = tapered(&set);
+    dc_geometry::assert_approx_eq!(tip.unwrap(), 0.762, 1e-9);
+    dc_geometry::assert_approx_eq!(taper.unwrap(), 6.7, 1e-12);
+    dc_geometry::assert_approx_eq!(flutes.unwrap(), 19.05, 1e-12);
+    dc_geometry::assert_approx_eq!(set.diameter_mm, 6.35, 1e-12);
+    for (field, mm_text, mm_unit, inch_text, inch_unit) in [
+        (ToolField::Diameter, "6.35", "mm", "0.25", "in"),
+        (ToolField::TipDiameter, "0.762", "mm", "0.03", "in"),
+        (ToolField::Taper, "6.7", "°", "6.7", "°"),
+        (ToolField::FluteLength, "19.05", "mm", "0.75", "in"),
+    ] {
+        assert_eq!(
+            (
+                tools::field_text(&set, field, Units::Mm),
+                tools::field_unit(field, Units::Mm)
+            ),
+            (mm_text.to_owned(), mm_unit),
+            "{field:?}"
+        );
+        assert_eq!(
+            (
+                tools::field_text(&set, field, Units::Inch),
+                tools::field_unit(field, Units::Inch)
+            ),
+            (inch_text.to_owned(), inch_unit),
+            "{field:?}"
+        );
+    }
+    // The rows as the editor draws them.
+    let rows = tools::rows(&set, Units::Mm);
+    assert_eq!(
+        rows.iter().map(|r| r.field).collect::<Vec<_>>(),
+        tools::fields(&set)
+    );
+    let taper_row = rows
+        .iter()
+        .find(|r| r.field == ToolField::Taper)
+        .expect("a taper row");
+    assert_eq!(
+        (
+            strings.get(taper_row.label),
+            taper_row.text.as_str(),
+            taper_row.unit
+        ),
+        ("Taper per side", "6.7", "°")
+    );
+    assert_eq!(taper_row.required, None);
+    for expected in steps.iter().rev().skip(1) {
+        harness.app.undo().expect("a step to undo");
+        assert_eq!(harness.app.project(), expected, "one edit, one step");
+    }
+    harness.app.undo().expect("the type switch is a step too");
+    assert_eq!(harness.app.project(), &before);
+
+    // A taper is degrees per side, more than 0° and at most 45°.
+    for good in ["6.7", "6.7°", "6.7 deg", "45"] {
+        assert!(
+            tools::set_field(&set, ToolField::Taper, good, Units::Mm).is_ok(),
+            "`{good}` is a taper"
+        );
+    }
+    for bad in ["0", "-2", "45.1", "90", "steep", "6,7"] {
+        assert!(
+            matches!(
+                tools::set_field(&set, ToolField::Taper, bad, Units::Mm),
+                Err(CommandError::NotAQuantity { .. })
+            ),
+            "`{bad}` is not a taper per side"
+        );
+    }
+    // A blank field clears its value: the file holds `null`.
+    for field in own {
+        let cleared = tools::set_field(&set, field, " ", Units::Mm).expect("clears");
+        let (tip, taper, flutes) = tapered(&cleared);
+        let now_unset = match field {
+            ToolField::TipDiameter => tip.is_none(),
+            ToolField::Taper => taper.is_none(),
+            _ => flutes.is_none(),
+        };
+        assert!(now_unset, "{field:?} cleared");
+        assert_eq!(cleared.unset_values().len(), 1, "and only it");
+    }
+    // The fields are a tapered ball nose's: on another type they change
+    // nothing, as a V-bit's angle does not.
+    for field in own {
+        assert_eq!(tools::set_field(&t2, field, "3", Units::Mm).unwrap(), t2);
+        assert_eq!(tools::field_text(&t2, field, Units::Mm), "");
+    }
+
+    // The type again changes nothing; another type drops the values; a
+    // V-bit is still held for its angle.
+    assert_eq!(
+        tools::set_kind(&set, KindChoice::TaperedBallNose),
+        KindSwitch::Unchanged
+    );
+    assert_eq!(
+        tools::set_kind(&set, KindChoice::EndMill),
+        KindSwitch::Update(Box::new(t2.clone()))
+    );
+    assert_eq!(
+        tools::set_kind(&set, KindChoice::VBit),
+        KindSwitch::HoldForAngle
+    );
+}
+
+/// #685; capabilities 63, 64a and 66b: each value a tapered ball nose
+/// still needs (tip, taper, flute length) is flagged at its own field,
+/// from `Tool::unset_values`, with the message the file gives
+/// (`tool_value_unset`, the line `check` prints), whether or not an
+/// operation uses the tool yet. `diameter_mm` is always present, so it
+/// is never flagged. The library's editing pane reads the same.
+#[test]
+fn tapered_ball_nose_unset_fields_show_required() {
+    let mut harness = Harness::open(&tapered_bytes()).expect("the test part opens");
+    assert!(!harness.app.validation().has_errors(), "it exports");
+    let t3 = tool(harness.app.project(), "t3").clone();
+    assert!(!tools::lacks_value(&t3));
+    assert!(tools::unset_values(&t3).is_empty());
+    assert!(
+        tools::rows(&t3, Units::Mm)
+            .iter()
+            .all(|r| r.required.is_none())
+    );
+
+    // The Inlay's bit without its flute length.
+    let cleared = tools::set_field(&t3, ToolField::FluteLength, "", Units::Mm).unwrap();
+    harness.run(Command::UpdateTool(cleared)).unwrap();
+    let t3 = tool(harness.app.project(), "t3").clone();
+    let message = "tools[t3].cutter.tapered_ball_nose.flute_length_mm is not set (mm) for tool `0.762 mm tip tapered ball nose`";
+    assert_eq!(
+        tools::required(&t3, ToolField::FluteLength).as_deref(),
+        Some(message)
+    );
+    assert_eq!(
+        tools::unset_values(&t3),
+        [(
+            "cutter.tapered_ball_nose.flute_length_mm",
+            message.to_owned()
+        )]
+    );
+    assert!(tools::lacks_value(&t3), "the row's red mark");
+    assert!(!tools::lacks_rate(&t3), "its rates are all set");
+    assert!(tools::unset_rates(&t3).is_empty());
+    for field in [
+        ToolField::Diameter,
+        ToolField::TipDiameter,
+        ToolField::Taper,
+        ToolField::Feed,
+    ] {
+        assert_eq!(tools::required(&t3, field), None, "{field:?} is set");
+    }
+    let flagged: Vec<(ToolField, Option<String>)> = tools::rows(&t3, Units::Mm)
+        .into_iter()
+        .filter(|r| r.required.is_some())
+        .map(|r| (r.field, r.required))
+        .collect();
+    assert_eq!(
+        flagged,
+        [(ToolField::FluteLength, Some(message.to_owned()))],
+        "the row carries its message"
+    );
+    // The message is the file's: the refusal `check` prints.
+    let refusal = harness
+        .warnings()
+        .iter()
+        .find(|f| f.field.as_deref() == Some("tools[t3].cutter.tapered_ball_nose.flute_length_mm"))
+        .expect("the refusal is listed");
+    assert_eq!(refusal.tier, Tier::Error);
+    assert_eq!(refusal.code.as_deref(), Some("tool_value_unset"));
+    assert_eq!(refusal.message, message);
+
+    // Every value unset, on a tool no operation uses: validation says
+    // nothing of them yet, and the fields are flagged all the same.
+    let KindSwitch::Update(unused) = tools::set_kind(
+        tool(harness.app.project(), "t1"),
+        KindChoice::TaperedBallNose,
+    ) else {
+        panic!("the placeholder becomes a tapered ball nose");
+    };
+    harness.run(Command::UpdateTool(*unused)).unwrap();
+    assert!(
+        !harness.warnings().iter().any(|f| f
+            .field
+            .as_deref()
+            .is_some_and(|f| f.starts_with("tools[t1]."))),
+        "an unused tool's unset values are not errors: {:?}",
+        harness.warnings()
+    );
+    let unused = tool(harness.app.project(), "t1").clone();
+    let named: Vec<&str> = tools::unset_values(&unused)
+        .into_iter()
+        .map(|(field, _)| field)
+        .collect();
+    assert_eq!(
+        named,
+        [
+            "cutter.tapered_ball_nose.tip_diameter_mm",
+            "cutter.tapered_ball_nose.taper_angle_deg",
+            "cutter.tapered_ball_nose.flute_length_mm",
+            "feed_mm_min",
+            "plunge_mm_min",
+            "rpm",
+        ],
+        "the cutter's values, then the rates: the file's order"
+    );
+    assert_eq!(
+        tools::required(&unused, ToolField::Taper).as_deref(),
+        Some(
+            "tools[t1].cutter.tapered_ball_nose.taper_angle_deg is not set (degrees per side) for tool `Set me`"
+        )
+    );
+    assert_eq!(
+        tools::required(&unused, ToolField::TipDiameter).as_deref(),
+        Some(
+            "tools[t1].cutter.tapered_ball_nose.tip_diameter_mm is not set (mm) for tool `Set me`"
+        )
+    );
+    assert_eq!(
+        tools::required(&unused, ToolField::Diameter),
+        None,
+        "the cutting diameter is always present"
+    );
+    assert_eq!(
+        tools::unset_rates(&unused)
+            .iter()
+            .map(|(field, _)| *field)
+            .collect::<Vec<_>>(),
+        ["feed_mm_min", "plunge_mm_min", "rpm"],
+        "the rates alone, as before"
+    );
+
+    // Typed back: the mark and the refusal go.
+    let typed = tools::set_field(&t3, ToolField::FluteLength, "19.05", Units::Mm).unwrap();
+    harness.run(Command::UpdateTool(typed)).unwrap();
+    let t3 = tool(harness.app.project(), "t3").clone();
+    assert_eq!(tools::required(&t3, ToolField::FluteLength), None);
+    assert!(!tools::lacks_value(&t3));
+    assert!(!harness.app.validation().has_errors());
+
+    // The library's editing pane: the same fields, the same marks.
+    let mut lib = Library::default();
+    dc_library::add(&mut lib, t3, None).expect("the library takes it");
+    let id = lib.tools[0].id.clone();
+    let lib = dc_app::library::edit(&lib, &id, ToolField::Taper, "", Units::Inch)
+        .expect("an unset value is not a fault in the library");
+    let entry = &lib.tools[0].tool;
+    assert_eq!(tapered(entry).1, None);
+    assert!(
+        tools::required(entry, ToolField::Taper)
+            .is_some_and(|m| m.contains("cutter.tapered_ball_nose.taper_angle_deg is not set")),
+        "flagged in the library's pane too"
+    );
+    let lib = dc_app::library::edit(&lib, &id, ToolField::TipDiameter, "0.045", Units::Inch)
+        .expect("a tip in the library's units");
+    dc_geometry::assert_approx_eq!(tapered(&lib.tools[0].tool).0.unwrap(), 1.143, 1e-9);
+    assert!(
+        dc_app::library::edit(&lib, &id, ToolField::TipDiameter, "0.3", Units::Inch).is_err(),
+        "a tip wider than the cutting diameter is refused, as the file is"
+    );
+}

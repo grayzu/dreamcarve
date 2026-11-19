@@ -738,3 +738,344 @@ fn edits_are_validated_as_the_file_is() {
         None
     );
 }
+
+// #685 (phase 3.6's model in the app; functional 63, 64 and 64b): the
+// tapered ball nose in the tables and the import review.
+
+/// The bench's 0.762 mm tip tapered ball nose as a library row: a 6.35 mm
+/// cutting diameter, 6.7° per side, 19.05 mm of flute.
+fn tapered_entry() -> LibraryTool {
+    entry(
+        "tbn",
+        "Tapered ball nose 0.015",
+        ToolKind::TaperedBallNose {
+            tip_diameter_mm: Some(0.762),
+            taper_angle_deg: Some(6.7),
+            flute_length_mm: Some(19.05),
+        },
+        6.35,
+    )
+}
+
+/// The cells of `tool`'s table row by column.
+fn cells(
+    tool: &Tool,
+    units: Units,
+) -> Vec<(dc_app::library::Column, dc_app::library::Cell)> {
+    use dc_app::library::{Column, row};
+    let strings = dc_app::Strings::english();
+    let cells = row(&strings, tool, units);
+    assert_eq!(cells.len(), Column::ALL.len(), "a cell per column");
+    Column::ALL.into_iter().zip(cells).collect()
+}
+
+/// The text of `tool`'s cell under `column`.
+fn cell_of(tool: &Tool, column: dc_app::library::Column, units: Units) -> dc_app::library::Cell {
+    cells(tool, units)
+        .into_iter()
+        .find(|(c, _)| *c == column)
+        .map(|(_, cell)| cell)
+        .unwrap_or_else(|| panic!("no {column:?} cell"))
+}
+
+/// #685; capabilities 63 and 64: the Ø column is the cutting diameter for
+/// every type (6.35 for a 1/4 in tapered ball nose, never its tip), the
+/// tip has a column of its own, and the Angle column says which angle it
+/// holds: a tapered ball nose's per side (`6.7°/side`), a V-bit's
+/// included (`90°`), since the two unlabelled in one column are the
+/// mix-up phase 3's research warns of. An unset required value is marked
+/// in its cell; a value a type does not have is an empty cell. The Tools
+/// tab's row reads the same values on its second line.
+#[test]
+fn tapered_ball_nose_row_shows_cutting_diameter_tip_and_angle_per_side() {
+    use dc_app::library::{Cell, Column};
+    let strings = dc_app::Strings::english();
+    let text = |s: &str| Cell::Text(s.to_owned());
+
+    let headings: Vec<&str> = Column::ALL
+        .iter()
+        .map(|c| strings.get(c.heading()))
+        .collect();
+    assert_eq!(
+        headings,
+        [
+            "Name", "Type", "Ø", "Tip", "Angle", "Flutes", "Feed", "Plunge", "RPM", "Product"
+        ],
+        "the tip's column follows the diameter's"
+    );
+
+    let tbn = tapered_entry().tool;
+    assert_eq!(
+        cells(&tbn, Units::Mm),
+        [
+            (Column::Name, text("Tapered ball nose 0.015")),
+            (Column::Kind, text("Tapered ball nose")),
+            (Column::Diameter, text("6.35")),
+            (Column::Tip, text("0.762")),
+            (Column::Angle, text("6.7°/side")),
+            (Column::Flutes, text("2")),
+            (Column::Feed, text("1016")),
+            (Column::Plunge, text("508")),
+            (Column::Rpm, text("18000")),
+            (Column::Product, Cell::Empty),
+        ]
+    );
+    assert_eq!(cell_of(&tbn, Column::Diameter, Units::Inch), text("0.25"));
+    assert_eq!(cell_of(&tbn, Column::Tip, Units::Inch), text("0.03"));
+    assert_eq!(
+        cell_of(&tbn, Column::Angle, Units::Inch),
+        text("6.7°/side"),
+        "an angle has no units to follow"
+    );
+
+    // A V-bit's angle stays its included angle; it has no tip.
+    let lib = four();
+    let v_bit = &lib.tools[3].tool;
+    assert_eq!(cell_of(v_bit, Column::Diameter, Units::Mm), text("12"));
+    assert_eq!(cell_of(v_bit, Column::Angle, Units::Mm), text("90°"));
+    assert_eq!(cell_of(v_bit, Column::Tip, Units::Mm), Cell::Empty);
+    let end_mill = &lib.tools[0].tool;
+    assert_eq!(cell_of(end_mill, Column::Diameter, Units::Mm), text("6.35"));
+    assert_eq!(cell_of(end_mill, Column::Tip, Units::Mm), Cell::Empty);
+    assert_eq!(cell_of(end_mill, Column::Angle, Units::Mm), Cell::Empty);
+
+    // A value the tool still needs is marked where it would stand; the
+    // cutting diameter is always there.
+    let unset = Tool {
+        cutter: ToolKind::TaperedBallNose {
+            tip_diameter_mm: None,
+            taper_angle_deg: None,
+            flute_length_mm: None,
+        },
+        feed_mm_min: None,
+        ..tbn.clone()
+    };
+    assert_eq!(cell_of(&unset, Column::Diameter, Units::Mm), text("6.35"));
+    assert_eq!(cell_of(&unset, Column::Tip, Units::Mm), Cell::Unset);
+    assert_eq!(cell_of(&unset, Column::Angle, Units::Mm), Cell::Unset);
+    assert_eq!(cell_of(&unset, Column::Feed, Units::Mm), Cell::Unset);
+    assert_eq!(cell_of(&unset, Column::Plunge, Units::Mm), text("508"));
+
+    // The Tools tab's row: the cutting diameter, the tip, the angle per
+    // side, the number.
+    assert_eq!(
+        dc_app::tools::row_detail(&strings, &tbn, Units::Mm),
+        "6.35 mm · tip 0.762 mm · 6.7°/side"
+    );
+    let numbered = Tool {
+        number: Some(2),
+        ..tbn.clone()
+    };
+    assert_eq!(
+        dc_app::tools::row_detail(&strings, &numbered, Units::Inch),
+        "0.25 in · tip 0.03 in · 6.7°/side · T2"
+    );
+    assert_eq!(
+        dc_app::tools::row_detail(&strings, v_bit, Units::Mm),
+        "12 mm · 90°"
+    );
+    assert_eq!(
+        dc_app::tools::row_detail(&strings, end_mill, Units::Mm),
+        "6.35 mm"
+    );
+    assert_eq!(
+        dc_app::tools::row_detail(&strings, &unset, Units::Mm),
+        "6.35 mm",
+        "an unset value is the row's red mark, not a made-up figure"
+    );
+
+    // The search reads the diameters the row shows: the cutting diameter
+    // and the tip.
+    let lib = Library {
+        tools: vec![lib.tools[0].clone(), tapered_entry()],
+        ..Library::default()
+    };
+    assert_eq!(keys(&filter(&lib, &search("0.762"), Units::Mm)), ["tbn"]);
+    assert_eq!(
+        keys(&filter(&lib, &search("6.35"), Units::Mm)),
+        ["e1", "tbn"]
+    );
+    assert_eq!(keys(&filter(&lib, &search("0.03"), Units::Inch)), ["tbn"]);
+}
+
+/// A Fusion library holding `items`.
+fn fusion_library(items: &[serde_json::Value]) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "version": 36, "data": items })).expect("serializes")
+}
+
+/// A Fusion `tapered mill` in inches named `description`: the bench's
+/// 0.03 in tip, 6.7° per side, 0.75 in of flute, a 0.25 in shaft, with
+/// its geometry's `without` keys left out.
+fn fusion_tapered_mill(description: &str, without: &[&str]) -> serde_json::Value {
+    let mut item = serde_json::json!({
+        "type": "tapered mill",
+        "unit": "inches",
+        "description": description,
+        "guid": description,
+        "vendor": "IDC Woodcraft",
+        "geometry": {
+            "DC": 0.03, "RE": 0.015, "TA": 6.7, "LCF": 0.75,
+            "SFDM": 0.25, "NOF": 2, "OAL": 2.5
+        },
+        "start-values": { "presets": [ {
+            "name": "Hardwood",
+            "guid": format!("{description}-preset"),
+            "n": 18000,
+            "v_f": 60,
+            "v_f_plunge": 20
+        } ] }
+    });
+    let geometry = item["geometry"].as_object_mut().expect("geometry");
+    for key in without {
+        geometry.remove(*key);
+    }
+    item
+}
+
+/// #685; capability 64b: the import review lists a tapered ball nose
+/// imported with values unset and names them, in the report's words and
+/// by the fields the editor shows; a Fusion tapered mill with no shaft
+/// diameter (`SkipReason::NoShaftDiameter`) or with a flat or bull tip
+/// (`TaperedTipNotBall`) is in the skipped list with its reason, never
+/// imported with a placeholder. A DreamCarve library's tapered ball nose
+/// reads the same.
+#[test]
+fn import_review_names_unset_tapered_values_and_skipped_tapered_mills() {
+    use dc_app::library::{Cell, Column, review, review_status, review_unset, skipped};
+    use dc_library::import::Status;
+    let strings = dc_app::Strings::english();
+
+    let bytes = fusion_library(&[
+        fusion_tapered_mill("Whole", &[]),
+        fusion_tapered_mill("No taper or flutes", &["TA", "LCF"]),
+        fusion_tapered_mill("No shaft", &["SFDM"]),
+        fusion_tapered_mill("Flat tip", &["RE"]),
+    ]);
+    let lib = Library::default();
+    let (incoming, found) = review(&lib, &bytes).expect("the file reads");
+    assert_eq!(lib, Library::default(), "nothing is written");
+    assert_eq!(incoming.tools.len(), 2);
+    assert_eq!(found.count(Status::New), 2);
+    assert_eq!(found.count(Status::Skipped), 2);
+    let item = |name: &str| {
+        found
+            .items
+            .iter()
+            .find(|i| i.name == name)
+            .unwrap_or_else(|| panic!("no item `{name}`"))
+    };
+
+    // Every value there: nothing to name.
+    let whole = item("Whole");
+    assert_eq!(whole.status, Status::New);
+    assert_eq!(review_unset(&strings, whole), None);
+    assert_eq!(review_status(&strings, whole, false), "New");
+    let tool = whole.tool.as_ref().expect("an imported tool");
+    assert_eq!(
+        cell_of(tool, Column::Diameter, Units::Mm),
+        Cell::Text("6.35".to_owned()),
+        "the shaft diameter is the cutting diameter"
+    );
+    assert_eq!(
+        cell_of(tool, Column::Tip, Units::Mm),
+        Cell::Text("0.762".to_owned())
+    );
+
+    // Values missing: imported unset and named, both ways.
+    let partial = item("No taper or flutes");
+    assert_eq!(partial.status, Status::New);
+    assert_eq!(
+        partial.notes,
+        ["set cutter.tapered_ball_nose.taper_angle_deg, cutter.tapered_ball_nose.flute_length_mm"],
+        "the report's words, as `tools import` prints them"
+    );
+    assert_eq!(
+        review_unset(&strings, partial).as_deref(),
+        Some("Still to set: Taper per side, Flute length"),
+        "and the editor's names for them"
+    );
+    let tool = partial.tool.as_ref().expect("an imported tool");
+    assert_eq!(cell_of(tool, Column::Angle, Units::Mm), Cell::Unset);
+    assert_eq!(
+        cell_of(tool, Column::Tip, Units::Mm),
+        Cell::Text("0.762".to_owned())
+    );
+    let line = found
+        .keep
+        .report
+        .lines()
+        .into_iter()
+        .find(|l| l.contains("No taper or flutes"))
+        .expect("its report line");
+    assert!(line.ends_with(&format!("; {}", partial.notes[0])), "{line}");
+
+    // The two skipped, each with its reason.
+    let no_shaft = "a tapered ball nose needs its shaft diameter (`SFDM`), the cutting diameter";
+    let flat = "a tapered mill with a flat or bull tip is not a tapered ball nose; DreamCarve does not model it yet";
+    assert_eq!(
+        skipped(&found),
+        [("No shaft", no_shaft), ("Flat tip", flat)]
+    );
+    for (name, reason) in [("No shaft", no_shaft), ("Flat tip", flat)] {
+        let entry = item(name);
+        assert_eq!(entry.status, Status::Skipped);
+        assert_eq!(entry.tool, None, "not imported, with a placeholder or without");
+        assert_eq!(review_unset(&strings, entry), None);
+        for replace in [false, true] {
+            assert_eq!(
+                review_status(&strings, entry, replace),
+                format!("Skipped: {reason}")
+            );
+        }
+    }
+
+    // Imported, the library holds the two, the partial one still unset;
+    // its own file reviewed against an empty library names the same.
+    let merged = found.merged(false).library.clone();
+    assert_eq!(merged.tools.len(), 2);
+    let saved = dc_library::save(&merged).expect("the library saves");
+    let (_, again) = review(&Library::default(), saved.as_bytes()).expect("a DreamCarve library");
+    assert_eq!(skipped(&again), [] as [(&str, &str); 0]);
+    let partial_again = again
+        .items
+        .iter()
+        .find(|i| i.name == "No taper or flutes")
+        .expect("the same tool");
+    assert_eq!(partial_again.notes, partial.notes);
+    assert_eq!(
+        review_unset(&strings, partial_again),
+        review_unset(&strings, partial)
+    );
+
+    // Changed since it was imported: the statuses the review shows.
+    let id = merged.tools[0].id.clone();
+    let edited = dc_app::library::edit(
+        &merged,
+        &id,
+        dc_app::tools::ToolField::Feed,
+        "1000",
+        Units::Mm,
+    )
+    .expect("an edit");
+    let (_, changed) = review(&edited, &bytes).expect("the file reads again");
+    let whole = changed
+        .items
+        .iter()
+        .find(|i| i.name == "Whole")
+        .expect("the edited tool");
+    assert_eq!(whole.status, Status::Changed);
+    assert_eq!(
+        review_status(&strings, whole, false),
+        "Changed: added as Whole (2)"
+    );
+    assert_eq!(
+        review_status(&strings, whole, true),
+        "Changed: replaces yours"
+    );
+    let same = changed
+        .items
+        .iter()
+        .find(|i| i.name == "No taper or flutes")
+        .expect("the untouched tool");
+    assert_eq!(review_status(&strings, same, false), "Same");
+}

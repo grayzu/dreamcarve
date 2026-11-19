@@ -2580,6 +2580,365 @@ fn inlay_both_boards() {
     assert!(!alert);
 }
 
+// #685 (phase 3.6's model in the app; functional 68's V-Carve, Inlay and
+// Photo V-Carve rows): the tapered ball nose in the tool pickers and the
+// Inlay's seat line.
+
+/// The tapered ball nose test part (`tests/fixtures/dc-tbn.dcv`): `t1`
+/// `init`'s placeholder end mill, `t2` and `t3` tapered ball noses (tips
+/// 2.286 mm and 0.762 mm, 6.7° per side, 19.05 mm of flute, a 6.35 mm
+/// cutting diameter), `t4` a 3.175 mm end mill; `op1` a disabled V-Carve
+/// with `t2`, `op2` an Inlay with `t3`, 6 mm deep with a 0.85 mm glue gap
+/// and a 2 mm plug depth. Added here: `t5` a 90° V-bit, `t6` a tapered
+/// ball nose with no value set yet, `t7` a ball nose.
+fn tapered_fixture() -> dc_app::test_support::Harness {
+    use dc_project::test_support::{tool_tbn_ultra, tool_v_bit_90};
+    let mut project = common::load_dcv(&common::fixture("dc-tbn.dcv"));
+    project.tools.push(dc_project::Tool {
+        id: dc_project::ToolId::new("t5"),
+        ..tool_v_bit_90()
+    });
+    project.tools.push(dc_project::Tool {
+        id: dc_project::ToolId::new("t6"),
+        name: "Unmeasured".into(),
+        cutter: ToolKind::TaperedBallNose {
+            tip_diameter_mm: None,
+            taper_angle_deg: None,
+            flute_length_mm: None,
+        },
+        ..tool_tbn_ultra()
+    });
+    project.tools.push(dc_project::Tool {
+        id: dc_project::ToolId::new("t7"),
+        name: "Ball".into(),
+        cutter: ToolKind::BallNose,
+        ..tool_tbn_ultra()
+    });
+    dc_app::test_support::Harness::from_project(project)
+}
+
+/// The ids of the tools `row`'s picker offers for `op`.
+fn offered_ids(project: &Project, op: &Operation, key: &str) -> Vec<String> {
+    editor::offered_for(project, op, row_of(op, key))
+        .iter()
+        .map(|t| t.id.as_str().to_owned())
+        .collect()
+}
+
+/// The tools of `project` that validation refuses as `op`'s carving bit
+/// (`v_carve_needs_v_bit`), each tried in turn on the enabled operation.
+fn refused_as_carving_bit(project: &Project, op: &Operation) -> Vec<String> {
+    project
+        .tools
+        .iter()
+        .filter(|tool| {
+            let mut probe = project.clone();
+            let at = probe
+                .operations
+                .iter()
+                .position(|o| o.id() == op.id())
+                .expect("the operation");
+            match &mut probe.operations[at] {
+                Operation::VCarve(carve) => {
+                    carve.tool = tool.id.clone();
+                    carve.enabled = true;
+                }
+                Operation::Inlay(inlay) => {
+                    inlay.tool = tool.id.clone();
+                    inlay.enabled = true;
+                }
+                Operation::PhotoVCarve(photo) => {
+                    photo.tool = tool.id.clone();
+                    photo.enabled = true;
+                }
+                other => panic!("{} is not a carve", other.name()),
+            }
+            dc_project::validate(&probe)
+                .iter()
+                .any(|p| p.code() == "v_carve_needs_v_bit")
+        })
+        .map(|t| t.id.as_str().to_owned())
+        .collect()
+}
+
+/// #685; capability 68: the V-Carve's and the Inlay's tool pickers offer
+/// the project's tapered ball noses beside its V-bits, one with values
+/// still unset included (its fields say so, as a tool with no feed is
+/// offered), and nothing validation refuses for the kind
+/// (`v_carve_needs_v_bit`): the picker asks validation, so the two cannot
+/// drift. Under the picker a tapered ball nose shows its cutting height
+/// (`Tool::cutting_height_mm`: the lower of its flutes and where its cone
+/// reaches the cutting diameter), a V-bit its cone. The Inlay's cut-out
+/// still takes an end mill.
+#[test]
+fn v_carve_and_inlay_pickers_offer_tapered_ball_noses() {
+    let strings = Strings::english();
+    let h = tapered_fixture();
+    let project = h.app.project();
+    let all: Vec<String> = project
+        .tools
+        .iter()
+        .map(|t| t.id.as_str().to_owned())
+        .collect();
+    for id in ["op1", "op2"] {
+        let op = op_of(&h, id);
+        let offered = offered_ids(project, &op, "tool");
+        assert_eq!(offered, ["t2", "t3", "t5", "t6"], "{id}");
+        let refused = refused_as_carving_bit(project, &op);
+        assert_eq!(refused, ["t1", "t4", "t7"], "{id}: validation's rule");
+        let rest: Vec<String> = all
+            .iter()
+            .filter(|t| !refused.contains(t))
+            .cloned()
+            .collect();
+        assert_eq!(offered, rest, "{id}: offered is what validation takes");
+        assert_eq!(
+            editor::offered_tools(project, &op)
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect::<Vec<_>>(),
+            offered
+        );
+    }
+    let inlay = op_of(&h, "op2");
+    assert_eq!(offered_ids(project, &inlay, "cut_out.tool"), ["t1", "t4"]);
+    // Any other kind still takes every tool.
+    let plaque = common::plaque();
+    let profile = plaque
+        .operations
+        .iter()
+        .find(|o| matches!(o, Operation::Profile(_)))
+        .expect("the plaque's Profile");
+    assert_eq!(
+        editor::offered_tools(&plaque, profile).len(),
+        plaque.tools.len()
+    );
+
+    // The line under the picker: the bit's cutting height.
+    let note = |id: &str| {
+        let tool = project
+            .tools
+            .iter()
+            .find(|t| t.id.as_str() == id)
+            .expect("the tool");
+        editor::tool_note(project, &strings, tool)
+    };
+    assert_eq!(note("t3").as_deref(), Some("cutting height 19.05 mm"));
+    let fine = project.tools[1].cutting_height_mm().expect("every value");
+    assert!((fine - 18.374).abs() < 1e-3, "{fine}");
+    assert_eq!(note("t2").as_deref(), Some("cutting height 18.374 mm"));
+    assert_eq!(note("t5").as_deref(), Some("cone height 3.175 mm"));
+    assert_eq!(note("t6"), None, "nothing to derive it from yet");
+    assert_eq!(note("t4"), None);
+    let (under_inlay, alert) = texts(&editor::notes(
+        project,
+        &strings,
+        &inlay,
+        &editor::Slot::of(row_of(&inlay, "tool")),
+    ));
+    assert_eq!(
+        under_inlay,
+        ["one bit for both boards · cutting height 19.05 mm"]
+    );
+    assert!(!alert);
+    let carve = op_of(&h, "op1");
+    let (under_carve, _) = texts(&editor::notes(
+        project,
+        &strings,
+        &carve,
+        &editor::Slot::of(row_of(&carve, "tool")),
+    ));
+    assert_eq!(under_carve, ["cutting height 18.374 mm"]);
+}
+
+/// #685; capability 68: a Photo V-Carve's depth follows a V-bit's angle,
+/// for good, so its picker offers the V-bits and no tapered ball nose,
+/// as validation refuses one there (`v_carve_needs_v_bit`).
+#[test]
+fn photo_picker_does_not() {
+    use dc_project::test_support::{photo_project, tool_tbn_ultra};
+    let mut project = photo_project();
+    project.tools.push(dc_project::Tool {
+        id: dc_project::ToolId::new("t3"),
+        ..tool_tbn_ultra()
+    });
+    let photo = project
+        .operations
+        .iter()
+        .find(|o| matches!(o, Operation::PhotoVCarve(_)))
+        .cloned()
+        .expect("the Photo V-Carve");
+    let kinds: Vec<(&str, &str)> = project
+        .tools
+        .iter()
+        .map(|t| (t.id.as_str(), t.cutter.describe()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("t1", "an end mill"),
+            ("t2", "a V-bit"),
+            ("t3", "a tapered ball nose")
+        ]
+    );
+    assert_eq!(offered_ids(&project, &photo, "tool"), ["t2"]);
+    assert_eq!(refused_as_carving_bit(&project, &photo), ["t1", "t3"]);
+
+    // The same bit is offered to a V-Carve of the same project.
+    let carve = Operation::VCarve(dc_project::test_support::sample_v_carve());
+    assert_eq!(
+        editor::offered_tools(&project, &carve)
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect::<Vec<_>>(),
+        ["t2", "t3"]
+    );
+
+    // A file may still name one: it shows as chosen, with validation's
+    // message, and the picker does not offer it back.
+    let mut with_tbn = project.clone();
+    for op in &mut with_tbn.operations {
+        if let Operation::PhotoVCarve(p) = op {
+            p.tool = dc_project::ToolId::new("t3");
+        }
+    }
+    let h = dc_app::test_support::Harness::from_project(with_tbn);
+    let op = op_of(&h, "o8");
+    let row = row_of(&op, "tool");
+    let chosen = editor::Slot::of(row)
+        .tool(h.app.project(), &op)
+        .expect("the file's tool");
+    assert_eq!(chosen.id.as_str(), "t3");
+    assert_eq!(offered_ids(h.app.project(), &op, "tool"), ["t2"]);
+    let status = editor::status(h.warnings(), h.app.project(), &op, row)
+        .expect("validation's message under the row");
+    assert_eq!(status.tier, Tier::Error);
+    assert!(
+        status
+            .message
+            .contains("a Photo V-Carve needs a V-bit; a tapered ball nose is not supported there"),
+        "{}",
+        status.message
+    );
+}
+
+/// #685; capability 68a: an Inlay cut with a tapered ball nose shows the
+/// seat line under its derived line, with `check`'s figures
+/// (`dc_job::summary::seat_lines`: how far the seat moves per 0.5° of
+/// taper and per 0.05 mm of tip radius, from the Inlay's own depth and
+/// plug depth), in millimetres whatever the display units, as its steps
+/// are. The engagement is compared with the bit's cutting height. An
+/// Inlay cut with a V-bit has no seat line.
+#[test]
+fn inlay_with_a_tapered_ball_nose_shows_the_seat_line() {
+    let strings = Strings::english();
+    let mut h = tapered_fixture();
+    let inlay = op_of(&h, "op2");
+    let seat = "seat: moves 0.55 mm per 0.5° of taper, 0.76 mm per 0.05 mm of tip radius; test-fit before gluing";
+    assert_eq!(
+        editor::seat_line(h.app.project(), &strings, &inlay).as_deref(),
+        Some(seat)
+    );
+    assert_eq!(
+        dc_job::summary::seat_lines(h.app.project()),
+        [format!("op2 `DC inlay` {seat}")],
+        "the line `check` prints, less the operation it names"
+    );
+    let derived = |h: &dc_app::test_support::Harness| {
+        let op = op_of(h, "op2");
+        texts(&editor::notes(
+            h.app.project(),
+            &strings,
+            &op,
+            &editor::Slot::of(row_of(&op, "male_board")),
+        ))
+    };
+    assert_eq!(
+        derived(&h),
+        (
+            vec![
+                "male start plane 5.15 mm · band floor 7.15 mm below the board top".to_owned(),
+                "flank engagement 7.15 mm of the tapered ball nose's 19.05 mm cutting height"
+                    .to_owned(),
+                seat.to_owned(),
+            ],
+            false
+        )
+    );
+
+    // Inches on the panel; the seat line stays in millimetres.
+    let mut inches = h.app.project().clone();
+    inches.display_units = Units::Inch;
+    let inch = dc_app::test_support::Harness::from_project(inches);
+    let (lines, _) = derived(&inch);
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].contains(" in "), "{}", lines[0]);
+    assert_eq!(lines[2], seat);
+
+    // A deeper Inlay moves the figures, as `check`'s move.
+    let edit = editor::commit_text(h.app.project(), &inlay, row_of(&inlay, "depth_mm"), "4");
+    run_edit(&mut h, edit);
+    let shallow = op_of(&h, "op2");
+    let moved = editor::seat_line(h.app.project(), &strings, &shallow).expect("still a seat line");
+    assert_ne!(moved, seat);
+    assert_eq!(
+        dc_job::summary::seat_lines(h.app.project()),
+        [format!("op2 `DC inlay` {moved}")]
+    );
+
+    // A disabled Inlay is still edited, so it still shows its line;
+    // `check` lists enabled ones only.
+    let mut off = shallow.clone();
+    if let Operation::Inlay(i) = &mut off {
+        i.enabled = false;
+    }
+    assert_eq!(
+        editor::seat_line(h.app.project(), &strings, &off),
+        Some(moved)
+    );
+
+    // The bit's values unset: no figures to give, and the engagement
+    // line says what is missing.
+    let mut unmeasured = shallow.clone();
+    if let Operation::Inlay(i) = &mut unmeasured {
+        i.tool = dc_project::ToolId::new("t6");
+    }
+    assert_eq!(
+        editor::seat_line(h.app.project(), &strings, &unmeasured),
+        None
+    );
+    let (lines, alert) = texts(&editor::notes(
+        h.app.project(),
+        &strings,
+        &unmeasured,
+        &editor::Slot::of(row_of(&unmeasured, "male_board")),
+    ));
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(
+        lines[1],
+        "flank engagement 5.15 mm; set the tapered ball nose's tip, taper and flute length to compare it with its cutting height"
+    );
+    assert!(!alert);
+
+    // A V-bit: its cone, and no seat line.
+    let mut v_bit = shallow;
+    if let Operation::Inlay(i) = &mut v_bit {
+        i.tool = dc_project::ToolId::new("t5");
+    }
+    assert_eq!(editor::seat_line(h.app.project(), &strings, &v_bit), None);
+    let (lines, _) = texts(&editor::notes(
+        h.app.project(),
+        &strings,
+        &v_bit,
+        &editor::Slot::of(row_of(&v_bit, "male_board")),
+    ));
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[1].contains("of the 90° bit's 3.175 mm cone"), "{}", lines[1]);
+    let v_inlay = inlay_fixture();
+    let op1 = op_of(&v_inlay, "op1");
+    assert_eq!(editor::seat_line(v_inlay.app.project(), &strings, &op1), None);
+}
+
 /// The editor's table (`dc_app::editor::fields`), re-exported here so the
 /// tests above name it as before, with slice 26's tests (#618; functional
 /// spec 66, 66a; acceptance 73, 97).
