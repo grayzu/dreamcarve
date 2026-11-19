@@ -351,6 +351,10 @@ fn view(
         egui::vec2(width, PILL_PX),
     );
     pill(ui, rect, "view", opacity, |ui| {
+        // Target editing has the drawing to itself: the view holds.
+        if state.inert() {
+            ui.disable();
+        }
         ui.spacing_mut().item_spacing.x = MODE_GAP_PX;
         let modes = [
             strings.get(StrKey::AppToolpathsByOperation),

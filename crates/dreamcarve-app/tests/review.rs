@@ -24,7 +24,9 @@
 //!
 //! `redesign_d6_screenshots` writes slice D6's set (pictures, Photo
 //! V-Carve and the tapered ball nose in the window) into `review/d6/` the
-//! same way.
+//! same way, and `redesign_d4_screenshots` slice D4's (Export as a step,
+//! the Viewport's floating controls, the Warnings drawer, the sheets and
+//! the status bar) into `review/d4/`.
 //!
 //! The slice D2 set beside it, `review/d2/`, shows the tokens and the
 //! components in the layout before the steps; the test that wrote it was
