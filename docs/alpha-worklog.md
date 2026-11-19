@@ -86,7 +86,8 @@ Notes from the fixes:
 
 | Slice | What | Status |
 | --- | --- | --- |
-| B1 | Calibrate the image-prep defaults from the sweep (#599), without the maintainer's private art | todo |
+| B1 | Image-prep defaults (#599). The calibration was already merged (#638); re-run and confirmed: `min_detail` 0.2, `smooth` 0.05. The maintainer's run on their own art is described under "Still to confirm" in `tests/fixtures/prep/README.md` | owner |
+| B4 | `image-prep`'s report gives a `Narrowest gap` of 0.19 to 3.0 mm for the same letters depending on `--smooth` (dc-geometry) | todo |
 | B2 | Exit-criteria audit and CHANGELOG for 3.7 (#701) | todo |
 | B3 | Bench checks 3.4, 3.5, 3.6 (#606, #649, #684) and the `v0.3.0` tag | owner |
 
