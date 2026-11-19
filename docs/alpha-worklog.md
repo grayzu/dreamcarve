@@ -46,7 +46,7 @@ Status is one of: todo, doing, done, owner (waits for the maintainer).
 | A1 | An Inlay's schema error names its field (GitHub #712; review 1.3) | done |
 | A2 | A clipped Inlay cut-out places the tabs it was asked for (#710; review 1.13) | done |
 | A3 | The safety pass fails closed on a lookup miss (#711; review 1.1): 102 sites audited, 31 failed open; the audit table is in `docs/specs/phase-1/design.md` | done |
-| A4 | Boundary sweep: the plug 0.182 mm proud at lettering seed 0x47 (#713) | doing |
+| A4 | Boundary sweep: the plug 0.182 mm proud at lettering seed 0x47 (#713). Fixed in `dc-geometry/src/medial.rs` (`restore_wall_reach`); all three sweeps pass with 0 failures | done |
 | A5 | Import robustness: DXF stitch and dedupe budget, warning names, read caps, control characters, `init` no-overwrite (review 1.5, 1.6, 1.8, 1.9, 1.12) | done |
 | A6 | `Rates` keeps feed and plunge; a cut outside every operation is refused; the digest hashes bitmaps; wall-clock assertions removed from dc-import and photo (review 1.4, 1.7, 1.10, 1.11). Still open: dc-gcode's `s17_check_is_fast_on_the_sign` and `s9_check_is_fast_*` assert time | done |
 | A7 | A generator's lookup miss is an internal-defect error, `CamError::Internal`, not a skipped pass (review 1.2). Done for the 2.5D generators (about 100 lookups now error, 55 removed). Still to do: `pocket/rings.rs` `RingTree`, `vcarve*`, `inlay.rs`, `relief.rs`, `photo.rs`, dc-geometry | doing |
@@ -70,6 +70,15 @@ Notes from the fixes:
   exported: a plunge into the stock at 5000 mm/min. Any `G1`, `G2` or `G3`
   outside every operation is now `ExportError::CutOutsideOperation`. The
   bundled definitions have no such line, so no program changed.
+- A4: the cause was a medial-axis dead end pruned by a threshold that is
+  relative to the sampling step, which grows with the band's size: in a
+  larger drawn boundary a 0.6 mm dead end fell under it and the male cut
+  nothing in the last 0.3 mm of a narrow channel. A pruned node is now put
+  back when it reaches a wall the remaining axis misses. The restore fires
+  on other designs too (about 50 nodes in an 80-design sample), so carves
+  can gain short extra cuts; no program in the suite moved.
+  `drop_small_components` uses the same kind of step-relative threshold
+  and could drop a short channel open at both ends; not hit, not changed.
 - A7: no golden or expected program changed, and no test met the new
   error, so no dropped pass was found in the 2.5D generators.
 
