@@ -6,16 +6,28 @@
 //! readable in a hand-edited `.dcv`, and a distinct type in code, so a tool
 //! id can never be passed where an instance id is expected.
 
-use serde::{Deserialize, Serialize};
-use std::fmt;
-
+/// Declares a string id newtype `$name`, with the doc comment given: a
+/// plain JSON string in a file, ordered, shown as its text, and made from
+/// a `&str` or a `String`. `dc-library` declares its tool id with it. The
+/// calling crate needs `serde`.
+#[macro_export]
 macro_rules! id_type {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
         ///
         /// Serialized as a plain JSON string. Ordered, so it can key a
         /// `BTreeMap` and sort deterministically.
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[derive(
+            Debug,
+            Clone,
+            PartialEq,
+            Eq,
+            PartialOrd,
+            Ord,
+            Hash,
+            ::serde::Serialize,
+            ::serde::Deserialize,
+        )]
         #[serde(transparent)]
         pub struct $name(String);
 
@@ -31,8 +43,8 @@ macro_rules! id_type {
             }
         }
 
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                 f.write_str(&self.0)
             }
         }
@@ -68,7 +80,7 @@ id_type!(
     OperationId
 );
 id_type!(
-    /// Identifies a [`crate::PlacedTab`] (#105).
+    /// Identifies a [`crate::PlacedTab`].
     TabId
 );
 id_type!(

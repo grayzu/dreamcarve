@@ -1,0 +1,735 @@
+code: definition_key_mismatch
+severity: Error
+field: definitions[d1].id
+message: definition keyed `d1` has id `d2`
+
+code: duplicate_instance_id
+severity: Error
+field: (none)
+message: instance id `i1` is used twice
+
+code: duplicate_tool_id
+severity: Error
+field: (none)
+message: tool id `t1` is used twice
+
+code: duplicate_operation_id
+severity: Error
+field: (none)
+message: operation id `o1` is used twice
+
+code: dangling_definition
+severity: Error
+field: instances[i1].definition
+message: instance `i1` places definition `nope`, which does not exist
+
+code: dangling_tool
+severity: Error
+field: operations[o1].tool
+message: operation `o1` uses tool `nope`, which does not exist
+
+code: dangling_instance
+severity: Error
+field: operations[o1].targets
+message: operation `o1` targets instance `nope`, which does not exist
+
+code: duplicate_tab_id
+severity: Error
+field: (none)
+message: two tabs have the id `tab1`
+
+code: tab_dangling_instance
+severity: Error
+field: tabs[tab2].instance
+message: tab `tab2` is on instance `nope`, which does not exist
+
+code: tab_profile_missing
+severity: Error
+field: tabs[tab3].profile
+message: tab `tab3` is on profile 3 of instance `i1`, whose definition has 1 profile(s), numbered from 0
+
+code: out_of_range
+severity: Error
+field: tools[t1].diameter_mm
+message: tools[t1].diameter_mm is -6.35, expected a value greater than 0
+
+code: out_of_range
+severity: Error
+field: operations[o1].step_over_fraction
+message: operations[o1].step_over_fraction is 1.5, expected a value greater than 0 and at most 1
+
+code: out_of_range
+severity: Error
+field: stock.width_mm
+message: stock.width_mm is 6000.5, expected a value greater than 0 and at most 6000 mm
+
+code: non_finite
+severity: Error
+field: stock.height_mm
+message: stock.height_mm is not a finite number
+
+code: operation_disabled
+severity: Warning
+field: operations[o1].enabled
+message: operation `o1` is disabled and will not be exported
+
+code: unused_tool
+severity: Warning
+field: tools[t1]
+message: tool `t1` (`6.35 mm upcut`) is defined but not used by any enabled operation
+
+code: stock_thickness_unset
+severity: Error
+field: stock.thickness_mm
+message: stock.thickness_mm is not set (mm)
+
+code: operation_value_unset
+severity: Error
+field: operations[o1].depth_mm
+message: operations[o1].depth_mm is not set (mm) for operation `Cut out`
+
+code: tool_out_of_range
+severity: Error
+field: tools[t1].feed_mm_min
+message: tool `6.35 mm upcut` (`t1`): feed_mm_min is 25000, expected a value greater than 0 and at most 20000 mm/min
+
+code: open_profile
+severity: Warning
+field: definitions[d1].profiles[2]
+message: `Scroll` (definition `d1`, profile 2) is an open path and no operation cuts it; only an On line, Left or Right Profile or an Engrave cuts an open path
+
+code: tool_change_mode_needs_m6
+severity: Error
+field: post_processor.tool_change_mode
+message: tool_change_mode is "m6", but post-processor `grbl` has no M6 in its tool change, so it cannot change tools within one program; use "separate_programs"
+
+code: step_down_above_diameter
+severity: Warning
+field: operations[o1].step_down_mm
+message: operation `Cut out` (`o1`) cuts 8.5 mm per pass, deeper than the 6.35 mm diameter of tool `6.35 mm upcut`; passes that deep can break the bit, so use a step-down of at most 6.35 mm
+
+code: step_down_above_diameter
+severity: Warning
+field: tools[t1].step_down_mm
+message: operation `Cut out` (`o1`) cuts 8.5 mm per pass, deeper than the 6.35 mm diameter of tool `6.35 mm upcut`; passes that deep can break the bit, so use a step-down of at most 6.35 mm
+
+code: operation_has_no_targets
+severity: Error
+field: operations[o1].targets
+message: operation `Cut out` (`o1`) is enabled but has no targets, so it would cut nothing; add targets or disable it
+
+code: spindle_speed_high
+severity: Warning
+field: tools[t1].rpm
+message: tool `6.35 mm upcut` (`t1`) is set to 180000 RPM, faster than the 60000 RPM a hobby spindle or router turns; check it for a typo
+
+code: plunge_above_feed
+severity: Warning
+field: tools[t1].plunge_mm_min
+message: tool `6.35 mm upcut` (`t1`) plunges at 1200.5 mm/min, faster than it cuts (300 mm/min); a plunge rate is usually well below the feed rate, so check the two are not swapped
+
+code: large_diameter
+severity: Warning
+field: tools[t1].diameter_mm
+message: tool `6.35 mm upcut` (`t1`) is 63.5 mm in diameter, larger than the 50 mm of a hobby router bit; check it for a typo
+
+code: duplicate_tool_number
+severity: Error
+field: tools[t2].number
+message: tool `3 mm drill` (`t2`) and tool `t1` would both be T1 in the program; a tool with no `number` is its position in the list, so give one of them another number
+
+code: rest_of_invalid
+severity: Error
+field: operations[o2].rest_of
+message: operation `Rest` (`o2`) rests on `o1`, which is not an earlier enabled Pocket with the same targets; rest machining clears what such a Pocket left
+
+code: helix_needs_waste_side
+severity: Error
+field: operations[o1].entry
+message: operation `Cut out` (`o1`) cuts on the line or beside an open path but asks for a helix entry; a helix sits in material the cut removes, and such a cut removes only its kerf. Use "plunge" or a ramp
+
+code: canned_cycles_unsupported
+severity: Error
+field: post_processor.use_canned_cycles
+message: use_canned_cycles is true, but post-processor `grbl` has no canned cycles, so Drill cannot write them; set it to false
+
+code: drill_cutter_unusual
+severity: Warning
+field: operations[o1].tool
+message: operation `Holes` (`o1`) drills with tool `90° V-bit` (`t1`), a V-bit, which makes a cone rather than a flat-bottomed hole; a drill or an end mill is usual
+
+code: relief_needs_step_down
+severity: Warning
+field: operations[o1].corner_relief
+message: operation `Cut out` (`o1`) asks for corner relief, but tool `6.35 mm upcut` (`t1`) has no step_down_mm, which the relief pass steps down at; the relief is skipped until it is set
+
+code: clearance_below_safe_z
+severity: Error
+field: heights.clearance_mm
+message: heights.clearance_mm is 3.5 mm, below the 5 mm safe_z_mm of operation `Cut out` (`o1`); links between parts would run lower than its links between passes, so raise the clearance to at least 5 mm
+
+code: machine_z_not_below_home
+severity: Error
+field: heights.tool_change_machine_z_mm
+message: heights.tool_change_machine_z_mm is 0 mm, which is not below 0 as the program writes it; grblHAL and GRBL, and LinuxCNC as its configuration tools set it up, home Z at the top of its travel, where machine Z is 0 or just below, so the lift must be below 0, at least the homing pull-off below it
+
+code: machine_z_not_below_home
+severity: Error
+field: heights.tool_change_machine_z_mm
+message: heights.tool_change_machine_z_mm is 2.125 mm, which is not below 0 as the program writes it; grblHAL and GRBL, and LinuxCNC as its configuration tools set it up, home Z at the top of its travel, where machine Z is 0 or just below, so the lift must be below 0, at least the homing pull-off below it
+
+code: machine_z_needs_g53
+severity: Error
+field: heights.tool_change_machine_z_mm
+message: heights.tool_change_machine_z_mm is set, but post-processor `grbl` does not document a machine-coordinate move (G53), so the lift cannot be written; set it to null
+
+code: engrave_deeper_than_cone
+severity: Warning
+field: operations[o1].depth_mm
+message: operation `Lettering` (`o1`) engraves 4.5 mm deep with tool `90° V-bit`, whose cone is only 3.175 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: last_pass_stock_to_leave
+severity: Error
+field: operations[o1].last_pass.stock_to_leave_mm
+message: operation `Cut out` (`o1`) has last_pass.stock_to_leave_mm 2.5 mm with tool `6.35 mm upcut` (6.35 mm); it must be more than 0 and at most 2.117 mm, a third of the bit's diameter, as VCarve advises
+
+code: last_pass_thicker_than_step_down
+severity: Error
+field: operations[o1].last_pass.thickness_mm
+message: operation `Cut out` (`o1`) has last_pass.thickness_mm 4 mm, more than its 2.5 mm step-down (tools[t1].step_down_mm); the last pass would cut that deep in one go. Make it at most the step-down, or set it to null for the usual last pass
+
+code: bore_pitch_over_step_down
+severity: Error
+field: operations[o1].pitch_mm
+message: operation `Bore` (`o1`) has pitch_mm 3.25 mm, more than its tool's 2 mm step-down; each turn of the helix would cut deeper than a pass. Make it at most the step-down, or set it to null to use the step-down
+
+code: flatten_tolerance_range
+severity: Error
+field: flatten_tolerance_mm
+message: flatten_tolerance_mm is 0.25 mm, above the 0.1 mm limit; the safety checks allow the program that far off the true curves, so a coarser tolerance could hide a cut through a wall. Use at most 0.1 mm
+
+code: tapered_ball_nose_range
+severity: Error
+field: tools[t1].cutter.tapered_ball_nose.tip_diameter_mm
+message: tool `Tapered ball nose` (`t1`): cutter.tapered_ball_nose.tip_diameter_mm is 0, expected a value greater than 0
+
+code: tapered_ball_nose_range
+severity: Error
+field: tools[t1].cutter.tapered_ball_nose.flute_length_mm
+message: tool `Tapered ball nose` (`t1`): cutter.tapered_ball_nose.flute_length_mm is 0.125, expected a flute length of at least 0.221 mm, where the ball ends
+
+code: tapered_ball_nose_range
+severity: Error
+field: tools[t1].diameter_mm
+message: tool `Tapered ball nose` (`t1`): diameter_mm is 0.5, expected a cutting diameter above the 0.5 mm tip
+
+code: v_bit_angle_range
+severity: Error
+field: tools[t1].cutter.v_bit.included_angle_deg
+message: tool `V-bit` (`t1`) has an included angle of 180 degrees; a V-Carve, an Inlay, a Photo V-Carve or a countersink needs a V-bit angle above 0 and below 180 degrees to work out its depth
+
+code: clearing_needs_flat_depth
+severity: Error
+field: operations[o1].clearing
+message: operation `Lettering` (`o1`) has clearing passes but no flat_depth_mm; with no flat floor there is nothing for them to clear, so set a flat depth or remove the passes
+
+code: clearing_needs_end_mill
+severity: Error
+field: operations[o1].clearing[1].tool
+message: clearing pass 1 of operation `Lettering` (`o1`) cuts with tool `Ball` (`t3`), a ball nose; a clearing pass is cut as a Pocket, which only a flat end mill cuts to size. Use an end mill
+
+code: clearing_dangling_tool
+severity: Error
+field: operations[o1].clearing[0].tool
+message: clearing pass 0 of operation `o1` uses tool `nope`, which does not exist
+
+code: clearing_not_descending
+severity: Warning
+field: operations[o1].clearing[1].tool
+message: clearing pass 1 of operation `Lettering` (`o1`) uses tool `6.35 mm upcut` (6.35 mm), wider than the pass before it (`3.175 mm end mill`, 3.175 mm); it still runs, but list the largest tool first so each pass clears only what the one before could not reach
+
+code: start_depth_negative
+severity: Error
+field: operations[o1].start_depth_mm
+message: operation `Lettering` (`o1`) has start_depth_mm -0.5 mm; the start plane is a depth below the stock top, 0 or more
+
+code: start_depth_negative
+severity: Error
+field: operations[o1].cycle.countersink.start_depth_mm
+message: operation `Holes` (`o1`) has start_depth_mm -0.5 mm; the start plane is a depth below the stock top, 0 or more
+
+code: start_depth_uncleared
+severity: Error
+field: operations[o1].start_depth_mm
+message: operation `Lettering` (`o1`) starts 2.5 mm below the stock top, but no enabled Pocket, nor the flat floor of an enabled V-Carve, before it contains its targets; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true
+
+code: start_depth_uncleared
+severity: Error
+field: operations[o1].cycle.countersink.start_depth_mm
+message: operation `Holes` (`o1`) starts 2.5 mm below the stock top, but no enabled Pocket, nor the flat floor of an enabled V-Carve, before it contains the whole of its V-bit at each hole; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true
+
+code: start_depth_uncleared
+severity: Error
+field: operations[o1].start_depth_mm
+message: operation `Photo` (`o1`) starts 2.5 mm below the stock top, but no enabled Pocket, nor the flat floor of an enabled V-Carve, before it contains its picture's footprint; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true
+
+code: countersink_needs_v_bit
+severity: Error
+field: operations[o1].tool
+message: operation `Holes` (`o1`) countersinks with tool `3 mm drill` (`t1`), a drill; a countersink's depth follows the angle of a V-bit, so use a V-bit
+
+code: countersink_diameter_positive
+severity: Error
+field: operations[o1].cycle.countersink.diameter_mm
+message: operation `Holes` (`o1`) has a countersink diameter_mm of 0 mm; the mouth must be wider than 0
+
+code: countersink_mouth_exceeds_tool
+severity: Error
+field: operations[o1].cycle.countersink.diameter_mm
+message: operation `Holes` (`o1`) asks for a 14.5 mm countersink, wider than the 12.7 mm tool `90° V-bit`; past its diameter a V-bit has no cutting edge, so use a mouth at most the bit's diameter or a wider bit
+
+code: countersink_ignores_tool_width
+severity: Warning
+field: operations[o1].allow_tool_wider_than_hole
+message: operation `Holes` (`o1`) countersinks, so allow_tool_wider_than_hole has no effect: a countersink's V-bit is wider than the hole by design, and a hole at least as wide as the mouth is skipped instead; set it to false
+
+code: inlay_glue_gap_not_below_depth
+severity: Error
+field: operations[o1].glue_gap_mm
+message: operation `Star` (`o1`) has glue_gap_mm 4.5 mm, not below its depth_mm 4 mm; the male starts depth_mm − glue_gap_mm below the stock top, so its plug would have no wall to seat. Make the glue gap smaller than the depth (0 or 0.25 mm to start)
+
+code: inlay_margin_positive
+severity: Error
+field: operations[o1].margin_mm
+message: operation `Star` (`o1`) is a male inlay with margin_mm -1.5 mm; its surround is carved that far beyond the design, so it must be above 0 (5 to 7.5 mm leaves room to clamp the plug board)
+
+code: inlay_outline_rounding
+severity: Error
+field: operations[o1].outline_rounding_mm
+message: operation `Star` (`o1`) has outline_rounding_mm 0 mm; the male's band is rounded by that radius, so it must be above 0. Set it to null for no rounding, or to a radius such as 10
+
+code: inlay_plug_base_thin
+severity: Warning
+field: operations[o1].plug_depth_mm
+message: operation `Star` (`o1`) cuts its plug's surround 5 mm below the male board's top, leaving 4.5 mm of the 9.5 mm male board under it, less than 6 mm; the base may flex or crack when the plug is pressed into the glue. Use a thicker male board, or a smaller depth_mm or plug_depth_mm
+
+code: inlay_glue_gap_below_ball
+severity: Warning
+field: operations[o1].glue_gap_mm
+message: operation `Star` (`o1`) has glue_gap_mm 0.25 mm, below its tapered ball nose's tangent height 0.441 mm, so the plug's top edge rides on the pocket's rounded floor: it stands about 0.123 mm proud with its walls 0.046 mm open at the surface. Set glue_gap_mm to at least 0.441 mm, and test-fit a coupon first
+
+code: inlay_plug_depth_below_ball
+severity: Warning
+field: operations[o1].plug_depth_mm
+message: operation `Star` (`o1`) has plug_depth_mm 0.3 mm, below its tapered ball nose's tangent height 0.441 mm, so the plug's wall just below the surface is cut by the ball, up to 0.046 mm narrower than the pocket. Set plug_depth_mm to at least 0.441 mm
+
+code: inlay_male_board_thickness
+severity: Error
+field: operations[o1].male_board.thickness_mm
+message: operation `Star` (`o1`) has male_board.thickness_mm -12 mm; measure the male board and set its thickness, above 0
+
+code: inlay_male_boards_differ
+severity: Error
+field: operations[o2].male_board
+message: operation `Moon` (`o2`) cuts its male on a male_board other than operation `o1`'s; every Inlay of a project cuts its male on the one male board, so give them the same male_board
+
+code: inlay_boundary_unknown
+severity: Error
+field: operations[o1].boundary[1]
+message: operation `Star` (`o1`) lists boundary[1] `nope`, which is no instance of the project; list the id of a drawn shape that is in it
+
+code: inlay_boundary_open
+severity: Error
+field: operations[o1].boundary[0]
+message: operation `Star` (`o1`) lists boundary[0] `i1`, whose profile 2 is not a closed outline; a boundary must be closed, so close that profile or list another shape
+
+code: inlay_boundary_is_target
+severity: Error
+field: operations[o1].boundary[0]
+message: operation `Star` (`o1`) lists boundary[0] `i1`, which is also one of its targets; the design cannot be its own boundary, so draw a separate shape round it
+
+code: inlay_boundary_crosses_design
+severity: Error
+field: operations[o1].boundary
+message: operation `Star` (`o1`) has a boundary that touches or crosses its design, or leaves part of it outside: the worst point is at (12.346, -7.000), 0.000 mm past the boundary's edge; the design must lie strictly inside the boundary, so draw the boundary wider there
+
+code: inlay_boundary_crosses_design
+severity: Error
+field: operations[o1].boundary
+message: operation `Star` (`o1`) has a boundary that touches or crosses its design, or leaves part of it outside: the worst point is at (80.000, 50.500), 1.235 mm past the boundary's edge; the design must lie strictly inside the boundary, so draw the boundary wider there
+
+code: inlay_boundary_empty
+severity: Warning
+field: operations[o1].boundary[2]
+message: operation `Star` (`o1`) lists boundary[2] `i1` (`Frame`), but no part of the design is inside it; it still widens the band, so remove it if you did not mean that
+
+code: inlay_boundary_hole_ignored
+severity: Warning
+field: operations[o1].boundary[0]
+message: operation `Star` (`o1`) lists boundary[0] `i1` (`Frame`), whose profile 1 is a hole; the band ignores holes, since board left standing in it would hold the plug off the female, so the hole is cut as band too
+
+code: photo_line_angle_range
+severity: Error
+field: operations[o1].line_angle_deg
+message: operation `Photo` (`o1`) has line_angle_deg 180; the grooves' angle is 0 degrees or more and less than 180
+
+code: photo_line_spacing_positive
+severity: Error
+field: operations[o1].line_spacing_fraction
+message: operation `Photo` (`o1`) has line_spacing_fraction 0; the spacing of the grooves is a fraction of a groove's width, above 0
+
+code: photo_lines_overlap
+severity: Warning
+field: operations[o1].line_spacing_fraction
+message: operation `Photo` (`o1`) has line_spacing_fraction 0.75, less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them; use 1 or more to keep the ridges
+
+code: photo_sample_positive
+severity: Error
+field: operations[o1].sample_mm
+message: operation `Photo` (`o1`) has sample_mm -0.1 mm; the distance between samples along a groove is above 0
+
+code: photo_retract_positive
+severity: Error
+field: operations[o1].stepover_retract_mm
+message: operation `Photo` (`o1`) has stepover_retract_mm 0 mm; the lift between grooves is above 0
+
+code: photo_unknown_bitmap
+severity: Error
+field: operations[o1].image
+message: operation `o1` carves bitmap `nope`, which does not exist
+
+code: bitmap_footprint_aspect
+severity: Error
+field: bitmaps[b1].height_mm
+message: bitmap `Portrait` (`b1`) is 100 × 60 mm, which is not the shape of its 640 × 480 px picture; set height_mm to 75 mm, or width_mm to 80 mm, so the picture is not stretched
+
+code: bitmap_pixels_mismatch
+severity: Error
+field: bitmaps[b1].width_px
+message: bitmap `Portrait` (`b1`) says it is 640 × 480 px, but its PNG is 320 × 240 px; set width_px and height_px to the PNG's size
+
+code: duplicate_bitmap_id
+severity: Error
+field: (none)
+message: bitmap id `b1` is used twice
+
+code: unsafe_file_extension
+severity: Error
+field: post_processor.file_extension
+message: the post-processor's file extension `dcv` is not allowed: it must be 1 to 8 letters or digits and not `dcv`
+
+code: unsafe_file_extension
+severity: Error
+field: post_processor.file_extension
+message: the post-processor's file extension `../nc` is not allowed: it must be 1 to 8 letters or digits and not `dcv`
+
+code: unsafe_file_extension
+severity: Error
+field: post_processor.file_extension
+message: the post-processor's file extension `n c\n` is not allowed: it must be 1 to 8 letters or digits and not `dcv`
+
+code: unsafe_file_extension
+severity: Error
+field: post_processor.file_extension
+message: the post-processor's file extension `t\u{e4}r` is not allowed: it must be 1 to 8 letters or digits and not `dcv`
+
+code: unsafe_file_extension
+severity: Error
+field: post_processor.file_extension
+message: the post-processor's file extension `` is not allowed: it must be 1 to 8 letters or digits and not `dcv`
+
+code: tool_value_unset
+severity: Error
+field: tools[t1].feed_mm_min
+message: tools[t1].feed_mm_min is not set (mm/min) for tool `6.35 mm upcut`
+
+code: tool_value_unset
+severity: Error
+field: tools[t1].plunge_mm_min
+message: tools[t1].plunge_mm_min is not set (mm/min) for tool `6.35 mm upcut`
+
+code: tool_value_unset
+severity: Error
+field: tools[t1].rpm
+message: tools[t1].rpm is not set (RPM) for tool `6.35 mm upcut`
+
+code: tool_value_unset
+severity: Error
+field: tools[t1].step_down_mm
+message: tools[t1].step_down_mm is not set (mm) for tool `6.35 mm upcut`
+
+code: tool_value_unset
+severity: Error
+field: tools[t1].cutter.tapered_ball_nose.tip_diameter_mm
+message: tools[t1].cutter.tapered_ball_nose.tip_diameter_mm is not set (mm) for tool `6.35 mm upcut`
+
+code: tool_value_unset
+severity: Error
+field: tools[t1].cutter.tapered_ball_nose.taper_angle_deg
+message: tools[t1].cutter.tapered_ball_nose.taper_angle_deg is not set (degrees per side) for tool `6.35 mm upcut`
+
+code: tool_value_unset
+severity: Error
+field: tools[t1].cutter.tapered_ball_nose.flute_length_mm
+message: tools[t1].cutter.tapered_ball_nose.flute_length_mm is not set (mm) for tool `6.35 mm upcut`
+
+code: cutter_not_flat
+severity: Error
+field: operations[o1].tool
+message: operation `Cut out` (`o1`) cuts with tool `90° V-bit` (`t1`), a V-bit; an Inside, Outside, Left or Right Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill
+
+code: cutter_not_flat
+severity: Error
+field: operations[o1].cut_out.tool
+message: operation `Cut out` (`o1`) cuts its plug's cut-out with tool `90° V-bit` (`t1`), a V-bit; the cut-out runs through the board in the band's flat floor, which only a flat end mill cuts with a straight wall at every depth. Use an end mill
+
+code: last_pass_needs_side
+severity: Error
+field: operations[o1].last_pass
+message: operation `Cut out` (`o1`) cuts on the line but has a last_pass; a last pass takes the stock to leave off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line
+
+code: last_pass_needs_side
+severity: Error
+field: operations[o1].last_pass
+message: operation `Cut out` (`o1`) cuts to the left of open paths but has a last_pass; a last pass takes the stock to leave off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line
+
+code: last_pass_needs_side
+severity: Error
+field: operations[o1].last_pass
+message: operation `Cut out` (`o1`) cuts to the right of open paths but has a last_pass; a last pass takes the stock to leave off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line
+
+code: last_pass_needs_side
+severity: Error
+field: operations[o1].last_pass
+message: operation `Cut out` (`o1`) cuts inside but has a last_pass; a last pass takes the stock to leave off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line
+
+code: last_pass_needs_side
+severity: Error
+field: operations[o1].last_pass
+message: operation `Cut out` (`o1`) cuts outside but has a last_pass; a last pass takes the stock to leave off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line
+
+code: v_carve_needs_v_bit
+severity: Error
+field: operations[o1].tool
+message: operation `Lettering` (`o1`) carves with tool `6.35 mm upcut` (`t1`), a tapered ball nose; a Photo V-Carve needs a V-bit; a tapered ball nose is not supported there
+
+code: v_carve_needs_v_bit
+severity: Error
+field: operations[o1].tool
+message: operation `Lettering` (`o1`) carves with tool `6.35 mm upcut` (`t1`), an end mill; a Photo V-Carve's depth follows the angle of a V-bit, so use a V-bit
+
+code: v_carve_needs_v_bit
+severity: Error
+field: operations[o1].tool
+message: operation `Lettering` (`o1`) carves with tool `6.35 mm upcut` (`t1`), a tapered ball nose; a carve's depth follows the bit's profile, so it needs a V-bit or a tapered ball nose; use a V-bit or a tapered ball nose
+
+code: v_carve_needs_v_bit
+severity: Error
+field: operations[o1].tool
+message: operation `Lettering` (`o1`) carves with tool `6.35 mm upcut` (`t1`), an end mill; a carve's depth follows the bit's profile, so it needs a V-bit or a tapered ball nose; use a V-bit or a tapered ball nose
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].flat_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep, but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].start_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep, but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep, but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].max_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep, but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].plug_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep, but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].cycle.countersink.diameter_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep, but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit`, a tapered ball nose, engaged 7.123 mm, past the bit's 5.499 mm flutes; above them the shank rubs, so use a shallower depth or a bit with longer flutes
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].plug_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit`, a tapered ball nose, engaged 7.123 mm, past 5.499 mm, where it reaches its 6.123 mm cutting diameter; above that the bit is a cylinder, whose walls follow no carve, so use a shallower depth
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].flat_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep from the stock top (its start depth, which no Pocket or V-Carve floor of the project clears, plus its flat depth), but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].start_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep from the stock top (its start depth, which no Pocket or V-Carve floor of the project clears, plus its flat depth), but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep from the stock top (its start depth, which no Pocket or V-Carve floor of the project clears, plus its flat depth), but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].max_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep from the stock top (its start depth, which no Pocket or V-Carve floor of the project clears, plus its max_depth_mm), but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].plug_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep from the stock top (its start plane, depth_mm − glue_gap_mm below the stock top, plus its plug_depth_mm; the plug above the start plane is never cleared), but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].cycle.countersink.diameter_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit` 7.123456 mm deep from the stock top (its start depth, which no Pocket or V-Carve floor of the project clears, plus its countersink's depth), but the bit's cone is only 5.499 mm tall; below that the shank cuts, so use a shallower depth or a wider bit
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit`, a tapered ball nose, from the stock top, engaged 7.123 mm, past the bit's 5.499 mm flutes; above them the shank rubs, so use a shallower depth or a bit with longer flutes
+
+code: v_bit_cone_exceeded
+severity: Error
+field: operations[o1].plug_depth_mm
+message: operation `Lettering` (`o1`) engages tool `60° V-bit`, a tapered ball nose, from the stock top, engaged 7.123 mm, past 5.499 mm, where it reaches its 6.123 mm cutting diameter; above that the bit is a cylinder, whose walls follow no carve, so use a shallower depth
+
+code: inlay_cut_out_no_room
+severity: Error
+field: operations[o1].margin_mm
+message: operation `Star` (`o1`) cuts its plug out with tool `6.35 mm upcut`, 6.35 mm across, along the outer edge of the band's flat floor; with margin_mm 7.123456 mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall. Raise margin_mm to at least 8.660 mm, or use a narrower end mill
+
+code: inlay_cut_out_no_room
+severity: Error
+field: operations[o1].boundary
+message: operation `Star` (`o1`) cuts its plug out with tool `6.35 mm upcut`, 6.35 mm across, along the outer edge of the band's flat floor; the drawn boundary is only 7.123 mm from the design at its narrowest, so that floor is narrower than the tool and the cut-out would cut into the plug's wall. Draw the boundary at least 8.660 mm from the design all round, or use a narrower end mill
+
+code: inlay_margin_ignored
+severity: Warning
+field: operations[o1].margin_mm
+message: operation `Star` (`o1`) draws its male's edge with a boundary, so margin_mm does nothing; the boundary replaces both margin_mm and outline_rounding_mm. Set margin_mm to null, or empty the boundary list to use it
+
+code: inlay_margin_ignored
+severity: Warning
+field: operations[o1].outline_rounding_mm
+message: operation `Star` (`o1`) draws its male's edge with a boundary, so outline_rounding_mm does nothing; the boundary replaces both margin_mm and outline_rounding_mm. Set outline_rounding_mm to null, or empty the boundary list to use it
+
+code: inlay_male_board_size
+severity: Error
+field: operations[o1].male_board.width_mm
+message: operation `Star` (`o1`) has male_board.width_mm -100 mm; the male board's size must be above 0. Set it to null to use the stock's
+
+code: bitmap_footprint_positive
+severity: Error
+field: bitmaps[b1].width_mm
+message: bitmap `Portrait` (`b1`) has width_mm 0 mm; a picture's footprint has a width and a height above 0
+
+code: inlay_male_board_size
+severity: Error
+field: operations[o1].male_board.height_mm
+message: operation `Star` (`o1`) has male_board.height_mm -100 mm; the male board's size must be above 0. Set it to null to use the stock's
+
+code: bitmap_footprint_positive
+severity: Error
+field: bitmaps[b1].height_mm
+message: bitmap `Portrait` (`b1`) has height_mm 0 mm; a picture's footprint has a width and a height above 0
+
+code: bitmap_not_grayscale_8
+severity: Error
+field: bitmaps[b1].png_base64
+message: the PNG of bitmap `Portrait` (`b1`) is 16-bit grayscale, not 8-bit grayscale; import the picture again so that DreamCarve converts it
+
+code: bitmap_not_grayscale_8
+severity: Error
+field: bitmaps[b1].png_base64
+message: the PNG of bitmap `Portrait` (`b1`) is 16-bit grayscale with alpha, not 8-bit grayscale; import the picture again so that DreamCarve converts it
+
+code: bitmap_not_grayscale_8
+severity: Error
+field: bitmaps[b1].png_base64
+message: the PNG of bitmap `Portrait` (`b1`) is 16-bit RGB, not 8-bit grayscale; import the picture again so that DreamCarve converts it
+
+code: bitmap_not_grayscale_8
+severity: Error
+field: bitmaps[b1].png_base64
+message: the PNG of bitmap `Portrait` (`b1`) is 16-bit RGB with alpha, not 8-bit grayscale; import the picture again so that DreamCarve converts it
+
+code: bitmap_not_grayscale_8
+severity: Error
+field: bitmaps[b1].png_base64
+message: the PNG of bitmap `Portrait` (`b1`) is 16-bit palette, not 8-bit grayscale; import the picture again so that DreamCarve converts it
+
+code: bitmap_empty
+severity: Error
+field: bitmaps[b1].width_px
+message: bitmap `Portrait` (`b1`) is 0 × 480 px; a picture has at least one pixel each way
+
+code: bitmap_empty
+severity: Error
+field: bitmaps[b1].height_px
+message: bitmap `Portrait` (`b1`) is 640 × 0 px; a picture has at least one pixel each way
+
+code: bitmap_empty
+severity: Error
+field: bitmaps[b1].width_px
+message: bitmap `Portrait` (`b1`) is 0 × 0 px; a picture has at least one pixel each way
+
+code: bitmap_too_large
+severity: Error
+field: bitmaps[b1].width_px
+message: bitmap `Portrait` (`b1`) is 9000 × 480 px; a picture is at most 8192 px on a side, so scale it down before adding it
+
+code: bitmap_too_large
+severity: Error
+field: bitmaps[b1].height_px
+message: bitmap `Portrait` (`b1`) is 640 × 9000 px; a picture is at most 8192 px on a side, so scale it down before adding it
+
+code: bitmap_too_large
+severity: Error
+field: bitmaps[b1].width_px
+message: bitmap `Portrait` (`b1`) is 9000 × 9000 px; a picture is at most 8192 px on a side, so scale it down before adding it
+
+code: bitmap_unreadable
+severity: Error
+field: bitmaps[b1].png_base64
+message: the picture of bitmap `Portrait` (`b1`) cannot be read: its png_base64 is not padded base64 in the standard alphabet: Invalid symbol 33, offset 0.
+
+code: bitmap_unreadable
+severity: Error
+field: bitmaps[b1].png_base64
+message: the picture of bitmap `Portrait` (`b1`) cannot be read: its PNG cannot be decoded: unexpected end of file
+
+code: bitmap_unreadable
+severity: Error
+field: bitmaps[b1].png_base64
+message: the picture of bitmap `Portrait` (`b1`) cannot be read: it is 0 × 4 px, and a picture has at least one pixel each way
+
+code: bitmap_unreadable
+severity: Error
+field: bitmaps[b1].png_base64
+message: the picture of bitmap `Portrait` (`b1`) cannot be read: it is 9000 × 4 px, and a side is at most 8192 px
+
+code: bitmap_unreadable
+severity: Error
+field: bitmaps[b1].png_base64
+message: the picture of bitmap `Portrait` (`b1`) cannot be read: its PNG is 8 × 2 px, not the 4 × 4 px of its width_px and height_px
+
+code: bitmap_unreadable
+severity: Error
+field: bitmaps[b1].png_base64
+message: the picture of bitmap `Portrait` (`b1`) cannot be read: its PNG is 8-bit RGB with alpha, not 8-bit grayscale
+

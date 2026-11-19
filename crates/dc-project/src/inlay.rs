@@ -1,12 +1,12 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! A male Inlay's band (#448; `docs/specs/phase-3/design.md`, "Algorithms
-//! → Inlay", steps 4 and 6): which clearing pass, if any, cuts the band's
-//! outer edge upright, how far the edge is rounded, and where the
-//! cut-out runs. The generator, validation and the safety pass all need
-//! the rule, and neither validation nor the safety pass may call
-//! `dc-cam`, so it lives here, as [`crate::cleared_start_plane`] does.
+//! A male Inlay's band (`docs/specs/phase-3/design.md`, "Algorithms →
+//! Inlay", steps 4 and 6): which clearing pass, if any, cuts the band's
+//! outer edge upright, how far the edge is rounded, and where the cut-out
+//! runs. The generator, validation and the safety pass all need the rule,
+//! and neither validation nor the safety pass may call `dc-cam`, so it
+//! lives here, as [`crate::cleared_start_plane`] does.
 //!
 //! With `s = tan(α/2)` of the Inlay's V-bit, `P` its `plug_depth_mm`, `M`
 //! its `margin_mm` and `r` an end mill's radius, the band's flat floor
@@ -16,14 +16,14 @@
 //! pass**) and the V-bit's flank at the plug's foot, `(D − G + P)·s` wide
 //! at the stock top, stays inside the band: `M ≥ (D − G + 2P)·s`.
 //!
-//! With a tapered ball nose (slice 27e, #681) every V-bit width reads the
+//! With a tapered ball nose every V-bit width reads the
 //! bit's profile `w`: the foot is `w(P)`, the flank at the stock top
 //! `w(D − G + P)` from a tip `w(P)` out, so the edge is open when `M −
 //! w(P) ≥ 2r` and `M ≥ w(P) + w(D − G + P)`. The design itself is rounded
 //! for the bit on both boards ([`rounded_for_bit`]).
 //!
 //! Where the band runs past the board's edge it is clipped to the board
-//! (#495, [`MaleBand::board`]): an open edge to the board itself, a V
+//! ([`MaleBand::board`]): an open edge to the board itself, a V
 //! wall to the board less the V-bit's radius. The design must still
 //! leave the band's own room there ([`MaleBand::board_room_mm`]).
 
@@ -47,8 +47,8 @@ use dc_geometry::{
 };
 
 impl Project {
-    /// This project as Inlay `inlay`'s male board cuts it (#498;
-    /// `docs/specs/phase-3/design.md`, "Algorithms → Inlay", "Boards"): a
+    /// This project as Inlay `inlay`'s male board cuts it
+    /// (`docs/specs/phase-3/design.md`, "Algorithms → Inlay", "Boards"): a
     /// copy whose stock is the male board ([`crate::MaleBoard::stock`]),
     /// everything else the same, so the origin preset, heights and
     /// tolerances apply to the male board as they do to the stock. The
@@ -61,7 +61,7 @@ impl Project {
         project
     }
 
-    /// The project's male board (#498): the first enabled Inlay that cuts
+    /// The project's male board: the first enabled Inlay that cuts
     /// its male, and its board as stock. Validation holds every other
     /// such Inlay to the same board (`inlay_male_boards_differ`). `None`
     /// when no Inlay cuts a male.
@@ -76,7 +76,7 @@ impl Project {
     }
 }
 
-/// The clearing pass that cuts a male Inlay's band edge upright (#448):
+/// The clearing pass that cuts a male Inlay's band edge upright:
 /// the first whose end mill fits the band's floor ring.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EdgePass {
@@ -88,7 +88,7 @@ pub struct EdgePass {
     pub radius_mm: f64,
 }
 
-/// What a male Inlay's band's outer edge is (#448).
+/// What a male Inlay's band's outer edge is.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BandEdge {
     /// Cut upright by the edge pass's end mill, out to the band's edge.
@@ -102,7 +102,7 @@ pub enum BandEdge {
     },
 }
 
-/// Where a male Inlay's band edge comes from (#449).
+/// Where a male Inlay's band edge comes from.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BandSource {
     /// The design grown by `margin_mm` and closed by
@@ -123,17 +123,16 @@ pub enum BandSource {
 }
 
 /// A male Inlay's band, as the generator, validation and the safety pass
-/// derive it (#448).
+/// derive it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaleBand {
-    /// Where the edge comes from (#449).
+    /// Where the edge comes from.
     pub source: BandSource,
     /// `margin_mm`, `M`: with a drawn boundary, the narrowest band
     /// ([`BandSource::Drawn`]), which every rule reads in its place.
     pub margin_mm: f64,
     /// `plug_depth_mm · tan(α/2)`, `P·s`: how far the plug's foot stands
-    /// out from the design at the floor, mm; a tapered ball nose's `w(P)`
-    /// (#681).
+    /// out from the design at the floor, mm; a tapered ball nose's `w(P)`.
     pub foot_mm: f64,
     /// `outline_rounding_mm`, `R`, 0 when unset.
     pub outline_rounding_mm: f64,
@@ -144,12 +143,12 @@ pub struct MaleBand {
     /// Open or a V wall.
     pub edge: BandEdge,
     /// The V-bit's radius, `R_v`, mm: the stock-boundary rule (S7) holds
-    /// a V-bit to its full radius, wherever its cone reaches (#495); a
-    /// tapered ball nose's cut radius, `min(w(L), R)` (#681).
+    /// a V-bit to its full radius, wherever its cone reaches; a
+    /// tapered ball nose's cut radius, `min(w(L), R)`.
     pub v_bit_radius_mm: f64,
     /// How far the V-bit's flank at the plug's foot reaches from the
     /// design at the stock top, `(D − G + 2P)·s`, mm; a tapered ball
-    /// nose's `w(P) + w(D − G + P)` (#681).
+    /// nose's `w(P) + w(D − G + P)`.
     pub flank_mm: f64,
 }
 
@@ -170,7 +169,7 @@ impl MaleBand {
     }
 
     /// How far inside the band's edge `B` the centre of a cut-out
-    /// `diameter_mm` wide runs, mm (design step 6; #461): as far out as the
+    /// `diameter_mm` wide runs, mm (design step 6): as far out as the
     /// floor reaches, so the tool's edge runs along the floor's outer edge
     /// and above the floor it cuts only what the carve removed. With an
     /// open edge the floor reaches `B`, which the edge pass cuts upright:
@@ -200,7 +199,7 @@ impl MaleBand {
         }
     }
 
-    /// How far inside the board's edge the band is clipped, mm (#495):
+    /// How far inside the board's edge the band is clipped, mm:
     /// 0 with an open edge, whose end mill clears to the board's edge, its
     /// cutting edge on it; the V-bit's radius `R_v` with a V wall, so the
     /// V-bit, which runs down the wall to its top, keeps its full radius
@@ -214,7 +213,7 @@ impl MaleBand {
         }
     }
 
-    /// The rectangle the band is clipped to (#495): `stock`'s, `[0,
+    /// The rectangle the band is clipped to: `stock`'s, `[0,
     /// width] × [0, height]`, inset by [`Self::board_inset_mm`].
     #[must_use]
     pub fn board(&self, stock: &Stock) -> Rect {
@@ -226,7 +225,7 @@ impl MaleBand {
     }
 
     /// The least distance, mm, from the design to a board edge that
-    /// clips the band (#495): the band left there must still hold what
+    /// clips the band: the band left there must still hold what
     /// the margin holds. The V-bit runs along the plug's foot, `P·s` out,
     /// and keeps its full radius on the board: `P·s + R_v` (which holds
     /// its flank too, as the cone check keeps `(D − G + P)·s ≤ R_v`). With
@@ -255,7 +254,7 @@ fn slope_of(project: &Project, op: &InlayOp) -> Option<f64> {
 
 /// Inlay `op`'s carving bit: its profile ([`crate::Tool::carve_profile`],
 /// a V-bit with an angle in (0°, 180°) or a tapered ball nose with every
-/// value set and usable; slice 27e, #681) and its radius on the board, mm
+/// value set and usable) and its radius on the board, mm
 /// ([`crate::Tool::cut_radius_mm`]: half a V-bit's diameter as the tool
 /// gives it, which `dc-cam` and the safety pass refuse when it is not above
 /// 0 before they use it; a tapered ball nose's widest cut).
@@ -265,14 +264,14 @@ fn carve_bit_of(project: &Project, op: &InlayOp) -> Option<(BitProfile, f64)> {
 }
 
 /// The profile of Inlay `op`'s carving bit, when it is a V-bit or a
-/// tapered ball nose with every value usable (#681).
+/// tapered ball nose with every value usable.
 #[must_use]
 pub fn inlay_profile(project: &Project, op: &InlayOp) -> Option<BitProfile> {
     carve_bit_of(project, op).map(|(profile, _)| profile)
 }
 
 /// Inlay `op`'s design `design` (nested, its near parts merged, the male's
-/// mirrored) rounded for its bit ([`rounded_for_bit`], #681), with its
+/// mirrored) rounded for its bit ([`rounded_for_bit`]), with its
 /// `D − G` and the project's flatten tolerance. A design carved by a
 /// V-bit, or whose bit, depth or glue gap is not usable, comes back as it
 /// is.
@@ -304,7 +303,7 @@ pub fn rounded_design(
 }
 
 /// How far the seat of Inlay `op` moves for an error in its tapered ball
-/// nose's taper and tip radius (#681; `check`'s seat line), from its own
+/// nose's taper and tip radius (`check`'s seat line), from its own
 /// `depth_mm` and `plug_depth_mm`; `None` for a V-bit or an unusable
 /// value.
 #[must_use]
@@ -338,7 +337,7 @@ fn pass_radii<'p>(
     })
 }
 
-/// The edge pass of Inlay `op`'s male (#448): its first clearing pass
+/// The edge pass of Inlay `op`'s male: its first clearing pass
 /// whose flat end mill fits the band's floor ring, `M − P·tan(α/2) ≥ 2r`
 /// (within [`EPS_MM`]). `None` without such a pass, or when the margin,
 /// the plug depth or the V-bit is not usable.
@@ -374,7 +373,7 @@ impl BandSource {
     }
 }
 
-/// Where Inlay `op`'s band edge comes from (#449): the drawn boundary
+/// Where Inlay `op`'s band edge comes from: the drawn boundary
 /// when it has one that resolves with the design strictly inside, else
 /// `margin_mm` and `outline_rounding_mm`. `None` when a value it needs is
 /// unusable: a boundary with a problem ([`drawn_boundary`]), a margin or
@@ -394,7 +393,7 @@ fn band_source(project: &Project, op: &InlayOp) -> Option<BandSource> {
     })
 }
 
-/// Inlay `op`'s male band (#448; module docs): its edge, open or a V
+/// Inlay `op`'s male band (module docs): its edge, open or a V
 /// wall, and its roundings. `None` when a value the band needs is
 /// unusable: the margin (or, with a drawn boundary, the boundary: it must
 /// resolve with the design inside), depth, glue gap or plug depth, an
@@ -418,7 +417,7 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
         } => *outline_rounding_mm,
         BandSource::Drawn { .. } => 0.0,
     };
-    // #681: every V-bit width reads the bit's profile: the plug's foot
+    // Every V-bit width reads the bit's profile: the plug's foot
     // `w(P)`, and the flank at the stock top `w(D − G + P)` from a tip
     // `w(P)` out.
     let foot_mm = profile.half_width_mm(plug_depth_mm);
@@ -458,10 +457,10 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
 }
 
 /// The male Inlay `op`'s band edge `B` before it is clipped to the board,
-/// in project space (`docs/specs/phase-3/design.md`, "Drawn boundary",
-/// "The band's source"; #449, #603): the one function the generator's
-/// step 4 and the safety pass both derive the band by, in place of their
-/// two direct [`rounded_band`] calls. `None` when the band is unusable
+/// in project space (`docs/specs/phase-3/design.md`, "Drawn boundary", "The
+/// band's source"): the one function the generator's step 4 and the safety
+/// pass both derive the band by, in place of their two direct
+/// [`rounded_band`] calls. `None` when the band is unusable
 /// ([`male_band`]).
 ///
 /// `mirror` is the male's mirror ([`Transform::mirror_x_about`] the
@@ -534,8 +533,8 @@ fn mirrored(regions: &[Region], mirror: Option<Transform>) -> Option<Vec<Region>
     nest(contours).ok().map(|(regions, _)| regions)
 }
 
-/// What is wrong with one of an Inlay's boundary instances (#449; design
-/// spec, "Drawn boundary"); validation reports each under its own code
+/// What is wrong with one of an Inlay's boundary instances (design spec,
+/// "Drawn boundary"); validation reports each under its own code
 /// (`inlay_boundary_*`), at the entry it names.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BoundaryProblem {
@@ -573,7 +572,7 @@ pub enum BoundaryProblem {
     },
 }
 
-/// One boundary instance of an Inlay, in project space (#449).
+/// One boundary instance of an Inlay, in project space.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoundaryInstance {
     /// The instance.
@@ -588,7 +587,7 @@ pub struct BoundaryInstance {
     pub holes: Vec<usize>,
 }
 
-/// Boundary instance `id` of Inlay `op`, resolved (#449): its closed
+/// Boundary instance `id` of Inlay `op`, resolved: its closed
 /// profiles under its transform, nested as the targets are. A problem
 /// when `id` is no instance (or its definition is missing), is a target,
 /// or has a profile that is not a closed outline.
@@ -650,9 +649,9 @@ pub fn boundary_instance(
     })
 }
 
-/// The regions of every instance of Inlay `op`'s `boundary`, in list
-/// order and in project space (#449; design spec, "Drawn boundary", step
-/// 1): the function the targets' regions are collected by, per entry.
+/// The regions of every instance of Inlay `op`'s `boundary`, in list order
+/// and in project space (design spec, "Drawn boundary", step 1): the
+/// function the targets' regions are collected by, per entry.
 ///
 /// # Errors
 ///
@@ -668,9 +667,9 @@ pub fn boundary_regions(
         .collect()
 }
 
-/// Inlay `op`'s drawn boundary, derived (#449; design spec, "Drawn
-/// boundary", steps 1 to 3), in project space: not mirrored, which is an
-/// isometry that moves the design with it.
+/// Inlay `op`'s drawn boundary, derived (design spec, "Drawn boundary",
+/// steps 1 to 3), in project space: not mirrored, which is an isometry that
+/// moves the design with it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DrawnBoundary {
     /// The drawn band `B`: the boundary instances' outer contours united,
@@ -699,12 +698,12 @@ pub struct NarrowestBand {
     pub y_mm: f64,
 }
 
-/// Inlay `op`'s drawn boundary, derived and checked against its design
-/// (#449): the instances' regions ([`boundary_regions`]), their drawn
-/// band, and the band's clearance from the design after near parts are
-/// merged (the design the female and the male both use). `Ok(None)` when
-/// `op` has no boundary. A design that does not resolve (a target that
-/// is not an instance) is empty here; validation reports that.
+/// Inlay `op`'s drawn boundary, derived and checked against its design: the
+/// instances' regions ([`boundary_regions`]), their drawn band, and the
+/// band's clearance from the design after near parts are merged (the design
+/// the female and the male both use). `Ok(None)` when `op` has no boundary.
+/// A design that does not resolve (a target that is not an instance) is
+/// empty here; validation reports that.
 ///
 /// # Errors
 ///
@@ -782,8 +781,8 @@ fn tolerance_mm(project: &Project) -> f64 {
 /// Inlay `op`'s design in project space: its targets' closed outlines
 /// nested even-odd, with the parts that come closer than
 /// [`INLAY_MERGE_MM`] merged into one shape, drawn within its V-bit's wall
-/// tolerance ([`wall_tolerance_mm`], #478), as the generator and the
-/// safety pass merge them (#479). Empty when the targets do not resolve.
+/// tolerance ([`wall_tolerance_mm`]), as the generator and the
+/// safety pass merge them. Empty when the targets do not resolve.
 fn merged_design_of(project: &Project, op: &InlayOp) -> Vec<Region> {
     let Some(outlines) = closed_outlines(project, &op.targets) else {
         return Vec::new();
@@ -795,7 +794,7 @@ fn merged_design_of(project: &Project, op: &InlayOp) -> Vec<Region> {
     let plug_tolerance_mm =
         slope_of(project, op).map_or(tolerance_mm, |slope| wall_tolerance_mm(tolerance_mm, slope));
     let merged = merge_near_parts(&design, INLAY_MERGE_MM, plug_tolerance_mm).regions;
-    // #681: rounded for a tapered ball nose as both boards cut it; a design
+    // Rounded for a tapered ball nose as both boards cut it; a design
     // the rounding refuses is the generator's error, and is measured here
     // as drawn.
     match rounded_design(project, op, &merged) {
@@ -804,16 +803,15 @@ fn merged_design_of(project: &Project, op: &InlayOp) -> Vec<Region> {
     }
 }
 
-/// How close two parts of an Inlay's design may come before both sides
-/// cut them as one shape (#479; `docs/specs/phase-3/design.md`,
-/// "Algorithms → Inlay", step 2), mm: 0.05, the most the maintainer
-/// allows. The generator, and the safety pass that re-derives the
-/// design, both use it.
+/// How close two parts of an Inlay's design may come before both sides cut
+/// them as one shape (`docs/specs/phase-3/design.md`, "Algorithms → Inlay",
+/// step 2), mm: 0.05, the most the maintainer allows. The generator, and
+/// the safety pass that re-derives the design, both use it.
 ///
 /// A gap narrower than twice the flatten tolerance plus `√2` units in the
 /// last place written (0.0214 mm by default) cannot be carved at all:
 /// each outline is carved as chords up to the tolerance off it, and a
-/// V-bit's tip path keeps `quantum / √2` from each wall (#469). But that
+/// V-bit's tip path keeps `quantum / √2` from each wall. But that
 /// distance is not enough. Near touches up to 0.044 mm wide still held
 /// the plug up to 1.6 mm proud, where the carve does not reach into the
 /// narrow wedge either side of the gap (the stress sweep's line art seed
@@ -825,354 +823,4 @@ fn merged_design_of(project: &Project, op: &InlayOp) -> Vec<Region> {
 pub const INLAY_MERGE_MM: f64 = 0.05;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ids::ToolId;
-    use crate::model::{ClearanceStrategy, ClearingPass, CutDirection, Entry, MaleBoard, Tool};
-    use crate::test_support::{sample_inlay, sample_project, tool_6_35_upcut, tool_v_bit_90};
-
-    /// An end mill `id` `diameter_mm` across.
-    fn end_mill(id: &str, diameter_mm: f64) -> Tool {
-        Tool {
-            id: ToolId::new(id),
-            name: format!("{diameter_mm} mm end mill"),
-            diameter_mm,
-            ..tool_6_35_upcut()
-        }
-    }
-
-    /// The sample Inlay's male ([`sample_inlay`] with its male board
-    /// measured, 6 mm: the 90° V-bit `t2`, slope 1, `D 2.5, G 0.25, P
-    /// 1.5`, margin 6, so the floor ring is `M − P·s` = 4.5 mm wide) with
-    /// clearing passes by `tools`, in a project holding the 6.35 mm end
-    /// mill `t1`, `t2`, a 3.175 mm end mill `t3` and a 1 mm one `t4`.
-    fn male(tools: &[&str]) -> (Project, InlayOp) {
-        let mut p = sample_project();
-        p.tools.push(tool_v_bit_90());
-        p.tools.push(end_mill("t3", 3.175));
-        p.tools.push(end_mill("t4", 1.0));
-        let op = InlayOp {
-            male_board: MaleBoard {
-                width_mm: None,
-                height_mm: None,
-                thickness_mm: Some(6.0),
-            },
-            clearing: tools
-                .iter()
-                .map(|t| ClearingPass {
-                    tool: ToolId::new(*t),
-                    strategy: ClearanceStrategy::Offset,
-                    direction: CutDirection::Climb,
-                    entry: Entry::Plunge,
-                })
-                .collect(),
-            ..sample_inlay()
-        };
-        (p, op)
-    }
-
-    /// #448: the edge pass is the first clearing pass whose end mill fits
-    /// the floor ring, `M − P·tan(α/2) ≥ 2r`: of the 6.35 mm and 3.175 mm
-    /// passes in a 4.5 mm ring, the second, though a 1 mm pass follows;
-    /// a 4.5 mm end mill just fits. With only the 6.35 mm pass, or none,
-    /// there is no edge pass; the male board does not change it (#498).
-    #[test]
-    fn edge_pass_is_the_first_clearing_pass_that_fits() {
-        let (p, op) = male(&["t1", "t3", "t4"]);
-        let pass = edge_pass(&p, &op).expect("an edge pass");
-        assert_eq!(pass.index, 1);
-        assert_eq!(pass.tool, ToolId::new("t3"));
-        dc_geometry::assert_approx_eq!(pass.radius_mm, 3.175 / 2.0, 1e-12);
-
-        let (mut p, op) = male(&["t3"]);
-        p.tools[2].diameter_mm = 4.5;
-        assert_eq!(edge_pass(&p, &op).map(|e| e.index), Some(0), "just fits");
-
-        for tools in [&["t1"][..], &[]] {
-            let (p, op) = male(tools);
-            assert_eq!(edge_pass(&p, &op), None, "{tools:?}");
-        }
-        let (p, op) = male(&["t3"]);
-        let unmeasured = InlayOp {
-            male_board: MaleBoard::default(),
-            ..op.clone()
-        };
-        assert_eq!(edge_pass(&p, &unmeasured), edge_pass(&p, &op));
-    }
-
-    /// #448: the band's outer edge is open when an edge pass fits and the
-    /// V-bit's flank at the plug's foot, `(D − G + P)·s` wide at the stock
-    /// top, stays inside the band: `M ≥ (D − G + 2P)·s`, 5.25 mm here.
-    /// Open, its rounding is `max(R, r)` and a cut-out's centre runs its
-    /// radius inside the edge (#461); with a V wall the rounding is `R` and
-    /// the centre runs `P·s` farther in, inside the slope's foot. A
-    /// margin of 5 has room for the pass but not the flank: a V wall,
-    /// naming the 5.25 mm needed; with no pass that fits, the margin that
-    /// fits the narrowest; with no clearing, nothing.
-    #[test]
-    fn open_edge_needs_the_pass_and_the_flank_inside_the_band() {
-        let (p, op) = male(&["t1", "t3"]);
-        let band = male_band(&p, &op).expect("a male band");
-        assert_eq!(band.edge_pass().map(|e| e.index), Some(1));
-        dc_geometry::assert_approx_eq!(band.margin_mm, 6.0, 1e-12);
-        dc_geometry::assert_approx_eq!(band.foot_mm, 1.5, 1e-12);
-        dc_geometry::assert_approx_eq!(band.outline_rounding_mm, 0.0, 1e-12);
-        dc_geometry::assert_approx_eq!(band.edge_rounding_mm, 3.175 / 2.0, 1e-12);
-        dc_geometry::assert_approx_eq!(band.cut_out_inset_mm(3.175), 3.175 / 2.0, 1e-12);
-        dc_geometry::assert_approx_eq!(band.cut_out_margin_needed_mm(3.175), 4.675, 1e-12);
-
-        let rounded = InlayOp {
-            outline_rounding_mm: Some(4.0),
-            ..op.clone()
-        };
-        let band = male_band(&p, &rounded).expect("a male band");
-        dc_geometry::assert_approx_eq!(band.outline_rounding_mm, 4.0, 1e-12);
-        dc_geometry::assert_approx_eq!(band.edge_rounding_mm, 4.0, 1e-12);
-
-        let narrow = InlayOp {
-            margin_mm: Some(5.0),
-            ..op.clone()
-        };
-        let band = male_band(&p, &narrow).expect("a male band");
-        let BandEdge::VWall {
-            margin_needed_mm: Some(needed_mm),
-        } = band.edge
-        else {
-            panic!("{band:?}");
-        };
-        dc_geometry::assert_approx_eq!(needed_mm, 5.25, 1e-12);
-        dc_geometry::assert_approx_eq!(band.edge_rounding_mm, 0.0, 1e-12);
-        dc_geometry::assert_approx_eq!(band.cut_out_inset_mm(1.0), 1.5 + 0.5, 1e-12);
-        dc_geometry::assert_approx_eq!(band.cut_out_margin_needed_mm(1.0), 4.0, 1e-12);
-
-        let (p, op) = male(&["t1"]);
-        let band = male_band(&p, &op).expect("a male band");
-        let BandEdge::VWall {
-            margin_needed_mm: Some(needed_mm),
-        } = band.edge
-        else {
-            panic!("{band:?}");
-        };
-        dc_geometry::assert_approx_eq!(needed_mm, 1.5 + 6.35, 1e-12);
-
-        let (p, op) = male(&[]);
-        let band = male_band(&p, &op).expect("a male band");
-        assert_eq!(
-            band.edge,
-            BandEdge::VWall {
-                margin_needed_mm: None
-            }
-        );
-        let unmeasured = InlayOp {
-            male_board: MaleBoard::default(),
-            ..op.clone()
-        };
-        assert_eq!(male_band(&p, &unmeasured), male_band(&p, &op));
-    }
-
-    /// The sample project with the V-bit `t2`, an Inlay `o7` of the
-    /// sample rectangle `i1` (10 to 60 by 10 to 40 mm) listing `boundary`
-    /// (male board 6 mm, no margin), and the shapes `shapes` as instances
-    /// `i2`, `i3`, … each a closed rectangle (corner x, y, width, height)
-    /// from the origin.
-    fn bounded(boundary: &[&str], shapes: &[[f64; 4]]) -> (Project, InlayOp) {
-        use crate::ids::{DefinitionId, InstanceId};
-        use crate::model::{FeatureDefinition, FeatureInstance};
-        let mut p = sample_project();
-        p.tools.push(tool_v_bit_90());
-        for (k, [x, y, w, h]) in shapes.iter().enumerate() {
-            let id = format!("i{}", k + 2);
-            let definition = DefinitionId::new(format!("d_{id}"));
-            p.definitions.insert(
-                definition.clone(),
-                FeatureDefinition {
-                    id: definition.clone(),
-                    name: id.clone(),
-                    profiles: vec![dc_geometry::Polyline::rect(Point::new(0.0, 0.0), *w, *h)],
-                },
-            );
-            p.instances.push(FeatureInstance {
-                id: InstanceId::new(&id),
-                definition,
-                transform: dc_geometry::Transform::translate(*x, *y),
-                name: format!("Shape {id}"),
-                visible: true,
-                locked: false,
-                z_top_mm: None,
-                z_bottom_mm: None,
-            });
-        }
-        let op = InlayOp {
-            male_board: MaleBoard {
-                width_mm: None,
-                height_mm: None,
-                thickness_mm: Some(6.0),
-            },
-            margin_mm: None,
-            targets: vec![InstanceId::new("i1")],
-            boundary: boundary.iter().map(|b| InstanceId::new(*b)).collect(),
-            ..sample_inlay()
-        };
-        (p, op)
-    }
-
-    /// `boundary_regions` collects each listed instance's regions in
-    /// project space, in list order: the rectangle placed at (0, 0), 80
-    /// by 50 mm, and the one at (5, 5), 30 by 30 mm.
-    #[test]
-    fn boundary_regions_collects_each_instance_in_project_space() {
-        let (p, op) = bounded(
-            &["i3", "i2"],
-            &[[0.0, 0.0, 80.0, 50.0], [5.0, 5.0, 30.0, 30.0]],
-        );
-        let found = boundary_regions(&p, &op).expect("resolves");
-        assert_eq!(found.len(), 2);
-        assert_eq!(found[0].instance, crate::ids::InstanceId::new("i3"));
-        assert_eq!(found[1].instance, crate::ids::InstanceId::new("i2"));
-        let bounds = found[0].regions[0].outer().polyline().bounds().unwrap();
-        assert_eq!((bounds.min.x, bounds.max.x), (5.0, 35.0));
-        assert_eq!((bounds.min.y, bounds.max.y), (5.0, 35.0));
-        assert_eq!(found[1].regions.len(), 1);
-    }
-
-    /// The problems of an entry: an id that is no instance, a target, a
-    /// definition with an open profile (the profile's index).
-    #[test]
-    fn boundary_regions_names_what_is_wrong() {
-        use crate::ids::InstanceId;
-        let (p, op) = bounded(&["nope"], &[]);
-        assert_eq!(
-            boundary_regions(&p, &op),
-            Err(BoundaryProblem::Unknown {
-                instance: InstanceId::new("nope")
-            })
-        );
-        let (p, op) = bounded(&["i1"], &[]);
-        assert_eq!(
-            boundary_regions(&p, &op),
-            Err(BoundaryProblem::IsTarget {
-                instance: InstanceId::new("i1")
-            })
-        );
-        let (mut p, op) = bounded(&["i2"], &[[0.0, 0.0, 80.0, 50.0]]);
-        p.definitions
-            .get_mut(&crate::ids::DefinitionId::new("d_i2"))
-            .unwrap()
-            .profiles
-            .insert(
-                0,
-                dc_geometry::Polyline::new(
-                    vec![
-                        dc_geometry::Vertex::line(0.0, 0.0),
-                        dc_geometry::Vertex::line(5.0, 0.0),
-                    ],
-                    false,
-                ),
-            );
-        assert_eq!(
-            boundary_regions(&p, &op),
-            Err(BoundaryProblem::Open {
-                instance: InstanceId::new("i2"),
-                profile: 0
-            })
-        );
-    }
-
-    /// The drawn boundary of an 80 × 50 rectangle round the design (10 to
-    /// 60 by 10 to 40): 10 mm at the narrowest. A rectangle that cuts the
-    /// design is `CrossesDesign` at its farthest point; no boundary is no
-    /// drawn band.
-    #[test]
-    fn drawn_boundary_reads_the_narrowest_band() {
-        let (p, op) = bounded(&["i2"], &[[0.0, 0.0, 80.0, 50.0]]);
-        let drawn = drawn_boundary(&p, &op)
-            .expect("resolves")
-            .expect("a drawn boundary");
-        let narrowest = drawn.narrowest.expect("a design in the band");
-        dc_geometry::assert_approx_eq!(narrowest.width_mm, 10.0, 1e-9);
-        assert_eq!(drawn.band.len(), 1);
-        assert!(drawn.empty.is_empty());
-
-        let (p, op) = bounded(&["i2"], &[[30.0, 0.0, 80.0, 50.0]]);
-        let Err(BoundaryProblem::CrossesDesign {
-            x_mm, distance_mm, ..
-        }) = drawn_boundary(&p, &op)
-        else {
-            panic!("the design is cut");
-        };
-        dc_geometry::assert_approx_eq!(x_mm, 10.0, 1e-9);
-        dc_geometry::assert_approx_eq!(distance_mm, 20.0, 1e-9);
-
-        let (p, op) = bounded(&[], &[]);
-        assert!(!op.has_boundary());
-        assert!(drawn_boundary(&p, &op).is_ok_and(|d| d.is_none()));
-    }
-
-    /// With a boundary the male band reads the narrowest band as its
-    /// margin, with no rounding of its own (`BandSource::Drawn`); the
-    /// same Inlay with a margin and no boundary reads the margin.
-    #[test]
-    fn male_band_reads_the_drawn_band_for_its_margin() {
-        let (p, op) = bounded(&["i2"], &[[0.0, 0.0, 80.0, 50.0]]);
-        let band = male_band(&p, &op).expect("a male band");
-        dc_geometry::assert_approx_eq!(band.margin_mm, 10.0, 1e-9);
-        dc_geometry::assert_approx_eq!(band.outline_rounding_mm, 0.0, 1e-12);
-        assert!(
-            matches!(band.source, BandSource::Drawn { narrowest_mm } if (narrowest_mm - 10.0).abs() < 1e-9)
-        );
-
-        let ignored = InlayOp {
-            margin_mm: Some(6.0),
-            outline_rounding_mm: Some(4.0),
-            ..op.clone()
-        };
-        assert_eq!(male_band(&p, &ignored), Some(band));
-        let computed = InlayOp {
-            boundary: Vec::new(),
-            ..ignored
-        };
-        let band = male_band(&p, &computed).expect("a male band");
-        dc_geometry::assert_approx_eq!(band.margin_mm, 6.0, 1e-12);
-        assert_eq!(
-            band.source,
-            BandSource::Computed {
-                margin_mm: 6.0,
-                outline_rounding_mm: 4.0
-            }
-        );
-    }
-
-    /// #495: an open band is clipped to the stock itself, a V wall the
-    /// V-bit's radius inside it (the 90° bit `t2`, 6.35 mm across). The
-    /// room a clipping edge needs: the V-bit along the plug's foot with
-    /// its radius, `1.5 + 3.175`; with an open edge also the edge pass's
-    /// ring, `1.5 + 3.175`, and the flank, `(2.25 + 3)·1` = 5.25; a 1 mm
-    /// cut-out's ring, `1.5 + 1` open and `3.175 + 3 + 1` with a V wall.
-    #[test]
-    fn band_is_clipped_to_the_board() {
-        let (p, op) = male(&["t3"]);
-        let band = male_band(&p, &op).expect("a male band");
-        assert!(band.is_open());
-        dc_geometry::assert_approx_eq!(band.v_bit_radius_mm, 3.175, 1e-12);
-        dc_geometry::assert_approx_eq!(band.flank_mm, 5.25, 1e-12);
-        dc_geometry::assert_approx_eq!(band.board_inset_mm(), 0.0, 1e-12);
-        let board = band.board(&p.stock);
-        assert_eq!(board.min, dc_geometry::Point::new(0.0, 0.0));
-        assert_eq!(
-            board.max,
-            dc_geometry::Point::new(p.stock.width_mm, p.stock.height_mm)
-        );
-        dc_geometry::assert_approx_eq!(band.board_room_mm(None), 5.25, 1e-12);
-        dc_geometry::assert_approx_eq!(band.board_room_mm(Some(1.0)), 5.25, 1e-12);
-
-        let (p, op) = male(&[]);
-        let band = male_band(&p, &op).expect("a male band");
-        assert!(!band.is_open());
-        dc_geometry::assert_approx_eq!(band.board_inset_mm(), 3.175, 1e-12);
-        let board = band.board(&p.stock);
-        dc_geometry::assert_approx_eq!(board.min.x, 3.175, 1e-12);
-        dc_geometry::assert_approx_eq!(board.max.y, p.stock.height_mm - 3.175, 1e-12);
-        dc_geometry::assert_approx_eq!(band.board_room_mm(None), 4.675, 1e-12);
-        dc_geometry::assert_approx_eq!(band.board_room_mm(Some(1.0)), 7.175, 1e-12);
-    }
-}
+mod tests;

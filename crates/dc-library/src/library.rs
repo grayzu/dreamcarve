@@ -47,45 +47,17 @@ use dc_project::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fmt;
 
 use crate::LibraryError;
 
 /// The library file format version this build reads and writes.
 pub const LIBRARY_VERSION: u32 = 3;
 
-/// Identifies a [`LibraryTool`]. `lt<n>`, so it can never be mistaken for
-/// a project's `t<n>`.
-///
-/// Serialized as a plain JSON string. Ordered, so it can key a `BTreeMap`
-/// and sort deterministically.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct LibraryToolId(String);
-
-impl LibraryToolId {
-    /// Wraps a string as a library tool id.
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    /// The id as a string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for LibraryToolId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl From<&str> for LibraryToolId {
-    fn from(id: &str) -> Self {
-        Self::new(id)
-    }
-}
+dc_project::id_type!(
+    /// Identifies a [`LibraryTool`]. `lt<n>`, so it can never be mistaken for
+    /// a project's `t<n>`.
+    LibraryToolId
+);
 
 /// The tool library: what `<config dir>/tools.json` holds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
