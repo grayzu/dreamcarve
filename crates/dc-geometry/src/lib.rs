@@ -152,4 +152,26 @@ pub enum GeometryError {
         /// The limit it exceeded, millimetres.
         limit_mm: f64,
     },
+    /// A geometry routine found its own working data inconsistent:
+    /// something it built itself and looks up cannot be missing, and was
+    /// (code review finding 1.2). A defect in DreamCarve, never in the
+    /// input. The routine stops, because carrying on would leave out a
+    /// contour, a hole or a node with no word of it.
+    #[error("a defect in DreamCarve's geometry, not in the drawing: {what}")]
+    Internal {
+        /// The invariant that did not hold, in words.
+        what: &'static str,
+    },
+}
+
+/// `items[index]`, for a lookup the caller's own construction makes sure
+/// of; [`GeometryError::Internal`] naming `what` when it is missing, where
+/// indexing would panic and `get` with a fallback would leave something
+/// out.
+pub(crate) fn at<'a, T>(
+    items: &'a [T],
+    index: usize,
+    what: &'static str,
+) -> Result<&'a T, GeometryError> {
+    items.get(index).ok_or(GeometryError::Internal { what })
 }

@@ -7,6 +7,7 @@
 
 use crate::GeometryError;
 use crate::GeometryWarning;
+use crate::at;
 use crate::contour::Contour;
 use crate::distance::distance_to_segment;
 use crate::offset::to_cavalier;
@@ -64,13 +65,19 @@ impl Region {
         Self {
             outer: self.outer.clone(),
             outer_index: self.outer_index,
-            holes: (0..self.holes.len())
-                .filter(keep)
-                .filter_map(|k| self.holes.get(k).cloned())
+            holes: self
+                .holes
+                .iter()
+                .enumerate()
+                .filter(|(k, _)| keep(k))
+                .map(|(_, hole)| hole.clone())
                 .collect(),
-            hole_indices: (0..self.hole_indices.len())
-                .filter(keep)
-                .filter_map(|k| self.hole_indices.get(k).copied())
+            hole_indices: self
+                .hole_indices
+                .iter()
+                .enumerate()
+                .filter(|(k, _)| keep(k))
+                .map(|(_, &source)| source)
                 .collect(),
             depth: self.depth,
         }
@@ -120,6 +127,18 @@ impl Region {
     }
 }
 
+impl Contour {
+    /// True when `p` lies inside the contour, whichever way it winds, or
+    /// within [`EPS_MM`] of it: what [`Region::contains_point`] says of
+    /// the region [`nest`] makes of this contour alone.
+    #[must_use]
+    pub fn contains_point(&self, p: Point) -> bool {
+        // As `nest` winds an outer.
+        let outer = with_ccw(self.clone(), true);
+        on_boundary(&outer, p) || winding_number(&outer, p) != 0
+    }
+}
+
 /// Total material area of `regions`, mm²: each outer's area less its
 /// holes'. Regions are assumed not to overlap.
 #[must_use]
@@ -144,6 +163,10 @@ pub fn area_mm2(regions: &[Region]) -> f64 {
 /// whatever its winding, is dropped with
 /// [`GeometryWarning::DuplicateContourDropped`]. The rules, with figures,
 /// are in the user guide chapter "Shapes, holes, and islands".
+///
+/// [`GeometryError::Internal`] when a pair to compare names a contour
+/// that was not given: the pair was once passed over, and a crossing or a
+/// duplicate in it not found.
 pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>), GeometryError> {
     let mut keep = vec![true; contours.len()];
     let mut warnings = Vec::new();
@@ -153,19 +176,19 @@ pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>
     // dropped and the same crossing reported.
     let boxes: Vec<Option<Rect>> = contours.iter().map(|c| c.polyline().bounds()).collect();
     for (i, j) in touching_pairs(&boxes, 0.0) {
-        let (Some(first), Some(second)) = (contours.get(i), contours.get(j)) else {
-            continue;
-        };
-        let both_kept =
-            keep.get(i).copied().unwrap_or(false) && keep.get(j).copied().unwrap_or(false);
+        // The pairs are of the boxes, one a contour.
+        let lacks = "a pair of contours to compare names one that was not given";
+        let (first, second) = (at(&contours, i, lacks)?, at(&contours, j, lacks)?);
+        // A contour dropped as a duplicate is compared with nothing more.
+        let both_kept = *at(&keep, i, lacks)? && *at(&keep, j, lacks)?;
         if !both_kept {
             continue;
         }
         match overlap(first, second) {
             Overlap::Same => {
-                if let Some(flag) = keep.get_mut(j) {
-                    *flag = false;
-                }
+                *keep
+                    .get_mut(j)
+                    .ok_or(GeometryError::Internal { what: lacks })? = false;
                 warnings.push(GeometryWarning::DuplicateContourDropped {
                     index: j,
                     duplicate_of: i,
@@ -886,5 +909,49 @@ mod tests {
             let full_mm2 = split.signed_area_mm2().abs();
             assert_approx_eq!(shared_area_mm2(&whole, &whole), full_mm2, 1e-6 * full_mm2);
         }
+    }
+
+    /// A contour holds a point exactly when the region `nest` makes of it
+    /// alone does, whichever way the contour winds.
+    #[test]
+    fn contour_contains_what_its_own_region_does() {
+        let square = Polyline::rect(Point::new(0.0, 0.0), 10.0, 10.0);
+        let circle = Polyline::circle(Point::new(20.0, 0.0), 5.0);
+        let probes = [
+            Point::new(5.0, 5.0),
+            Point::new(10.0, 5.0),
+            Point::new(10.0 + EPS_MM / 2.0, 5.0),
+            Point::new(10.1, 5.0),
+            Point::new(-1.0, -1.0),
+            Point::new(20.0, 0.0),
+            Point::new(24.0, 3.0),
+            Point::new(24.0, 3.1),
+            Point::new(25.0, 0.0),
+        ];
+        for outline in [square, circle] {
+            for polyline in [outline.clone(), outline.reversed()] {
+                let contour = Contour::new(polyline).expect("a contour");
+                let (regions, _) = nest(vec![contour.clone()]).expect("nests");
+                for p in probes {
+                    assert_eq!(
+                        contour.contains_point(p),
+                        regions[0].contains_point(p),
+                        "{p:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A lookup that cannot miss returns the item, and the defect when it
+    /// does miss, never a default.
+    #[test]
+    fn at_is_the_item_or_the_internal_defect() {
+        let items = [1, 2];
+        assert_eq!(at(&items, 1, "an item"), Ok(&2));
+        assert_eq!(
+            at(&items, 2, "an item"),
+            Err(GeometryError::Internal { what: "an item" })
+        );
     }
 }

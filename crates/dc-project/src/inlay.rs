@@ -117,7 +117,7 @@ pub enum BandSource {
     /// `outline_rounding_mm` are ignored.
     Drawn {
         /// The least distance, mm, from the design's outlines to the
-        /// drawn edge ([`DrawnBoundary::narrowest_mm`]).
+        /// drawn edge ([`DrawnBoundary::narrowest`]).
         narrowest_mm: f64,
     },
 }
@@ -382,7 +382,7 @@ impl BandSource {
 fn band_source(project: &Project, op: &InlayOp) -> Option<BandSource> {
     if op.has_boundary() {
         let drawn = drawn_boundary(project, op).ok()??;
-        return positive(Some(drawn.narrowest_mm))
+        return positive(drawn.narrowest.map(|n| n.width_mm))
             .map(|narrowest_mm| BandSource::Drawn { narrowest_mm });
     }
     Some(BandSource::Computed {
@@ -676,18 +676,27 @@ pub struct DrawnBoundary {
     /// The drawn band `B`: the boundary instances' outer contours united,
     /// holes dropped ([`dc_geometry::drawn_band`]).
     pub band: Vec<Region>,
-    /// The least distance, mm, from the design's outlines to the band's
-    /// edge: the narrowest band, `M`.
-    pub narrowest_mm: f64,
-    /// X of the design's point nearest the edge, mm.
-    pub x_mm: f64,
-    /// Y of the design's point nearest the edge, mm.
-    pub y_mm: f64,
+    /// Where the design comes nearest the band's edge; `None` for a
+    /// design with no outline, which stands nowhere in the band.
+    pub narrowest: Option<NarrowestBand>,
     /// The instances, in list order.
     pub instances: Vec<BoundaryInstance>,
     /// The places, in the list, of the instances none of whose shapes
     /// holds any part of the design (`inlay_boundary_empty`).
     pub empty: Vec<usize>,
+}
+
+/// Where a design comes nearest its drawn band's edge
+/// ([`DrawnBoundary::narrowest`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NarrowestBand {
+    /// The least distance, mm, from the design's outlines to the band's
+    /// edge: the narrowest band, `M`.
+    pub width_mm: f64,
+    /// X of the design's point nearest the edge, mm.
+    pub x_mm: f64,
+    /// Y of the design's point nearest the edge, mm.
+    pub y_mm: f64,
 }
 
 /// Inlay `op`'s drawn boundary, derived and checked against its design
@@ -716,12 +725,17 @@ pub fn drawn_boundary(
         .collect();
     let band = drawn_band(&all, tolerance_mm);
     let design = merged_design_of(project, op);
-    let (narrowest_mm, x_mm, y_mm) = match band_clearance(&design, &band, tolerance_mm) {
+    let narrowest = match band_clearance(&design, &band, tolerance_mm) {
+        BandClearance::NoDesign => None,
         BandClearance::Inside {
             narrowest_mm,
             x_mm,
             y_mm,
-        } => (narrowest_mm, x_mm, y_mm),
+        } => Some(NarrowestBand {
+            width_mm: narrowest_mm,
+            x_mm,
+            y_mm,
+        }),
         BandClearance::Crosses {
             x_mm,
             y_mm,
@@ -748,9 +762,7 @@ pub fn drawn_boundary(
         .collect();
     Ok(Some(DrawnBoundary {
         band,
-        narrowest_mm,
-        x_mm,
-        y_mm,
+        narrowest,
         instances,
         empty,
     }))
@@ -1076,7 +1088,8 @@ mod tests {
         let drawn = drawn_boundary(&p, &op)
             .expect("resolves")
             .expect("a drawn boundary");
-        dc_geometry::assert_approx_eq!(drawn.narrowest_mm, 10.0, 1e-9);
+        let narrowest = drawn.narrowest.expect("a design in the band");
+        dc_geometry::assert_approx_eq!(narrowest.width_mm, 10.0, 1e-9);
         assert_eq!(drawn.band.len(), 1);
         assert!(drawn.empty.is_empty());
 

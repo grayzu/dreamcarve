@@ -65,7 +65,7 @@ mod tests;
 use std::borrow::Cow;
 use std::ops::Range;
 
-use crate::error::{CamError, ShapeRef};
+use crate::error::{CamError, ShapeRef, at};
 use crate::placed_tabs;
 use crate::profile::{generate_profile_below, rates_of};
 use crate::run::{RunLabel, ToolRun};
@@ -213,7 +213,10 @@ impl Values {
                         problem,
                     })?
                     .ok_or_else(|| unset("margin_mm"))?;
-                Some(positive_margin(op, drawn.narrowest_mm)?)
+                // A boundary round a design with no outline has no
+                // narrowest band to stand for the margin.
+                let narrowest = drawn.narrowest.ok_or_else(|| unset("margin_mm"))?;
+                Some(positive_margin(op, narrowest.width_mm)?)
             }
             Board::Male => {
                 let margin_mm = op.margin_mm.ok_or_else(|| unset("margin_mm"))?;
@@ -445,14 +448,19 @@ fn check_boundary(project: &Project, op: &InlayOp, board: Board) -> Result<Vec<W
         }
     }
     for &index in &drawn.empty {
-        if let Some(instance) = drawn.instances.get(index) {
-            warnings.push(Warning::InlayBoundaryEmpty {
-                op: op.id.clone(),
-                index,
-                instance: instance.instance.clone(),
-                instance_name: instance.name.clone(),
-            });
-        }
+        // An empty boundary instance is one of the boundary's instances.
+        let instance = at(
+            &drawn.instances,
+            index,
+            "an empty boundary instance is none of the boundary's",
+        )
+        .map_err(|e| e.for_op(&op.id))?;
+        warnings.push(Warning::InlayBoundaryEmpty {
+            op: op.id.clone(),
+            index,
+            instance: instance.instance.clone(),
+            instance_name: instance.name.clone(),
+        });
     }
     Ok(warnings)
 }
@@ -484,7 +492,7 @@ fn side_of(
     let start_plane_z_mm = thickness_mm - values.start_depth_mm();
     let Some(margin_mm) = values.margin_mm else {
         let design = carve_regions(project, &op.id, &op.targets, warnings)?;
-        let design = merge_near(design, project, op, None, warnings);
+        let design = merge_near(design, project, op, None, warnings)?;
         return Ok(Side {
             targets: round_for_bit(design, project, op, None, warnings)?,
             start_plane_z_mm,
@@ -501,7 +509,7 @@ fn side_of(
     let mirror_x_mm = axis_x_mm(project, &op.id, &op.targets)?;
     let mirror = mirror_x_mm.map(Transform::mirror_x_about);
     let design = carve_regions_then(project, &op.id, &op.targets, mirror, warnings)?;
-    let design = merge_near(design, project, op, mirror, warnings);
+    let design = merge_near(design, project, op, mirror, warnings)?;
     // #681: rounded for a tapered ball nose, on the mirrored design, as the
     // female's is on the design.
     let design = round_for_bit(design, project, op, mirror, warnings)?;
@@ -567,10 +575,10 @@ fn side_of(
         design: design.regions.clone(),
         top_z_mm: thickness_mm,
     });
-    let shapes = regions
-        .iter()
-        .map(|region| bordering_shape(region, &design))
-        .collect();
+    let mut shapes = Vec::with_capacity(regions.len());
+    for region in &regions {
+        shapes.push(bordering_shape(region, &design)?);
+    }
     Ok(Side {
         targets: Targets {
             regions,
@@ -653,17 +661,18 @@ fn round_for_bit(
             radius_mm: change.radius_mm,
         });
     }
-    let shapes = rounded
-        .sources
-        .iter()
-        .map(|&i| {
-            design.shapes.get(i).cloned().unwrap_or_else(|| ShapeRef {
-                instance: InstanceId::new(""),
-                instance_name: String::new(),
-                profile: 0,
-            })
-        })
-        .collect();
+    // Each rounded region is one of the design's, rounded.
+    let mut shapes = Vec::with_capacity(rounded.sources.len());
+    for &i in &rounded.sources {
+        shapes.push(
+            at(
+                &design.shapes,
+                i,
+                "a rounded region is of no region of the design",
+            )?
+            .clone(),
+        );
+    }
     Ok(Targets {
         regions: rounded.regions,
         shapes,
@@ -683,23 +692,42 @@ fn round_for_bit(
 ///
 /// A merged group is drawn within the V-bit's wall tolerance (#478), as
 /// the plug's outline is.
+///
+/// # Errors
+///
+/// [`CamError::Internal`] when what [`merge_near_parts`] says it merged is
+/// no outline or region of `design`, where a merged region would be named
+/// by no shape.
 fn merge_near(
     design: Targets,
     project: &Project,
     op: &InlayOp,
     mirror: Option<Transform>,
     warnings: &mut Vec<Warning>,
-) -> Targets {
+) -> Result<Targets, CamError> {
     let merge_mm = INLAY_MERGE_MM;
     let merged = merge_near_parts(&design.regions, merge_mm, plug_tolerance_mm(project, op));
     if merged.near.is_empty() && merged.filled.is_empty() {
-        return design;
+        return Ok(design);
     }
-    let shape_of = |index: usize| design.contours.get(index).map(|(s, _)| s.clone());
+    // The outlines are numbered as the design's regions number them.
+    let shape_of = |index: usize| {
+        at(
+            &design.contours,
+            index,
+            "a merged outline is none of the design's",
+        )
+        .map(|(s, _)| s.clone())
+    };
+    let region_shape = |k: usize| {
+        at(
+            &design.shapes,
+            k,
+            "a merged region is of no region of the design",
+        )
+    };
     for near in &merged.near {
-        let (Some(first), Some(second)) = (shape_of(near.first), shape_of(near.second)) else {
-            continue;
-        };
+        let (first, second) = (shape_of(near.first)?, shape_of(near.second)?);
         // A mirror is its own inverse.
         let at = mirror.map_or(near.at, |m| m.apply(near.at));
         warnings.push(Warning::InlayPartsMerged {
@@ -713,9 +741,7 @@ fn merge_near(
         });
     }
     for filled in &merged.filled {
-        let Some(hole) = shape_of(filled.index) else {
-            continue;
-        };
+        let hole = shape_of(filled.index)?;
         let at = mirror.map_or(filled.at, |m| m.apply(filled.at));
         warnings.push(Warning::InlayHoleFilled {
             op: op.id.clone(),
@@ -728,26 +754,18 @@ fn merge_near(
     }
     // Each input region's shape, and the shape it is now named by.
     let mut renamed: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
-    let shapes: Vec<ShapeRef> = merged
-        .sources
-        .iter()
-        .map(|sources| {
-            let name = sources.first().and_then(|&k| design.shapes.get(k));
-            if let Some(name) = name {
-                renamed.extend(
-                    sources
-                        .iter()
-                        .filter_map(|&k| design.shapes.get(k))
-                        .map(|s| (s, name)),
-                );
-            }
-            name.cloned().unwrap_or_else(|| ShapeRef {
-                instance: InstanceId::new(""),
-                instance_name: String::new(),
-                profile: 0,
-            })
-        })
-        .collect();
+    let mut shapes: Vec<ShapeRef> = Vec::with_capacity(merged.sources.len());
+    for sources in &merged.sources {
+        // A merged region is made of one region of the design or more.
+        let &first = sources
+            .first()
+            .ok_or_else(|| CamError::internal("a merged region is made of no region"))?;
+        let name = region_shape(first)?;
+        for &k in sources {
+            renamed.push((region_shape(k)?, name));
+        }
+        shapes.push(name.clone());
+    }
     let rename = |s: &ShapeRef| {
         renamed
             .iter()
@@ -761,44 +779,52 @@ fn merge_near(
             containment.push(pair);
         }
     }
-    Targets {
+    Ok(Targets {
         regions: merged.regions,
         shapes,
         containment,
         contours: design.contours,
-    }
+    })
 }
 
 /// The design outline surround region `region` borders, to name it by:
 /// the one whose first vertex is nearest the region's outlines (the
 /// band round a shape has the shape as a hole, a hole of the design is a
 /// region of its own).
-fn bordering_shape(region: &Region, design: &Targets) -> ShapeRef {
+///
+/// # Errors
+///
+/// [`CamError::Internal`] when the design has no outline to name the
+/// region by (a band stands round a plug, so a male with a band has one),
+/// or an outline has no vertex or the region no edge to measure to. The
+/// region was once named by a shape with an empty instance id.
+fn bordering_shape(region: &Region, design: &Targets) -> Result<ShapeRef, CamError> {
     let outlines: Vec<_> = std::iter::once(region.outer())
         .chain(region.holes())
         .map(dc_geometry::Contour::polyline)
         .collect();
-    design
-        .contours
-        .iter()
-        .filter_map(|(shape, contour)| {
-            let probe = contour.polyline().vertices().first()?.point();
-            let gap_mm = outlines
-                .iter()
-                .filter_map(|o| nearest_point(o, probe))
-                .map(|n| n.gap_mm)
-                .reduce(f64::min)?;
-            Some((shape, gap_mm))
-        })
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map_or_else(
-            || ShapeRef {
-                instance: InstanceId::new(""),
-                instance_name: String::new(),
-                profile: 0,
-            },
-            |(shape, _)| shape.clone(),
-        )
+    let mut nearest: Option<(&ShapeRef, f64)> = None;
+    for (shape, contour) in &design.contours {
+        let probe = contour
+            .polyline()
+            .vertices()
+            .first()
+            .ok_or_else(|| CamError::internal("a design outline has no vertex"))?
+            .point();
+        let gap_mm = outlines
+            .iter()
+            .filter_map(|o| nearest_point(o, probe))
+            .map(|n| n.gap_mm)
+            .reduce(f64::min)
+            .ok_or_else(|| CamError::internal("a male Inlay's band region has no edge"))?;
+        // The first of the outlines as near.
+        if nearest.is_none_or(|(_, best_mm)| gap_mm.total_cmp(&best_mm).is_lt()) {
+            nearest = Some((shape, gap_mm));
+        }
+    }
+    nearest
+        .map(|(shape, _)| shape.clone())
+        .ok_or_else(|| CamError::internal("a male Inlay's band borders no outline of its design"))
 }
 
 /// The ridges the V-bit leaves on the floor of `board` of Inlay `op`,
@@ -914,7 +940,8 @@ pub fn generate_inlay_board(
             vec![Warning::InlayMaleBoardUnset { op: op.id.clone() }],
         ));
     }
-    let (mut runs, warnings) = generate_on(&on_board(project, op, board), op, board)?;
+    let (mut runs, warnings) =
+        generate_on(&on_board(project, op, board), op, board).map_err(|e| e.for_op(&op.id))?;
     for run in &mut runs {
         run.board = board;
     }
@@ -953,20 +980,14 @@ fn generate_on(
     // Step 1: the flank is engaged from the stock top, so the plug above
     // the male's start plane counts (security review H4).
     let engaged_mm = values.engagement_mm();
-    if engaged_mm > bit.cone_mm + EPS_MM {
+    // The error names the first shape carved; with none, nothing is carved
+    // and no flank is engaged.
+    if engaged_mm > bit.cone_mm + EPS_MM
+        && let Some(shape) = side.targets.shapes.first()
+    {
         return Err(CamError::VBitConeExceeded {
             op: op.id.clone(),
-            shape: Box::new(
-                side.targets
-                    .shapes
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| ShapeRef {
-                        instance: InstanceId::new(""),
-                        instance_name: String::new(),
-                        profile: 0,
-                    }),
-            ),
+            shape: Box::new(shape.clone()),
             depth_mm: engaged_mm,
             cone_mm: bit.cone_mm,
             limit: bit.limit,

@@ -183,11 +183,19 @@ fn a_hairline_in_a_large_piece_is_measured() {
 fn median_is_length_weighted() {
     // Two short narrow edges and one long wide one: the median is the
     // wide one, whatever the count.
-    let profile = WidthProfile::from_samples(vec![(1.0, 1.0), (1.0, 1.0), (5.0, 10.0)]);
+    let profile =
+        WidthProfile::from_samples(vec![(1.0, 1.0), (1.0, 1.0), (5.0, 10.0)]).expect("a profile");
     assert_approx_eq!(profile.median_mm(), 5.0, 1e-12);
     assert_approx_eq!(profile.min_mm(), 1.0, 1e-12);
-    let balanced = WidthProfile::from_samples(vec![(1.0, 6.0), (5.0, 4.0)]);
+    let balanced = WidthProfile::from_samples(vec![(1.0, 6.0), (5.0, 4.0)]).expect("a profile");
     assert_approx_eq!(balanced.median_mm(), 1.0, 1e-12);
+}
+
+/// Code review finding 1.2: with no sample there is no profile, where a
+/// median and a minimum of 0 mm once stood for one.
+#[test]
+fn no_samples_make_no_profile() {
+    assert_eq!(WidthProfile::from_samples(Vec::new()), None);
 }
 
 #[test]

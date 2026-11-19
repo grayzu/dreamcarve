@@ -32,11 +32,11 @@ pub use history::{History, MAX_UNDO_STEPS};
 pub use ids::{BitmapId, DefinitionId, InstanceId, OperationId, TabId, ToolId};
 pub use inlay::{
     BandEdge, BandSource, BitRounding, BoundaryInstance, BoundaryProblem, CornerKind,
-    DrawnBoundary, EdgePass, GlueGapBelowBall, INLAY_MERGE_MM, MaleBand, PlugDepthBelowBall,
-    RoundedDesign, RoundingChange, SEAT_TAPER_STEP_DEG, SEAT_TIP_STEP_MM, SeatSensitivity,
-    TooNarrow, band_edge, band_edge_of, boundary_instance, boundary_regions, drawn_boundary,
-    edge_pass, glue_gap_below_ball, inlay_profile, inlay_seat_sensitivity, male_band,
-    plug_depth_below_ball, rounded_design, rounded_for_bit, seat_sensitivity,
+    DrawnBoundary, EdgePass, GlueGapBelowBall, INLAY_MERGE_MM, MaleBand, NarrowestBand,
+    PlugDepthBelowBall, RoundedDesign, RoundingChange, SEAT_TAPER_STEP_DEG, SEAT_TIP_STEP_MM,
+    SeatSensitivity, TooNarrow, band_edge, band_edge_of, boundary_instance, boundary_regions,
+    drawn_boundary, edge_pass, glue_gap_below_ball, inlay_profile, inlay_seat_sensitivity,
+    male_band, plug_depth_below_ball, rounded_design, rounded_for_bit, seat_sensitivity,
 };
 pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, MigrationNote, migrate, migrate_with_notes};

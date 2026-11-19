@@ -59,18 +59,30 @@ pub struct Gap {
 }
 
 /// The widths along a region ([`local_widths`]): one sample for each edge
-/// of its medial axis, as `(width_mm, length_mm)`, sorted by width.
+/// of its medial axis, as `(width_mm, length_mm)`, sorted by width. It
+/// has at least one sample, so its narrowest and its median are widths
+/// that were measured.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidthProfile {
     samples: Vec<(f64, f64)>,
+    /// The narrowest sample's width, mm.
+    narrowest_mm: f64,
+    /// The widest sample's width, mm.
+    widest_mm: f64,
 }
 
 impl WidthProfile {
-    /// A profile of `samples`, `(width_mm, length_mm)`, sorted here.
-    /// `None`-free: an empty profile has median and minimum 0.
-    pub(crate) fn from_samples(mut samples: Vec<(f64, f64)>) -> Self {
+    /// A profile of `samples`, `(width_mm, length_mm)`, sorted here;
+    /// `None` with no sample, where there is no width to report (a median
+    /// and a minimum of 0 once stood for it).
+    pub(crate) fn from_samples(mut samples: Vec<(f64, f64)>) -> Option<Self> {
         samples.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
-        Self { samples }
+        let (&(narrowest_mm, _), &(widest_mm, _)) = (samples.first()?, samples.last()?);
+        Some(Self {
+            samples,
+            narrowest_mm,
+            widest_mm,
+        })
     }
 
     /// The samples, `(width_mm, length_mm)`, narrowest first.
@@ -80,7 +92,7 @@ impl WidthProfile {
     }
 
     /// The length-weighted median width, mm: the width below which half
-    /// of the axis's length lies. 0 for an empty profile.
+    /// of the axis's length lies.
     #[must_use]
     pub fn median_mm(&self) -> f64 {
         let total_mm: f64 = self.samples.iter().map(|s| s.1).sum();
@@ -91,13 +103,15 @@ impl WidthProfile {
                 return width_mm;
             }
         }
-        self.samples.last().map_or(0.0, |s| s.0)
+        // Half the length is reached by the last sample at the latest,
+        // unless a length is not a number: the widest stands then.
+        self.widest_mm
     }
 
-    /// The narrowest width, mm. 0 for an empty profile.
+    /// The narrowest width, mm.
     #[must_use]
     pub fn min_mm(&self) -> f64 {
-        self.samples.first().map_or(0.0, |s| s.0)
+        self.narrowest_mm
     }
 }
 
@@ -205,7 +219,7 @@ pub fn local_widths(region: &Region, tolerance_mm: f64) -> Option<WidthProfile> 
             }
         }
     }
-    (!samples.is_empty()).then(|| WidthProfile::from_samples(samples))
+    WidthProfile::from_samples(samples)
 }
 
 /// The narrowest gap between `regions` (nested by [`crate::nest`]),
