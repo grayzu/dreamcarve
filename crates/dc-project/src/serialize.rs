@@ -24,7 +24,8 @@ use crate::layout::DcvFormatter;
 use crate::locate::{PathSegment, SourceMap, TextPosition};
 use crate::migrate::{MigrationNote, migrate_with_notes};
 use crate::model::{
-    BoreOp, DrillOp, EngraveOp, PhotoVCarveOp, PocketOp, ProfileOp, Project, VCarveOp,
+    BoreOp, DrillOp, EngraveOp, InlayOp, Operation, PhotoVCarveOp, PocketOp, ProfileOp, Project,
+    VCarveOp,
 };
 use crate::post_processor::PostProcessorError;
 use crate::validate::{Problem, validate};
@@ -325,18 +326,44 @@ fn operation_error(root: &Value, path: &[PathSegment]) -> Option<PathError> {
     }
     let mut fields = root.get(key)?.get(*i)?.as_object()?.clone();
     let kind = fields.shift_remove("kind")?;
-    let fields = Value::Object(fields);
-    // One arm per `Operation` variant, by its `kind`.
-    match kind.as_str()? {
-        "profile" => serde_path_to_error::deserialize::<_, ProfileOp>(&fields).err(),
-        "pocket" => serde_path_to_error::deserialize::<_, PocketOp>(&fields).err(),
-        "drill" => serde_path_to_error::deserialize::<_, DrillOp>(&fields).err(),
-        "bore" => serde_path_to_error::deserialize::<_, BoreOp>(&fields).err(),
-        "engrave" => serde_path_to_error::deserialize::<_, EngraveOp>(&fields).err(),
-        "v_carve" => serde_path_to_error::deserialize::<_, VCarveOp>(&fields).err(),
-        "photo_v_carve" => serde_path_to_error::deserialize::<_, PhotoVCarveOp>(&fields).err(),
-        _ => None,
-    }
+    variant_error(kind.as_str()?, &Value::Object(fields))
+}
+
+/// Builds `variant_error` from [`Operation`]'s variants, each listed as
+/// `Variant(Struct) = "kind"`. The list cannot fall behind the enum
+/// (#712): the `match` on an `Operation` below has no wildcard arm, so a
+/// variant the list lacks does not compile, nor does a struct that is not
+/// its variant's. That each `kind` is the tag serde writes is the test
+/// `every_operation_kind_reports_its_field`'s to hold.
+macro_rules! operation_variants {
+    ($($variant:ident($fields:ty) = $kind:literal),+ $(,)?) => {
+        /// The error of reading `fields`, an operation's without its
+        /// `kind`, as the struct of the variant `kind` tags. `None` when
+        /// they read, or no variant has that tag.
+        fn variant_error(kind: &str, fields: &Value) -> Option<PathError> {
+            match kind {
+                $($kind => serde_path_to_error::deserialize::<_, $fields>(fields).err(),)+
+                _ => None,
+            }
+        }
+
+        const _: fn(&Operation) = |operation| match operation {
+            $(Operation::$variant(fields) => {
+                let _: &$fields = fields;
+            })+
+        };
+    };
+}
+
+operation_variants! {
+    Profile(ProfileOp) = "profile",
+    Pocket(PocketOp) = "pocket",
+    Drill(DrillOp) = "drill",
+    Bore(BoreOp) = "bore",
+    Engrave(EngraveOp) = "engrave",
+    VCarve(VCarveOp) = "v_carve",
+    Inlay(InlayOp) = "inlay",
+    PhotoVCarve(PhotoVCarveOp) = "photo_v_carve",
 }
 
 /// Where the value at `path` starts in the file. An unknown field inside
