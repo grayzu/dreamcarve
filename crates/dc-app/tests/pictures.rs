@@ -867,7 +867,12 @@ fn a_photo_v_carves_picture_is_marked_as_its_target() {
     let op1 = harness.app.project().operations[0].id().clone();
     assert!(harness.app.scene().targets().is_none());
     harness.app.edit(Some(op1.clone()));
-    let marks = harness.app.scene().targets().expect("op1 is marked").clone();
+    let marks = harness
+        .app
+        .scene()
+        .targets()
+        .expect("op1 is marked")
+        .clone();
     assert_eq!(marks.op, op1);
     assert!(marks.targets.is_empty(), "no shape is its target");
     assert_eq!(marks.picture, Some(b("b1")));

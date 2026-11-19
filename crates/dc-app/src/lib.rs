@@ -16,6 +16,7 @@ pub mod library;
 pub mod mixed;
 pub mod onboarding;
 pub mod operations;
+pub mod pictures;
 pub mod prefs;
 pub mod project;
 pub mod properties;

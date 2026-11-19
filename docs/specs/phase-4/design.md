@@ -183,6 +183,7 @@ pub enum Command {
     ImportPicture { name: String, pixels: Arc<Grayscale>, size: PictureSize },   // `picture_into` at the stock's corner; ids are `apply`'s
     SetBitmapFlags { ids: Vec<BitmapId>, visible: Option<bool>, locked: Option<bool> },
     RenameBitmap { id: BitmapId, name: String }, DeleteBitmaps(Vec<BitmapId>),
+    MoveBitmaps { ids: Vec<BitmapId>, dx_mm: f64, dy_mm: f64 },   // refused when any is locked
     TransformInstances { ids: Vec<InstanceId>, delta: Transform },   // about the selection's centre
     SetInstanceFlags { ids: Vec<InstanceId>, visible: Option<bool>, locked: Option<bool> },
     RenameInstance { id: InstanceId, name: String }, DuplicateInstances(Vec<InstanceId>), DeleteInstances(Vec<InstanceId>),
@@ -257,6 +258,23 @@ returns the sheet's model for a drawing or a picture. `App::import_drawing`,
 `import_picture`, `new_from_drawing` and `new_from_picture` run a sheet.
 The Design Tree's Pictures rows are `tree::BitmapRow`s, listed with the
 rest by `Tree::rows`.
+
+A picture is selected and placed through `dc_app::pictures` (slice 15).
+`App::selected_pictures` holds the selection and `App::click_picture`
+changes it; `pick::picture_under` is the picture a click selects when
+`pick` finds nothing above it. `pictures::properties` gives the
+Properties panel a `properties::Placement`, so a picture's X, Y, W and H
+are a shape's fields, with its pixel size beside them; `pictures::edit`
+and `pictures::move_by` return the `MoveBitmaps` a typed value, a drag or
+a nudge is. The selected pictures and the picked picture are kept beside
+`Selection` and `Hit` until the window is wired for them; they are the
+variants `Selection::Bitmaps` and `Hit::Bitmap`. A Photo V-Carve's
+Picture row is likewise a `FieldKind::Choice` with no fixed options
+(`Row::picks_picture`), served by `editor::offered_pictures`,
+`picture_text` and `set_picture`, until `FieldKind` gains a picture
+picker. *Add ▸ Photo V-Carve* reads the selected pictures through
+`operations::add_menu_with` and `add_with`; `photo_target` decides the
+picture.
 
 ### Digest and staleness
 
@@ -584,7 +602,7 @@ before merge.
 
 ```
 crates/dc-job/src/{lib.rs, build.rs (build, generate_operation, finish, Findings, Tier), names.rs (program_names), summary.rs (extents, estimates, carve_facts, describe_carves), report.rs, setup_sheet.rs (review: render), preview.rs (render, marks; moved), project_from.rs (drawing, picture; moved from init.rs), import.rs (drawing_into), tabs.rs (place_request and re-exports)}
-crates/dc-app/src/{lib.rs, app.rs (App, SnapshotId, dirty), command.rs (Command, apply, label, CommandError), history.rs (labels beside dc_project::History), selection.rs, view.rs (View, Visibility, ColourMode), generation.rs (digest, Job, JobResult, staleness), scene.rs (Scene, male board offset), viewport/{camera.rs, pick.rs, handles.rs, arrows.rs (port), tabs.rs (tab_drag)}, editor/{fields.rs (the capability 68 table), set.rs (key-path set/get), targets.rs, clearing.rs}, tree.rs, warnings.rs (merge, tiers, grouping), export.rs (plan), library.rs (filter; port), units.rs, strings.rs (+ build.rs, strings/en.toml), prefs.rs, test_support.rs (Harness)}
+crates/dc-app/src/{lib.rs, app.rs (App, SnapshotId, dirty), command.rs (Command, apply, label, CommandError), history.rs (labels beside dc_project::History), selection.rs, view.rs (View, Visibility, ColourMode), generation.rs (digest, Job, JobResult, staleness), scene.rs (Scene, male board offset), viewport/{camera.rs, pick.rs, handles.rs, arrows.rs (port), tabs.rs (tab_drag)}, editor/{fields.rs (the capability 68 table), set.rs (key-path set/get), targets.rs, clearing.rs}, tree.rs, pictures.rs (a picture's Properties and moves), warnings.rs (merge, tiers, grouping), export.rs (plan), library.rs (filter; port), units.rs, strings.rs (+ build.rs, strings/en.toml), prefs.rs, test_support.rs (Harness)}
 crates/dreamcarve-app/src/{main.rs (eframe entry, --open), shell/{window.rs, menu.rs, toolbar.rs, status.rs, files.rs (open/save/recent/unsaved), worker.rs (thread, channels), theme.rs (tokens → Visuals), strings.rs (loader)}, panels/{tree.rs, properties.rs, project.rs, operations.rs, editor.rs (renderers per field kind), tools.rs, library.rs (window), warnings.rs, export.rs (sheet), import.rs (sheet), empty.rs}, viewport/{mod.rs, renderer.rs (wgpu callback, buffers, shader.wgsl), lod.rs, handles.rs, cursor.rs}, widgets/{unit_field.rs, segmented.rs, section.rs, row.rs, icon.rs, tabs.rs}}
 crates/dreamcarve-app/assets/{fonts/, icons/, strings/ (symlink or include of dc-app's table)}
 crates/dreamcarve-shell/src/{lib.rs, staged.rs (StagedFile, commit_all; moved from cli.rs), config_dir.rs (moved from config.rs), config.rs (config.toml), gui_prefs.rs (gui.toml), read.rs (read_capped, MAX_FILE_BYTES)}
@@ -694,6 +712,7 @@ carries. The CLI's existing tests are the regression net for slice 1.
 - `editor::fields_table_matches_the_records` (acc 73, table-driven over every kind), `editor::set_and_get_by_key_path_round_trip`, `editor::tool_derived_defaults_show_the_tools_value_and_write_null`, `editor::located_warning_matches_its_row`.
 - `operations::add_targets_the_selection_with_cli_defaults` (acc 72), `operations::add_menu_partitions_by_eligibility`, `operations::reorder_enable_duplicate` (acc 74), `operations::delete_keeps_placed_tabs`.
 - `editor::clearing_list_orders_and_warns` (acc 75), `editor::inlay_both_boards` (acc 76, after #498), `editor::photo_v_carve_fields` (acc 77, after 3.5), `editor::drill_cycle_fields_follow_the_cycle`, `editor::profile_tab_request_and_place_tabs` (acc 78).
+- Slice 15, a picture selected and placed: `editor::photo_needs_a_picture_target`, `pictures::a_click_inside_a_footprint_picks_the_picture_under_everything_else`, `pictures::a_picture_is_selected_from_its_row_or_the_viewport`, `pictures::a_pictures_properties_are_its_position_size_and_pixels`, `pictures::moving_a_picture_is_one_undo_step_and_takes_its_grooves_along`, `pictures::a_photo_v_carves_picture_is_marked_as_its_target`, `pictures::a_bitmap_rows_menu_adds_a_photo_v_carve_on_it`.
 
 **Export (slice 18)**
 - `export::plan_waits_for_generation`, `export::plan_lists_programs_as_the_cli_prints_them`, `export::board_tick_filters_without_saving` (acc 76, 85), `export::errors_disable_warnings_do_not` (acc 84), `export::override_not_saved` (acc 85), `export::preview_svg_equals_the_cli` (acc 83).

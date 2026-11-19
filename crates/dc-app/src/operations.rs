@@ -12,8 +12,13 @@
 //! one sentence says to select shapes. A shape takes a Pocket, a V-Carve or
 //! an Inlay when it has a closed outline, a Drill or a Bore when it has a
 //! circle (`dc_geometry::as_circle` on the placed outline, as the Drill
-//! generator decides), a Profile or an Engrave always, and a Photo V-Carve
-//! needs a picture, which no project holds before phase 3.5.
+//! generator decides), and a Profile or an Engrave always.
+//!
+//! A Photo V-Carve carves a picture, not shapes (slice 15, #544), so the
+//! shapes selected do not decide it ([`photo_target`]): it needs the
+//! project to have a picture, and carves the selected one, or the only
+//! one. With several pictures and not exactly one selected, its reason
+//! says to select the one to carve.
 //!
 //! A new operation targets the selection, takes the project's first tool
 //! whose type fits (a V-bit for V-Carve, Inlay and Photo V-Carve; an end
@@ -28,9 +33,9 @@
 
 use dc_geometry::as_circle;
 use dc_project::{
-    BoreOp, ClearanceStrategy, DrillCycle, DrillOp, EngraveOp, InlayOp, InstanceId, MaleBoard,
-    Operation, OperationId, PocketOp, Project, Tool, ToolId, ToolKind, VCarveOp, VCarveStrategy,
-    WallPass,
+    BitmapId, BoreOp, ClearanceStrategy, DrillCycle, DrillOp, EngraveOp, InlayOp, InstanceId,
+    MaleBoard, Operation, OperationId, PocketOp, Project, Tool, ToolId, ToolKind, VCarveOp,
+    VCarveStrategy, WallPass,
 };
 
 use crate::app::App;
@@ -57,7 +62,7 @@ pub enum Kind {
     VCarve,
     /// A V-bit inlay, both boards.
     Inlay,
-    /// Carve a picture in grooves (phase 3.5; no record before it).
+    /// Carve a picture in grooves.
     PhotoVCarve,
 }
 
@@ -121,8 +126,8 @@ impl Kind {
 /// The Add menu for a selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddMenu {
-    /// The one sentence shown above a list that offers nothing, when
-    /// nothing is selected.
+    /// The one sentence shown above the list while no shape is selected:
+    /// why the kinds that cut shapes are not offered.
     pub prompt: Option<String>,
     /// The kinds the selection can take, in [`Kind::ALL`]'s order.
     pub available: Vec<Kind>,
@@ -161,7 +166,28 @@ fn outlines(project: &Project, id: &InstanceId) -> Outlines {
     found
 }
 
-/// Why `kind` cannot take the shapes `of`, or `None` when it can.
+/// The picture a new Photo V-Carve carves (capability 65; slice 15, #544),
+/// given the pictures `selected`: the selected one, or with none selected
+/// the project's only one.
+///
+/// # Errors
+///
+/// The reason the Add menu shows instead: the project has no picture, or
+/// it has several and not exactly one of them is selected. A selected id
+/// the project does not have is not a picture.
+pub fn photo_target(project: &Project, selected: &[BitmapId]) -> Result<BitmapId, StrKey> {
+    let has = |id: &BitmapId| project.bitmaps.iter().any(|b| b.id == *id);
+    let selected: Vec<&BitmapId> = selected.iter().filter(|id| has(id)).collect();
+    match (project.bitmaps.as_slice(), selected.as_slice()) {
+        ([], _) => Err(StrKey::OperationsReasonPicture),
+        (_, [one]) => Ok((*one).clone()),
+        ([only], []) => Ok(only.id.clone()),
+        _ => Err(StrKey::OperationsReasonOnePicture),
+    }
+}
+
+/// Why `kind` cannot take the shapes `of`, or `None` when it can. A Photo
+/// V-Carve takes no shapes: [`photo_target`] decides it.
 fn refusal(kind: Kind, of: &[Outlines]) -> Option<StrKey> {
     match kind {
         Kind::Profile | Kind::Engrave => None,
@@ -176,32 +202,52 @@ fn refusal(kind: Kind, of: &[Outlines]) -> Option<StrKey> {
             (!of.iter().all(|o| o.circle)).then_some(StrKey::OperationsReasonCircleDrill)
         }
         Kind::Bore => (!of.iter().all(|o| o.circle)).then_some(StrKey::OperationsReasonCircleBore),
-        Kind::PhotoVCarve => Some(StrKey::OperationsReasonPicture),
+        Kind::PhotoVCarve => None,
     }
 }
 
-/// The Add menu for the shapes `selected` (capability 65; acceptance 72).
+/// The Add menu for the shapes `selected` with no picture selected
+/// (capability 65; acceptance 72): [`add_menu_with`], which the window
+/// calls once it holds a selection of pictures.
 #[must_use]
 pub fn add_menu(project: &Project, strings: &Strings, selected: &[InstanceId]) -> AddMenu {
-    if selected.is_empty() {
-        return AddMenu {
-            prompt: Some(strings.get(StrKey::OperationsAddSelectShapes).to_owned()),
-            available: Vec::new(),
-            unavailable: Kind::ALL.iter().map(|k| (*k, None)).collect(),
-        };
-    }
+    add_menu_with(project, strings, selected, &[])
+}
+
+/// The Add menu for the shapes `selected` and the pictures `pictures`
+/// selected ([`crate::App::selected_pictures`]; capability 65). The kinds
+/// that cut shapes are offered when every selected shape can take them,
+/// and with no shape selected one sentence says to select some. A Photo
+/// V-Carve is offered when there is a picture for it to carve
+/// ([`photo_target`]), whatever shapes are selected, and listed with its
+/// reason otherwise.
+#[must_use]
+pub fn add_menu_with(
+    project: &Project,
+    strings: &Strings,
+    selected: &[InstanceId],
+    pictures: &[BitmapId],
+) -> AddMenu {
     let of: Vec<Outlines> = selected.iter().map(|id| outlines(project, id)).collect();
     let mut menu = AddMenu {
-        prompt: None,
+        prompt: selected
+            .is_empty()
+            .then(|| strings.get(StrKey::OperationsAddSelectShapes).to_owned()),
         available: Vec::new(),
         unavailable: Vec::new(),
     };
     for kind in Kind::ALL {
-        match refusal(kind, &of) {
+        let refused = match kind {
+            Kind::PhotoVCarve => photo_target(project, pictures).err().map(Some),
+            // The prompt says it for every kind that cuts shapes.
+            _ if selected.is_empty() => Some(None),
+            _ => refusal(kind, &of).map(Some),
+        };
+        match refused {
             None => menu.available.push(kind),
             Some(reason) => menu
                 .unavailable
-                .push((kind, Some(strings.get(reason).to_owned()))),
+                .push((kind, reason.map(|key| strings.get(key).to_owned()))),
         }
     }
     menu
@@ -237,9 +283,25 @@ fn next_id(project: &Project) -> OperationId {
     OperationId::new(crate::command::next_free_id(&taken, "op"))
 }
 
+/// A new Photo V-Carve of bitmap `image` (slice 15, #544): `init`'s
+/// ([`dc_job::project_from::default_photo_v_carve`]: no maximum depth,
+/// which is the user's (S20), raster grooves at 22.5° 1.1 groove widths
+/// apart), with the project's first V-bit (or none, the empty id) and the
+/// next free name and id.
+#[must_use]
+pub fn new_photo_v_carve(project: &Project, strings: &Strings, image: &BitmapId) -> Operation {
+    let tool = fitting_tool(project, Kind::PhotoVCarve).unwrap_or_else(|| ToolId::new(""));
+    let mut photo = dc_job::project_from::default_photo_v_carve(image.clone(), tool);
+    photo.id = next_id(project);
+    photo.name = next_name(project, strings, Kind::PhotoVCarve);
+    Operation::PhotoVCarve(photo)
+}
+
 /// A new operation of `kind` on `targets` with the CLI's defaults, the
 /// first fitting tool (or none, the empty id) and the next free name and
-/// id; `None` for a Photo V-Carve, which has no record before phase 3.5.
+/// id. A Photo V-Carve has no targets: it carves the project's only
+/// picture ([`photo_target`] with none selected; [`new_photo_v_carve`]
+/// names one), and is `None` when that does not decide one.
 #[must_use]
 pub fn new_operation(
     project: &Project,
@@ -357,12 +419,15 @@ pub fn new_operation(
             safe_z_mm,
             cut_out: None,
         }),
-        Kind::PhotoVCarve => return None,
+        Kind::PhotoVCarve => {
+            let image = photo_target(project, &[]).ok()?;
+            new_photo_v_carve(project, strings, &image)
+        }
     })
 }
 
-/// *Add ▸ `kind`* on the shapes `selected`: `None` when the menu does not
-/// offer the kind for them.
+/// *Add ▸ `kind`* on the shapes `selected` with no picture selected:
+/// [`add_with`]. `None` when the menu does not offer the kind for them.
 #[must_use]
 pub fn add(
     project: &Project,
@@ -370,13 +435,34 @@ pub fn add(
     kind: Kind,
     selected: &[InstanceId],
 ) -> Option<Command> {
-    if !add_menu(project, strings, selected)
+    add_with(project, strings, kind, selected, &[])
+}
+
+/// *Add ▸ `kind`* on the shapes `selected` and the pictures `pictures`
+/// selected: `None` when [`add_menu_with`] does not offer the kind for
+/// them. A Photo V-Carve carves [`photo_target`]'s picture; every other
+/// kind targets the shapes.
+#[must_use]
+pub fn add_with(
+    project: &Project,
+    strings: &Strings,
+    kind: Kind,
+    selected: &[InstanceId],
+    pictures: &[BitmapId],
+) -> Option<Command> {
+    if !add_menu_with(project, strings, selected, pictures)
         .available
         .contains(&kind)
     {
         return None;
     }
-    new_operation(project, strings, kind, selected).map(Command::AddOperation)
+    let operation = if kind == Kind::PhotoVCarve {
+        let image = photo_target(project, pictures).ok()?;
+        new_photo_v_carve(project, strings, &image)
+    } else {
+        new_operation(project, strings, kind, selected)?
+    };
+    Some(Command::AddOperation(operation))
 }
 
 /// Moving operation `id` to position `to`, or `None` when it is there.

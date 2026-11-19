@@ -3038,7 +3038,7 @@ fn photo_v_carve_fields() {
     );
 
     // Each edit is one step named for its field.
-    let mut typed = |h: &mut dc_app::test_support::Harness, key: &str, text: &str| {
+    let typed = |h: &mut dc_app::test_support::Harness, key: &str, text: &str| {
         let op = op_of(h, "op1");
         let edit = editor::commit_text(h.app.project(), &op, row_of(&op, key), text);
         run_edit(h, edit)
@@ -3226,7 +3226,7 @@ fn photo_v_carve_fields() {
             _ => None,
         })
         .expect("check counts the grooves");
-    assert_eq!(depth, "2 mm");
+    assert_eq!(depth, "2.000 mm", "as check writes a length");
     assert!(count > 1, "{count} grooves");
     assert!(
         check[0].contains(&format!("{count} grooves {width} wide")),
@@ -3255,7 +3255,7 @@ fn photo_v_carve_fields() {
     assert_eq!(
         bar.message,
         Some(format!(
-            "Photo V-Carve · {count} grooves {width} wide, to 2 mm"
+            "Photo V-Carve · {count} grooves {width} wide, to {depth}"
         ))
     );
     assert_eq!(bar.message_op, Some(id));
@@ -3340,7 +3340,10 @@ fn photo_needs_a_picture_target() {
     init.name = "Photo V-Carve 1".into();
     assert_eq!(photo, &init, "init's defaults, the picture, the V-bit");
     assert_eq!(photo.max_depth_mm, None, "no depth of the app's own (S20)");
-    assert!(added.targets().is_empty(), "it carves a picture, not shapes");
+    assert!(
+        added.targets().is_empty(),
+        "it carves a picture, not shapes"
+    );
     assert_eq!(h.app.editing(), Some(added.id()), "and the editor shows it");
 
     // Several pictures: the selected one; with none selected, or more

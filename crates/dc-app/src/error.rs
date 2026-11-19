@@ -18,9 +18,17 @@ use dc_project::{
 pub enum CommandError {
     /// A transform named a locked instance (functional spec, capability
     /// 58). `names` are the locked instances', in selection order.
-    #[error("{}", locked_text(names))]
+    #[error("{}", locked_text("shape", names))]
     Locked {
         /// The locked instances' names.
+        names: Vec<String>,
+    },
+    /// A move or a resize named a locked picture (functional spec,
+    /// capabilities 56 and 58). `names` are the locked bitmaps', in
+    /// selection order.
+    #[error("{}", locked_text("picture", names))]
+    PictureLocked {
+        /// The locked bitmaps' names.
         names: Vec<String>,
     },
     /// A command that acts on a selection was given none.
@@ -161,13 +169,14 @@ pub enum CommandError {
     Library(#[from] dc_library::LibraryError),
 }
 
-/// `shape “A” is locked` or `shapes “A” and “B” are locked`.
-fn locked_text(names: &[String]) -> String {
+/// `shape “A” is locked` or `shapes “A” and “B” are locked`, for a `what`
+/// of `shape`; a picture's the same.
+fn locked_text(what: &str, names: &[String]) -> String {
     let quoted: Vec<String> = names.iter().map(|n| format!("“{n}”")).collect();
     match quoted.as_slice() {
         [] => "the selection is locked".to_owned(),
-        [one] => format!("shape {one} is locked"),
-        _ => format!("shapes {} are locked", join_and(&quoted)),
+        [one] => format!("{what} {one} is locked"),
+        _ => format!("{what}s {} are locked", join_and(&quoted)),
     }
 }
 
@@ -199,6 +208,13 @@ mod tests {
             names: vec!["Oval".into(), "Star".into()],
         };
         assert_eq!(two.to_string(), "shapes “Oval” and “Star” are locked");
+        let pictures = CommandError::PictureLocked {
+            names: vec!["portrait".into(), "frame".into()],
+        };
+        assert_eq!(
+            pictures.to_string(),
+            "pictures “portrait” and “frame” are locked"
+        );
     }
 
     #[test]

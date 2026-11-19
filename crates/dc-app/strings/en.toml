@@ -411,7 +411,7 @@ footprint = "Footprint"
 footprint_at = "{width} × {height} at ({x}, {y})"
 grooves = "Grooves"
 grooves_wide = "{count}, {width} wide at the full depth of {depth}"
-summary_grooves = "{count} grooves to {depth}"
+summary_grooves = "{count} grooves {width} wide, to {depth}"
 female_board = "Female board"
 male_board = "Male board"
 summary = "{name} · {facts}"
@@ -586,6 +586,9 @@ reason_open_inlay = "An open path cannot take an Inlay"
 reason_circle_drill = "A Drill needs circles"
 reason_circle_bore = "A Bore needs circles"
 reason_picture = "A Photo V-Carve needs a picture"
+# Slice 15 (#544): with several pictures, the one to carve is the one
+# selected.
+reason_one_picture = "Select the picture to carve"
 
 # The operation kinds as the list, the Add menu and the editor's title
 # name them (the chapters' names).
@@ -687,6 +690,11 @@ inlay_base = "base under the band {base} (at least {least})"
 inlay_engagement_tapered = "flank engagement {engagement} of the tapered ball nose's {height} cutting height"
 inlay_engagement_tapered_unset = "flank engagement {engagement}; set the tapered ball nose's tip, taper and flute length to compare it with its cutting height"
 inlay_seat = "seat: moves {taper} mm per {taper_step}° of taper, {tip} mm per {tip_step} mm of tip radius; test-fit before gluing"
+# Slice 15 (#544): a Photo V-Carve's Picture row when the bitmap it names
+# is gone, and how a closed Strategy group words its grooves.
+picture_missing = "{id} · not in the project"
+summary_line_angle = "angle {value}"
+summary_line_spacing = "spacing {value}"
 
 # The editor's groups, in capability 66's order.
 [editor.group]
@@ -868,6 +876,24 @@ cut_out_tabs_help = "Off cuts the plug free on the last pass; on, tabs hold it t
 cut_out_tab_height_help = "How high each tab's top stands above the bottom of the male board."
 cut_out_allowance = "Cut-out allowance"
 cut_out_allowance_help = "How far below the male board the last pass goes, into the spoilboard; 0.2 mm is usual."
+# Slice 15 (#544): the Photo V-Carve's fields (the Photo V-Carve
+# chapter's). Its target is a picture, chosen from the project's.
+picture = "Picture"
+picture_help = "The picture to carve, one of the project's; its footprint is where the grooves are cut."
+max_depth = "Max depth"
+max_depth_help = "How deep black is carved below the start plane: above 0 and at most the V-bit's cone height."
+invert = "Invert"
+invert_help = "Off carves black deepest, for a light wood; on carves white deepest, for a dark one."
+photo_strategy = "Strategy"
+photo_strategy_help = "One set of parallel grooves (Raster), or a second set across the first (Hatch)."
+line_angle = "Line angle"
+line_angle_help = "The grooves' direction, counterclockwise from the X axis: 0 is along X, 90 along Y. At least 0 and less than 180."
+line_spacing = "Line spacing"
+line_spacing_help = "How far apart the grooves are, as a share of a groove's width at the max depth; below 100 % they overlap."
+sample = "Sample"
+sample_help = "How far apart along a groove the picture is read; each groove is straight moves between these points."
+stepover_retract = "Stepover retract"
+stepover_retract_help = "How far above the start plane the bit lifts to step over to the next groove."
 
 # The choices' names.
 [editor.choice]
@@ -903,6 +929,7 @@ countersink = "Countersink"
 full = "Full"
 chip_break = "Chip break"
 medial = "Medial"
+hatch = "Hatch"
 
 # The Import drawing sheet (slice 6, #535; functional spec, capabilities
 # 51 and 55; mock-up 02).
@@ -1028,6 +1055,12 @@ scale = "Scale {x} % × {y} %"
 rotate = "Rotate {angle}°"
 margin = "Margin"
 fit = "Fit"
+# Slice 15 (#544; capabilities 56 and 58): a selected picture's
+# Properties. Its position and size are a shape's X, Y, W and H; its size
+# in pixels is read-only.
+picture_title_many = "Properties · {count} pictures"
+picture_pixels = "Pixels"
+picture_pixels_value = "{width} × {height} px"
 
 # The Arrange actions (slice 25, #617; functional spec, capability 58a;
 # experience.md, section 7, "Split button"): the toolbar's group, its

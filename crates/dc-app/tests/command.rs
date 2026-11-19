@@ -126,6 +126,7 @@ fn kind(command: &Command) -> &'static str {
         Command::SetBitmapFlags { .. } => "SetBitmapFlags",
         Command::RenameBitmap { .. } => "RenameBitmap",
         Command::DeleteBitmaps(_) => "DeleteBitmaps",
+        Command::MoveBitmaps { .. } => "MoveBitmaps",
         Command::TransformInstances { .. } => "TransformInstances",
         Command::RotateInstances { .. } => "RotateInstances",
         Command::FlipInstances { .. } => "FlipInstances",
@@ -250,8 +251,16 @@ fn every_command() -> Vec<(Project, Command)> {
             },
         ),
         (
-            with_picture,
+            with_picture.clone(),
             Command::DeleteBitmaps(vec![BitmapId::new("b1")]),
+        ),
+        (
+            with_picture,
+            Command::MoveBitmaps {
+                ids: vec![BitmapId::new("b1")],
+                dx_mm: 12.345_678_9,
+                dy_mm: -3.0,
+            },
         ),
         (
             plaque.clone(),
@@ -516,6 +525,14 @@ fn labels_name_the_thing() {
         "Rename “gradient”"
     );
     assert_eq!(label(Command::DeleteBitmaps(b1())), "Delete “gradient”");
+    assert_eq!(
+        label(Command::MoveBitmaps {
+            ids: b1(),
+            dx_mm: 5.0,
+            dy_mm: 0.0,
+        }),
+        "Move “gradient”"
+    );
 }
 
 /// Acceptance 66: a locked instance refuses each transform with a message

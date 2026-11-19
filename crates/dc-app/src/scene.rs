@@ -354,6 +354,10 @@ pub struct TargetMarks {
     pub colour: usize,
     /// The marked instances, in the record's or the draft's order.
     pub targets: Vec<InstanceId>,
+    /// The picture a marked Photo V-Carve carves (slice 15, #544): its
+    /// target, where every other kind's are shapes. It may name a bitmap
+    /// the project no longer has. `None` for any other kind.
+    pub picture: Option<BitmapId>,
 }
 
 /// What the Viewport shows of one snapshot.

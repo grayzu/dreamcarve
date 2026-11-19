@@ -23,6 +23,11 @@
 //! slice 13, #542), so a list's items are edited by the same functions and
 //! drawn by the same renderers. The free functions are the [`Slot::of`]
 //! case.
+//!
+//! A Photo V-Carve carves a picture, not shapes (slice 15, #544): its
+//! Picture row ([`Row::picks_picture`]) offers the project's pictures
+//! ([`offered_pictures`]), shows the one carved ([`picture_text`]) and
+//! writes the one chosen ([`set_picture`]).
 
 pub mod clearing;
 pub mod fields;
@@ -35,8 +40,8 @@ use std::borrow::Cow;
 use dc_geometry::Point;
 use dc_job::{Finding, Tier};
 use dc_project::{
-    Board, DrillCycle, INLAY_MIN_PLUG_BASE_MM, Operation, OperationId, Problem, Project, Tool,
-    ToolId, ToolKind, Units,
+    Bitmap, BitmapId, Board, DrillCycle, INLAY_MIN_PLUG_BASE_MM, Operation, OperationId, Problem,
+    Project, Tool, ToolId, ToolKind, Units,
 };
 use serde_json::{Value, json};
 
@@ -984,6 +989,72 @@ pub fn set_earlier_pocket(
         op,
         pocket.map_or(Value::Null, |id| Value::from(id.as_str())),
     )
+}
+
+/// The pictures a Photo V-Carve's Picture row offers (capability 67;
+/// slice 15, #544): the project's bitmaps, in file order, by id and name.
+/// A hidden or a locked one is offered too: neither flag stops an
+/// operation cutting.
+#[must_use]
+pub fn offered_pictures(project: &Project) -> Vec<(BitmapId, String)> {
+    project
+        .bitmaps
+        .iter()
+        .map(|bitmap| (bitmap.id.clone(), bitmap.name.clone()))
+        .collect()
+}
+
+/// The bitmap Photo V-Carve `op` carves; `None` for another kind, and
+/// when the project has no bitmap of the id its `image` names (the
+/// picture was deleted), which validation reports under the Picture row
+/// (`photo_unknown_bitmap`).
+#[must_use]
+pub fn picture<'p>(project: &'p Project, op: &Operation) -> Option<&'p Bitmap> {
+    let Operation::PhotoVCarve(photo) = op else {
+        return None;
+    };
+    project.bitmaps.iter().find(|b| b.id == photo.image)
+}
+
+/// What the Picture row shows as chosen for Photo V-Carve `op`: its
+/// picture's name, or, when the project no longer has it, the id it still
+/// names (`b2 · not in the project`), so the row never reads as empty
+/// while the file holds a value. `None` for another kind.
+#[must_use]
+pub fn picture_text(project: &Project, strings: &Strings, op: &Operation) -> Option<String> {
+    let Operation::PhotoVCarve(photo) = op else {
+        return None;
+    };
+    Some(picture(project, op).map_or_else(
+        || {
+            strings.fmt(
+                StrKey::EditorPictureMissing,
+                &[("id", photo.image.as_str())],
+            )
+        },
+        |bitmap| bitmap.name.clone(),
+    ))
+}
+
+/// The Picture row's choice: `op` carving bitmap `picture`; `None` when
+/// it carves it already.
+///
+/// # Errors
+///
+/// [`CommandError::FieldRefused`] when the row is not a Picture row
+/// ([`Row::picks_picture`]), or the file refuses it.
+pub fn set_picture(
+    op: &Operation,
+    row: &Row,
+    picture: &BitmapId,
+) -> Result<Option<Command>, CommandError> {
+    if !row.picks_picture() {
+        return Err(CommandError::FieldRefused {
+            field: row.key.to_owned(),
+            reason: "it does not name a picture".to_owned(),
+        });
+    }
+    Slot::of(row).update(op, Value::from(picture.as_str()))
 }
 
 /// A click on the Viewport at `at_mm` (project space, Y-up, mm) while a
