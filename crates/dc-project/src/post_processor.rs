@@ -636,6 +636,19 @@ pub enum PostProcessorError {
 /// and text.
 type Source = (&'static str, u32, &'static str, &'static str);
 
+/// The [`Source`] of one bundled definition, compiled in from
+/// `definitions/<id>/v<version>.json`.
+macro_rules! source {
+    ($id:literal, $version:literal) => {
+        (
+            $id,
+            $version,
+            concat!($id, "/v", $version, ".json"),
+            include_str!(concat!("definitions/", $id, "/v", $version, ".json")),
+        )
+    };
+}
+
 /// Every bundled definition version, compiled in, in listing order: by
 /// id (grblHAL, GRBL, LinuxCNC, Mach3, UCCNC, generic), then oldest
 /// version first. A released version is
@@ -643,102 +656,22 @@ type Source = (&'static str, u32, &'static str, &'static str);
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
 const SOURCES: [Source; 16] = [
-    (
-        "grblhal",
-        1,
-        "grblhal/v1.json",
-        include_str!("definitions/grblhal/v1.json"),
-    ),
-    (
-        "grblhal",
-        2,
-        "grblhal/v2.json",
-        include_str!("definitions/grblhal/v2.json"),
-    ),
-    (
-        "grblhal",
-        3,
-        "grblhal/v3.json",
-        include_str!("definitions/grblhal/v3.json"),
-    ),
-    (
-        "grblhal",
-        4,
-        "grblhal/v4.json",
-        include_str!("definitions/grblhal/v4.json"),
-    ),
-    (
-        "grbl",
-        1,
-        "grbl/v1.json",
-        include_str!("definitions/grbl/v1.json"),
-    ),
-    (
-        "grbl",
-        2,
-        "grbl/v2.json",
-        include_str!("definitions/grbl/v2.json"),
-    ),
-    (
-        "grbl",
-        3,
-        "grbl/v3.json",
-        include_str!("definitions/grbl/v3.json"),
-    ),
-    (
-        "linuxcnc",
-        1,
-        "linuxcnc/v1.json",
-        include_str!("definitions/linuxcnc/v1.json"),
-    ),
-    (
-        "linuxcnc",
-        2,
-        "linuxcnc/v2.json",
-        include_str!("definitions/linuxcnc/v2.json"),
-    ),
-    (
-        "mach3",
-        1,
-        "mach3/v1.json",
-        include_str!("definitions/mach3/v1.json"),
-    ),
-    (
-        "mach3",
-        2,
-        "mach3/v2.json",
-        include_str!("definitions/mach3/v2.json"),
-    ),
-    (
-        "mach3",
-        3,
-        "mach3/v3.json",
-        include_str!("definitions/mach3/v3.json"),
-    ),
-    (
-        "uccnc",
-        1,
-        "uccnc/v1.json",
-        include_str!("definitions/uccnc/v1.json"),
-    ),
-    (
-        "uccnc",
-        2,
-        "uccnc/v2.json",
-        include_str!("definitions/uccnc/v2.json"),
-    ),
-    (
-        "uccnc",
-        3,
-        "uccnc/v3.json",
-        include_str!("definitions/uccnc/v3.json"),
-    ),
-    (
-        "generic",
-        1,
-        "generic/v1.json",
-        include_str!("definitions/generic/v1.json"),
-    ),
+    source!("grblhal", 1),
+    source!("grblhal", 2),
+    source!("grblhal", 3),
+    source!("grblhal", 4),
+    source!("grbl", 1),
+    source!("grbl", 2),
+    source!("grbl", 3),
+    source!("linuxcnc", 1),
+    source!("linuxcnc", 2),
+    source!("mach3", 1),
+    source!("mach3", 2),
+    source!("mach3", 3),
+    source!("uccnc", 1),
+    source!("uccnc", 2),
+    source!("uccnc", 3),
+    source!("generic", 1),
 ];
 
 /// [`SOURCES`] parsed, once per process. The one exception to "no global
