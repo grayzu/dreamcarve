@@ -10,10 +10,10 @@
 //! from toolpaths, then parses it back and checks the safety rules on the
 //! text (`docs/specs/phase-1/design.md`, "Emission").
 
-pub mod arcfit;
+pub(crate) mod arcfit;
 mod ascii;
-pub mod canned;
-pub mod emit;
+pub(crate) mod canned;
+pub(crate) mod emit;
 mod error;
 pub mod estimate;
 pub mod format;

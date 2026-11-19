@@ -58,7 +58,7 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use dc_cam::{Move, MoveKind};
 use dc_geometry::{
-    EPS_MM, Point, Point3, Segment, Vec2, approx_eq, fit_circle_kasa, point_segment_distance_mm,
+    EPS_MM, Point, Point3, Segment, approx_eq, fit_circle_kasa, point_segment_distance_mm,
 };
 use dc_project::ArcFormat;
 
@@ -172,14 +172,6 @@ pub struct SubArc {
     /// Clockwise viewed from +Z (Y-up): `G2` on a machine that does not
     /// mirror the plane.
     pub clockwise: bool,
-}
-
-impl SubArc {
-    /// The I and J words: the centre relative to the start.
-    #[must_use]
-    pub fn centre_offsets(&self) -> Vec2 {
-        self.centre - self.start.xy()
-    }
 }
 
 /// Fits arcs to `moves`, a toolpath in project space, within

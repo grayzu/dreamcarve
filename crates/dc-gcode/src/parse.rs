@@ -184,7 +184,7 @@ pub fn parse_program(text: &str) -> Result<Vec<Block>, ExportError> {
 
 /// Parses `text` into blocks, one per line that has words. A canned-cycle
 /// line (`G81`, `G82`, `G83`, `G73`) is followed by one synthetic block per
-/// move or dwell the controller makes for it ([`crate::canned`]), using
+/// move or dwell the controller makes for it (the `canned` module), using
 /// `model` for what the program does not say.
 ///
 /// # Errors

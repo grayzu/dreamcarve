@@ -20,7 +20,7 @@ use crate::ExportError;
 
 /// Decimal places `format` gives numbers in `units`.
 #[must_use]
-pub fn decimal_places(format: &NumberFormat, units: Units) -> u8 {
+pub(crate) fn decimal_places(format: &NumberFormat, units: Units) -> u8 {
     match units {
         Units::Mm => format.decimal_places.mm,
         Units::Inch => format.decimal_places.inch,
@@ -49,7 +49,11 @@ pub fn format_number(
 /// # Errors
 ///
 /// [`ExportError::NonFiniteNumber`] if `value` is `NaN` or infinite.
-pub fn format_fixed(value: f64, places: u8, format: &NumberFormat) -> Result<String, ExportError> {
+pub(crate) fn format_fixed(
+    value: f64,
+    places: u8,
+    format: &NumberFormat,
+) -> Result<String, ExportError> {
     if !value.is_finite() {
         return Err(ExportError::NonFiniteNumber { value });
     }
@@ -77,7 +81,7 @@ pub fn format_fixed(value: f64, places: u8, format: &NumberFormat) -> Result<Str
 /// The number a controller reads from `text`, a word value this module
 /// wrote. `None` only if `text` is not a number.
 #[must_use]
-pub fn read_back(text: &str) -> Option<f64> {
+pub(crate) fn read_back(text: &str) -> Option<f64> {
     text.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
