@@ -49,10 +49,10 @@ Status is one of: todo, doing, done, owner (waits for the maintainer).
 | A4 | Boundary sweep: the plug 0.182 mm proud at lettering seed 0x47 (#713). Fixed in `dc-geometry/src/medial.rs` (`restore_wall_reach`); all three sweeps pass with 0 failures | done |
 | A5 | Import robustness: DXF stitch and dedupe budget, warning names, read caps, control characters, `init` no-overwrite (review 1.5, 1.6, 1.8, 1.9, 1.12) | done |
 | A6 | `Rates` keeps feed and plunge; a cut outside every operation is refused; the digest hashes bitmaps; wall-clock assertions removed from dc-import and photo (review 1.4, 1.7, 1.10, 1.11). Still open: dc-gcode's `s17_check_is_fast_on_the_sign` and `s9_check_is_fast_*` assert time | done |
-| A7 | A generator's lookup miss is an internal-defect error, `CamError::Internal`, not a skipped pass (review 1.2). Done for the 2.5D generators (about 100 lookups now error, 55 removed). Still to do: `pocket/rings.rs` `RingTree`, `vcarve*`, `inlay.rs`, `relief.rs`, `photo.rs`, dc-geometry | doing |
+| A7 | A generator's lookup miss is an internal-defect error, `CamError::Internal`, not a skipped pass (review 1.2). Done for every generator in dc-cam (about 160 lookups now error, 110 removed, 16 sentinels replaced); the sweeps' totals are identical and none met the new error. Still to do: the interior of dc-geometry (about 275 unclassified pattern hits, mostly `medial.rs`, `merge.rs`, `simplify.rs`, `self_band.rs`, `polyline.rs`); making `medial_axis` and `boolean` fallible changes signatures in dc-import and about 36 call sites | doing |
 
 | A8 | A smooth tab at the end of an open path was cut away: the generator laid the tab's slope inside the clamped span and plunged at the tab's centre. Fixed in `dc-cam/src/tabs.rs`; the safety pass's tab spine now covers Left and Right open paths | done |
-| A9 | `PROPTEST_RNG_SEED=37` fails `random_valid_profiles_never_panic_and_pass_safety`: an Outside Profile, no tabs, helix 0.05, a 0.94 mm bit, `OffMaterial`. The shrunk case is in `docs/alpha-notes/profile-seed-37.txt` | todo |
+| A9 | `PROPTEST_RNG_SEED=37` fails `random_valid_profiles_never_panic_and_pass_safety`: an Outside Profile, no tabs, helix 0.05, a 0.94 mm bit, `OffMaterial`. The shrunk case is in `docs/alpha-notes/profile-seed-37.txt` | doing |
 
 Notes from the fixes:
 
@@ -220,3 +220,7 @@ hides the step panel).
 ### F. Review plan, stage 2
 
 Taken where a slice above already touches the code; the rest after E.
+
+| Slice | What | Status |
+| --- | --- | --- |
+| F1 | dc-project: tests out of the source files (2.25), `Problem` through thiserror with a code macro (2.1), the migration helper and steps array (2.18), the accessor and `SOURCES` macros (2.19), the comment sweep (2.23, 2.24) | doing |
