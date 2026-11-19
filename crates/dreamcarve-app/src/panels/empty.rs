@@ -40,7 +40,7 @@ const CARD_PADDING_PX: f32 = 12.0;
 /// The well an example card's thumbnail sits in, px high.
 const WELL_PX: f32 = THUMBNAIL_HEIGHT_PX + 16.0;
 /// An example card's height, px: the well, the name and one line.
-const CARD_PX: f32 = CARD_PADDING_PX + WELL_PX + 10.0 + 18.0 + 2.0 + 16.0 + CARD_PADDING_PX;
+const CARD_PX: f32 = CARD_PADDING_PX + WELL_PX + 12.0 + 18.0 + 2.0 + 16.0 + CARD_PADDING_PX;
 /// The start screen's buttons, px high.
 const BUTTON_PX: f32 = 40.0;
 /// A block heading's height with the gap under it, px.
@@ -201,7 +201,7 @@ fn example_card(
         TextStyle::Name(theme::MEDIUM_STYLE.into()).resolve(ui.style()),
         palette.text_primary,
     );
-    let name_top = well.bottom() + 10.0;
+    let name_top = well.bottom() + 12.0;
     let line = Rect::from_min_max(
         egui::pos2(inner.left(), name_top + 18.0 + 2.0),
         egui::pos2(inner.right(), inner.bottom()),
@@ -278,8 +278,9 @@ fn example_card(
     response
 }
 
-/// A recent file: its name, then where it is, cut with an ellipsis. The
-/// row is the button, named for the file.
+/// A recent file: its name, then the folder it is in, cut with an
+/// ellipsis; the whole path is the row's tooltip, as File ▸ Open Recent
+/// shows it. The row is the button, named for the file.
 fn recent_row(ui: &mut Ui, path: &Path, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let name = files::file_name(path);
@@ -289,6 +290,7 @@ fn recent_row(ui: &mut Ui, path: &Path, out: &mut Vec<Action>) {
     if response.clicked() {
         out.push(Action::OpenRecent(path.to_path_buf()));
     }
+    let response = response.on_hover_text(path.display().to_string());
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -320,7 +322,8 @@ fn recent_row(ui: &mut Ui, path: &Path, out: &mut Vec<Action>) {
     );
     let folder = path
         .parent()
-        .map(|p| p.display().to_string())
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let mut job = egui::text::LayoutJob::simple_singleline(
         folder,

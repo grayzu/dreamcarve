@@ -468,8 +468,9 @@ fn delete_a_feed(h: &mut H) {
 /// "Slices"): the start screen; each of the five steps on the plaque;
 /// the Inspector on a shape, a tool and an operation; Export with an
 /// error blocking it; the rail with steps that need attention; the
-/// Warnings drawer; and the window at its minimum size. Each in dark and
-/// light at 1×, and the first two in dark at 2×.
+/// Warnings drawer; the window at its minimum size; and a narrower one,
+/// where the Inspector lies over the Viewport. Each in dark and light at
+/// 1×, and the first two in dark at 2×.
 #[test]
 #[ignore = "writes the committed D3 review pictures; run by hand"]
 fn redesign_d3_screenshots() {
@@ -572,6 +573,12 @@ fn redesign_d3_screenshots() {
         open_operation(&mut h, "Cut out");
         park_pointer(&mut h);
         shoot_in(&mut h, &out, "13-minimum-window", looks);
+        // Narrower than the minimum: the Inspector lies over the
+        // Viewport.
+        h.set_size(egui::vec2(1100.0, 768.0));
+        h.run();
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "14-narrow-window-inspector-over", looks);
         drop(h);
         std::fs::remove_dir_all(&dir).unwrap();
     }
