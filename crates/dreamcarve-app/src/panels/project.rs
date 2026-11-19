@@ -1,18 +1,19 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Project Settings (`docs/specs/phase-4/functional.md`, capabilities 53,
-//! 60, 61 and 62; mock-up `03-stock-origin.svg`): the body of the upper
-//! collapsible panel of the left column's lower half (`panels::side`),
-//! which Project ▸ Project Settings… opens. Units first, a `mm` / `in`
-//! segmented control (#615), then five sections: Stock, Origin, Heights,
-//! Tolerances (folded away) and Post-processor. Every row edits the
-//! project in place and applies
-//! when it is left, one undo step, with no OK or Cancel (`experience.md`,
-//! section 1); every field shows the file's validation message under
-//! itself. What each row writes, its text and its message come from
-//! `dc_app::project`; this module only draws them and hands the commands
-//! to the window.
+//! The project's settings (`docs/specs/phase-4/functional.md`,
+//! capabilities 53, 60, 61 and 62; mock-up `03-stock-origin.svg`;
+//! `redesign.md`, "The steps"), in the two steps that own them. The
+//! **Stock** step ([`stock_step`], which Project ▸ Project Settings…
+//! opens) is Units first, a `mm` / `in` segmented control (#615), then
+//! the stock's width, height and thickness with *Fit to shapes*, and the
+//! Origin section. The **Export** step's settings half ([`output`]) is
+//! the Heights, Tolerances (folded away) and Post-processor sections.
+//! Every row edits the project in place and applies when it is left, one
+//! undo step, with no OK or Cancel (`experience.md`, section 1); every
+//! field shows the file's validation message under itself. What each row
+//! writes, its text and its message come from `dc_app::project`; this
+//! module only draws them and hands the commands to the window.
 //!
 //! The park point is typed, or picked: *Click on the view* arms the
 //! Viewport, whose next click sets it ([`park_pick_armed`]). The armed
@@ -40,8 +41,7 @@ use crate::widgets::unit_field::{Required, UnitField, field as unit_field};
 const MARGIN_PX: i8 = 16;
 
 /// The sections, by their `gui.toml` name, and whether each starts open.
-const SECTIONS: [(&str, bool); 5] = [
-    ("project.stock", true),
+const SECTIONS: [(&str, bool); 4] = [
     ("project.origin", true),
     ("project.heights", true),
     ("project.tolerances", false),
@@ -82,31 +82,49 @@ impl Cx<'_> {
     }
 }
 
-/// Draws the panel's body under its title band; the left column's
-/// scroll area holds it.
-pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
-    let cx = Cx {
+/// What the rows of `state`'s project read.
+fn cx<'a>(state: &'a FrameState<'_>) -> Cx<'a> {
+    Cx {
         strings: state.app.strings(),
         project: state.app.project(),
         findings: state.app.warnings(),
         sections: &state.prefs.sections,
-    };
-    egui::Frame::NONE
-        .inner_margin(egui::Margin {
-            left: MARGIN_PX,
-            right: MARGIN_PX,
-            top: 4,
-            bottom: 12,
-        })
+    }
+}
+
+/// The Stock step's content, under its title: Units, the stock's size
+/// with *Fit to shapes*, and the Origin section, in a scroll area that
+/// fills the card.
+pub(crate) fn stock_step(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let cx = cx(state);
+    egui::ScrollArea::vertical()
+        .id_salt("stock_step")
+        .auto_shrink(false)
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
-            units_row(ui, &cx, out);
-            stock(ui, &cx, out);
-            origin(ui, &cx, out);
-            heights(ui, &cx, out);
-            tolerances(ui, &cx, out);
-            post(ui, state, &cx, out);
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: MARGIN_PX,
+                    right: MARGIN_PX,
+                    top: 0,
+                    bottom: MARGIN_PX,
+                })
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
+                    units_row(ui, &cx, out);
+                    stock(ui, &cx, out);
+                    origin(ui, &cx, out);
+                });
         });
+}
+
+/// The Export step's settings half: the Heights, Tolerances and
+/// Post-processor sections, laid out where the step puts them.
+pub(crate) fn output(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let cx = cx(state);
+    ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
+    heights(ui, &cx, out);
+    tolerances(ui, &cx, out);
+    post(ui, state, &cx, out);
 }
 
 /// **Units**, the first row (capability 53): a `mm` / `in` segmented
@@ -288,22 +306,13 @@ fn dropdown<T: Copy + PartialEq>(
     (picked.filter(|p| *p != current), response)
 }
 
+/// The stock's width, height and thickness, then *Fit to shapes*. No
+/// section header: the step's title names them.
 fn stock(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
-    let fields = [Field::StockWidth, Field::StockHeight, Field::StockThickness];
-    let toggled = group(
-        ui,
-        cx,
-        "project.stock",
-        StrKey::ProjectStockTitle,
-        (&fields, &[]),
-        |ui| {
-            for field in fields {
-                field_row(ui, cx, field, true, None, out);
-            }
-            fit_row(ui, cx, out);
-        },
-    );
-    out.extend(toggled);
+    for field in [Field::StockWidth, Field::StockHeight, Field::StockThickness] {
+        field_row(ui, cx, field, true, None, out);
+    }
+    fit_row(ui, cx, out);
 }
 
 /// *Fit to shapes* with the margin typed beside it (capability 61). The

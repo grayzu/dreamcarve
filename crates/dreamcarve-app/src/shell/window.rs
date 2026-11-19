@@ -2,14 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The window (`docs/specs/phase-4/design.md`, "Architecture → The
-//! shell"; functional spec, capabilities 50, 51 and 79): one [`Shell`]
-//! implementing `eframe::App`, which owns the `dc_app::App` and every
-//! file, dialog and preference write, and never holds project data of its
-//! own. Each frame it shows the appearance the preference names (dark
-//! unless chosen otherwise), answers the window's
-//! close button and dropped files, reads the keyboard shortcuts, draws the
-//! menu bar, toolbar, status bar, side panels and Viewport, and then runs
-//! what the widgets asked for.
+//! shell"; `docs/specs/phase-4/redesign.md`, "The window"; functional
+//! spec, capabilities 50, 51 and 79): one [`Shell`] implementing
+//! `eframe::App`, which owns the `dc_app::App` and every file, dialog and
+//! preference write, and never holds project data of its own. Each frame
+//! it shows the appearance the preference names (dark unless chosen
+//! otherwise), answers the window's close button and dropped files, reads
+//! the keyboard shortcuts, draws the header, the status bar, the rail,
+//! the current step's panel, the Inspector and the Viewport, and then
+//! runs what the widgets asked for.
+//!
+//! The work is five steps ([`dc_app::steps`]): the shell holds which one
+//! is current. A newly opened project starts on its first step that is
+//! not complete; after that the step the user picks stays.
 //!
 //! Generation runs on the [`Worker`] thread (slice 9, #538): each frame
 //! first hands the results it finished to `dc_app::App::accept`, and last
@@ -25,7 +30,8 @@ use std::time::Instant;
 
 use dc_app::import::{DrawingFormat, Purpose};
 use dc_app::onboarding::Thumbnail;
-use dc_app::{App, Command, Prefs, StrKey, Strings};
+use dc_app::steps::{self, Step};
+use dc_app::{App, Command, Prefs, SnapshotId, StrKey, Strings};
 use dc_job::EstimateConfig;
 use dreamcarve_shell::{GuiPrefs, Paths, StagedFile, commit_all, config, gui_prefs};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, Rect, Vec2, ViewportCommand};
@@ -33,7 +39,7 @@ use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, Rect, Vec2, ViewportC
 use crate::keyboard::{self, Command as Shortcut};
 use crate::shell::focus::{self, Region};
 use crate::shell::worker::{self, Worker};
-use crate::shell::{files, menu, status, theme, toolbar};
+use crate::shell::{files, header, rail, status, theme};
 use crate::{panels, viewport};
 
 /// The quick starts' example projects (functional spec, capability 79).
@@ -49,7 +55,7 @@ pub enum Example {
 }
 
 impl Example {
-    /// Every example, in the empty state's order.
+    /// Every example, in the start screen's order.
     pub const ALL: [Self; 3] = [Self::Coaster, Self::Plaque, Self::Sign];
 
     /// Its name on its card.
@@ -104,18 +110,11 @@ const SIGN_DCV: &[u8] = include_bytes!("../../../../tests/fixtures/sign.dcv");
 /// The book, for Help ▸ User Guide.
 const USER_GUIDE_URL: &str = "https://grayzu.github.io/dreamcarve/";
 
-/// The smallest window that holds both side panels at their minimum
-/// (functional spec, capability 50; `experience.md`, section 3): below it
-/// they collapse to strips.
+/// The smallest window that holds the rail, the step panel, the Viewport
+/// and the Inspector at their minimum widths (functional spec, capability
+/// 50; `redesign.md`, "The window"): in a narrower one the Inspector lies
+/// over the Viewport.
 pub const MIN_WINDOW: Vec2 = egui::vec2(1280.0, 768.0);
-/// The left column's minimum width, px.
-pub const LEFT_MIN_PX: f32 = 240.0;
-/// The CAM panel's minimum width, px.
-pub const RIGHT_MIN_PX: f32 = 300.0;
-/// The Viewport's minimum width, px.
-pub const VIEWPORT_MIN_PX: f32 = 560.0;
-/// A collapsed panel's strip, px.
-pub const STRIP_PX: f32 = 32.0;
 
 /// The native file dialogs, or a test's stand-ins.
 pub trait Dialogs {
@@ -244,26 +243,17 @@ impl std::fmt::Debug for Options {
     }
 }
 
-/// How a side panel was shown in the last frame.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PanelShown {
-    /// Open, this wide, px.
-    Open {
-        /// The panel's width.
-        width: f32,
-    },
-    /// Collapsed to its strip.
-    Strip,
-}
-
-/// The last frame's layout.
+/// The last frame's layout: each region's card.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Layout {
-    /// The left column (Design Tree over Properties).
-    pub left: PanelShown,
-    /// The CAM panel.
-    pub right: PanelShown,
-    /// The Viewport's rectangle.
+    /// The rail.
+    pub rail: egui::Rect,
+    /// The step panel; `None` while View ▸ Step Panel is off.
+    pub step_panel: Option<egui::Rect>,
+    /// The Inspector; `None` while the step has nothing selected. In a
+    /// window narrower than [`MIN_WINDOW`] it lies over the Viewport.
+    pub inspector: Option<egui::Rect>,
+    /// The Viewport.
     pub viewport: egui::Rect,
     /// The window's size.
     pub window: Vec2,
@@ -292,17 +282,20 @@ pub(crate) enum Action {
         margin_mm: f64,
     },
     SetTheme(dc_app::Theme),
-    ToggleLeft,
-    ToggleRight,
-    ShowLeft,
-    ShowRight,
-    DismissEmpty,
+    /// Open this step (a rail button, View ▸ Go to, Ctrl 1 to 5).
+    GoTo(Step),
+    /// The header's *Continue*: the next step that is not complete.
+    Continue,
+    /// View ▸ Step Panel: the step panel shown or hidden.
+    ToggleStepPanel,
+    /// The Inspector's close button: what it edits is no longer selected.
+    CloseInspector,
     PruneRecent,
     UserGuide,
     About,
     Answer(Answer),
-    /// Project ▸ Project Settings…: the panel opened and scrolled into
-    /// view (capability 60).
+    /// Project ▸ Project Settings…: the Stock step, where the project's
+    /// units, stock and origin are (capability 60).
     ShowProject,
     /// A panel section opened or closed, kept in `gui.toml`.
     SetSection {
@@ -311,7 +304,7 @@ pub(crate) enum Action {
     },
     /// Run a command on the project; a refusal goes to the status bar.
     Run(Box<Command>),
-    /// An Arrange action on the selection (the toolbar's group, the
+    /// An Arrange action on the selection (the Inspector's group, the
     /// Arrange menu, R, Shift R, Ctrl Shift H, Ctrl Shift V; #617): its
     /// command runs on the unlocked shapes, and the status bar names the
     /// locked ones, or says why nothing could turn.
@@ -319,7 +312,8 @@ pub(crate) enum Action {
     /// Rename a shape in its Design Tree row (F2, the context menu's
     /// *Rename*; #617).
     Rename(dc_project::InstanceId),
-    /// Arrange ▸ Rotate…: the toolbar's Rotate popover opened (#617).
+    /// Arrange ▸ Rotate…: the Arrange group's Rotate popover opened, on
+    /// the Design step where the group is (#617).
     OpenRotate,
     /// Show a refusal in the status bar.
     Refused(String),
@@ -366,7 +360,7 @@ pub(crate) enum Action {
     HideAllToolpaths,
     /// Show an operation in the editor (its row clicked).
     EditOperation(dc_project::OperationId),
-    /// *Add ▸ kind* on these shapes, from the Operations tab or the Design
+    /// *Add ▸ kind* on these shapes, from the Operations step or the Design
     /// Tree.
     AddOperation {
         kind: dc_app::operations::Kind,
@@ -374,18 +368,19 @@ pub(crate) enum Action {
     },
     /// An operation row's eye: its toolpath hidden or shown (view state).
     ToggleOperationHidden(dc_project::OperationId),
-    /// A Warnings row naming an operation's field: the operation in the
-    /// editor, scrolled to that field and focused.
-    FocusField {
-        op: dc_project::OperationId,
-        field: String,
+    /// A Warnings row was clicked: what it names selected, and the step
+    /// that edits it opened.
+    OpenRow {
+        selection: Option<dc_app::Selection>,
+        op: Option<dc_project::OperationId>,
+        field: Option<String>,
     },
     /// *Place tabs* on a Profile (the editor's button, the operation's
     /// menu): its request placed, what placing found in the Warnings
     /// panel (#546).
     PlaceTabs(dc_project::OperationId),
     /// A click on an operation's cut in the Viewport (#576): the
-    /// operation in the editor, the CAM panel on Operations, its row
+    /// operation in the editor, the Operations step open, its row
     /// scrolled into view. The shape selection stays.
     ShowOperation(dc_project::OperationId),
     /// The Targets row's *Edit*: target editing on this operation (#619;
@@ -404,8 +399,8 @@ pub(crate) enum Action {
     CommitTargets,
     /// The target-editing bar's *Cancel* (Escape).
     CancelTargets,
-    /// Open the export sheet (File ▸ Export G-code…, the toolbar, ⌘E;
-    /// #547).
+    /// Open the export sheet (File ▸ Export G-code…, the header's
+    /// *Export G-code*, the Export step, ⌘E; #547).
     OpenExport,
     /// Open the toolpath view's popover (View ▸ Toolpaths…, capability
     /// 79a), as the status bar's *Toolpaths* button does.
@@ -424,9 +419,8 @@ impl Action {
     }
 
     /// Whether the action still runs in target editing (capability 67:
-    /// "nothing else can be selected or moved"): the mode's own, the
-    /// camera's, and what shows or hides a panel. Every other is dropped,
-    /// whatever raised it.
+    /// "nothing else can be selected or moved"): the mode's own and the
+    /// camera's. Every other is dropped, whatever raised it.
     const fn in_target_editing(&self) -> bool {
         matches!(
             self,
@@ -436,8 +430,6 @@ impl Action {
                 | Self::CancelTargets
                 | Self::SetCamera(_)
                 | Self::FitView
-                | Self::ShowLeft
-                | Self::ShowRight
                 | Self::Refused(_)
         )
     }
@@ -464,27 +456,6 @@ enum Pending {
     NewFromDrawing,
 }
 
-/// Which tab of the CAM panel is showing, in the strip's order
-/// (functional spec, capability 50: Tools, then Operations).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum CamTab {
-    #[default]
-    Tools,
-    Operations,
-}
-
-impl CamTab {
-    /// The tab a project opens on (capability 50a): Tools while it has
-    /// no tools, Operations otherwise.
-    pub(crate) fn opening(project: &dc_project::Project) -> Self {
-        if project.tools.is_empty() {
-            Self::Tools
-        } else {
-            Self::Operations
-        }
-    }
-}
-
 /// The app's window.
 pub struct Shell {
     app: App,
@@ -506,29 +477,32 @@ pub struct Shell {
     /// `config.toml`'s `[estimate]`: the estimates' settings, as the CLI
     /// reads them (capability 78).
     estimate: EstimateConfig,
-    empty_dismissed: bool,
-    /// The empty state's example thumbnails, built when the card first
-    /// shows and kept: never per frame.
+    /// The start screen's example thumbnails, built when it first shows
+    /// and kept: never per frame.
     thumbnails: Vec<(Example, Thumbnail)>,
+    /// The recent files the start screen lists: the preference's list as
+    /// last looked at, and those of it that exist. Looked at when the
+    /// list changes, never per frame.
+    recent: (Vec<PathBuf>, Vec<PathBuf>),
     /// The status bar's last message.
     message: Option<String>,
     layout: Layout,
-    pub(crate) cam_tab: CamTab,
+    /// The step whose panel shows (capability 50).
+    step: Step,
+    /// The steps' states as the rail marks them: the project's, with a
+    /// mark held while toolpaths regenerate ([`steps::settle`]).
+    states: steps::States,
+    /// How many of the notes in the Warnings panel are an importer's
+    /// warnings about a drawing: the Design step's mark.
+    import_warnings: usize,
+    /// The snapshot the last export wrote: the Export step is complete
+    /// while it is the current one.
+    exported: Option<SnapshotId>,
     /// [`App::replaced`] as last seen, to tell a newly opened project.
     seen_project: Option<u64>,
-    /// Whether a Project Settings field had an error last frame.
-    settings_error: bool,
-    /// Project Settings held open over the preference: set when a new
-    /// project, or a new error in one of its fields, appears; cleared by
-    /// a click on its title (capability 60).
-    settings_forced: bool,
     /// The title last sent to the window.
     title: String,
     close_allowed: bool,
-    /// The window's size in the last frame, to tell a resize.
-    last_window: Option<Vec2>,
-    /// Panels reopened from their strip in a window below the minimum.
-    forced_open: (bool, bool),
     /// The Viewport's gestures and layer caches.
     viewport: viewport::ViewportState,
     /// The generation thread.
@@ -606,23 +580,23 @@ impl Shell {
             export: None,
             setup_sheet: None,
             estimate,
-            empty_dismissed: false,
             thumbnails: Vec::new(),
+            recent: (Vec::new(), Vec::new()),
             message,
             layout: Layout {
-                left: PanelShown::Strip,
-                right: PanelShown::Strip,
+                rail: egui::Rect::NOTHING,
+                step_panel: None,
+                inspector: None,
                 viewport: egui::Rect::NOTHING,
                 window: Vec2::ZERO,
             },
-            cam_tab: CamTab::default(),
+            step: Step::Design,
+            states: steps::States::default(),
+            import_warnings: 0,
+            exported: None,
             seen_project: None,
-            settings_error: false,
-            settings_forced: false,
             title: String::new(),
             close_allowed: false,
-            last_window: None,
-            forced_open: (false, false),
             viewport: viewport::ViewportState::default(),
             worker,
             warnings_open: false,
@@ -650,8 +624,20 @@ impl Shell {
         self.viewport.drawn()
     }
 
-    /// The empty state's example cards' thumbnails, in the cards' order:
-    /// empty until the card first shows.
+    /// The step whose panel shows.
+    #[must_use]
+    pub fn step(&self) -> Step {
+        self.step
+    }
+
+    /// The steps' states as the rail marks them.
+    #[must_use]
+    pub fn step_states(&self) -> steps::States {
+        self.states
+    }
+
+    /// The start screen's example cards' thumbnails, in the cards' order:
+    /// empty until the screen first shows.
     #[must_use]
     pub fn example_thumbnails(&self) -> &[(Example, Thumbnail)] {
         &self.thumbnails
@@ -738,25 +724,53 @@ impl Shell {
         )
     }
 
-    /// What a newly opened project starts with, once per project: the CAM
-    /// panel's tab (capability 50a); and Project Settings held open while
-    /// one of its fields has an error that was not there before
-    /// (capability 60), a new project's unset thickness included.
-    fn follow_project(&mut self) {
+    /// What the steps read that the project does not hold.
+    fn session(&self) -> steps::Session {
+        steps::Session {
+            // Saving clears the notes, and the importer's among them.
+            import_warnings: self.import_warnings.min(self.app.notes().len()),
+            exported: self.exported,
+        }
+    }
+
+    /// The steps' states for this frame, and what a newly opened project
+    /// starts with, once per project: its first step that is not complete
+    /// (capability 50), and no tool in the Inspector.
+    fn follow_project(&mut self, ctx: &egui::Context) {
+        let now = steps::states(&self.app, &self.session());
         let replaced = self.app.replaced();
-        if self.seen_project != Some(replaced) {
+        if self.seen_project == Some(replaced) {
+            let generating = self.app.generation().busy();
+            self.states = steps::settle(&self.states, now, generating);
+        } else {
             self.seen_project = Some(replaced);
-            self.cam_tab = CamTab::opening(self.app.project());
-            self.settings_error = false;
-            self.settings_forced = false;
-            // The last export's setup sheet is the old project's.
+            self.states = now;
+            self.step = steps::opening(&now);
+            panels::tools::select(ctx, None);
+            // The last export, and its setup sheet, are the old project's.
             self.setup_sheet = None;
+            self.exported = None;
         }
-        let error = dc_app::project::settings_error(self.app.warnings());
-        if error && !self.settings_error {
-            self.settings_forced = true;
+    }
+
+    /// Opens `step`, with its panel showing.
+    fn go_to(&mut self, step: Step) {
+        self.step = step;
+        self.app.prefs_mut().panels.left_open = true;
+    }
+
+    /// Disarms a pick on the Viewport whose button is no longer in view:
+    /// the park point's is the Export step's, a point row's its
+    /// operation's editor's.
+    fn disarm_hidden_picks(&self, ctx: &egui::Context) {
+        if self.step != Step::Export {
+            panels::project::arm_park_pick(ctx, false);
         }
-        self.settings_error = error;
+        if let Some((picking, _)) = panels::editor::point_pick(ctx)
+            && (self.step != Step::Operations || self.app.editing() != Some(&picking))
+        {
+            panels::editor::arm_point_pick(ctx, None);
+        }
     }
 
     /// Asks for `pending`, through the unsaved-changes sheet when the
@@ -778,7 +792,7 @@ impl Shell {
             Pending::New => match App::new_project() {
                 Ok(project) => {
                     self.app.reset(project);
-                    self.empty_dismissed = false;
+                    self.import_warnings = 0;
                     self.viewport.fit_on_next_frame();
                 }
                 Err(e) => self.message = Some(e.to_string()),
@@ -814,7 +828,7 @@ impl Shell {
         match result {
             Ok(opened) => {
                 self.app.prefs_mut().push_recent(path.to_path_buf());
-                self.empty_dismissed = false;
+                self.import_warnings = 0;
                 self.viewport.fit_on_next_frame();
                 let count = opened.notes.len().to_string();
                 // The project's name, as the title has it (capability
@@ -850,7 +864,7 @@ impl Shell {
                 .map_err(|e| e.to_string()),
             None => coaster().map(|project| self.app.reset(project)),
         };
-        self.empty_dismissed = false;
+        self.import_warnings = 0;
         self.viewport.fit_on_next_frame();
         if let Err(reason) = result {
             self.message = Some(reason);
@@ -986,8 +1000,12 @@ impl Shell {
             panels::import::Request::Confirm => {
                 let model = sheet.model();
                 let name = model.name().to_owned();
+                // The importer's warnings become notes: the Design step
+                // marks them until the file is saved.
+                let noted = self.app.notes().len();
                 let result = match model.purpose() {
                     Purpose::Import => self.app.import_drawing(model).map(|_| {
+                        self.import_warnings += self.app.notes().len().saturating_sub(noted);
                         let count = self.app.selection().instances().len().to_string();
                         self.strings().fmt(
                             StrKey::AppMessageImported,
@@ -995,7 +1013,7 @@ impl Shell {
                         )
                     }),
                     Purpose::New => self.app.new_from_drawing(model).map(|()| {
-                        self.empty_dismissed = false;
+                        self.import_warnings = self.app.notes().len();
                         self.viewport.fit_on_next_frame();
                         self.strings()
                             .fmt(StrKey::AppMessageNewFromDrawing, &[("name", &name)])
@@ -1114,25 +1132,18 @@ impl Shell {
                 }
             }
             Action::SetTheme(theme) => self.app.prefs_mut().theme = theme,
-            Action::ToggleLeft => {
+            Action::GoTo(step) => self.go_to(step),
+            Action::Continue => self.go_to(steps::next(&self.states, self.step)),
+            Action::ToggleStepPanel => {
                 let panels = &mut self.app.prefs_mut().panels;
                 panels.left_open = !panels.left_open;
-                self.forced_open.0 = panels.left_open;
             }
-            Action::ToggleRight => {
-                let panels = &mut self.app.prefs_mut().panels;
-                panels.right_open = !panels.right_open;
-                self.forced_open.1 = panels.right_open;
-            }
-            Action::ShowLeft => {
-                self.app.prefs_mut().panels.left_open = true;
-                self.forced_open.0 = true;
-            }
-            Action::ShowRight => {
-                self.app.prefs_mut().panels.right_open = true;
-                self.forced_open.1 = true;
-            }
-            Action::DismissEmpty => self.empty_dismissed = true,
+            Action::CloseInspector => match self.step {
+                Step::Design => self.app.select(dc_app::Selection::Nothing),
+                Step::Tools => panels::tools::select(ctx, None),
+                Step::Operations => self.app.edit(None),
+                Step::Stock | Step::Export => {}
+            },
             Action::PruneRecent => {
                 files::recent(self.app.prefs_mut());
             }
@@ -1150,27 +1161,20 @@ impl Shell {
                 }
             }
             Action::Arrange(action) => self.arrange(action),
-            Action::OpenRotate => toolbar::open_rotate(ctx),
+            Action::OpenRotate => {
+                // The popover hangs from the Arrange group, which is the
+                // Design step's.
+                self.go_to(Step::Design);
+                panels::arrange::open_rotate(ctx);
+            }
             Action::Rename(id) => {
                 // The name is edited in its Design Tree row, so the tree
                 // shows.
-                self.app.prefs_mut().panels.left_open = true;
-                self.forced_open.0 = true;
+                self.go_to(Step::Design);
                 panels::tree::start_rename(ctx, self.app.project(), &id);
             }
-            Action::ShowProject => {
-                self.app
-                    .prefs_mut()
-                    .sections
-                    .insert(panels::side::SETTINGS_SECTION.to_owned(), true);
-                self.app.prefs_mut().panels.left_open = true;
-                self.forced_open.0 = true;
-                panels::side::reveal_settings(ctx);
-            }
+            Action::ShowProject => self.go_to(Step::Stock),
             Action::SetSection { name, open } => {
-                if name == panels::side::SETTINGS_SECTION {
-                    self.settings_forced = false;
-                }
                 self.app.prefs_mut().sections.insert(name, open);
             }
             Action::Refused(reason) => self.message = Some(reason),
@@ -1236,6 +1240,36 @@ impl Shell {
                 self.viewport.reset_clicks();
                 ctx.request_repaint();
             }
+            Action::OpenRow {
+                selection,
+                op,
+                field,
+            } => {
+                let owner = selection.as_ref().and_then(steps::owner);
+                if let Some(selection) = selection {
+                    self.app.select(selection);
+                }
+                match (owner, op, field) {
+                    // An operation's field: the editor, at that field.
+                    (_, Some(op), Some(field)) => {
+                        self.app.edit(Some(op.clone()));
+                        panels::editor::request_focus(ctx, op, field);
+                        self.go_to(Step::Operations);
+                    }
+                    (Some(step), _, _) => self.go_to(step),
+                    // A field of no operation and no shape: the step that
+                    // edits it, and a tool's shown in the Inspector.
+                    (None, _, Some(field)) => {
+                        let step = steps::step_of_field(&field);
+                        if step == Step::Tools {
+                            let tool = panels::tools::tool_in_field(self.app.project(), &field);
+                            panels::tools::select(ctx, tool.as_ref());
+                        }
+                        self.go_to(step);
+                    }
+                    (None, _, None) => {}
+                }
+            }
             Action::ToggleWarnings => self.warnings_open = !self.warnings_open,
             Action::ShowNote(op) => {
                 self.warnings_open = true;
@@ -1248,7 +1282,10 @@ impl Shell {
             Action::StopGeneration => self.app.stop(),
             Action::RegenerateAll => self.app.regenerate_all(),
             Action::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
-            Action::EditOperation(id) => self.app.edit(Some(id)),
+            Action::EditOperation(id) => {
+                self.app.edit(Some(id));
+                self.go_to(Step::Operations);
+            }
             Action::AddOperation { kind, targets } => {
                 let app = &self.app;
                 match dc_app::operations::add(app.project(), app.strings(), kind, &targets) {
@@ -1256,7 +1293,7 @@ impl Shell {
                         if let Err(e) = self.app.run(command) {
                             self.message = Some(e.to_string());
                         }
-                        self.show_operations();
+                        self.go_to(Step::Operations);
                     }
                     None => {
                         self.message = Some(
@@ -1268,15 +1305,10 @@ impl Shell {
                 }
             }
             Action::ToggleOperationHidden(id) => self.app.toggle_hidden(&id),
-            Action::FocusField { op, field } => {
-                self.app.edit(Some(op.clone()));
-                panels::editor::request_focus(ctx, op, field);
-                self.show_operations();
-            }
             Action::ShowOperation(op) => {
                 self.app.edit(Some(op.clone()));
                 panels::operations::reveal(ctx, op);
-                self.show_operations();
+                self.go_to(Step::Operations);
             }
             Action::EditTargets(op) => {
                 // The mode is on the drawing: no pick stays armed under it.
@@ -1373,6 +1405,7 @@ impl Shell {
                 {
                     self.message = Some(message);
                     self.setup_sheet = sheet.setup_sheet().cloned();
+                    self.exported = Some(self.app.snapshot());
                 }
             }
             Request::Copied => {
@@ -1402,17 +1435,13 @@ impl Shell {
                     .flat_map(|g| g.rows)
                     .find(|r| r.level == dc_app::warnings::Level::Error);
                 if let Some(selection) = first.and_then(|r| r.selection()) {
+                    if let Some(step) = steps::owner(&selection) {
+                        self.go_to(step);
+                    }
                     self.app.select(selection);
                 }
             }
         }
-    }
-
-    /// The CAM panel open on its Operations tab.
-    fn show_operations(&mut self) {
-        self.cam_tab = CamTab::Operations;
-        self.app.prefs_mut().panels.right_open = true;
-        self.forced_open.1 = true;
     }
 
     fn answer(&mut self, ctx: &egui::Context, answer: Answer) {
@@ -1431,7 +1460,7 @@ impl Shell {
     }
 
     /// Sends the title when it changed: the project's name and `*` when
-    /// unsaved (capabilities 50 and 51), the one place the name shows.
+    /// unsaved (capabilities 50 and 51), as the header shows it.
     fn update_title(&mut self, ctx: &egui::Context) {
         let key = if self.app.is_dirty() {
             StrKey::AppTitleUnsaved
@@ -1485,21 +1514,6 @@ impl Shell {
             );
         }
         self.written = file;
-    }
-
-    /// Lays out the side panels for a window of `size`: below the minimum
-    /// they show as strips unless reopened from one since the last resize.
-    fn panels_open(&mut self, size: Vec2) -> (bool, bool) {
-        if self.last_window != Some(size) {
-            self.forced_open = (false, false);
-            self.last_window = Some(size);
-        }
-        let fits = size.x >= MIN_WINDOW.x && size.y >= MIN_WINDOW.y;
-        let panels = self.app.prefs().panels;
-        (
-            panels.left_open && (fits || self.forced_open.0),
-            panels.right_open && (fits || self.forced_open.1),
-        )
     }
 }
 
@@ -1599,6 +1613,11 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         Shortcut::FlipVertical => arrange(dc_app::arrange::Action::FlipVertical),
         Shortcut::FitView => Some(Action::FitView),
         Shortcut::ZoomToSelection => (!selected.is_empty()).then_some(Action::ZoomToSelection),
+        Shortcut::GoToDesign => Some(Action::GoTo(Step::Design)),
+        Shortcut::GoToStock => Some(Action::GoTo(Step::Stock)),
+        Shortcut::GoToTools => Some(Action::GoTo(Step::Tools)),
+        Shortcut::GoToOperations => Some(Action::GoTo(Step::Operations)),
+        Shortcut::GoToExport => Some(Action::GoTo(Step::Export)),
         Shortcut::TabTool
         | Shortcut::Nudge
         | Shortcut::NudgeCoarse
@@ -1617,12 +1636,24 @@ pub(crate) struct FrameState<'a> {
     pub app: &'a App,
     pub prefs: &'a Prefs,
     pub display_name: String,
-    pub message: Option<&'a str>,
+    /// Whether the Viewport shows the start screen: the project has
+    /// nothing to cut and the Design step is open.
     pub show_empty: bool,
-    /// The empty state's example cards, each with its thumbnail.
+    /// The start screen's example cards, each with its thumbnail.
     pub examples: &'a [(Example, Thumbnail)],
-    /// The pointer over the Viewport, for the status bar.
-    pub pointer: viewport::Pointer,
+    /// The recent files that still exist, for the start screen.
+    pub recent: &'a [PathBuf],
+    /// The step whose panel shows.
+    pub step: Step,
+    /// The steps' states, as the rail marks them.
+    pub states: steps::States,
+    /// What the steps read that the project does not hold.
+    pub session: steps::Session,
+    /// The status bar's cells, which the header's generation chip and
+    /// the rail's count read too.
+    pub cells: dc_app::status::StatusBar,
+    /// The tool the Tools step shows in the Inspector.
+    pub tool: Option<dc_project::ToolId>,
     /// Whether the Warnings drawer is open, for View ▸ Warnings.
     pub warnings_open: bool,
     /// The operation whose carve note the drawer scrolls to this frame.
@@ -1633,15 +1664,13 @@ pub(crate) struct FrameState<'a> {
     /// Whether this project has been exported, so File ▸ Save Setup
     /// Sheet… has a sheet to save.
     pub setup_sheet: bool,
-    /// Project Settings is held open over its preference (capability
-    /// 60).
-    pub settings_forced: bool,
 }
 
 impl FrameState<'_> {
     /// Whether target editing is on (capability 67; `experience.md`,
     /// section 8, "Target editing"): every part of the window but the
-    /// Viewport and the Design Tree draws dimmed and takes no clicks.
+    /// Viewport and the Design Tree, which the step panel then shows,
+    /// draws dimmed and takes no clicks.
     pub(crate) fn inert(&self) -> bool {
         self.app.target_editing().is_some()
     }
@@ -1651,46 +1680,40 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         theme::follow(&ctx, self.app.prefs().theme);
+        // The backdrop, under every panel: the gaps the panels leave
+        // between their frames show it.
+        ui.painter().rect_filled(
+            ui.max_rect(),
+            0.0,
+            theme::Palette::current(ui).surface_window,
+        );
         // What the worker finished since the last frame, before anything
         // reads the results.
         self.worker.tick(&mut self.app, Instant::now());
-        self.follow_project();
+        self.follow_project(&ctx);
+        self.disarm_hidden_picks(&ctx);
         let mut actions = Vec::new();
         self.read_input(&ctx, &mut actions);
 
         let size = ctx.content_rect().size();
-        let (left_open, right_open) = self.panels_open(size);
         let pointer = self
             .viewport
             .read_pointer(&ctx, self.layout.viewport, &self.app);
-        // Each part of the window's rectangle, from the space it took, for
-        // Tab's walk (`shell::focus`).
+        // Each part of the window's rectangle, for Tab's walk
+        // (`shell::focus`).
         let mut regions: Vec<(Region, Rect)> = Vec::new();
-        let mut before = ui.available_rect_before_wrap();
-        let mut took = |ui: &egui::Ui, region: Region, regions: &mut Vec<(Region, Rect)>| {
-            let after = ui.available_rect_before_wrap();
-            let rect = match region {
-                Region::Menu | Region::Toolbar => {
-                    Rect::from_x_y_ranges(before.x_range(), before.top()..=after.top())
-                }
-                Region::Status | Region::Drawer => {
-                    Rect::from_x_y_ranges(before.x_range(), after.bottom()..=before.bottom())
-                }
-                Region::Cam => {
-                    Rect::from_x_y_ranges(after.right()..=before.right(), before.y_range())
-                }
-                _ => Rect::from_x_y_ranges(before.left()..=after.left(), before.y_range()),
-            };
-            regions.push((region, rect));
-            before = after;
-        };
-        let show_empty = self.app.project().instances.is_empty() && !self.empty_dismissed;
+        let show_empty = steps::blank(self.app.project()) && self.step == Step::Design;
         if show_empty && self.thumbnails.is_empty() {
-            // Once, when the card first shows: never per frame.
+            // Once, when the start screen first shows: never per frame.
             self.thumbnails = Example::ALL
                 .into_iter()
                 .map(|example| (example, example.thumbnail()))
                 .collect();
+        }
+        if show_empty && self.recent.0 != self.app.prefs().recent {
+            let listed = self.app.prefs().recent.clone();
+            let existing = listed.iter().filter(|p| p.is_file()).cloned().collect();
+            self.recent = (listed, existing);
         }
         // Asked for by the last frame's message cell: scrolled to once.
         let note_target = if self.warnings_open {
@@ -1698,51 +1721,76 @@ impl eframe::App for Shell {
         } else {
             None
         };
+        let cells = dc_app::status::cells(
+            &self.app,
+            &dc_app::status::Inputs {
+                cursor_mm: pointer.cursor_mm,
+                drag: pointer.drag.as_deref(),
+                hover: pointer
+                    .hover
+                    .as_ref()
+                    .map(|(name, locked)| (name.as_str(), *locked)),
+                message: self.message.as_deref(),
+                estimate: &self.estimate,
+            },
+        );
         let state = FrameState {
             app: &self.app,
             prefs: self.app.prefs(),
             display_name: self.display_name(),
-            message: self.message.as_deref(),
             show_empty,
             examples: &self.thumbnails,
-            pointer,
+            recent: &self.recent.1,
+            step: self.step,
+            states: self.states,
+            session: self.session(),
+            cells,
+            tool: panels::tools::selected(&ctx, self.app.project()),
             warnings_open: self.warnings_open,
             note_target: note_target.as_ref(),
             estimate: &self.estimate,
             setup_sheet: self.setup_sheet.is_some(),
-            settings_forced: self.settings_forced,
         };
-        focus::mark(ui, Region::Menu);
-        menu::bar(ui, &state, &mut actions);
-        took(ui, Region::Menu, &mut regions);
-        focus::mark(ui, Region::Toolbar);
-        toolbar::bar(ui, &state, &mut actions);
-        took(ui, Region::Toolbar, &mut regions);
+        focus::mark(ui, Region::Header);
+        regions.push((Region::Header, header::bar(ui, &state, &mut actions)));
         focus::mark(ui, Region::Status);
-        status::bar(ui, &state, &mut actions);
-        took(ui, Region::Status, &mut regions);
-        // `side::left` marks its Properties and Design Tree.
-        let left = panels::side::left(ui, &state, left_open, size, right_open, &mut actions);
-        took(ui, Region::Tree, &mut regions);
-        if let Some(properties) = left.properties {
-            if let Some((_, column)) = regions.last_mut() {
-                column.max.y = properties.top();
-            }
-            regions.push((Region::Properties, properties));
-        }
-        let mut cam_tab = self.cam_tab;
-        focus::mark(ui, Region::Cam);
-        let right = panels::side::right(ui, &state, right_open, size, &mut cam_tab, &mut actions);
-        took(ui, Region::Cam, &mut regions);
-        // Between the side panels, over the Viewport's bottom.
+        regions.push((Region::Status, status::bar(ui, &state, &mut actions)));
+        focus::mark(ui, Region::Rail);
+        let rail = rail::show(ui, &state, &mut actions);
+        regions.push((Region::Rail, rail));
+        let step_panel = state.prefs.panels.left_open.then(|| {
+            focus::mark(ui, Region::Step);
+            panels::side::step_panel(ui, &state, size, &mut actions)
+        });
+        regions.extend(step_panel.map(|shown| (Region::Step, shown.card)));
+        // In a window too narrow for all four regions the Inspector lies
+        // over the Viewport, drawn after it.
+        let inspecting = panels::side::inspecting(&state).is_some();
+        let overlaid = size.x < MIN_WINDOW.x;
+        let docked = (inspecting && !overlaid).then(|| {
+            focus::mark(ui, Region::Inspector);
+            panels::side::inspector(ui, &state, size, step_panel.map(|s| s.width), &mut actions)
+        });
+        let margins = viewport::Margins {
+            left: step_panel.map_or(theme::GAP_PX, |_| panels::side::HALF_GAP_PX),
+            right: docked.map_or(theme::GAP_PX, |_| panels::side::HALF_GAP_PX),
+        };
+        // Between the step panel and the Inspector, over the Viewport's
+        // bottom.
         if self.warnings_open {
             focus::mark(ui, Region::Drawer);
-            panels::warnings::drawer(ui, &state, &mut actions);
-            took(ui, Region::Drawer, &mut regions);
+            let drawer = panels::warnings::drawer(ui, &state, margins, &mut actions);
+            regions.push((Region::Drawer, drawer));
         }
         focus::mark(ui, Region::Viewport);
-        regions.push((Region::Viewport, ui.available_rect_before_wrap()));
-        let viewport = viewport::show(ui, &state, &mut self.viewport, &mut actions);
+        let viewport = viewport::show(ui, &state, &mut self.viewport, margins, &mut actions);
+        regions.push((Region::Viewport, viewport));
+        let floating = (inspecting && overlaid).then(|| {
+            focus::mark(ui, Region::Inspector);
+            panels::side::inspector_over(ui, &state, viewport, &mut actions)
+        });
+        let inspector = docked.map(|shown| shown.card).or(floating);
+        regions.extend(inspector.map(|card| (Region::Inspector, card)));
         focus::mark_end(ui);
         if self.sheet.is_some() {
             panels::unsaved::sheet(&ctx, self.app.strings(), &state.display_name, &mut actions);
@@ -1759,41 +1807,19 @@ impl eframe::App for Shell {
         } else if let Some(sheet) = self.export.as_mut() {
             panels::export::show(&ctx, &self.app, &state.display_name, sheet, &mut actions);
         }
-        self.cam_tab = cam_tab;
         self.focus = focus::finish(ui, regions);
 
-        // A panel the user dragged closed is a preference; one closed for
-        // the window's size is not.
-        let fits = size.x >= MIN_WINDOW.x && size.y >= MIN_WINDOW.y;
-        if let panels::side::Shown {
-            width: Some(w),
-            dragged_closed,
-            ..
-        } = left
-        {
-            self.app.prefs_mut().panels.left_width = f64::from(w);
-            if dragged_closed && fits {
-                self.app.prefs_mut().panels.left_open = false;
-            }
+        // The widths the user dragged the panels to are preferences.
+        if let Some(shown) = step_panel {
+            self.app.prefs_mut().panels.left_width = f64::from(shown.width);
         }
-        if let panels::side::Shown {
-            width: Some(w),
-            dragged_closed,
-            ..
-        } = right
-        {
-            self.app.prefs_mut().panels.right_width = f64::from(w);
-            if dragged_closed && fits {
-                self.app.prefs_mut().panels.right_open = false;
-            }
+        if let Some(shown) = docked {
+            self.app.prefs_mut().panels.right_width = f64::from(shown.width);
         }
         self.layout = Layout {
-            left: left
-                .width
-                .map_or(PanelShown::Strip, |width| PanelShown::Open { width }),
-            right: right
-                .width
-                .map_or(PanelShown::Strip, |width| PanelShown::Open { width }),
+            rail,
+            step_panel: step_panel.map(|shown| shown.card),
+            inspector,
             viewport,
             window: size,
         };

@@ -158,9 +158,9 @@ pub struct Panels {
 impl Default for Panels {
     fn default() -> Self {
         Self {
-            left_width: 280.0,
+            left_width: 312.0,
             left_open: true,
-            right_width: 320.0,
+            right_width: 328.0,
             right_open: true,
             warnings_open: false,
         }

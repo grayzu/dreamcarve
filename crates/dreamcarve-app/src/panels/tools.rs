@@ -1,14 +1,17 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The CAM panel's Tools tab (functional spec, capability 63; mock-ups
-//! `01-workspace.svg` and `16-tools-tab.svg`; `experience.md`, section 7):
-//! *New tool* and *Add from library…* over the project's tools, one 52-px
-//! row each with its type glyph, name, diameter (and angle for a V-bit)
-//! and number, a red dot when it lacks a feed, plunge rate or RPM and the
-//! `unused_tool` hint when no operation uses it; *Duplicate* and *Delete*
-//! under the list; then the selected tool's editor, every field with its
-//! unit, and *Save to library* in its footer. Feed, plunge and RPM are
+//! The Tools step (functional spec, capability 63; mock-up
+//! `16-tools-tab.svg`; `experience.md`, section 7; `redesign.md`, "The
+//! steps"). The step panel holds [`list`]: *New tool* and *Add from
+//! library…* over the project's tools, one 52-px row each with its type
+//! glyph, name, diameter (and angle for a V-bit) and number, a red dot
+//! when it lacks a feed, plunge rate or RPM and the `unused_tool` hint
+//! when no operation uses it; *Duplicate* and *Delete* under the list;
+//! and *Tool Library…* at the card's foot. The Inspector holds the
+//! selected tool's editor ([`editor_card`]), every field with its unit,
+//! and *Save to library* in its footer. No tool is selected until a row
+//! is clicked or a tool is added. Feed, plunge and RPM are
 //! empty while the file holds `null`, never prefilled, and show the
 //! required-field look with the file's message as the tooltip (S20; 66b).
 //! Switching a tool to V-bit writes no default angle: the switch is held,
@@ -19,7 +22,7 @@
 //! empty list says *No tools yet* with *New tool* and *Add from library…*
 //! under it (capability 79).
 //!
-//! The tab holds no project data: it reads the snapshot and emits
+//! The step holds no project data: it reads the snapshot and emits
 //! commands. Which row is selected, a held switch and a name to focus are
 //! view state, kept in egui's memory.
 
@@ -29,10 +32,10 @@ use dc_project::{Project, Tool, ToolId, ToolKind, Units};
 use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
 
 use crate::panels::library::kind_label;
+use crate::panels::side;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
-use crate::widgets::card::{card, fitted};
 use crate::widgets::icon::Icon;
 use crate::widgets::row::{surface, surface_rect};
 use crate::widgets::unit_field::{Required, UnitField, field as unit_field, row, validation_line};
@@ -46,21 +49,31 @@ const STATUS_PX: f32 = 24.0;
 const FOOTER_PX: f32 = theme::GAP_PX + theme::CONTROL_PX + theme::CARD_PADDING_PX;
 /// The panel's content margin, px.
 const MARGIN_PX: f32 = theme::CARD_PADDING_PX;
+/// The room *Tool Library…* takes at the step panel's foot, px: the gap
+/// above it, the button and the card's padding.
+const FOOT_PX: f32 = theme::GAP_PX + theme::CONTROL_PX + theme::CARD_PADDING_PX;
 
 /// The selected row, and how many tools there were, between frames.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Selected {
     tool: Option<ToolId>,
-    count: usize,
+    /// The project's tool count when last looked at; `None` since the
+    /// selection was last set, so the next look only records it.
+    count: Option<usize>,
 }
 
-/// The tool the tab shows in its editor: the one selected, the newest
-/// when a tool was just added, else the first.
-fn selected(ui: &Ui, project: &Project) -> Option<ToolId> {
-    let id = Id::unique("tools_tab_selected");
-    let mut state: Selected = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+/// Where the selection lives in egui's memory.
+fn selected_id() -> Id {
+    Id::unique("tools_step_selected")
+}
+
+/// The tool the Tools step shows in the Inspector: the row last clicked,
+/// or the newest when a tool has just been added (from the library, by
+/// *Duplicate*); none until then, and none once that tool is deleted.
+pub(crate) fn selected(ctx: &egui::Context, project: &Project) -> Option<ToolId> {
+    let mut state: Selected = ctx.data(|d| d.get_temp(selected_id())).unwrap_or_default();
     let count = project.tools.len();
-    if count > state.count && state.count > 0 {
+    if state.count.is_some_and(|was| count > was) {
         state.tool = project.tools.last().map(|t| t.id.clone());
     }
     if !state
@@ -68,25 +81,36 @@ fn selected(ui: &Ui, project: &Project) -> Option<ToolId> {
         .as_ref()
         .is_some_and(|t| project.tools.iter().any(|tool| tool.id == *t))
     {
-        state.tool = project.tools.first().map(|t| t.id.clone());
+        state.tool = None;
     }
-    state.count = count;
+    state.count = Some(count);
     let tool = state.tool.clone();
-    ui.data_mut(|d| d.insert_temp(id, state));
+    ctx.data_mut(|d| d.insert_temp(selected_id(), state));
     tool
 }
 
-/// Selects tool `tool`.
-fn select(ui: &Ui, tool: &ToolId, count: usize) {
-    ui.data_mut(|d| {
+/// Selects tool `tool`, or none.
+pub(crate) fn select(ctx: &egui::Context, tool: Option<&ToolId>) {
+    ctx.data_mut(|d| {
         d.insert_temp(
-            Id::unique("tools_tab_selected"),
+            selected_id(),
             Selected {
-                tool: Some(tool.clone()),
-                count,
+                tool: tool.cloned(),
+                count: None,
             },
         );
     });
+}
+
+/// The project tool a field path names, `tools[<id>]…`: what a Warnings
+/// row about a tool opens.
+pub(crate) fn tool_in_field(project: &Project, field: &str) -> Option<ToolId> {
+    let (id, _) = field.strip_prefix("tools[")?.split_once(']')?;
+    project
+        .tools
+        .iter()
+        .find(|t| t.id.as_str() == id)
+        .map(|t| t.id.clone())
 }
 
 /// The tool whose switch to V-bit is held until its included angle is
@@ -112,80 +136,118 @@ fn set_pending_v_bit(ui: &Ui, tool: Option<&ToolId>) {
     });
 }
 
-/// Draws the tab: a card that holds `head` (the CAM panel's title and
-/// tabs), the buttons that add a tool and the list, and under it the
-/// card of the selected tool's editor.
-pub(crate) fn show(
-    ui: &mut Ui,
-    state: &FrameState<'_>,
-    head: impl FnOnce(&mut Ui),
-    out: &mut Vec<Action>,
-) {
+/// The step panel's content under its title: the buttons that add a
+/// tool, the list, *Duplicate* and *Delete* under it, and *Tool
+/// Library…* at the card's foot.
+pub(crate) fn list(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let app = state.app;
     let strings = app.strings();
     let project = app.project();
-    let current = selected(ui, project);
+    let current = state.tool.as_ref();
     // Moving to another tool discards a held switch.
-    if pending_v_bit(ui).is_some_and(|held| current.as_ref() != Some(&held)) {
+    if pending_v_bit(ui).is_some_and(|held| current != Some(&held)) {
         set_pending_v_bit(ui, None);
     }
-    if project.tools.is_empty() {
-        card(ui, |ui| {
-            head(ui);
-            empty(ui, strings, project, out);
-        });
-        return;
-    }
-    let gap = ui.spacing().item_spacing.y;
-    fitted(ui, |ui| {
-        head(ui);
-        ui.horizontal(|ui| {
-            ui.add_space(MARGIN_PX);
-            add_buttons(ui, strings, project, out);
-        });
-        ui.add_space(8.0 - gap);
-        // Four rows show before the list scrolls.
-        let rows = u8::try_from(project.tools.len().min(4)).unwrap_or(4);
-        let list_h = ROW_PX * f32::from(rows);
-        egui::ScrollArea::vertical()
-            .id_salt("tools_list")
-            .max_height(list_h)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for tool in &project.tools {
-                    list_row(ui, state, tool, current.as_ref() == Some(&tool.id));
-                }
-            });
-        ui.add_space(8.0 - gap);
-        list_actions(ui, strings, project, current.as_ref(), out);
-        ui.add_space(MARGIN_PX - gap);
-    });
-    // The gap between the two cards.
-    ui.add_space(theme::GAP_PX - gap);
-    if let Some(tool) = current
-        .as_ref()
-        .and_then(|id| project.tools.iter().find(|t| t.id == *id))
+    let full = ui.available_rect_before_wrap();
+    let top = Rect::from_min_max(full.min, egui::pos2(full.right(), full.bottom() - FOOT_PX));
+    let mut above = ui.new_child(egui::UiBuilder::new().max_rect(top));
+    above.set_clip_rect(top.intersect(ui.clip_rect()));
     {
-        card(ui, |ui| {
-            // The editor scrolls above its footer, which stays in view.
+        let ui = &mut above;
+        let gap = ui.spacing().item_spacing.y;
+        if project.tools.is_empty() {
+            empty(ui, strings, project, out);
+        } else {
+            ui.horizontal(|ui| {
+                ui.add_space(MARGIN_PX);
+                add_buttons(ui, strings, project, out);
+            });
+            ui.add_space(8.0 - gap);
+            // The list takes what the buttons under it leave.
+            let room = (ui.available_height() - theme::GAP_PX - theme::CONTROL_PX).max(ROW_PX);
             egui::ScrollArea::vertical()
-                .id_salt("tool_editor")
-                .auto_shrink(false)
-                .max_height((ui.available_height() - FOOTER_PX).max(0.0))
+                .id_salt("tools_list")
+                .max_height(room)
+                .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    ui.add_space(MARGIN_PX - gap);
-                    ui.horizontal(|ui| {
-                        ui.add_space(MARGIN_PX);
-                        ui.vertical(|ui| {
-                            ui.set_width(ui.available_width() - MARGIN_PX);
-                            editor(ui, strings, project.display_units, tool, out);
-                        });
-                    });
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for tool in &project.tools {
+                        list_row(ui, state, tool, current == Some(&tool.id));
+                    }
                 });
-            footer(ui, strings, tool, out);
-        });
+            ui.add_space(8.0 - gap);
+            list_actions(ui, strings, project, current, out);
+        }
     }
+    // *Tool Library…* (capability 64), at the card's foot.
+    let foot = Rect::from_min_max(
+        egui::pos2(full.left() + MARGIN_PX, full.bottom() - FOOT_PX),
+        egui::pos2(full.right() - MARGIN_PX, full.bottom() - MARGIN_PX),
+    );
+    let mut below = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(foot)
+            .layout(egui::Layout::left_to_right(egui::Align::Max)),
+    );
+    let library = ButtonSpec::new(Kind::Quiet, strings.get(StrKey::AppMenuToolLibrary))
+        .icon(Icon::LibraryBig, theme::ICON_SMALL_PX);
+    if button(&mut below, library).clicked() {
+        out.push(Action::OpenLibrary);
+    }
+    ui.allocate_rect(full, Sense::hover());
+}
+
+/// The Inspector's content for `tool`: its type glyph and name, its
+/// fields in a scroll area, and *Save to library* in a footer that stays
+/// in view.
+pub(crate) fn editor_card(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, out: &mut Vec<Action>) {
+    let strings = state.app.strings();
+    let units = state.app.project().display_units;
+    header(ui, tool);
+    egui::ScrollArea::vertical()
+        .id_salt("tool_editor")
+        .auto_shrink(false)
+        .max_height((ui.available_height() - FOOTER_PX).max(0.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(MARGIN_PX);
+                ui.vertical(|ui| {
+                    ui.set_width(ui.available_width() - MARGIN_PX);
+                    editor(ui, strings, units, tool, out);
+                });
+            });
+        });
+    footer(ui, strings, tool, out);
+}
+
+/// The editor's header: the tool's type glyph and its name at
+/// panel-title weight, cut with an ellipsis before the Inspector's close
+/// button. Painted only: the Name field under it carries the name for
+/// assistive tools.
+fn header(ui: &mut Ui, tool: &Tool) {
+    let palette = Palette::current(ui);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), side::HEADER_PX),
+        Sense::hover(),
+    );
+    let rect = rect.translate(egui::vec2(0.0, 2.0));
+    let glyph = egui::pos2(rect.left() + MARGIN_PX + 8.0, rect.center().y);
+    super::editor::paint_tool_icon(ui, glyph, &tool.cutter, palette.text_secondary);
+    let left = glyph.x + 8.0 + 8.0;
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        tool.name.clone(),
+        TextStyle::Name(theme::TITLE.into()).resolve(ui.style()),
+        palette.text_primary,
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(
+        (rect.right() - side::CLOSE_RESERVE_PX - left).max(0.0),
+    );
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(
+        egui::pos2(left, rect.center().y - galley.size().y / 2.0),
+        galley,
+        palette.text_primary,
+    );
 }
 
 /// The name field to focus, with its text selected, when the editor next
@@ -203,7 +265,7 @@ fn add_buttons(ui: &mut Ui, strings: &Strings, project: &Project, out: &mut Vec<
     if button(ui, new).clicked() {
         let command = tools::new_tool(project);
         if let Command::NewTool(tool) = &command {
-            select(ui, &tool.id, project.tools.len().saturating_add(1));
+            select(ui.ctx(), Some(&tool.id));
             ui.data_mut(|d| d.insert_temp(focus_name_id(), tool.id.clone()));
         }
         out.push(Action::Run(Box::new(command)));
@@ -280,19 +342,7 @@ fn list_actions(
 /// The empty list (capability 79; section 8, "Empty states"): *No tools
 /// yet*, with *New tool* and *Add from library…* under it.
 fn empty(ui: &mut Ui, strings: &Strings, project: &Project, out: &mut Vec<Action>) {
-    let palette = Palette::current(ui);
-    ui.add_space(24.0);
-    ui.vertical_centered(|ui| {
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(strings.get(StrKey::AppPanelNoTools))
-                    .text_style(TextStyle::Body)
-                    .color(palette.text_secondary),
-            )
-            .wrap()
-            .selectable(false),
-        );
-    });
+    side::empty_sentence(ui, strings.get(StrKey::AppPanelNoTools));
     ui.add_space(8.0);
     // The two buttons, centred as a pair.
     let width = ui.available_width();
@@ -337,7 +387,7 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
     response
         .widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, true, chosen, &tool.name));
     if response.clicked() {
-        select(ui, &tool.id, project.tools.len());
+        select(ui.ctx(), Some(&tool.id));
     }
     let rect = surface_rect(slot);
     surface(ui, rect, chosen, response.hovered());

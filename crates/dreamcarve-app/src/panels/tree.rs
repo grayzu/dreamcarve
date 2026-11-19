@@ -684,7 +684,7 @@ fn context_menu(
         };
         if item == MenuItem::AddOperation {
             ui.separator();
-            // The Operations tab's Add menu, for these shapes (#539).
+            // The Operations step's Add menu, for these shapes (#539).
             ui.menu_button(strings.get(key), |ui| {
                 panels::operations::add_menu(ui, strings, project, ids, out);
             });

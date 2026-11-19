@@ -91,8 +91,8 @@ fn view_state_is_not_project_state() {
 }
 
 /// The preferences' defaults are `gui.toml`'s (`dreamcarve-shell`, which
-/// owns the file): a 1280 × 800 window, panels of 280 and 320 px open and
-/// the Warnings drawer closed, everything but the arrows visible, colour
+/// owns the file): a 1280 × 800 window, the step panel 312 px and the
+/// Inspector 328 px wide, the Warnings drawer closed, everything but the arrows visible, colour
 /// by operation, the dark theme, no recent files.
 #[test]
 fn prefs_defaults_match_the_file_defaults() {
@@ -107,8 +107,8 @@ fn prefs_defaults_match_the_file_defaults() {
         WindowGeometry::default().height.to_bits(),
         800.0_f64.to_bits()
     );
-    assert_eq!(prefs.panels.left_width.to_bits(), 280.0_f64.to_bits());
-    assert_eq!(prefs.panels.right_width.to_bits(), 320.0_f64.to_bits());
+    assert_eq!(prefs.panels.left_width.to_bits(), 312.0_f64.to_bits());
+    assert_eq!(prefs.panels.right_width.to_bits(), 328.0_f64.to_bits());
     assert!(prefs.panels.left_open && prefs.panels.right_open);
     assert!(!prefs.panels.warnings_open);
     assert_eq!(

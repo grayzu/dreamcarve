@@ -7,7 +7,7 @@
 //!
 //! A 560-px sheet over a scrim: the destination folder and file name
 //! (the folder remembered per project in `gui.toml`, beside the project
-//! by default), the post-processor (changing it is the Project panel's
+//! by default), the post-processor (changing it is the Export step's
 //! undoable switch), the program split as the project says or overridden
 //! for this export, a tick per board with an Inlay, then *Program
 //! Details*, a disclosure closed whenever the sheet opens, holding the

@@ -6,7 +6,7 @@
 //! `experience.md`, section 7): X and Y (the selection box's bottom-left),
 //! W and H with the proportion link to their right (one chain spanning
 //! both rows, linked or broken), and the operations targeting the
-//! selection. Nothing else: rotation and mirroring are the toolbar's
+//! selection. Nothing else: rotation and mirroring are the Inspector's
 //! Arrange actions (58a; slice 25, #617). Fields are
 //! `dc_app::properties`'; a field commits on leave as one
 //! `TransformInstances` about the box's centre, and a refusal (a value

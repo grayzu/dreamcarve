@@ -7,7 +7,7 @@
 //! for the grid, the stock's outline, the shapes, the hover and the
 //! selection, with the overlay egui's painter draws on top (the origin
 //! crosshair and its label, the park point, the padlocks, the marquee)
-//! and the empty-state card over all while the project has no shapes.
+//! and the start screen in its place while the project has nothing to cut.
 //!
 //! Navigation: a middle-button drag, a Space-drag or a two-finger scroll
 //! pans; the wheel, Ctrl/⌘-scroll and a pinch zoom about the cursor
@@ -37,9 +37,15 @@
 //! Profile's start point) and disarms it, as the park point's does (#540).
 //! Placed tabs (#546): a press on a tab (tabs win over the shape they sit
 //! on) drags it along its outline, previewed live and committed as one
-//! `MoveTab` on release; while the Tab tool is armed (the toolbar, T) a
+//! `MoveTab` on release; while the Tab tool is armed (its button, T) a
 //! click on an outline adds a tab there, until Escape; Delete removes the
 //! selected tabs ([`tab_tool`]).
+//!
+//! The Viewport is a card. *Fit* and the *Tab tool* float over its top
+//! left corner in one `surface.raised` pill ([`tools_pill`];
+//! `redesign.md`, "The Viewport's floating controls"). While the project
+//! has nothing to cut and the Design step is open, the card shows the
+//! start screen in place of the stock ([`crate::panels::empty`]).
 
 mod layers;
 mod legend;
@@ -76,8 +82,38 @@ use crate::widgets::card::mask_corners;
 use crate::widgets::icon::Icon;
 use renderer::{Frame, Layer, LayerData, StyleId, StyleTable, ToolpathData};
 
-/// The gap between the Viewport's card and its neighbours, px.
-const GUTTER_PX: i8 = 8;
+/// What the Viewport leaves of the gap to the card on each side, px: 8
+/// at the window's edge or beside the rail, less beside a resizable
+/// panel, which keeps the rest (`panels::side`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Margins {
+    /// Left of the card.
+    pub left: f32,
+    /// Right of the card.
+    pub right: f32,
+}
+
+impl Margins {
+    /// The margins as a frame's, over a `bottom` one.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a gap of at most 8 px, whole"
+    )]
+    pub(crate) fn frame(self, top: i8, bottom: i8) -> egui::Margin {
+        egui::Margin {
+            left: self.left as i8,
+            right: self.right as i8,
+            top,
+            bottom,
+        }
+    }
+}
+
+/// A floating control's height, px: a 28-px button and the pill round
+/// it.
+const PILL_PX: f32 = 36.0;
+/// A floating control's button, px square.
+const PILL_BUTTON_PX: f32 = 28.0;
 /// The margin under the card, px: the status bar's pills stand 2 px in
 /// from its top, which makes the gap.
 const BOTTOM_PX: i8 = 6;
@@ -1471,11 +1507,84 @@ fn target_bar(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Vec<Act
     });
 }
 
-/// Draws the Viewport in the central panel; returns its rectangle.
+/// The floating tools at the top left of the Viewport's card `pane`
+/// (`redesign.md`, "The Viewport's floating controls"): *Fit* and the
+/// *Tab tool* in one `surface.raised` pill with the one shadow, 12 px in
+/// from the card's edge, under the target-editing bar while that shows.
+/// The pill takes the clicks on it, so none reaches the drawing.
+fn tools_pill(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
+    let strings = state.app.strings();
+    let editing_targets = state.app.target_editing().is_some();
+    let top =
+        pane.top() + theme::FLOAT_INSET_PX + if editing_targets { TARGET_BAR_PX } else { 0.0 };
+    let padding = (PILL_PX - PILL_BUTTON_PX) / 2.0;
+    let gap = 2.0;
+    let rect = Rect::from_min_size(
+        egui::pos2(pane.left() + theme::FLOAT_INSET_PX, top),
+        egui::vec2(2.0 * padding + 2.0 * PILL_BUTTON_PX + gap, PILL_PX),
+    );
+    ui.interact(
+        rect,
+        egui::Id::unique("dc.viewport.tools_pill"),
+        egui::Sense::click_and_drag(),
+    );
+    let radius = theme::pill(PILL_PX);
+    ui.painter()
+        .add(theme::shadow(palette).as_shape(rect, radius));
+    ui.painter().rect(
+        rect,
+        radius,
+        palette.surface_raised,
+        Stroke::new(1.0, palette.border_default),
+        egui::StrokeKind::Inside,
+    );
+    let mut pill = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink(padding))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    pill.spacing_mut().item_spacing.x = gap;
+    let tool = |key: StrKey, icon: Icon| {
+        ButtonSpec::new(ButtonKind::Quiet, "")
+            .icon(icon, theme::ICON_SMALL_PX)
+            .width(PILL_BUTTON_PX)
+            .height(PILL_BUTTON_PX)
+            .named(strings.get(key))
+    };
+    let fit_keys = keyboard::binding(Shortcut::FitView)
+        .map(|(modifiers, key)| crate::shell::window::shortcut_text(ui.ctx(), modifiers, key));
+    let fit_tip = match &fit_keys {
+        Some(keys) => format!("{} ({keys})", strings.get(StrKey::AppViewportFit)),
+        None => strings.get(StrKey::AppViewportFit).to_owned(),
+    };
+    if button(
+        &mut pill,
+        tool(StrKey::AppViewportFit, Icon::Maximize).tooltip(&fit_tip),
+    )
+    .clicked()
+    {
+        out.push(Action::FitView);
+    }
+    // The Tab tool (#546): armed, it shows as pressed. Target editing
+    // has the drawing to itself.
+    let armed = tab_tool::armed(ui.ctx());
+    let tab = tool(StrKey::AppViewportTabTool, Icon::BookmarkPlus)
+        .tooltip(strings.get(StrKey::AppViewportTabToolHelp))
+        .pressed(armed)
+        .enabled(!editing_targets);
+    if button(&mut pill, tab).clicked() {
+        tab_tool::arm(ui.ctx(), !armed);
+    }
+}
+
+/// Draws the Viewport in the central panel, `margins` from the cards
+/// beside it; returns its rectangle.
 pub(crate) fn show(
     ui: &mut Ui,
     state: &FrameState<'_>,
     view: &mut ViewportState,
+    margins: Margins,
     out: &mut Vec<Action>,
 ) -> Rect {
     let palette = Palette::current(ui);
@@ -1483,12 +1592,7 @@ pub(crate) fn show(
         .frame(
             egui::Frame::NONE
                 .fill(palette.surface_window)
-                .inner_margin(egui::Margin {
-                    left: GUTTER_PX,
-                    right: GUTTER_PX,
-                    top: 0,
-                    bottom: BOTTOM_PX,
-                }),
+                .inner_margin(margins.frame(0, BOTTOM_PX)),
         )
         .show(ui, |ui| {
             let (pane, response) =
@@ -1595,6 +1699,12 @@ pub(crate) fn show(
 
             let painter = ui.painter_at(pane);
             painter.rect_filled(pane, 0.0, palette.viewport_bg);
+            if state.show_empty {
+                // The start screen, in place of the empty stock.
+                empty::screen(ui, pane, state, out);
+                mask_corners(&painter, pane, theme::CARD_RADIUS_PX, palette);
+                return pane;
+            }
             let stock = &app.project().stock;
             let sheet = Rect::from_two_pos(
                 window_pos(pane, &camera, Point::new(0.0, 0.0)),
@@ -1612,21 +1722,17 @@ pub(crate) fn show(
             painter.add(renderer::callback(pane, frame));
             overlay(ui, pane, state, view, &camera);
             target_bar(ui, pane, state, out);
+            tools_pill(ui, pane, state, out);
             let derived = view.derived.clone();
-            let covers: Vec<Rect> = if state.show_empty {
-                empty::card(ui, pane, state, out);
-                Vec::new()
-            } else {
-                // Capability 73a: the depth legend while By depth is on,
-                // whether or not the toolpath view is open.
-                derived
-                    .as_ref()
-                    .and_then(|d| d.legend.as_ref())
-                    .filter(|_| app.view().colour == ColourMode::ByDepth)
-                    .map(|legend| legend::draw_legend(ui, pane, app, legend))
-                    .into_iter()
-                    .collect()
-            };
+            // Capability 73a: the depth legend while By depth is on,
+            // whether or not the toolpath view is open.
+            let covers: Vec<Rect> = derived
+                .as_ref()
+                .and_then(|d| d.legend.as_ref())
+                .filter(|_| app.view().colour == ColourMode::ByDepth)
+                .map(|legend| legend::draw_legend(ui, pane, app, legend))
+                .into_iter()
+                .collect();
             // After the legend, so the caption can step out from under
             // it; it stays on the pane's layer, below it.
             if let Some(extents) = derived

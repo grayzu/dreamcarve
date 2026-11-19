@@ -127,6 +127,27 @@ pub fn harness(options: Options, width: f32, height: f32) -> Harness<'static, Sh
     harness
 }
 
+/// Opens step `name` (*Design*, *Stock*, *Tools*, *Operations*, *Export*)
+/// from the rail.
+pub fn go_to(harness: &mut Harness<'_, Shell>, name: &str) {
+    use egui_kittest::kittest::Queryable as _;
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Tab, name)
+        .click();
+    harness.run();
+}
+
+/// Opens operation `name` in the Inspector, from the Operations step's
+/// list.
+pub fn open_operation(harness: &mut Harness<'_, Shell>, name: &str) {
+    use egui_kittest::kittest::Queryable as _;
+    go_to(harness, "Operations");
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ListItem, name)
+        .click();
+    harness.run();
+}
+
 /// Presses the window's close button, as the OS reports it.
 pub fn press_close(harness: &mut Harness<'_, Shell>) {
     harness

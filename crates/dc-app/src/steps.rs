@@ -83,11 +83,11 @@ impl Step {
     #[must_use]
     pub const fn label(self) -> StrKey {
         match self {
-            Self::Design => StrKey::StepsDesign,
-            Self::Stock => StrKey::StepsStock,
-            Self::Tools => StrKey::StepsTools,
-            Self::Operations => StrKey::StepsOperations,
-            Self::Export => StrKey::StepsExport,
+            Self::Design => StrKey::StepsLabelDesign,
+            Self::Stock => StrKey::StepsLabelStock,
+            Self::Tools => StrKey::StepsLabelTools,
+            Self::Operations => StrKey::StepsLabelOperations,
+            Self::Export => StrKey::StepsLabelExport,
         }
     }
 }
@@ -197,8 +197,7 @@ pub fn blank(project: &Project) -> bool {
 #[must_use]
 pub fn off_stock(app: &App) -> bool {
     let project = app.project();
-    let ids: Vec<_> = project.instances.iter().map(|i| i.id.clone()).collect();
-    let Some(bounds) = app.scene().bounds_of(&ids) else {
+    let Some(bounds) = app.scene().shapes_bounds() else {
         return false;
     };
     bounds.min.x < -EPS_MM

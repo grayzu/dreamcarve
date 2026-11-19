@@ -1,17 +1,18 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The menu bar (functional spec, capability 50: File, Edit, Arrange,
-//! View, Project, Help; `experience.md`, section 2, "Menu bar and
-//! toolbar"): egui's own on every platform (design open question 6),
-//! 32 px on the backdrop, every shortcut shown in its row (capability
-//! 54). The Arrange
-//! menu (capability 58a, mock-up 14) holds the toolbar's Arrange commands
-//! with their shortcuts, *Rotate…* (the toolbar's angle popover) and
-//! *Centre on Stock* (61). The File, Edit, View and Project menus are
-//! capability 79a's (mock-up 14): new-project and add-to-project apart,
-//! *Export G-code…* in its own group, and View ▸ Appearance a choice of
-//! three with a check.
+//! The menus (functional spec, capability 50: File, Edit, Arrange, View,
+//! Project, Help; `redesign.md`, "The window"): quiet text buttons at the
+//! left of the header ([`crate::shell::header`]), egui's own on every
+//! platform (design open question 6), every shortcut shown in its row
+//! (capability 54). The Arrange menu (capability 58a, mock-up 14) holds
+//! the Arrange group's commands with their shortcuts, *Rotate…* (the
+//! group's angle popover) and *Centre on Stock* (61). The File, Edit,
+//! View and Project menus are capability 79a's (mock-up 14): new-project
+//! and add-to-project apart, *Export G-code…* in its own group, View ▸
+//! *Go to* each of the five steps, and View ▸ Appearance a choice of
+//! three with a check. The rail's Appearance and Help buttons open the
+//! same rows ([`appearance_items`], [`help_items`]).
 
 use dc_app::{StrKey, Strings};
 use eframe::egui::{self, Button, Key, Modifiers, Ui};
@@ -21,9 +22,6 @@ use crate::shell::files;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState, shortcut_action, shortcut_text};
 use crate::widgets::icon::Icon;
-
-/// The menu bar's height, px: a control's, so a menu's title is one.
-pub(crate) const HEIGHT_PX: f32 = theme::CONTROL_PX;
 
 /// A menu row reading `key` with `shortcut`, pushing `action` when chosen.
 fn item(
@@ -56,67 +54,65 @@ fn item_text(
     }
 }
 
-/// Draws the menu bar.
-pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
-    let palette = Palette::current(ui);
-    egui::Panel::top("menu_bar")
-        .exact_size(HEIGHT_PX)
-        .resizable(false)
-        .show_separator_line(false)
-        .frame(
-            egui::Frame::NONE
-                .fill(palette.surface_window)
-                .inner_margin(egui::Margin::symmetric(8, 0)),
-        )
-        .show(ui, |ui| {
-            if state.inert() {
-                ui.disable();
-            }
-            egui::MenuBar::new().ui(ui, |ui| {
-                let strings = state.app.strings();
-                ui.menu_button(strings.get(StrKey::AppMenuFile), |ui| file(ui, state, out));
-                ui.menu_button(strings.get(StrKey::AppMenuEdit), |ui| edit(ui, state, out));
-                ui.menu_button(strings.get(StrKey::AppMenuArrange), |ui| {
-                    arrange(ui, state, out);
-                });
-                ui.menu_button(strings.get(StrKey::AppMenuView), |ui| view(ui, state, out));
-                ui.menu_button(strings.get(StrKey::AppMenuProject), |ui| {
-                    item(
-                        ui,
-                        strings,
-                        StrKey::AppMenuProjectSettings,
-                        None,
-                        Action::ShowProject,
-                        out,
-                    );
-                    item(
-                        ui,
-                        strings,
-                        StrKey::AppMenuToolLibrary,
-                        None,
-                        Action::OpenLibrary,
-                        out,
-                    );
-                    placement_items(ui, state, out);
-                });
-                ui.menu_button(strings.get(StrKey::AppMenuHelp), |ui| {
-                    item(
-                        ui,
-                        strings,
-                        StrKey::AppMenuUserGuide,
-                        None,
-                        Action::UserGuide,
-                        out,
-                    );
-                    item(ui, strings, StrKey::AppMenuAbout, None, Action::About, out);
-                });
+/// Draws the menus at the left of `ui`, the header's left part; where
+/// the last one ends, px.
+pub(crate) fn menus(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) -> f32 {
+    egui::MenuBar::new()
+        .ui(ui, |ui| {
+            let strings = state.app.strings();
+            ui.menu_button(strings.get(StrKey::AppMenuFile), |ui| file(ui, state, out));
+            ui.menu_button(strings.get(StrKey::AppMenuEdit), |ui| edit(ui, state, out));
+            ui.menu_button(strings.get(StrKey::AppMenuArrange), |ui| {
+                arrange(ui, state, out);
             });
-        });
+            ui.menu_button(strings.get(StrKey::AppMenuView), |ui| view(ui, state, out));
+            ui.menu_button(strings.get(StrKey::AppMenuProject), |ui| {
+                item(
+                    ui,
+                    strings,
+                    StrKey::AppMenuProjectSettings,
+                    None,
+                    Action::ShowProject,
+                    out,
+                );
+                item(
+                    ui,
+                    strings,
+                    StrKey::AppMenuToolLibrary,
+                    None,
+                    Action::OpenLibrary,
+                    out,
+                );
+                placement_items(ui, state, out);
+            });
+            ui.menu_button(strings.get(StrKey::AppMenuHelp), |ui| {
+                help_items(ui, state, out);
+            })
+            .response
+            .rect
+            .right()
+        })
+        .inner
+}
+
+/// Help's rows: the User Guide and About. The Help menu's, and the
+/// rail's Help button's.
+pub(crate) fn help_items(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let strings = state.app.strings();
+    item(
+        ui,
+        strings,
+        StrKey::AppMenuUserGuide,
+        None,
+        Action::UserGuide,
+        out,
+    );
+    item(ui, strings, StrKey::AppMenuAbout, None, Action::About, out);
 }
 
 /// The Arrange menu (capability 58a; mock-up 14): Rotate 90° either way,
 /// *Rotate…*, the two flips, and *Centre on Stock*, each disabled with
-/// the toolbar group's reason when nothing can turn.
+/// the Arrange group's reason when nothing can turn.
 fn arrange(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     use dc_app::arrange::Action as Arrange;
     let strings = state.app.strings();
@@ -392,21 +388,29 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 
 fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
-    let mut left = state.prefs.panels.left_open;
+    let mut panel = state.prefs.panels.left_open;
     if ui
-        .checkbox(&mut left, strings.get(StrKey::AppMenuLeftPanel))
+        .checkbox(&mut panel, strings.get(StrKey::AppMenuStepPanel))
         .clicked()
     {
-        out.push(Action::ToggleLeft);
+        out.push(Action::ToggleStepPanel);
         ui.close();
     }
-    let mut right = state.prefs.panels.right_open;
-    if ui
-        .checkbox(&mut right, strings.get(StrKey::AppMenuRightPanel))
-        .clicked()
-    {
-        out.push(Action::ToggleRight);
-        ui.close();
+    ui.separator();
+    // The five steps, each with its key (capability 54).
+    for command in [
+        Shortcut::GoToDesign,
+        Shortcut::GoToStock,
+        Shortcut::GoToTools,
+        Shortcut::GoToOperations,
+        Shortcut::GoToExport,
+    ] {
+        if let (Some((_, label)), Some(action)) = (
+            keyboard::of(command).and_then(|s| s.menu),
+            shortcut_action(state.app, command),
+        ) {
+            item(ui, strings, label, keyboard::binding(command), action, out);
+        }
     }
     ui.separator();
     // Capability 73: the toolpath view, as the status bar's button opens
@@ -456,17 +460,34 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     // Capability 79a: a choice of three is a submenu with a check, not a
     // checkbox, since a checkbox cannot say "follow the system".
     ui.menu_button(strings.get(StrKey::AppMenuAppearance), |ui| {
-        for (theme, key) in [
-            (dc_app::Theme::System, StrKey::AppMenuThemeSystem),
-            (dc_app::Theme::Light, StrKey::AppMenuThemeLight),
-            (dc_app::Theme::Dark, StrKey::AppMenuThemeDark),
-        ] {
-            if checked_item(ui, strings.get(key), state.prefs.theme == theme).clicked() {
-                out.push(Action::SetTheme(theme));
-                ui.close();
-            }
-        }
+        appearance_items(ui, state, out);
     });
+}
+
+/// The name of appearance `theme`.
+pub(crate) const fn theme_label(theme: dc_app::Theme) -> StrKey {
+    match theme {
+        dc_app::Theme::System => StrKey::AppMenuThemeSystem,
+        dc_app::Theme::Light => StrKey::AppMenuThemeLight,
+        dc_app::Theme::Dark => StrKey::AppMenuThemeDark,
+    }
+}
+
+/// Appearance's three choices, the current one checked: View ▸
+/// Appearance's rows, and the rail's Appearance button's.
+pub(crate) fn appearance_items(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let strings = state.app.strings();
+    for theme in [
+        dc_app::Theme::System,
+        dc_app::Theme::Light,
+        dc_app::Theme::Dark,
+    ] {
+        let label = strings.get(theme_label(theme));
+        if checked_item(ui, label, state.prefs.theme == theme).clicked() {
+            out.push(Action::SetTheme(theme));
+            ui.close();
+        }
+    }
 }
 
 /// A menu row with a check in front when `checked`: one of a choice

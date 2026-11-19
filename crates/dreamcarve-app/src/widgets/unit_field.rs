@@ -17,8 +17,9 @@
 //! placeholder text while empty, and a ⟲ inside its right end while it
 //! holds a value of its own.
 //!
-//! One form for every panel: the Project panel (#536), the Tools tab
-//! (#537), the placement fields (#534) and the operation editor (#539).
+//! One form for every panel: the Stock and Export steps (#536), the tool
+//! editor (#537), the placement fields (#534) and the operation editor
+//! (#539).
 //!
 //! An unset value the file needs before export (functional spec, 66b;
 //! section 7, "required (unset)"; slice 26, #618) is [`UnitField::required`]:

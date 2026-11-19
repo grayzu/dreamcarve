@@ -67,7 +67,7 @@ pub struct Palette {
     /// The backdrop: the window behind the cards, showing as the gaps
     /// between them and the margin round them.
     pub surface_window: Color32,
-    /// Cards: the side panels, the Warnings drawer.
+    /// Cards: the rail, the step panel, the Inspector, the Warnings drawer.
     pub surface_panel: Color32,
     /// Menus, popovers, sheets, and a card inside a card.
     pub surface_raised: Color32,
@@ -486,14 +486,24 @@ pub const ICONS: &str = "icons";
 pub const TITLE: &str = "Title";
 /// An emphasised row name: 13 px Medium.
 pub const MEDIUM_STYLE: &str = "Medium";
-/// The empty-state heading and sheet titles: 18 px SemiBold.
+/// A step's title, the start screen's heading and sheet titles: 18 px
+/// SemiBold.
 pub const DISPLAY: &str = "Display";
+/// A summary number (the estimate on the Export step): 22 px SemiBold,
+/// tabular.
+pub const SUMMARY: &str = "Summary";
+/// A rail button's label: 11 px, the one text under 12 px, allowed
+/// because an icon carries the meaning (`redesign.md`, "Shape, size and
+/// type").
+pub const RAIL_LABEL: &str = "RailLabel";
 
 /// Icon sizes (section 6): 16 px in rows and the status bar, 20 px in the
-/// toolbar and sheet headers.
+/// header and sheet headers.
 pub const ICON_SMALL_PX: f32 = 16.0;
-/// The toolbar's icon size.
+/// The header's icon size.
 pub const ICON_LARGE_PX: f32 = 20.0;
+/// A rail button's icon size.
+pub const ICON_RAIL_PX: f32 = 24.0;
 
 /// Shape and size (`redesign.md`, "Shape, size and type"; `experience.md`,
 /// section 3), px at 1×. A card's corner radius.
@@ -521,8 +531,29 @@ pub const SHEET_PADDING_PX: f32 = 24.0;
 pub const SECTION_GAP_PX: f32 = 20.0;
 /// A control's height: a field, a dropdown, a button, a segmented control.
 pub const CONTROL_PX: f32 = 32.0;
-/// The primary button of the toolbar (the header, once there is one).
+/// The header's height: the menus, the project's name, Undo and Redo and
+/// the primary button, on the backdrop.
+pub const HEADER_PX: f32 = 48.0;
+/// The header's primary button.
 pub const HEADER_PRIMARY_PX: f32 = 34.0;
+/// The rail's width: a card.
+pub const RAIL_PX: f32 = 64.0;
+/// A rail button's width.
+pub const RAIL_BUTTON_WIDTH_PX: f32 = 56.0;
+/// A rail button's height: a 24-px icon over an 11-px label.
+pub const RAIL_BUTTON_HEIGHT_PX: f32 = 52.0;
+/// The step panel's default width, a card's.
+pub const STEP_PANEL_PX: f32 = 312.0;
+/// The step panel's minimum width.
+pub const STEP_PANEL_MIN_PX: f32 = 280.0;
+/// The Inspector's default width, a card's.
+pub const INSPECTOR_PX: f32 = 328.0;
+/// The Inspector's minimum width.
+pub const INSPECTOR_MIN_PX: f32 = 300.0;
+/// The Viewport's minimum width.
+pub const VIEWPORT_MIN_PX: f32 = 520.0;
+/// How far a floating control sits in from the Viewport card's edge.
+pub const FLOAT_INSET_PX: f32 = 12.0;
 /// A section header's height.
 pub const SECTION_HEADER_PX: f32 = 32.0;
 /// A Design Tree row's height.
@@ -664,6 +695,14 @@ fn text_styles() -> std::collections::BTreeMap<TextStyle, FontId> {
         (
             TextStyle::Name(DISPLAY.into()),
             FontId::new(18.0, family(SEMIBOLD)),
+        ),
+        (
+            TextStyle::Name(SUMMARY.into()),
+            FontId::new(22.0, family(SEMIBOLD)),
+        ),
+        (
+            TextStyle::Name(RAIL_LABEL.into()),
+            FontId::new(11.0, FontFamily::Proportional),
         ),
     ]
     .into_iter()
@@ -876,15 +915,21 @@ mod tests {
         }
     }
 
-    /// The type scale has no size under 12 px and only the spec's sizes
-    /// (section 13, item 5).
+    /// The type scale has only the spec's sizes, and one size under
+    /// 12 px: the rail's 11-px label, which sits under an icon
+    /// (`redesign.md`, "Shape, size and type"; section 13, item 5).
     #[test]
     fn type_scale_is_the_spec_sizes() {
         for (style, font) in text_styles() {
             assert!(
-                [12.0, 13.0, 15.0, 18.0]
+                [11.0, 12.0, 13.0, 15.0, 18.0, 22.0]
                     .iter()
                     .any(|s| (font.size - s).abs() < 1e-6),
+                "{style:?} is {} px",
+                font.size
+            );
+            assert!(
+                font.size >= 12.0 || style == TextStyle::Name(RAIL_LABEL.into()),
                 "{style:?} is {} px",
                 font.size
             );
