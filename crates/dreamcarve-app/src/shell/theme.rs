@@ -44,6 +44,12 @@ const fn rgba(hex: u32) -> Color32 {
 pub const NONE: Color32 = Color32::TRANSPARENT;
 /// Text laid out now and coloured when painted.
 pub const PAINT_TIME: Color32 = Color32::PLACEHOLDER;
+/// A picture painted as it is: the tint that changes nothing.
+pub const IMAGE_TINT: Color32 = Color32::WHITE;
+/// How strongly a picture draws on the Viewport while a shape is selected
+/// (`experience.md`, section 5, `viewport.picture`: "the bitmap at 100 %,
+/// 60 % when any shape is selected"), so the selection reads over it.
+pub const PICTURE_DIMMED: f32 = 0.6;
 
 /// A status colour (section 5, "Status"): text that reads at 4.5:1 on a
 /// panel, the stroke for glyphs and field outlines, and the tint for row

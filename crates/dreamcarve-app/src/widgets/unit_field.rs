@@ -122,11 +122,16 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEIGHT_PX), Sense::hover());
     let buffer_id = spec.id.with("typed");
     let had_focus = ui.memory(|m| m.has_focus(spec.id));
-    let mut text = if had_focus {
-        ui.data(|d| d.get_temp::<String>(buffer_id))
-            .unwrap_or_else(|| spec.value.to_owned())
-    } else {
-        spec.value.to_owned()
+    // What is typed, and the value it started from. While nothing has
+    // been typed over that value the field follows the project: a field
+    // tabbed into as its neighbour commits (W, then H, which follows W)
+    // shows the new value, and leaving it writes nothing back.
+    let buffer = had_focus
+        .then(|| ui.data(|d| d.get_temp::<(String, String)>(buffer_id)))
+        .flatten();
+    let (mut text, seed) = match buffer {
+        Some((typed, seed)) if typed != seed || seed == spec.value => (typed, seed),
+        _ => (spec.value.to_owned(), spec.value.to_owned()),
     };
 
     // The frame is painted under the text, into a slot taken before it.
@@ -189,10 +194,10 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     let escaped = ui.input(|i| i.key_pressed(Key::Escape));
     let mut committed = None;
     if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(buffer_id, text.clone()));
+        ui.data_mut(|d| d.insert_temp(buffer_id, (text.clone(), seed)));
     }
     if response.lost_focus() {
-        ui.data_mut(|d| d.remove::<String>(buffer_id));
+        ui.data_mut(|d| d.remove::<(String, String)>(buffer_id));
         if !escaped && text != spec.value {
             committed = Some(text);
         }

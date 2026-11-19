@@ -110,14 +110,6 @@ pub struct TabRow {
     pub tabs: Vec<TabId>,
 }
 
-/// The placeholder a Pictures row was before the project had bitmaps: a
-/// type with no values, which the window's tree still matches on through
-/// [`Line::Picture`]. The rows are [`BitmapRow`]s, listed by
-/// [`Tree::rows`]; this type, [`Line`] and [`Tree::lines`] go when the
-/// window draws them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PictureRow {}
-
 /// One bitmap's row, in the Pictures section (capabilities 56 and 57).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitmapRow {
@@ -154,20 +146,6 @@ pub enum Section {
     Pictures,
 }
 
-/// One line of the tree without its bitmaps ([`Tree::lines`]): what the
-/// window drew before the project had pictures. [`Row`] is the whole tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Line<'a> {
-    /// A section's header, drawn whether or not it has rows.
-    Header(Section),
-    /// An instance's row.
-    Shape(&'a ShapeRow),
-    /// An outline's placed tabs.
-    Tab(&'a TabRow),
-    /// Never built: [`PictureRow`] has no values.
-    Picture(&'a PictureRow),
-}
-
 /// One row of the tree as the shell draws it, top to bottom
 /// ([`Tree::rows`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,9 +178,6 @@ pub struct Tree {
     /// The Tabs section: one row per outline with placed tabs, in the
     /// order of the instances, then of the outlines.
     pub tabs: Vec<TabRow>,
-    /// Always empty ([`PictureRow`]); the Pictures section's rows are
-    /// [`Tree::bitmaps`].
-    pub pictures: Vec<PictureRow>,
     /// The Pictures section: one row per bitmap, in file order.
     pub bitmaps: Vec<BitmapRow>,
 }
@@ -293,7 +268,6 @@ impl Tree {
         Self {
             shapes,
             tabs,
-            pictures: Vec::new(),
             bitmaps,
         }
     }
@@ -332,21 +306,6 @@ impl Tree {
         rows.push(Row::Header(Section::Pictures));
         rows.extend(self.bitmaps.iter().map(Row::Bitmap));
         rows
-    }
-
-    /// [`Tree::rows`] without the bitmaps: each section's header, then
-    /// the shapes' and the tabs' rows. Kept for the window's tree until
-    /// it draws [`Tree::rows`].
-    #[must_use]
-    pub fn lines(&self) -> Vec<Line<'_>> {
-        let mut lines = Vec::with_capacity(3 + self.shapes.len() + self.tabs.len());
-        lines.push(Line::Header(Section::Shapes));
-        lines.extend(self.shapes.iter().map(Line::Shape));
-        lines.push(Line::Header(Section::Tabs));
-        lines.extend(self.tabs.iter().map(Line::Tab));
-        lines.push(Line::Header(Section::Pictures));
-        lines.extend(self.pictures.iter().map(Line::Picture));
-        lines
     }
 
     /// The Shapes header's eye and padlock.
@@ -575,7 +534,7 @@ fn all_bitmaps(project: &Project, ids: &[BitmapId]) -> (bool, bool) {
 /// The context menu of the Pictures rows `ids` (capabilities 56 and 57):
 /// Rename, Hide or Show (Show when any is hidden), Lock or Unlock (Unlock
 /// when every one is locked), Delete, Zoom to, and *Add operation ▸*,
-/// whose menu for the rows is [`crate::operations::add_menu_with`]: a
+/// whose menu for the rows is [`crate::operations::add_menu`]: a
 /// Photo V-Carve on the picture (slice 15, #544). A picture has no linked
 /// copy, and its Photo V-Carve names it by the editor's Picture row, so a
 /// shape's Duplicate, *Add to* and *Remove from* are absent.
@@ -603,7 +562,7 @@ pub fn bitmap_menu(project: &Project, ids: &[BitmapId]) -> Vec<MenuItem> {
 /// The command `item` runs on the bitmaps `ids`; `None` for the items
 /// that are not a change to the project (Rename, which commits through
 /// [`rename_bitmap`], Zoom to, and Add operation, a submenu whose items
-/// run [`crate::operations::add_with`]), for an item [`bitmap_menu`] does not
+/// run [`crate::operations::add`]), for an item [`bitmap_menu`] does not
 /// offer, with nothing chosen, or when the project lacks one of `ids`.
 #[must_use]
 pub fn bitmap_menu_command(project: &Project, item: MenuItem, ids: &[BitmapId]) -> Option<Command> {

@@ -490,21 +490,69 @@ fn a_click_inside_a_footprint_picks_the_picture_under_everything_else() {
         Some(b("b1")),
         "the picture lies under it"
     );
-    assert_eq!(
-        pick::picture_under(&scene, &camera, on_shape, &hit),
-        None,
-        "but the shape takes the click"
-    );
+    // The shape takes the click (`hit` above); where nothing does, the
+    // pick is the picture, last of all; off every footprint, nothing.
     let empty = at(shapes.max.x + 50.0, shapes.max.y + 50.0);
     let hit = pick::pick(&scene, &camera, empty, PICK_TOLERANCE_PX, 0);
-    assert_eq!(hit, Hit::Nothing);
-    assert_eq!(
-        pick::picture_under(&scene, &camera, empty, &hit),
-        Some(b("b1"))
-    );
+    assert_eq!(hit, Hit::Bitmap(b("b1")));
     let off = at(450.0, 30.0);
     let hit = pick::pick(&scene, &camera, off, PICK_TOLERANCE_PX, 0);
-    assert_eq!(pick::picture_under(&scene, &camera, off, &hit), None);
+    assert_eq!(hit, Hit::Nothing);
+    // A click cycle picks it the same way, every time.
+    let mut cycle = pick::ClickCycle::default();
+    for _ in 0..2 {
+        assert_eq!(
+            cycle.click(&scene, &camera, empty, PICK_TOLERANCE_PX),
+            Hit::Bitmap(b("b1"))
+        );
+    }
+}
+
+/// Capability 57 ("pictures are selected on their own, as tabs are"): a
+/// marquee takes every visible picture whose footprint it touches, in
+/// file order, and the selection it makes holds pictures alone: those,
+/// those added with Shift, each toggled with Ctrl. One that touches no
+/// picture clears. b1 is 100 × 50 at (10, 10); b2 is 20 × 20 at the
+/// origin.
+#[test]
+fn a_marquee_takes_the_pictures_it_touches() {
+    let harness = two_pictures();
+    let scene = harness.app.scene();
+    let rect = |x0: f64, y0: f64, x1: f64, y1: f64| Rect {
+        min: Point::new(x0, y0),
+        max: Point::new(x1, y1),
+    };
+    let both = pick::pictures_touching(scene, rect(-5.0, -5.0, 15.0, 15.0));
+    assert_eq!(both, [b("b1"), b("b2")]);
+    let first = pick::pictures_touching(scene, rect(60.0, 40.0, 200.0, 200.0));
+    assert_eq!(first, [b("b1")]);
+    assert!(pick::pictures_touching(scene, rect(200.0, 200.0, 300.0, 300.0)).is_empty());
+
+    let none = Selection::Nothing;
+    assert_eq!(
+        none.boxed_pictures(&both, ClickMode::Replace),
+        Selection::Bitmaps(both.clone())
+    );
+    assert_eq!(
+        none.boxed_pictures(&[], ClickMode::Replace),
+        Selection::Nothing
+    );
+    let one = Selection::Bitmaps(vec![b("b2")]);
+    assert_eq!(
+        one.boxed_pictures(&first, ClickMode::Add),
+        Selection::Bitmaps(vec![b("b2"), b("b1")])
+    );
+    assert_eq!(
+        one.boxed_pictures(&both, ClickMode::Toggle),
+        Selection::Bitmaps(vec![b("b1")]),
+        "b1 in, b2 out"
+    );
+    // A click on a picture is a click among pictures: shapes selected go.
+    let shapes = Selection::Instances(vec![dc_project::InstanceId::new("i1")]);
+    assert_eq!(
+        shapes.clicked(&Hit::Bitmap(b("b1")), ClickMode::Add),
+        Selection::Bitmaps(vec![b("b1")])
+    );
 }
 
 /// Slice 15 (#544); capability 57: clicking a picture's row or the
@@ -517,11 +565,19 @@ fn a_click_inside_a_footprint_picks_the_picture_under_everything_else() {
 fn a_picture_is_selected_from_its_row_or_the_viewport() {
     let mut harness = two_pictures();
     let steps = harness.app.history().undo_labels().count();
+    // The picture just imported is the selection, so it can be moved at
+    // once (capability 56).
+    assert_eq!(harness.app.selected_pictures(), [b("b2")]);
+    harness.app.select(Selection::Nothing);
     assert!(harness.app.selected_pictures().is_empty());
 
     harness.app.click_picture(&b("b1"), ClickMode::Replace);
     assert_eq!(harness.app.selected_pictures(), [b("b1")]);
-    assert_eq!(harness.app.selection(), &Selection::Nothing);
+    assert_eq!(
+        harness.app.selection(),
+        &Selection::Bitmaps(vec![b("b1")]),
+        "the app's one selection holds the pictures"
+    );
     harness.app.click_picture(&b("b2"), ClickMode::Add);
     assert_eq!(harness.app.selected_pictures(), [b("b1"), b("b2")]);
     harness.app.click_picture(&b("b2"), ClickMode::Add);
@@ -554,7 +610,7 @@ fn a_picture_is_selected_from_its_row_or_the_viewport() {
     harness.app.select(Selection::Operation(op1.clone()));
     assert!(harness.app.selected_pictures().is_empty());
     harness.app.click_picture(&b("b2"), ClickMode::Replace);
-    assert_eq!(harness.app.selection(), &Selection::Nothing);
+    assert_eq!(harness.app.selection(), &Selection::Bitmaps(vec![b("b2")]));
     assert_eq!(harness.app.editing(), Some(&op1));
     // A plain click on nothing clears it.
     harness.app.select(Selection::Nothing);
@@ -1092,10 +1148,10 @@ fn a_bitmap_rows_menu_adds_a_photo_v_carve_on_it() {
         None,
         "a submenu, not a command"
     );
-    let menu = operations::add_menu_with(project, &strings, &[], &[b("b2")]);
+    let menu = operations::add_menu(project, &strings, &[], &[b("b2")]);
     assert_eq!(menu.available, [Kind::PhotoVCarve]);
     let Some(Command::AddOperation(Operation::PhotoVCarve(photo))) =
-        operations::add_with(project, &strings, Kind::PhotoVCarve, &[], &[b("b2")])
+        operations::add(project, &strings, Kind::PhotoVCarve, &[], &[b("b2")])
     else {
         panic!("a Photo V-Carve to add");
     };

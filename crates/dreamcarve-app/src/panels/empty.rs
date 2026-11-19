@@ -12,8 +12,9 @@
 //! arrives or another step is opened, where the stock shows.
 //!
 //! *New from drawing…* starts a new project from the chosen file, so the
-//! stock is sized round the drawing. *New from picture…* waits for
-//! picture import, as the Design step's *Add picture* does.
+//! stock is sized round the drawing. *New from picture…* does the same
+//! round a picture, with the Photo V-Carve that carves it (File ▸ New
+//! Project from Picture…).
 
 use std::path::Path;
 
@@ -137,14 +138,13 @@ fn actions(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             // project: the stock is sized round it (capability 79).
             out.push(Action::NewFromDrawing);
         }
-        button(
-            ui,
-            ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppEmptyImportPicture))
-                .icon(Icon::ImagePlus, theme::ICON_SMALL_PX)
-                .height(BUTTON_PX)
-                .tooltip(strings.get(StrKey::AppEmptyPictureUnavailable))
-                .enabled(false),
-        );
+        let picture = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppEmptyImportPicture))
+            .icon(Icon::ImagePlus, theme::ICON_SMALL_PX)
+            .height(BUTTON_PX)
+            .tooltip(strings.get(StrKey::AppEmptyImportPictureHint));
+        if button(ui, picture).clicked() {
+            out.push(Action::NewFromPicture);
+        }
         let shortcut = shortcut_text(ui.ctx(), Modifiers::COMMAND, Key::O);
         let open = ButtonSpec::new(Kind::Quiet, strings.get(StrKey::AppEmptyOpenProject))
             .icon(Icon::FolderOpen, theme::ICON_SMALL_PX)

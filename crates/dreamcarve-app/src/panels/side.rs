@@ -17,8 +17,9 @@
 //!
 //! The **Inspector** (328 px, at least 300) is there only while the step
 //! has something selected ([`inspecting`]): on Design the Properties of
-//! the selected shapes or tabs ([`panels::properties`]) with the Arrange
-//! group ([`panels::arrange`]) in its header, on Tools the tool's editor,
+//! the selected shapes, tabs or pictures ([`panels::properties`]), the
+//! shapes' with the Arrange group ([`panels::arrange`]) in its header (a
+//! picture does not turn or flip), on Tools the tool's editor,
 //! on Operations the operation's ([`panels::editor`]). Its close button
 //! deselects, and the Viewport takes the room. In a window narrower than
 //! 1280 px it lies over the Viewport's right side instead of beside it.
@@ -29,7 +30,7 @@
 
 use dc_app::steps::Step;
 use dc_app::{Selection, StrKey};
-use dc_project::{InstanceId, Operation, TabId, Tool};
+use dc_project::{BitmapId, InstanceId, Operation, TabId, Tool};
 use eframe::egui::{self, Id, Rangef, Rect, Sense, Stroke, TextStyle, Ui, UiBuilder, Vec2};
 
 use crate::panels;
@@ -270,16 +271,14 @@ fn design(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             if button(ui, add(StrKey::StepsDesignAddDrawing, Icon::FileInput)).clicked() {
                 out.push(Action::ImportDrawing);
             }
-            button(
-                ui,
-                add(StrKey::StepsDesignAddPicture, Icon::ImagePlus)
-                    .enabled(false)
-                    .tooltip(strings.get(StrKey::AppEmptyPictureUnavailable)),
-            );
+            if button(ui, add(StrKey::StepsDesignAddPicture, Icon::ImagePlus)).clicked() {
+                out.push(Action::ImportPicture);
+            }
         });
     });
     ui.add_space(GAP_PX - spacing);
-    if state.app.project().instances.is_empty() {
+    let project = state.app.project();
+    if project.instances.is_empty() && project.bitmaps.is_empty() {
         empty_sentence(ui, strings.get(StrKey::AppPanelNoShapes));
     } else {
         panels::tree::show(ui, state, out);
@@ -293,6 +292,8 @@ pub(crate) enum Inspecting<'a> {
     Shapes(&'a [InstanceId]),
     /// The size and shape of the selected placed tabs.
     Tabs(&'a [TabId]),
+    /// The placement, the pixels and the lock of the selected pictures.
+    Pictures(&'a [BitmapId]),
     /// A project tool.
     Tool(&'a Tool),
     /// An operation.
@@ -300,7 +301,7 @@ pub(crate) enum Inspecting<'a> {
 }
 
 /// What the current step has selected that has an editor: on Design the
-/// selected shapes or tabs, on Tools the selected tool, on Operations
+/// selected shapes, tabs or pictures, on Tools the selected tool, on Operations
 /// the operation in the editor. While an operation's targets are edited,
 /// that operation.
 pub(crate) fn inspecting<'a>(state: &FrameState<'a>) -> Option<Inspecting<'a>> {
@@ -320,6 +321,7 @@ pub(crate) fn inspecting<'a>(state: &FrameState<'a>) -> Option<Inspecting<'a>> {
         Step::Design => match app.selection() {
             Selection::Instances(ids) if !ids.is_empty() => Some(Inspecting::Shapes(ids)),
             Selection::Tabs(ids) if !ids.is_empty() => Some(Inspecting::Tabs(ids)),
+            Selection::Bitmaps(ids) if !ids.is_empty() => Some(Inspecting::Pictures(ids)),
             _ => None,
         },
         Step::Tools => {
@@ -444,6 +446,13 @@ fn body(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             header(ui, &panels::properties::tabs_title(state, ids), 0.0, |_| {});
             scrolled(ui, "inspector_tabs", |ui| {
                 panels::properties::tabs(ui, state, ids, out);
+            });
+        }
+        Inspecting::Pictures(ids) => {
+            let title = panels::properties::pictures_title(state, ids);
+            header(ui, &title, 0.0, |_| {});
+            scrolled(ui, "inspector_pictures", |ui| {
+                panels::properties::pictures(ui, state, ids, out);
             });
         }
         Inspecting::Tool(tool) => panels::tools::editor_card(ui, state, tool, out),

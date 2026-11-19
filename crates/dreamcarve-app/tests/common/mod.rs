@@ -48,7 +48,8 @@ pub fn copy_fixture(name: &str, dir: &Path) -> PathBuf {
 pub struct QueuedDialogs {
     answers: Arc<Mutex<VecDeque<Option<PathBuf>>>>,
     /// What each dialog was asked, in order: `open_project`,
-    /// `save_project <file name>`, `open_drawing`, `open_library`,
+    /// `save_project <file name>`, `open_drawing`, `open_picture`,
+    /// `open_library`,
     /// `save_library <file name>`, `export_folder`,
     /// `save_setup_sheet <suggested path>`.
     pub asked: Arc<Mutex<Vec<String>>>,
@@ -85,6 +86,10 @@ impl Dialogs for QueuedDialogs {
 
     fn open_drawing(&mut self, _title: &str) -> Option<PathBuf> {
         self.next("open_drawing".to_owned())
+    }
+
+    fn open_picture(&mut self, _title: &str) -> Option<PathBuf> {
+        self.next("open_picture".to_owned())
     }
 
     fn open_library(&mut self, _title: &str) -> Option<PathBuf> {
@@ -146,6 +151,138 @@ pub fn open_operation(harness: &mut Harness<'_, Shell>, name: &str) {
         .get_by_role_and_label(egui::accesskit::Role::ListItem, name)
         .click();
     harness.run();
+}
+
+/// Runs frames until the picture the Add picture sheet waits for is
+/// decoded (on its own thread) and the sheet is open, or its refusal is
+/// in the status bar.
+pub fn settle_picture(harness: &mut Harness<'_, Shell>) {
+    let started = std::time::Instant::now();
+    while harness.state().opening_picture() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "the picture never landed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        harness.run();
+    }
+    harness.run();
+}
+
+/// A picture file for a test: `pixels` as an 8-bit RGB PNG at `dir/name`,
+/// tinted warm so it is a colour picture (the importer converts it to
+/// grayscale and says so), so no picture needs committing to show one
+/// the fixtures lack. Written without compression: a zlib stream of
+/// stored blocks.
+pub fn write_colour_png(dir: &Path, name: &str, pixels: &dc_project::Grayscale) -> PathBuf {
+    let (width, height) = (pixels.width_px as usize, pixels.height_px as usize);
+    // Each row: filter 0, then R, G, B a sample: a sepia of the gray.
+    let mut raw = Vec::with_capacity(height * (1 + 3 * width));
+    for row in pixels.bytes.chunks(width).take(height) {
+        raw.push(0);
+        for gray in row {
+            let g = f64::from(*gray);
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "clamped to a byte"
+            )]
+            let byte = |v: f64| v.clamp(0.0, 255.0).round() as u8;
+            raw.extend([byte(g * 1.06 + 6.0), byte(g * 0.98), byte(g * 0.84)]);
+        }
+    }
+    let mut zlib = vec![0x78, 0x01];
+    let blocks = raw.chunks(0xFFFF).count();
+    for (k, block) in raw.chunks(0xFFFF).enumerate() {
+        let len = u16::try_from(block.len()).expect("a stored block's length");
+        zlib.push(u8::from(k + 1 == blocks));
+        zlib.extend(len.to_le_bytes());
+        zlib.extend((!len).to_le_bytes());
+        zlib.extend(block);
+    }
+    let (mut a, mut b) = (1_u32, 0_u32);
+    for byte in &raw {
+        a = (a + u32::from(*byte)) % 65_521;
+        b = (b + a) % 65_521;
+    }
+    zlib.extend(((b << 16) | a).to_be_bytes());
+
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    let mut chunk = |kind: &[u8; 4], body: &[u8]| {
+        png.extend(
+            u32::try_from(body.len())
+                .expect("a chunk's length")
+                .to_be_bytes(),
+        );
+        let mut crc = !0_u32;
+        for byte in kind.iter().chain(body) {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        png.extend(kind);
+        png.extend(body);
+        png.extend((!crc).to_be_bytes());
+    };
+    let mut header = Vec::with_capacity(13);
+    header.extend(pixels.width_px.to_be_bytes());
+    header.extend(pixels.height_px.to_be_bytes());
+    // 8 bits a channel, colour type 2 (RGB), no interlace.
+    header.extend([8, 2, 0, 0, 0]);
+    chunk(b"IHDR", &header);
+    chunk(b"IDAT", &zlib);
+    chunk(b"IEND", &[]);
+    let path = dir.join(name);
+    std::fs::write(&path, png).expect("the PNG is written");
+    path
+}
+
+/// A picture with no symmetry, `width_px × height_px`: a pale sky that
+/// darkens toward the bottom, a white sun in the top right, a dark hill
+/// rising to the left along the bottom. Turned or mirrored, it shows.
+pub fn landscape(width_px: u32, height_px: u32) -> dc_project::Grayscale {
+    let (w, h) = (f64::from(width_px), f64::from(height_px));
+    let mut bytes = Vec::with_capacity(width_px as usize * height_px as usize);
+    for row in 0..height_px {
+        for column in 0..width_px {
+            let (x, y) = (f64::from(column) / w, f64::from(row) / h);
+            // The sky: 215 at the top down to 150 at the horizon.
+            let mut gray = 215.0 - 65.0 * y;
+            // The sun, top right, with a soft edge.
+            let sun = ((x - 0.78).powi(2) * (w / h).powi(2) + (y - 0.24).powi(2)).sqrt();
+            if sun < 0.13 {
+                gray = 255.0;
+            } else if sun < 0.16 {
+                gray += (255.0 - gray) * (0.16 - sun) / 0.03;
+            }
+            // The far hill, mid grey, and the near one, dark, higher at
+            // the left.
+            let far = 0.62 + 0.10 * (x * 5.0).sin() + 0.08 * x;
+            let near = 0.70 + 0.22 * x - 0.06 * (x * 9.0).cos();
+            if y > far {
+                gray = 105.0 - 25.0 * (y - far);
+            }
+            if y > near {
+                gray = 38.0 + 30.0 * (y - near);
+            }
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "clamped to a byte"
+            )]
+            bytes.push(gray.clamp(0.0, 255.0).round() as u8);
+        }
+    }
+    dc_project::Grayscale {
+        width_px,
+        height_px,
+        bytes,
+    }
 }
 
 /// Presses the window's close button, as the OS reports it.

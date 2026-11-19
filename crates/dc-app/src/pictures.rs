@@ -27,7 +27,7 @@
 //! regenerates when the picture moves or changes size.
 //!
 //! The selection, the click that makes it and the rows' menu are
-//! [`crate::App::click_picture`], [`crate::viewport::pick::picture_under`]
+//! [`crate::App::click_picture`], [`crate::viewport::pick::Hit::Bitmap`]
 //! and [`crate::tree::bitmap_menu`].
 
 use dc_geometry::{Point, Rect};

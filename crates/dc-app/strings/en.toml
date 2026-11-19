@@ -312,7 +312,7 @@ intro = "Bring in an SVG or DXF drawing to make toolpaths from, or open an examp
 import_drawing = "New from drawing…"
 import_drawing_hint = "SVG or DXF; the stock is sized round it."
 import_picture = "New from picture…"
-picture_unavailable = "Pictures arrive with phase 3.5"
+import_picture_hint = "PNG or JPEG; the stock is sized round it."
 open_project = "Open…"
 examples = "Examples"
 recent = "Recent"
@@ -335,8 +335,11 @@ open_title = "Open a project"
 save_title = "Save the project"
 drawing_title = "Import a drawing"
 new_from_drawing_title = "New project from a drawing"
+picture_title = "Add a picture"
+new_from_picture_title = "New project from a picture"
 project_filter = "DreamCarve project"
 drawing_filter = "Drawing"
+picture_filter = "Picture"
 library_import_title = "Import a tool library"
 library_export_title = "Export the tool library"
 library_filter = "Tool library"
@@ -350,6 +353,9 @@ save_failed = "Cannot save {name}: {reason}"
 imported = "Imported {count} shapes from {name}"
 import_failed = "Cannot import {name}: {reason}"
 not_a_drawing = "{name} is not an SVG or DXF drawing"
+not_a_picture = "{name} is not a PNG or JPEG picture"
+imported_picture = "Added the picture {name}"
+reading_picture = "Reading {name}…"
 dropped_unknown = "{name} is not a project (.dcv), a drawing (.svg, .dxf) or a picture (.png, .jpg, .jpeg)"
 new_from_drawing = "Made a new project from {name}"
 prefs_failed = "Cannot save preferences: {reason}"
@@ -1048,6 +1054,19 @@ note = "{name}: {note}"
 [app.picture]
 size_missing = "Type the picture's width or its height"
 note = "{name}: {code}: {note}"
+# The Add picture sheet (slice D6; capability 56): its titles, the file's
+# line, the size's two fields and the link between them, and its button.
+title = "Add picture to project"
+title_new = "New project from picture"
+file_help = "The PNG or JPEG picture to add. Choose… picks another."
+png = "PNG"
+jpeg = "JPEG"
+summary = "{format} · {width} × {height} px"
+size = "Size"
+width = "Width"
+height = "Height"
+proportions = "The other side follows the picture's proportions"
+add = "Add picture"
 
 # The Design Tree (slice 5, #534; functional spec, capability 57;
 # experience.md, sections 6 to 8): the sections, the rows' badges and
@@ -1088,8 +1107,16 @@ target_of = "A target of “{name}”"
 target_on = "Remove {name} from the targets"
 target_off = "Add {name} to the targets"
 tabs_no_flags = "Placed tabs have no visibility or lock of their own"
-pictures_no_flags = "Pictures arrive with phase 3.5"
 rename = "Rename {name}"
+# A picture's row (slice D6; capabilities 56 and 57): its glyph's hover,
+# and the hovers of its count of Photo V-Carves.
+glyph_picture = "Picture: a Photo V-Carve carves it"
+show_all_pictures = "Show all pictures"
+hide_all_pictures = "Hide all pictures"
+lock_all_pictures = "Lock all pictures"
+unlock_all_pictures = "Unlock all pictures"
+carved_by = "Carved by {names}"
+not_carved = "No Photo V-Carve carves it"
 
 # The Properties panel's placement fields (slice 5, #534; functional spec,
 # capability 58), the Viewport's drag readout, and the Project menu's
@@ -1129,6 +1156,15 @@ fit = "Fit"
 picture_title_many = "Properties · {count} pictures"
 picture_pixels = "Pixels"
 picture_pixels_value = "{width} × {height} px"
+# Slice D6: the rest of a picture's Properties in the Inspector. Its name
+# is typed here too; its proportions are always kept; a lock is a switch.
+picture_name = "Name"
+picture_proportions = "A picture keeps its proportions: the other side follows"
+picture_locked = "Locked"
+picture_one_size = "Select one picture to type its size"
+picture_carved_by = "Carved by: {names}"
+picture_not_carved = "No Photo V-Carve carves the selection"
+picture_hover = "Picture “{name}”"
 
 # The Arrange actions (slice 25, #617; functional spec, capability 58a;
 # experience.md, section 7, "Split button"): the toolbar's group, its

@@ -261,22 +261,39 @@ The Design Tree's Pictures rows are `tree::BitmapRow`s, listed with the
 rest by `Tree::rows`.
 
 A picture is selected and placed through `dc_app::pictures` (slice 15).
-`App::selected_pictures` holds the selection and `App::click_picture`
-changes it; `pick::picture_under` is the picture a click selects when
-`pick` finds nothing above it. `pictures::properties` gives the
+The selected pictures are `Selection::Bitmaps`, read through
+`App::selected_pictures` and changed by `App::click_picture`,
+`Selection::clicked` and, for a marquee that touches no shape,
+`Selection::boxed_pictures` over `pick::pictures_touching`. `Hit::Bitmap`
+is the picture a click selects, which `pick` returns last, when it finds
+nothing above the picture. `pictures::properties` gives the
 Properties panel a `properties::Placement`, so a picture's X, Y, W and H
 are a shape's fields, with its pixel size beside them; `pictures::edit`
 and `pictures::move_by` return the `MoveBitmaps` a typed value, a drag or
 a nudge is, and `pictures::edit` and `pictures::resize` the `ResizeBitmap`
-one picture's typed W or H is. The selected pictures and the picked picture are kept beside
-`Selection` and `Hit` until the window is wired for them; they are the
-variants `Selection::Bitmaps` and `Hit::Bitmap`. A Photo V-Carve's
-Picture row is likewise a `FieldKind::Choice` with no fixed options
+one picture's typed W or H, or its corner handle dragged, is. A command
+that adds a bitmap leaves it selected, as one that adds shapes does. A
+Photo V-Carve's Picture row is a `FieldKind::PicturePicker`
 (`Row::picks_picture`), served by `editor::offered_pictures`,
-`picture_text` and `set_picture`, until `FieldKind` gains a picture
-picker. *Add ▸ Photo V-Carve* reads the selected pictures through
-`operations::add_menu_with` and `add_with`; `photo_target` decides the
+`picture_text` and `set_picture`. *Add ▸ Photo V-Carve* reads the
+selected pictures through `operations::add_menu` and `add`, which take
+the selected shapes and the selected pictures; `photo_target` decides the
 picture.
+
+In the window (slice D6) the Add picture sheet is `panels/picture.rs`,
+over a `PictureImport` the shell opens on a thread of its own, since
+decoding a camera's picture takes longer than a frame; a dropped file
+goes by `FileKind::of` to `App::drop_file`, a `.dcv` after the
+unsaved-changes sheet. The Viewport draws each `SceneBitmap` as a
+textured quad through a second pipeline (`viewport/picture.wgsl`), after
+the stock and under the shapes: one `R8Unorm` texture per stored
+picture, kept by `SceneBitmap::picture`, sampled with linear filtering
+through a mip chain built once (in the frame up to a megapixel, on a
+thread above it), and a 32-byte uniform per quad for its footprint and
+its strength, 60 % while a shape is selected. The quad's `v` runs down as
+`y` runs up, the one place a picture's top-first rows meet the Y-up
+drawing. Selecting, dragging and resizing a picture on the Viewport are
+`viewport/pictures.rs`; its Properties are `panels::properties::pictures`.
 
 ### Digest and staleness
 
@@ -623,7 +640,7 @@ before merge.
 ```
 crates/dc-job/src/{lib.rs, build.rs (build, generate_operation, finish, Findings, Tier), names.rs (program_names), summary.rs (extents, estimates, carve_facts, describe_carves), report.rs, setup_sheet.rs (review: render), preview.rs (render, marks; moved), project_from.rs (drawing, picture; moved from init.rs), import.rs (drawing_into), tabs.rs (place_request and re-exports)}
 crates/dc-app/src/{lib.rs, app.rs (App, SnapshotId, dirty), command.rs (Command, apply, label, CommandError), history.rs (labels beside dc_project::History), selection.rs, view.rs (View, Visibility, ColourMode), generation.rs (digest, Job, JobResult, staleness), scene.rs (Scene, male board offset), viewport/{camera.rs, pick.rs, handles.rs, arrows.rs (port), tabs.rs (tab_drag)}, editor/{fields.rs (the capability 68 table), set.rs (key-path set/get), targets.rs, clearing.rs}, tree.rs, pictures.rs (a picture's Properties and moves), warnings.rs (merge, tiers, grouping), steps.rs (Step, State, states, next, opening; redesign), export.rs (plan), library.rs (filter; port), units.rs, strings.rs (+ build.rs, strings/en.toml), prefs.rs, test_support.rs (Harness)}
-crates/dreamcarve-app/src/{main.rs (eframe entry, --open), shell/{window.rs, header.rs (menus' bar, name, Undo and Redo, the primary button; redesign), menu.rs, rail.rs (the steps; redesign), status.rs, files.rs (open/save/recent/unsaved), worker.rs (thread, channels), theme.rs (tokens → Visuals), strings.rs (loader)}, panels/{side.rs (the step panel and the Inspector; redesign), tree.rs, properties.rs, arrange.rs (the Arrange group), project.rs (the Stock step, the Export step's settings), operations.rs, editor.rs (renderers per field kind), tools.rs, export_step.rs (the readiness card; redesign), library.rs (window), warnings.rs, export.rs (sheet), import.rs (sheet), empty.rs (the start screen)}, viewport/{mod.rs, renderer.rs (wgpu callback, buffers, shader.wgsl), lod.rs, handles.rs, cursor.rs}, widgets/{unit_field.rs, segmented.rs, section.rs, row.rs, icon.rs, tabs.rs}}
+crates/dreamcarve-app/src/{main.rs (eframe entry, --open), shell/{window.rs, header.rs (menus' bar, name, Undo and Redo, the primary button; redesign), menu.rs, rail.rs (the steps; redesign), status.rs, files.rs (open/save/recent/unsaved), worker.rs (thread, channels), theme.rs (tokens → Visuals), strings.rs (loader)}, panels/{side.rs (the step panel and the Inspector; redesign), tree.rs, properties.rs, arrange.rs (the Arrange group), project.rs (the Stock step, the Export step's settings), operations.rs, editor.rs (renderers per field kind), tools.rs, export_step.rs (the readiness card; redesign), library.rs (window), warnings.rs, export.rs (sheet), import.rs (sheet), picture.rs (the Add picture sheet; slice D6), empty.rs (the start screen)}, viewport/{mod.rs, renderer.rs (wgpu callback, buffers, shader.wgsl, picture.wgsl), pictures.rs (a picture's quad, drag and handles; slice D6), lod.rs, handles.rs, cursor.rs}, widgets/{unit_field.rs, segmented.rs, section.rs, row.rs, icon.rs, tabs.rs}}
 crates/dreamcarve-app/assets/{fonts/, icons/, strings/ (symlink or include of dc-app's table)}
 crates/dreamcarve-shell/src/{lib.rs, staged.rs (StagedFile, commit_all; moved from cli.rs), config_dir.rs (moved from config.rs), config.rs (config.toml), gui_prefs.rs (gui.toml), read.rs (read_capped, MAX_FILE_BYTES)}
 crates/dreamcarve/src/{cli.rs, export.rs, check.rs, init.rs, tabs.rs, tools.rs, config.rs, image.rs}  — thin: argument parsing, printing, calls into dc-job and dreamcarve-shell

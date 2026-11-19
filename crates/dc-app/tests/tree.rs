@@ -19,7 +19,7 @@ mod common;
 
 use dc_app::Command;
 use dc_app::test_support::Harness;
-use dc_app::tree::{Line, MenuItem, Section, ShapeGlyph, Tree};
+use dc_app::tree::{MenuItem, Row, Section, ShapeGlyph, Tree};
 use dc_geometry::Transform;
 use dc_project::{InstanceId, OperationId};
 
@@ -97,7 +97,7 @@ fn rows_follow_file_order_with_badges() {
     assert_eq!(tabs.name, "outline");
     assert_eq!(tabs.tabs.len(), project.tabs.len());
     assert!(!tabs.tabs.is_empty());
-    assert!(tree.pictures.is_empty(), "no pictures before phase 3.5");
+    assert!(tree.bitmaps.is_empty(), "the plaque has no pictures");
 
     // Every row shown and unlocked: the header reads so, not mixed.
     harness
@@ -169,13 +169,13 @@ fn rows_carry_a_shape_glyph() {
 #[test]
 fn empty_sections_have_no_placeholder_row() {
     let tree = Tree::build(&plaque());
-    let lines = tree.lines();
-    assert!(matches!(lines.first(), Some(Line::Header(Section::Shapes))));
-    let shapes = lines.iter().filter(|l| matches!(l, Line::Shape(_))).count();
+    let lines = tree.rows();
+    assert!(matches!(lines.first(), Some(Row::Header(Section::Shapes))));
+    let shapes = lines.iter().filter(|l| matches!(l, Row::Shape(_))).count();
     assert_eq!(shapes, tree.shapes.len(), "a line per shape");
     let pictures = lines
         .iter()
-        .position(|l| matches!(l, Line::Header(Section::Pictures)))
+        .position(|l| matches!(l, Row::Header(Section::Pictures)))
         .expect("a Pictures header");
     assert_eq!(
         pictures + 1,
@@ -184,7 +184,7 @@ fn empty_sections_have_no_placeholder_row() {
     );
     let tabs = lines
         .iter()
-        .position(|l| matches!(l, Line::Header(Section::Tabs)))
+        .position(|l| matches!(l, Row::Header(Section::Tabs)))
         .expect("a Tabs header");
     assert_eq!(tabs + 1, pictures, "the empty Tabs section is its header");
 }

@@ -18,14 +18,23 @@
 //! shape, the one tab's position and the Profiles that cross it, and
 //! *Delete* ([`tabs`]).
 //!
+//! With pictures selected (capabilities 56 and 58) it shows the one
+//! picture's name, the selection's X and Y, W and H with the link always
+//! closed (a picture is never stretched: [`closed_link`]), its size in
+//! pixels, read-only, its lock and the Photo V-Carves that carve it
+//! ([`pictures`]). The values are `dc_app::pictures`'; X or Y moves the
+//! selection and W or H resizes the one picture about its centre, each
+//! one undo step.
+//!
 //! The link is view state, not project state: it lives in egui's memory,
 //! and the Viewport's corner handles read it too ([`proportions_free`]).
 
+use dc_app::pictures::{self, PictureProperties};
 use dc_app::properties::{self, Field, Placement};
 use dc_app::units;
 use dc_app::viewport::tabs::TabEdit;
 use dc_app::{CommandError, StrKey};
-use dc_project::{InstanceId, TabId, TabShape};
+use dc_project::{BitmapId, InstanceId, TabId, TabShape};
 use eframe::egui::{self, Id, Rect, Stroke, TextStyle, Ui, UiBuilder};
 
 use crate::shell::theme::{self, Palette};
@@ -33,6 +42,7 @@ use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
 use crate::widgets::icon::Icon;
 use crate::widgets::segmented::segmented;
+use crate::widgets::toggle::toggle;
 use crate::widgets::unit_field::{UnitField, field as unit_field, row};
 
 /// The proportion link's column right of the fields, px
@@ -189,10 +199,54 @@ fn proportion_link(ui: &mut Ui, state: &FrameState<'_>, (w_y, h_y): (f32, f32), 
     }
 }
 
-/// The locked note (capability 58): the padlock, the line saying what a
-/// lock stops, and *Unlock*, one step unlocking the selection's locked
-/// shapes.
-fn locked_note(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out: &mut Vec<Action>) {
+/// The proportion link where it is not a choice (a picture's W and H, the
+/// Add picture sheet's width and height): the bracket from the middle of
+/// one row (`w_y`) to the middle of the other (`h_y`) with the `link`
+/// glyph on it, closed, and `tip` on hover saying the other side follows.
+/// Drawn in the 28-px column at the right of `ui`, over the rows; it
+/// takes no room.
+pub(crate) fn closed_link(ui: &mut Ui, (w_y, h_y): (f32, f32), tip: &str, enabled: bool) {
+    let palette = Palette::current(ui);
+    let x = ui.max_rect().right() - LINK_COLUMN_PX / 2.0;
+    let stroke = Stroke::new(1.0, palette.border_strong);
+    let painter = ui.painter();
+    painter.line_segment(
+        [egui::pos2(x - BRACKET_TICK_PX, w_y), egui::pos2(x, w_y)],
+        stroke,
+    );
+    painter.vline(x, w_y..=h_y, stroke);
+    painter.line_segment(
+        [egui::pos2(x - BRACKET_TICK_PX, h_y), egui::pos2(x, h_y)],
+        stroke,
+    );
+    let toggle = Rect::from_center_size(
+        egui::pos2(x, f32::midpoint(w_y, h_y)),
+        egui::vec2(LINK_TOGGLE_PX, LINK_TOGGLE_PX),
+    );
+    painter.rect_filled(
+        toggle.shrink(2.0),
+        theme::CONTROL_RADIUS_PX,
+        ui.visuals().panel_fill,
+    );
+    let colour = if enabled {
+        palette.text_secondary
+    } else {
+        palette.text_disabled
+    };
+    let glyph = Icon::Link.galley(ui, theme::ICON_SMALL_PX, colour);
+    ui.painter()
+        .galley(toggle.center() - glyph.size() / 2.0, glyph, colour);
+    ui.interact(
+        toggle,
+        ui.scope_id().with("closed_proportion_link"),
+        egui::Sense::hover(),
+    )
+    .on_hover_text(tip);
+}
+
+/// The locked note (capability 58): the padlock and the line saying what
+/// a lock stops, with `unlock`'s button under them.
+fn locked_lines(ui: &mut Ui, state: &FrameState<'_>, unlock: impl FnOnce(&mut Ui)) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
     ui.add_space(4.0);
@@ -212,15 +266,188 @@ fn locked_note(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out: &mu
                 .selectable(false),
             );
             ui.add_space(8.0);
-            let unlock = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::PlacementUnlock));
-            if button(ui, unlock).clicked()
-                && let Some(command) = properties::unlock(state.app.project(), ids)
-            {
-                out.push(Action::run(command));
-            }
+            unlock(ui);
         });
     });
     ui.add_space(8.0);
+}
+
+/// The locked note of shapes `ids`: *Unlock* is one step unlocking the
+/// selection's locked shapes.
+fn locked_note(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out: &mut Vec<Action>) {
+    let strings = state.app.strings();
+    locked_lines(ui, state, |ui| {
+        let unlock = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::PlacementUnlock));
+        if button(ui, unlock).clicked()
+            && let Some(command) = properties::unlock(state.app.project(), ids)
+        {
+            out.push(Action::run(command));
+        }
+    });
+}
+
+/// The panel's title for pictures `ids`: the one picture's name, or the
+/// count.
+pub(crate) fn pictures_title(state: &FrameState<'_>, ids: &[BitmapId]) -> String {
+    pictures::properties(state.app.project(), ids)
+        .map(|properties| pictures::title(state.app.strings(), &properties))
+        .unwrap_or_default()
+}
+
+/// One of a picture selection's placement rows: X, Y, W or H, read-only
+/// as [`pictures::read_only`] says; the row's vertical middle.
+fn picture_field_row(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    shown: &PictureProperties,
+    ids: &[BitmapId],
+    field: Field,
+    out: &mut Vec<Action>,
+) -> f32 {
+    let strings = state.app.strings();
+    let units = state.app.project().display_units;
+    let (key, name) = match field {
+        Field::X => (StrKey::PlacementX, "x"),
+        Field::Y => (StrKey::PlacementY, "y"),
+        Field::W => (StrKey::PlacementW, "w"),
+        Field::H => (StrKey::PlacementH, "h"),
+    };
+    let placement = &shown.placement;
+    let value = properties::field_text(placement, field, units);
+    let read_only = pictures::read_only(shown, field);
+    // Why it cannot be typed: the lock, or that a size is one picture's.
+    let reason = if placement.any_locked {
+        StrKey::PlacementLockedNote
+    } else {
+        StrKey::PlacementPictureOneSize
+    };
+    let id = Id::unique(("picture_field", name));
+    let name = strings.get(key);
+    let (label, output) = row(ui, name, |ui| {
+        ui.set_max_width((ui.available_width() - LINK_GAP_PX - LINK_COLUMN_PX).max(0.0));
+        unit_field(
+            ui,
+            UnitField {
+                enabled: !read_only,
+                disabled_reason: read_only.then(|| strings.get(reason)),
+                ..UnitField::new(id, name, &value, properties::field_unit(field, units))
+            },
+        )
+    });
+    let middle = label.rect.center().y;
+    let _ = output.response.labelled_by(label.id);
+    if let Some(typed) = output.committed {
+        // A picture keeps its proportions whatever the link shows.
+        match properties::parse(placement, field, &typed, units, true)
+            .and_then(|edit| pictures::edit(state.app.project(), ids, edit))
+        {
+            Ok(command) => out.push(Action::Run(Box::new(command))),
+            Err(CommandError::NothingToDo) => {}
+            Err(e) => out.push(Action::Refused(e.to_string())),
+        }
+    }
+    ui.add_space(4.0);
+    middle
+}
+
+/// A text row of a picture's Properties: `label`, then a field holding
+/// `value`; what was typed, when `editable` and left changed.
+fn picture_text_row(
+    ui: &mut Ui,
+    (label, name): (&str, &str),
+    value: &str,
+    editable: bool,
+) -> Option<String> {
+    let (label_response, output) = row(ui, label, |ui| {
+        ui.set_max_width((ui.available_width() - LINK_GAP_PX - LINK_COLUMN_PX).max(0.0));
+        unit_field(
+            ui,
+            UnitField {
+                enabled: editable,
+                ..UnitField::new(Id::unique(("picture_field", name)), label, value, "")
+            },
+        )
+    });
+    let _ = output.response.labelled_by(label_response.id);
+    ui.add_space(4.0);
+    output.committed
+}
+
+/// Draws the Properties of the pictures `ids` (capabilities 56 and 58):
+/// the one picture's name; X and Y; W and H with the link closed; its
+/// pixels, read-only; its lock; and the Photo V-Carves that carve it.
+pub(crate) fn pictures(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    ids: &[BitmapId],
+    out: &mut Vec<Action>,
+) {
+    let strings = state.app.strings();
+    let project = state.app.project();
+    let palette = Palette::current(ui);
+    let Some(shown) = pictures::properties(project, ids) else {
+        return;
+    };
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(16, 8))
+        .show(ui, |ui| {
+            if let (Some(name), [id]) = (&shown.name, ids) {
+                let label = strings.get(StrKey::PlacementPictureName);
+                if let Some(typed) = picture_text_row(ui, (label, "name"), name, true)
+                    && let Some(command) = dc_app::tree::rename_bitmap(project, id, &typed)
+                {
+                    out.push(Action::run(command));
+                }
+            }
+            let mut middles = [0.0; 4];
+            for (field, middle) in properties::FIELDS.iter().zip(&mut middles) {
+                *middle = picture_field_row(ui, state, &shown, ids, *field, out);
+            }
+            let [_, _, w_y, h_y] = middles;
+            closed_link(
+                ui,
+                (w_y, h_y),
+                strings.get(StrKey::PlacementPictureProportions),
+                !pictures::read_only(&shown, Field::W),
+            );
+            if let Some(pixels) = pictures::pixels_text(strings, &shown) {
+                let label = strings.get(pictures::PIXELS_LABEL);
+                picture_text_row(ui, (label, "pixels"), &pixels, false);
+            }
+            // The lock: a switch, and what it stops while it is on.
+            let locked = shown.placement.locked == Some(true);
+            let lock_label = strings.get(StrKey::PlacementPictureLocked);
+            let (label_response, switched) =
+                row(ui, lock_label, |ui| toggle(ui, locked, lock_label));
+            let switched = switched.labelled_by(label_response.id);
+            if switched.clicked()
+                && let Some(command) = dc_app::tree::toggle_bitmap_locked(project, ids)
+            {
+                out.push(Action::run(command));
+            }
+            ui.add_space(4.0);
+            if shown.placement.any_locked {
+                locked_lines(ui, state, |ui| {
+                    let unlock =
+                        ButtonSpec::new(Kind::Secondary, strings.get(StrKey::PlacementUnlock));
+                    if button(ui, unlock).clicked()
+                        && let Some(command) = pictures::unlock(project, ids)
+                    {
+                        out.push(Action::run(command));
+                    }
+                });
+            }
+            ui.add_space(4.0);
+            let carved = if shown.placement.targeted_by.is_empty() {
+                strings.get(StrKey::PlacementPictureNotCarved).to_owned()
+            } else {
+                strings.fmt(
+                    StrKey::PlacementPictureCarvedBy,
+                    &[("names", &shown.placement.targeted_by.join(", "))],
+                )
+            };
+            text(ui, &carved, TextStyle::Small, palette.text_secondary);
+        });
 }
 
 /// Draws the placement of `ids`.

@@ -567,13 +567,14 @@ fn unreadable_picture_blocks_with_the_cli_message() {
 
 /// One picture import is one undo step, labelled with the file's name;
 /// undo returns the project as it was, redo brings the bitmap back. The
-/// shapes selected stay selected: a picture is not a shape.
+/// new picture becomes the selection, alone, as imported shapes do, so it
+/// can be moved at once (capability 56).
 #[test]
 fn one_picture_import_is_one_undo_step() {
     let mut harness = Harness::open(&read(&fixture("plaque.dcv"))).expect("the plaque opens");
     let before = harness.app.project().clone();
     let selected = Selection::Instances(vec![before.instances[0].id.clone()]);
-    harness.app.select(selected.clone());
+    harness.app.select(selected);
     let mut sheet = picture("photo/gradient.png", Purpose::Import);
     sheet.set_width_mm(40.0);
     harness
@@ -582,7 +583,8 @@ fn one_picture_import_is_one_undo_step() {
         .expect("the picture imports");
     let after = harness.app.project().clone();
     assert_eq!(after.bitmaps.len(), before.bitmaps.len() + 1);
-    assert_eq!(harness.app.selection(), &selected);
+    let added = after.bitmaps.last().expect("the new bitmap").id.clone();
+    assert_eq!(harness.app.selection(), &Selection::Bitmaps(vec![added]));
     assert_eq!(harness.app.undo_label(), Some("Import gradient.png"));
     assert!(harness.app.is_dirty());
 

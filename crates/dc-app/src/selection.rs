@@ -7,10 +7,10 @@
 //! a snapshot drops what was selected, the selection drops it too.
 //!
 //! Pictures are selected too (slice 15, #544; capability 57), alone, as
-//! tabs are. Their selection is kept beside [`Selection`]
-//! ([`crate::App::selected_pictures`], changed by [`pictures_clicked`]):
-//! the window matches [`Selection`] exhaustively and is being rebuilt
-//! while this lands, so the variant `Selection::Bitmaps` waits for it.
+//! tabs are: [`Selection::Bitmaps`], read through
+//! [`crate::App::selected_pictures`] and changed by a click
+//! ([`Selection::clicked`] on a [`Hit::Bitmap`], [`pictures_clicked`]) or
+//! a marquee ([`Selection::boxed_pictures`]).
 
 use dc_project::{BitmapId, InstanceId, OperationId, Project, TabId};
 
@@ -70,6 +70,8 @@ pub enum Selection {
     Tabs(Vec<TabId>),
     /// One operation (the Operations list's row).
     Operation(OperationId),
+    /// One or more pictures, in selection order (capability 57).
+    Bitmaps(Vec<BitmapId>),
 }
 
 impl Selection {
@@ -82,6 +84,15 @@ impl Selection {
         }
     }
 
+    /// The selected pictures, or none.
+    #[must_use]
+    pub fn bitmaps(&self) -> &[BitmapId] {
+        match self {
+            Self::Bitmaps(ids) => ids,
+            _ => &[],
+        }
+    }
+
     /// Whether nothing is selected.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -90,6 +101,17 @@ impl Selection {
             Self::Instances(ids) => ids.is_empty(),
             Self::Tabs(ids) => ids.is_empty(),
             Self::Operation(_) => false,
+            Self::Bitmaps(ids) => ids.is_empty(),
+        }
+    }
+
+    /// A selection of the pictures `ids`, or nothing when there are none.
+    #[must_use]
+    pub fn of_bitmaps(ids: Vec<BitmapId>) -> Self {
+        if ids.is_empty() {
+            Self::Nothing
+        } else {
+            Self::Bitmaps(ids)
         }
     }
 
@@ -97,7 +119,9 @@ impl Selection {
     /// nothing clears; Shift or Ctrl on nothing keeps what there is. Adding
     /// or toggling an instance to a selection of tabs or an operation
     /// starts an instance selection. A shape on the male inlay board
-    /// selects its Inlay, whatever the modifier (capability 72).
+    /// selects its Inlay, whatever the modifier (capability 72). A
+    /// picture is selected among pictures, as a tab among tabs
+    /// (capability 57).
     #[must_use]
     pub fn clicked(&self, hit: &Hit, mode: ClickMode) -> Self {
         if let Hit::MaleBoardShape(op) = hit {
@@ -105,6 +129,9 @@ impl Selection {
         }
         if let Hit::Tab(tab) = hit {
             return self.tab_clicked(tab, mode);
+        }
+        if let Hit::Bitmap(id) = hit {
+            return Self::of_bitmaps(pictures_clicked(self.bitmaps(), id, mode));
         }
         // A toolpath opens its operation in the editor (`App::edit`);
         // the shapes stay selected (#576).
@@ -159,6 +186,20 @@ impl Selection {
         }
     }
 
+    /// The selection after a marquee that touched no shape took the
+    /// pictures `ids` (capability 57: pictures are selected on their own,
+    /// so a marquee selects them only where it touches no shape): those
+    /// alone, those added, or each toggled.
+    #[must_use]
+    pub fn boxed_pictures(&self, ids: &[BitmapId], mode: ClickMode) -> Self {
+        match mode {
+            ClickMode::Replace => Self::of_bitmaps(ids.to_vec()),
+            ClickMode::Add | ClickMode::Toggle => ids.iter().fold(self.clone(), |sel, id| {
+                sel.clicked(&Hit::Bitmap(id.clone()), mode)
+            }),
+        }
+    }
+
     /// Drops whatever `project` no longer has; an emptied selection is
     /// [`Selection::Nothing`].
     pub(crate) fn retain_existing(&mut self, project: &Project) {
@@ -172,6 +213,9 @@ impl Selection {
                 if !project.operations.iter().any(|o| o.id() == id) {
                     *self = Self::Nothing;
                 }
+            }
+            Self::Bitmaps(ids) => {
+                ids.retain(|id| project.bitmaps.iter().any(|b| b.id == *id));
             }
         }
         if self.is_empty() {

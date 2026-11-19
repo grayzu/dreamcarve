@@ -107,11 +107,17 @@ fn add_targets_the_selection_with_cli_defaults() {
         .collect();
     harness.app.select(Selection::Instances(coaster.clone()));
 
-    let menu = operations::add_menu(harness.app.project(), &strings, &coaster);
+    let menu = operations::add_menu(harness.app.project(), &strings, &coaster, &[]);
     assert_eq!(menu.prompt, None);
     assert!(menu.available.contains(&Kind::Profile), "{menu:?}");
-    let command = operations::add(harness.app.project(), &strings, Kind::Profile, &coaster)
-        .expect("the coaster can take a Profile");
+    let command = operations::add(
+        harness.app.project(),
+        &strings,
+        Kind::Profile,
+        &coaster,
+        &[],
+    )
+    .expect("the coaster can take a Profile");
     let label = harness.run(command).unwrap();
     assert_eq!(label, "Add “Profile 1”");
     assert_eq!(
@@ -140,7 +146,14 @@ fn add_targets_the_selection_with_cli_defaults() {
         "the new operation is the editor's"
     );
 
-    let again = operations::add(harness.app.project(), &strings, Kind::Profile, &coaster).unwrap();
+    let again = operations::add(
+        harness.app.project(),
+        &strings,
+        Kind::Profile,
+        &coaster,
+        &[],
+    )
+    .unwrap();
     harness.run(again).unwrap();
     assert_eq!(harness.app.project().operations[1].name(), "Profile 2");
     assert_ne!(
@@ -149,26 +162,26 @@ fn add_targets_the_selection_with_cli_defaults() {
     );
 
     // Nothing selected: one sentence, nothing offered.
-    let empty = operations::add_menu(harness.app.project(), &strings, &[]);
+    let empty = operations::add_menu(harness.app.project(), &strings, &[], &[]);
     assert_eq!(
         empty.prompt.as_deref(),
         Some(strings.get(StrKey::OperationsAddSelectShapes))
     );
     assert!(empty.available.is_empty());
     assert_eq!(empty.unavailable.len(), Kind::ALL.len());
-    assert!(operations::add(harness.app.project(), &strings, Kind::Profile, &[]).is_none());
+    assert!(operations::add(harness.app.project(), &strings, Kind::Profile, &[], &[]).is_none());
 
     // An open path: Pocket is below the divider, with its reason.
     let plaque = common::plaque();
     let squiggle = ids(&["i10"]);
-    let menu = operations::add_menu(&plaque, &strings, &squiggle);
+    let menu = operations::add_menu(&plaque, &strings, &squiggle, &[]);
     let (_, reason) = menu
         .unavailable
         .iter()
         .find(|(kind, _)| *kind == Kind::Pocket)
         .expect("an open path cannot take a Pocket");
     assert_eq!(reason.as_deref(), Some("An open path cannot take a Pocket"));
-    assert!(operations::add(&plaque, &strings, Kind::Pocket, &squiggle).is_none());
+    assert!(operations::add(&plaque, &strings, Kind::Pocket, &squiggle, &[]).is_none());
 
     // Each kind's tool: the sign has end mills, a V-bit; no drill.
     let sign = common::load_dcv(&common::fixture("sign.dcv"));
@@ -230,7 +243,8 @@ fn add_targets_the_selection_with_cli_defaults() {
 fn add_menu_partitions_by_eligibility() {
     let strings = Strings::english();
     let plaque = common::plaque();
-    let available = |selected: &[&str]| operations::add_menu(&plaque, &strings, &ids(selected));
+    let available =
+        |selected: &[&str]| operations::add_menu(&plaque, &strings, &ids(selected), &[]);
 
     // Circles take every kind with a record.
     let holes = available(&["i5", "i6"]);

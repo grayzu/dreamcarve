@@ -22,7 +22,8 @@ tools' editing rules (`tools`), the Tool Library window's model
 (`import`: the bytes the shell read, parsed by `dc-import` with the
 options the sheet shows), the Add picture sheet's model beside it (the
 picture decoded once, and its width or height), what a dropped file
-becomes, the Operations list with its Add menu and each
+becomes, the selection (shapes, placed tabs, one operation, or pictures,
+which are selected on their own), the Operations list with its Add menu and each
 kind's new operation (`operations`), and the operation editor's table of
 rows per kind with its key-path edits (`editor`, the idea of
 PureCutCNC's `operationFields.ts`).

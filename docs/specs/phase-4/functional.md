@@ -308,15 +308,19 @@ folder are app preferences, kept outside the project.
     or mirror in this phase (phase 3 decision). It is never stretched,
     since its footprint keeps the picture's proportions: one picture's W
     or H can be retyped in Properties, the other side following the
-    pixels as it does at import, about the footprint's centre; no handle
-    scales it. It is deleted like a
+    pixels as it does at import, about the footprint's centre, and the
+    one selected picture's corner handles resize it the same way, its
+    proportions kept (slice D6; for the maintainer to confirm with the
+    resize itself). It is deleted like a
     shape; a Photo V-Carve that loses its picture says so. A picture is
     selected from its row, or by a click inside its footprint where no
     shape, tab or toolpath takes the click (it is under all of them), the
     topmost where two overlap. Pictures are selected on their own, as
-    tabs are. Properties shows a selected picture's X, Y, W and H (its
+    tabs are: a marquee takes the pictures it touches only where it
+    touches no shape, and a picture just added is the selection.
+    Properties shows a selected picture's name, its X, Y, W and H (its
     footprint; several pictures' joint box), its size in pixels,
-    read-only, and the Photo V-Carves that carve it; X and Y are typed
+    read-only, its lock and the Photo V-Carves that carve it; X and Y are typed
     for any selection of pictures, W and H for one picture, with the
     proportion link always closed. A move or a resize is one undo step
     named for the picture, a locked picture refuses both, and the Photo

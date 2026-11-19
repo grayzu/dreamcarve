@@ -93,6 +93,16 @@ impl Sheet {
         }
     }
 
+    /// The sheet over `model`, a drawing already read from `path` (a file
+    /// dropped on the window, `dc_app::App::drop_file`).
+    pub(crate) fn of(path: &Path, model: DrawingImport) -> Self {
+        Self {
+            model,
+            path: path.to_path_buf(),
+            refused: None,
+        }
+    }
+
     /// The model, for the shell to import from.
     pub(crate) fn model(&self) -> &DrawingImport {
         &self.model

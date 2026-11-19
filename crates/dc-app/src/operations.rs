@@ -208,14 +208,6 @@ fn refusal(kind: Kind, of: &[Outlines]) -> Option<StrKey> {
     }
 }
 
-/// The Add menu for the shapes `selected` with no picture selected
-/// (capability 65; acceptance 72): [`add_menu_with`], which the window
-/// calls once it holds a selection of pictures.
-#[must_use]
-pub fn add_menu(project: &Project, strings: &Strings, selected: &[InstanceId]) -> AddMenu {
-    add_menu_with(project, strings, selected, &[])
-}
-
 /// The Add menu for the shapes `selected` and the pictures `pictures`
 /// selected ([`crate::App::selected_pictures`]; capability 65). The kinds
 /// that cut shapes are offered when every selected shape can take them,
@@ -224,7 +216,7 @@ pub fn add_menu(project: &Project, strings: &Strings, selected: &[InstanceId]) -
 /// ([`photo_target`]), whatever shapes are selected, and listed with its
 /// reason otherwise.
 #[must_use]
-pub fn add_menu_with(
+pub fn add_menu(
     project: &Project,
     strings: &Strings,
     selected: &[InstanceId],
@@ -461,31 +453,19 @@ fn with_tool(
     })
 }
 
-/// *Add ▸ `kind`* on the shapes `selected` with no picture selected:
-/// [`add_with`]. `None` when the menu does not offer the kind for them.
+/// *Add ▸ `kind`* on the shapes `selected` and the pictures `pictures`
+/// selected: `None` when [`add_menu`] does not offer the kind for
+/// them. A Photo V-Carve carves [`photo_target`]'s picture; every other
+/// kind targets the shapes.
 #[must_use]
 pub fn add(
     project: &Project,
     strings: &Strings,
     kind: Kind,
     selected: &[InstanceId],
-) -> Option<Command> {
-    add_with(project, strings, kind, selected, &[])
-}
-
-/// *Add ▸ `kind`* on the shapes `selected` and the pictures `pictures`
-/// selected: `None` when [`add_menu_with`] does not offer the kind for
-/// them. A Photo V-Carve carves [`photo_target`]'s picture; every other
-/// kind targets the shapes.
-#[must_use]
-pub fn add_with(
-    project: &Project,
-    strings: &Strings,
-    kind: Kind,
-    selected: &[InstanceId],
     pictures: &[BitmapId],
 ) -> Option<Command> {
-    if !add_menu_with(project, strings, selected, pictures)
+    if !add_menu(project, strings, selected, pictures)
         .available
         .contains(&kind)
     {
