@@ -77,7 +77,7 @@ Notes from the fixes:
 
 | Slice | What | Status |
 | --- | --- | --- |
-| C1 | Import drawings and pictures (#535) | doing |
+| C1 | Import drawings and pictures (#535): the headless half is done; the window half (picture sheet, tree rows, textured quads, drop) is slice D6 | doing |
 | C2 | Photo V-Carve editor and bitmaps (#544) | todo |
 | C3 | Tapered ball nose in the app (#685) | doing |
 
@@ -90,6 +90,33 @@ Notes from the fixes:
 | D3 | The shell: icon rail, steps, start screen | todo |
 | D4 | The steps' panels (Design, Stock, Tools, Operations, Export), warnings, viewport overlays | todo |
 | D5 | Window tests and snapshots for the new shell | todo |
+
+| D6 | Wire the features built headless into the new window (contracts below) | todo |
+
+#### What the window must draw for slice C1 (pictures)
+
+- **Add picture sheet:** `PictureImport::open(ImageFormat, name, &bytes,
+  Purpose)`; read `size_px()`, `pixels()`, `warnings()`, `notes(&Strings)`,
+  `side()`, `size()`, `footprint_mm()`, `blocked(&Strings)`; write
+  `set_width_mm`, `set_height_mm`, `clear_size` (mm; parse typed text with
+  `units::parse_length_mm`); run `App::import_picture(&sheet)`.
+- **New from…:** open either sheet with `Purpose::New`, then
+  `App::new_from_drawing(&sheet)` or `App::new_from_picture(&sheet)`.
+- **A dropped file:** `FileKind::of(name)`; `App::drop_file(&path, bytes)`
+  returns `Dropped::Project`, `Drawing(sheet)` or `Picture(sheet)`. Run
+  the unsaved-changes sheet before passing a `.dcv`.
+- **Tree:** `Tree::rows()`, `Tree::bitmaps`, `bitmaps_header()`,
+  `bitmap(&id)`; row actions `tree::bitmap_menu`, `bitmap_menu_command`,
+  `toggle_bitmap_visible`, `toggle_bitmap_locked`, `rename_bitmap`. The
+  legacy `PictureRow`, `Line` and `Tree::lines()` are deleted once the
+  window uses `rows()`.
+- **Viewport:** `Scene::bitmaps() -> &[SceneBitmap]` (`id`, `name`,
+  `locked`, `footprint`, `width_px`, `height_px`, `pixels`, and `picture`,
+  the texture cache key). The Scene decodes a picture on the UI thread
+  when it first appears; move that to the worker if it stutters.
+- **Not built yet:** selecting, picking and moving a picture (new
+  `Selection` and `Hit` variants); *Add ▸ Photo V-Carve* is still disabled.
+  Both belong to C2.
 
 ### E. Docs and release preparation
 
