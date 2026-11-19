@@ -18,7 +18,9 @@
 mod common;
 
 use dc_app::test_support::Harness;
-use dc_app::viewport::camera::{self, Camera, FIT_MARGIN_PX, MAX_PX_PER_MM, MIN_PX_PER_MM, Pos};
+use dc_app::viewport::camera::{
+    self, Camera, FIT_MARGIN_PX, Insets, MAX_PX_PER_MM, MIN_PX_PER_MM, Pos,
+};
 use dc_app::{Command, Selection};
 use dc_geometry::{Point, Rect, Transform, Vec2, approx_eq};
 use dc_project::InstanceId;
@@ -36,43 +38,154 @@ fn camera(centre: Point, px_per_mm: f64) -> Camera {
     }
 }
 
-/// `experience.md`, section 9, "Depth legend" (#616): Fit leaves the
-/// legend's strip at the pane's left free. With a 260-px strip the
-/// bounds sit inside the rest of the pane, within the margin, and fill
-/// its width; with no strip, or one that is not a number, it is
-/// [`Camera::fit`].
+/// `redesign.md`, "The Viewport's floating controls": Fit keeps the stock
+/// clear of what floats over the pane. With the room each edge keeps
+/// given as insets, the bounds sit in the rest of the pane, centred
+/// there, and fill it on the tighter axis; the same inset on every side
+/// is [`Camera::fit`]; an inset that is not a number counts as none.
 #[test]
-fn fit_beside_leaves_the_left_strip_free() {
+fn fit_inside_leaves_the_insets_free() {
     let viewport_px = Vec2::new(900.0, 640.0);
     let bounds = Rect {
         min: Point::new(0.0, 0.0),
         max: Point::new(170.0, 120.0),
     };
-    let strip_px = 260.0;
+    let insets = Insets {
+        left_px: 32.0,
+        top_px: 60.0,
+        right_px: 260.0,
+        bottom_px: 52.0,
+    };
     let mut cam = camera(Point::new(0.0, 0.0), 1.0);
     cam.viewport_px = viewport_px;
-    cam.fit_beside(bounds, strip_px);
-    let mut tight = false;
+    cam.fit_inside(bounds, insets);
+    let (mut left, mut right) = (f64::INFINITY, f64::NEG_INFINITY);
+    let (mut top, mut bottom) = (f64::INFINITY, f64::NEG_INFINITY);
     for p in corners(bounds) {
         let s = cam.to_screen(p);
-        assert!(
-            s.x_px >= strip_px + FIT_MARGIN_PX - EPS
-                && s.x_px <= viewport_px.x - FIT_MARGIN_PX + EPS,
-            "{p:?} at {s:?} is under the strip"
-        );
-        assert!(s.y_px >= FIT_MARGIN_PX - EPS && s.y_px <= viewport_px.y - FIT_MARGIN_PX + EPS);
-        tight |= approx_eq(s.x_px, strip_px + FIT_MARGIN_PX, 1e-6);
+        left = left.min(s.x_px);
+        right = right.max(s.x_px);
+        top = top.min(s.y_px);
+        bottom = bottom.max(s.y_px);
     }
-    assert!(tight, "the fit fills the width beside the strip");
+    assert!(left >= insets.left_px - EPS, "left edge at {left}");
+    assert!(right <= viewport_px.x - insets.right_px + EPS, "{right}");
+    assert!(top >= insets.top_px - EPS, "top edge at {top}");
+    assert!(bottom <= viewport_px.y - insets.bottom_px + EPS, "{bottom}");
+    // 608 x 528 px of room for 170 x 120 mm: the width is the tighter.
+    assert!(approx_eq(left, insets.left_px, 1e-6), "fills the width");
+    assert!(approx_eq(right, viewport_px.x - insets.right_px, 1e-6));
+    // Centred in the room on the other axis.
+    assert!(approx_eq(
+        top - insets.top_px,
+        viewport_px.y - insets.bottom_px - bottom,
+        1e-6
+    ));
 
     let mut plain = cam;
     plain.fit(bounds);
-    let mut none = cam;
-    none.fit_beside(bounds, 0.0);
-    assert_eq!(plain, none);
+    let mut same = cam;
+    same.fit_inside(bounds, Insets::all(FIT_MARGIN_PX));
+    assert_eq!(plain, same, "one margin on every side is fit");
     let mut bad = cam;
-    bad.fit_beside(bounds, f64::NAN);
-    assert_eq!(plain, bad, "a strip that is not a number is none");
+    bad.fit_inside(
+        bounds,
+        Insets {
+            right_px: f64::NAN,
+            ..Insets::all(FIT_MARGIN_PX)
+        },
+    );
+    let mut none = cam;
+    none.fit_inside(
+        bounds,
+        Insets {
+            right_px: 0.0,
+            ..Insets::all(FIT_MARGIN_PX)
+        },
+    );
+    assert_eq!(bad, none, "an inset that is not a number is none");
+}
+
+/// The polish item of slice D4: with the depth legend in a corner, the
+/// stock is not squeezed into a strip beside it when there is more room
+/// under it. Of the ways to stand clear, Fit takes the one that draws
+/// the bounds largest: a wide stock in a narrow pane goes under the
+/// legend, a tall one beside it. With no way given the camera stays.
+#[test]
+fn fit_clear_takes_the_way_that_draws_the_bounds_largest() {
+    // A 520 x 640 pane with a 200 x 280 legend hung at its top right.
+    let viewport_px = Vec2::new(520.0, 640.0);
+    let base = Insets {
+        left_px: 32.0,
+        top_px: 60.0,
+        right_px: 32.0,
+        bottom_px: 52.0,
+    };
+    let beside = Insets {
+        right_px: 224.0,
+        ..base
+    };
+    let under = Insets {
+        top_px: 348.0,
+        ..base
+    };
+    let fit = |bounds: Rect, ways: &[Insets]| {
+        let mut cam = camera(Point::new(0.0, 0.0), 1.0);
+        cam.viewport_px = viewport_px;
+        cam.fit_clear(bounds, ways);
+        cam
+    };
+    let inside = |bounds: Rect, way: Insets| {
+        let mut cam = camera(Point::new(0.0, 0.0), 1.0);
+        cam.viewport_px = viewport_px;
+        cam.fit_inside(bounds, way);
+        cam
+    };
+    let wide = Rect {
+        min: Point::new(0.0, 0.0),
+        max: Point::new(170.0, 120.0),
+    };
+    assert_eq!(fit(wide, &[beside, under]), inside(wide, under), "under it");
+    assert!(inside(wide, under).px_per_mm > 1.4 * inside(wide, beside).px_per_mm);
+    let tall = Rect {
+        min: Point::new(0.0, 0.0),
+        max: Point::new(60.0, 300.0),
+    };
+    assert_eq!(
+        fit(tall, &[beside, under]),
+        inside(tall, beside),
+        "beside it"
+    );
+    let stays = camera(Point::new(3.0, 4.0), 2.0);
+    let mut cam = stays;
+    cam.fit_clear(wide, &[]);
+    assert_eq!(cam, stays);
+}
+
+/// The zoom read-out (`redesign.md`, "The Viewport's floating controls"):
+/// 100 % is one inch of the work on 96 logical pixels, so the number
+/// means the same in any window. Stepping the zoom and setting it keep
+/// the point at the pane's centre where it is, and both stop at the
+/// camera's limits.
+#[test]
+fn zoom_percent_is_of_96_px_per_inch_about_the_centre() {
+    let centre = Point::new(40.0, 25.0);
+    let mut cam = camera(centre, 96.0 / 25.4);
+    assert!(approx_eq(cam.zoom_percent(), 100.0, 1e-9));
+    cam.zoom_by(1.25);
+    assert!(approx_eq(cam.zoom_percent(), 125.0, 1e-9));
+    assert_point(cam.centre_mm, centre, "stepping keeps the centre");
+    cam.zoom_by(f64::NAN);
+    assert!(approx_eq(cam.zoom_percent(), 125.0, 1e-9), "not a number");
+    cam.set_zoom_percent(100.0);
+    assert!(approx_eq(cam.px_per_mm, 96.0 / 25.4, 1e-12));
+    assert_point(cam.centre_mm, centre, "setting keeps the centre");
+    cam.set_zoom_percent(1e9);
+    assert!(approx_eq(cam.px_per_mm, MAX_PX_PER_MM, 1e-9));
+    cam.set_zoom_percent(0.0);
+    assert!(approx_eq(cam.px_per_mm, MAX_PX_PER_MM, 1e-9), "0 % is none");
+    cam.zoom_by(1e-9);
+    assert!(approx_eq(cam.px_per_mm, MIN_PX_PER_MM, 1e-9));
 }
 
 fn assert_point(got: Point, want: Point, what: &str) {

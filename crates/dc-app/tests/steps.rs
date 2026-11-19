@@ -109,7 +109,6 @@ fn a_new_project_counts_no_problem() {
     let bar = dc_app::status::cells(
         &harness.app,
         &dc_app::status::Inputs {
-            cursor_mm: None,
             drag: None,
             hover: None,
             message: None,

@@ -300,7 +300,7 @@ estimate = "Estimated time"
 z_range = "Z range, tool centre"
 
 # The status bar (slice 24, #616; functional spec, capability 50b): the
-# units button and its menu, the counts, and the Toolpaths button.
+# units button and its menu, and the counts.
 [app.status]
 mm = "mm"
 inch = "in"
@@ -380,11 +380,21 @@ hover_male_board = "Male board · {name}"
 fit_view = "Fit View"
 zoom_selection = "Zoom to Selection"
 name = "Viewport"
-# The floating tools at the Viewport's top left (`redesign.md`, "The
-# Viewport's floating controls").
+# The Viewport's floating controls (`redesign.md`, "The Viewport's
+# floating controls"): the tools and the zoom at its top left, the colour
+# mode and Layers at its top right.
+select = "Select"
+select_help = "Select, move and resize shapes"
 fit = "Fit"
 tab_tool = "Tab tool"
 tab_tool_help = "Click an outline to add a tab with the last-used size (T); Escape ends"
+zoom_out = "Zoom out"
+zoom_in = "Zoom in"
+zoom = "{percent} %"
+zoom_level = "Zoom level: {zoom}"
+zoom_reset = "Zoom to 100 %: an inch of the work on 96 pixels, about its real size"
+layers = "Layers"
+layers_help = "What the Viewport draws of the toolpaths"
 
 # The toolpath display (slice 16, #545): the visibility card, the depth
 # legend, the program extents' caption and the status bar's Z range.

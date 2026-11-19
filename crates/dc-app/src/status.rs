@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The status bar's cells as data (functional spec, capability 50b;
-//! `experience.md`, section 2, "Status bar"; slice 24, #616). Left to
-//! right: the units button, the cursor, the *Toolpaths* button, the
-//! generation state, the counts, the estimate, the Z range, then what the
-//! pointer and the app have to say. A cell with nothing to say is `None`
-//! (or empty, for the cursor's fixed cell), and the shell draws neither
-//! it nor its rule. The stock size is not a cell: Project Settings shows
-//! it.
+//! `experience.md`, section 2, "Status bar"; slice 24, #616; redesign
+//! slice D4). Left to right: the units button, the generation state, the
+//! counts, the estimate, then what the pointer and the app have to say.
+//! A cell with nothing to say is `None`, and the shell does not draw
+//! it. The cursor's position, the program's Z range and the toolpath
+//! view are the Viewport's ([`crate::view::readout`]), and the stock size
+//! is not a cell: the Stock step shows it.
 
-use dc_geometry::Point;
 use dc_job::EstimateConfig;
 use dc_project::{OperationId, Units};
 
@@ -19,13 +18,10 @@ use crate::selection::Selection;
 use crate::strings::{StrKey, Strings};
 use crate::warnings::{self, Counts, Level};
 
-/// What the status bar reads from outside the app: the pointer over the
-/// Viewport and the window's last message.
+/// What the status bar reads from outside the app: what the pointer is
+/// doing on the Viewport and the window's last message.
 #[derive(Debug, Clone, Copy)]
 pub struct Inputs<'a> {
-    /// The pointer's position in project space, mm, while it is over the
-    /// Viewport.
-    pub cursor_mm: Option<Point>,
     /// A drag's travel, scale or angle, as the Viewport words it.
     pub drag: Option<&'a str>,
     /// The shape under the pointer, by name, and whether it is locked.
@@ -86,20 +82,12 @@ pub struct StatusBar {
     pub units: Units,
     /// The units button's label: `mm` or `in`.
     pub units_label: String,
-    /// The cursor's position from the origin (`X 64.2  Y 51.8`); empty
-    /// while the pointer is off the Viewport.
-    pub cursor: String,
-    /// Whether the *Toolpaths* button shows: once the project has a
-    /// toolpath.
-    pub toolpaths: bool,
     /// The generation cell; `None` when every toolpath is current.
     pub generation: Option<GenerationCell>,
     /// The counts.
     pub counts: CountsCell,
     /// The programs' estimated time (capability 78).
     pub estimate: Option<String>,
-    /// The program's Z range while the extents are shown (capability 74).
-    pub z_range: Option<String>,
     /// A drag in progress.
     pub drag: Option<String>,
     /// The shape under the pointer.
@@ -118,20 +106,14 @@ impl StatusBar {
     /// Every text the bar shows, cell by cell.
     #[must_use]
     pub fn texts(&self) -> Vec<&str> {
-        let mut out = vec![self.units_label.as_str(), self.cursor.as_str()];
+        let mut out = vec![self.units_label.as_str()];
         if let Some(generation) = &self.generation {
             out.push(&generation.text);
             out.extend(generation.action.as_ref().map(|a| a.label.as_str()));
         }
         out.extend(self.counts.tiers.iter().map(|(_, t)| t.as_str()));
         out.extend(self.counts.none.as_deref());
-        for cell in [
-            &self.estimate,
-            &self.z_range,
-            &self.drag,
-            &self.hover,
-            &self.message,
-        ] {
+        for cell in [&self.estimate, &self.drag, &self.hover, &self.message] {
             out.extend(cell.as_deref());
         }
         out
@@ -163,20 +145,10 @@ pub fn cells(app: &App, inputs: &Inputs<'_>) -> StatusBar {
     StatusBar {
         units,
         units_label,
-        cursor: inputs
-            .cursor_mm
-            .map(|p| cursor(strings, p, units))
-            .unwrap_or_default(),
-        toolpaths: app
-            .scene()
-            .operations()
-            .iter()
-            .any(|op| !op.runs.is_empty()),
         generation: generation(app),
         counts: counts(app),
         estimate: crate::export::total_time(app, inputs.estimate)
             .map(|time| strings.fmt(StrKey::ExportStatusTotal, &[("time", &time)])),
-        z_range: z_range(app),
         drag: inputs.drag.map(str::to_owned),
         hover: inputs.hover.map(|(name, locked)| {
             if locked {
@@ -215,26 +187,6 @@ pub fn selected_operation(app: &App) -> Option<&OperationId> {
         Selection::Operation(op) => Some(op),
         _ => app.editing(),
     }
-}
-
-/// `p` as the cursor cell writes it (`experience.md`, section 9): one
-/// decimal in mm and three in inches, from the origin, never `-0.0`.
-fn cursor(strings: &Strings, p: Point, units: Units) -> String {
-    let decimals = match units {
-        Units::Mm => 1,
-        Units::Inch => 3,
-    };
-    let coordinate = |mm: f64| {
-        let text = format!("{:.decimals$}", crate::units::to_display(mm, units));
-        match text.strip_prefix('-') {
-            Some(digits) if digits.chars().all(|c| c == '0' || c == '.') => digits.to_owned(),
-            _ => text,
-        }
-    };
-    strings.fmt(
-        StrKey::AppViewportCursor,
-        &[("x", &coordinate(p.x)), ("y", &coordinate(p.y))],
-    )
 }
 
 /// The generation cell (capability 71; `experience.md`, section 8,
@@ -318,17 +270,4 @@ fn counts(app: &App) -> CountsCell {
         tiers,
         none,
     }
-}
-
-/// The program's Z range while the extents are shown (capability 74;
-/// `experience.md`, section 9): the tool centre's, in machine coordinates
-/// as `check` prints it.
-fn z_range(app: &App) -> Option<String> {
-    if !app.view().visibility.extents {
-        return None;
-    }
-    let finished = app.generation().finished()?;
-    let extents = crate::view::program_extents(app.project(), finished)?;
-    let z = crate::view::range_label(extents.z?, extents.units);
-    Some(app.strings().fmt(StrKey::AppToolpathsZRange, &[("z", &z)]))
 }

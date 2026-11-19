@@ -22,12 +22,13 @@ use dc_app::export::ExportResult;
 use dc_app::{StrKey, Strings};
 use eframe::egui::{self, Align, Layout, TextStyle, Ui};
 
-use crate::panels::export::{Request, path_label};
+use crate::panels::export::Request;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
 use crate::widgets::card;
 use crate::widgets::icon::Icon;
+use crate::widgets::row;
 use crate::widgets::section::section;
 
 /// A Files row, px.
@@ -194,7 +195,7 @@ fn folder(ui: &mut Ui, strings: &Strings, result: &ExportResult, out: &mut Vec<A
                     TextStyle::Body,
                     palette.text_secondary,
                 );
-                path_label(ui, &result.files.folder);
+                row::path(ui, &result.files.folder);
             });
         },
     );

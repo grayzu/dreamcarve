@@ -680,10 +680,11 @@ fn camera(h: &Harness<'_, dreamcarve_app::Shell>) -> dc_app::Camera {
     h.state().app().view().camera
 }
 
-/// The camera fitted to `bounds` in the shell's pane.
+/// The camera fitted to `bounds` in the shell's pane, clear of the
+/// Viewport's floating controls.
 fn fitted(h: &Harness<'_, dreamcarve_app::Shell>, bounds: dc_geometry::Rect) -> dc_app::Camera {
     let mut want = camera(h);
-    want.fit(bounds);
+    want.fit_inside(bounds, dreamcarve_app::FIT_INSETS);
     want
 }
 
@@ -840,6 +841,245 @@ fn pan_zoom_fit_reach_the_camera() {
     h.get_by_label("Fit").click();
     h.run();
     assert_same_view(camera(&h), fit_view, "the Fit button");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `redesign.md`, "The Viewport's floating controls" (slice D4), top
+/// left: *Select* and the *Tab tool* in one pill, the one in use pressed;
+/// then *Fit*, *Zoom out*, the zoom as a percentage and *Zoom in*. The
+/// zoom controls step the scale by a quarter about the pane's centre, and
+/// a click on the percentage sets it to 100 %, an inch of the work on 96
+/// pixels. Bottom left: the cursor's read-out, there while the pointer is
+/// over the Viewport. None of it is in the status bar.
+#[test]
+fn floating_tools_select_fit_and_zoom() {
+    use egui_kittest::kittest::NodeT as _;
+
+    let dir = scratch("floating-tools");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    let pane = h.state().layout().viewport;
+    let rect = |h: &Harness<'_, dreamcarve_app::Shell>, label: &str| {
+        h.get_by_role_and_label(Role::Button, label).rect()
+    };
+    // One row at the pane's top left, in reading order.
+    let order = ["Select", "Tab tool", "Fit", "Zoom out", "Zoom in"];
+    let rects: Vec<egui::Rect> = order.iter().map(|label| rect(&h, label)).collect();
+    for (label, r) in order.iter().zip(&rects) {
+        assert!(
+            pane.contains_rect(*r) && r.top() < pane.top() + 24.0 && r.left() < pane.center().x,
+            "{label} floats at the top left: {r:?}"
+        );
+    }
+    assert!(
+        rects
+            .windows(2)
+            .all(|pair| pair[0].right() <= pair[1].left()),
+        "in order: {rects:?}"
+    );
+    let level = h.get_by_label_contains("Zoom level").rect();
+    assert!(rects[3].right() <= level.left() && level.right() <= rects[4].left());
+    let status_top = 800.0 - STATUS_BAR_PX;
+    assert!(
+        h.query_all_by_label_contains("Zoom")
+            .all(|node| node.rect().bottom() <= status_top),
+        "no zoom in the status bar"
+    );
+
+    // Select is the tool in use; the Tab tool takes over and gives back.
+    let pressed = |h: &Harness<'_, dreamcarve_app::Shell>, at: egui::Rect| {
+        // The pressed wash is a filled rounded rectangle on the button.
+        h.output().shapes.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Rect(shape)
+                if shape.rect == at && shape.fill == theme::DARK.surface_active)
+        })
+    };
+    assert!(pressed(&h, rects[0]), "Select shows pressed");
+    assert!(!pressed(&h, rects[1]));
+    h.get_by_role_and_label(Role::Button, "Tab tool").click();
+    h.run();
+    assert!(pressed(&h, rects[1]), "the Tab tool shows pressed");
+    assert!(!pressed(&h, rects[0]));
+    h.get_by_role_and_label(Role::Button, "Select").click();
+    h.run();
+    assert!(pressed(&h, rects[0]), "Select takes the tool back");
+
+    // The zoom: a quarter in, a quarter out, about the pane's centre.
+    let fit_view = camera(&h);
+    let centre = world_at(&h, pane.center());
+    h.get_by_role_and_label(Role::Button, "Zoom in").click();
+    h.run();
+    assert!((camera(&h).px_per_mm / fit_view.px_per_mm - 1.25).abs() < 1e-9);
+    assert_near(world_at(&h, pane.center()), centre, "zoom in");
+    let percent = format!("Zoom level: {:.0} %", camera(&h).zoom_percent());
+    assert!(
+        h.query_by_label(&percent).is_some(),
+        "the read-out says {percent}"
+    );
+    h.get_by_role_and_label(Role::Button, "Zoom out").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Zoom out").click();
+    h.run();
+    assert!((camera(&h).px_per_mm / fit_view.px_per_mm - 0.8).abs() < 1e-9);
+    assert_near(world_at(&h, pane.center()), centre, "zoom out");
+
+    // A click on the percentage: 100 %, 96 px to the inch.
+    h.get_by_label_contains("Zoom level").click();
+    h.run();
+    assert!((camera(&h).px_per_mm - 96.0 / 25.4).abs() < 1e-9);
+    assert!(h.query_by_label("Zoom level: 100 %").is_some());
+    assert_near(world_at(&h, pane.center()), centre, "100 %");
+    // The zoom is the user's now: a wider pane does not fit again.
+    go_to(&mut h, "Design");
+    assert!((camera(&h).px_per_mm - 96.0 / 25.4).abs() < 1e-9);
+    h.get_by_role_and_label(Role::Button, "Fit").click();
+    h.run();
+    let app = h.state().app();
+    let bounds = dc_app::viewport::camera::fit_bounds(app.project(), app.scene());
+    assert_same_view(camera(&h), fitted(&h, bounds), "Fit");
+    assert!(!h.state().app().is_dirty(), "none of it edits the project");
+
+    // The read-out: the cursor's position, at the pane's bottom left.
+    h.event(egui::Event::PointerGone);
+    h.run();
+    assert!(
+        h.query_by_label_contains("X ").is_none(),
+        "off the Viewport"
+    );
+    let pane = h.state().layout().viewport;
+    let at = common::on_screen(&h, dc_geometry::Point::new(64.2, 51.8));
+    h.event(egui::Event::PointerMoved(at));
+    h.run();
+    let readout = h.get_by_label("X 64.2  Y 51.8");
+    assert!(
+        pane.contains_rect(readout.rect())
+            && readout.rect().bottom() > pane.bottom() - 48.0
+            && readout.rect().left() < pane.left() + 24.0,
+        "the read-out floats at the bottom left: {:?}",
+        readout.rect()
+    );
+    assert!(!readout.accesskit_node().is_disabled());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `redesign.md`, "The Viewport's floating controls": they never cover
+/// the stock at Fit. At the minimum window with an operation in the
+/// Inspector, the Viewport at its narrowest, the stock as Fit frames it
+/// is clear of the tools, the colour mode, *Layers* and the read-out; and
+/// with By depth on (the polish item of slice D4) it is clear of the
+/// legend too and still fills most of the pane's width, where a strip
+/// kept beside the legend left it small.
+#[test]
+fn floating_controls_never_cover_the_stock_at_fit() {
+    let dir = scratch("floating-fit");
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        768.0,
+    );
+    settle_export(&mut h);
+    open_operation(&mut h, "Cut out");
+    let stock_rect = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        let stock = &h.state().app().project().stock;
+        egui::Rect::from_two_pos(
+            common::on_screen(h, dc_geometry::Point::new(0.0, 0.0)),
+            common::on_screen(h, dc_geometry::Point::new(stock.width_mm, stock.height_mm)),
+        )
+    };
+    let controls = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<(String, egui::Rect)> {
+        ["Select", "Tab tool", "Fit", "Zoom out", "Zoom in", "Layers"]
+            .iter()
+            .map(|label| {
+                (
+                    (*label).to_owned(),
+                    h.get_by_role_and_label(Role::Button, label).rect(),
+                )
+            })
+            .chain(["By operation", "By depth"].iter().map(|label| {
+                (
+                    (*label).to_owned(),
+                    h.get_by_role_and_label(Role::RadioButton, label).rect(),
+                )
+            }))
+            .collect()
+    };
+    let pane = h.state().layout().viewport;
+    assert!(
+        pane.width() < 560.0,
+        "the Viewport is near its least width, 520 px: {pane:?}"
+    );
+
+    // The pointer over the stock, so the read-out shows.
+    let over = common::on_screen(&h, dc_geometry::Point::new(85.0, 60.0));
+    h.event(egui::Event::PointerMoved(over));
+    h.run();
+    let stock = stock_rect(&h);
+    let shown = controls(&h);
+    for (label, rect) in &shown {
+        assert!(
+            pane.contains_rect(*rect),
+            "{label} is on the pane: {rect:?}"
+        );
+        assert!(!rect.intersects(stock), "{label} {rect:?} covers {stock:?}");
+    }
+    // The two pills do not run into each other.
+    let zoom_in = &shown[4].1;
+    let by_operation = &shown[6].1;
+    assert!(
+        zoom_in.right() < by_operation.left(),
+        "the pills are apart: {zoom_in:?}, {by_operation:?}"
+    );
+    let readout = h.get_by_label_contains("X 85.0").rect();
+    assert!(!readout.intersects(stock), "the read-out {readout:?}");
+    let plain_width = stock.width();
+    assert!(
+        plain_width > 0.75 * pane.width(),
+        "the stock fills the pane's width: {plain_width} of {}",
+        pane.width()
+    );
+
+    // By depth: the legend hangs under the top-right pill, and Fit
+    // stands clear of it.
+    h.get_by_role_and_label(Role::RadioButton, "By depth")
+        .click();
+    h.run();
+    let stock = stock_rect(&h);
+    let legend = [
+        "Z (mm)",
+        "stock top",
+        "Screw holes, Cut out",
+        "Grey: rapids",
+    ]
+    .iter()
+    .flat_map(|label| text_rects(&h, label))
+    .reduce(|a, b| a.union(b))
+    .expect("the legend's labels");
+    let layers = h.get_by_role_and_label(Role::Button, "Layers").rect();
+    assert!(
+        legend.top() >= layers.bottom() && legend.right() <= pane.right(),
+        "the legend hangs under the top-right pill: {legend:?}"
+    );
+    assert!(
+        !legend.expand(8.0).intersects(stock),
+        "the legend {legend:?} covers the stock {stock:?}"
+    );
+    for (label, rect) in controls(&h) {
+        assert!(!rect.intersects(stock), "{label} {rect:?} covers {stock:?}");
+    }
+    assert!(
+        stock.width() > 0.7 * pane.width(),
+        "the stock is not squeezed beside the legend: {} of {}",
+        stock.width(),
+        pane.width()
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1241,7 +1481,7 @@ fn park_point_click_on_the_viewport() {
     h.get_by_label("Click on the view").click();
     h.run();
     // Empty stock near the plaque's bottom-right corner (stock 170 × 120),
-    // clear of the depth legend at the pane's bottom-left (#616).
+    // clear of the read-out at the pane's bottom-left.
     let want = dc_geometry::Point::new(165.0, 5.0);
     let at = common::on_screen(&h, want);
     let under = world_at(&h, at);
@@ -3606,11 +3846,11 @@ fn click_card_button(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str) {
     h.run();
 }
 
-/// Opens the toolpath view from the status bar's *Toolpaths* button
-/// (#616), unless it is open.
+/// Opens the toolpath view from the Viewport's *Layers* button
+/// (redesign slice D4), unless it is open.
 fn open_toolpath_view(h: &mut Harness<'_, dreamcarve_app::Shell>) {
     if h.query_by_label("Cuts").is_none() {
-        h.get_by_role_and_label(Role::Button, "Toolpaths").click();
+        h.get_by_role_and_label(Role::Button, "Layers").click();
         h.run();
     }
     assert!(
@@ -5341,10 +5581,8 @@ fn depth_legend_paints_under_a_sheet() {
         800.0,
     );
     settle_export(&mut h);
-    open_toolpath_view(&mut h);
     h.get_by_label("By depth").click();
     h.run();
-    close_toolpath_view(&mut h);
     assert!(painted_at(&h, "stock top").is_some(), "the legend is drawn");
     h.get_by_label("Project").click();
     h.run();
@@ -5391,9 +5629,9 @@ fn depth_legend_leaves_the_extents_caption_readable() {
         768.0,
     );
     settle_export(&mut h);
-    open_toolpath_view(&mut h);
     h.get_by_label("By depth").click();
     h.run();
+    open_toolpath_view(&mut h);
     h.get_by_label("Program extents").click();
     h.run();
     close_toolpath_view(&mut h);
@@ -6138,13 +6376,14 @@ fn generated_plaque(dir: &std::path::Path, copy: bool) -> Harness<'static, dream
     h
 }
 
-/// Capability 73, acceptance 94 (#549, row 03): the toolpath view is a
-/// popover from the status bar's *Toolpaths* button, not a card on the
-/// Viewport. The button is absent while the project has no toolpath (the
-/// plaque's shapes with no operation) and present on the generated
-/// plaque; a click shows the popover, titled *Toolpaths*, with the eight
-/// toggles, above the status bar; Escape closes it. Neither state has a
-/// card on the Viewport.
+/// Capability 73, acceptance 94 (#549, row 03; redesign slice D4): the
+/// toolpath view is a popover from the *Layers* button of the Viewport's
+/// floating controls, not a card on the Viewport. The colour mode and the
+/// button are absent while the project has no toolpath (the plaque's
+/// shapes with no operation) and float at the Viewport's top right on the
+/// generated plaque; a click shows the popover, titled *Toolpaths*, with
+/// the eight toggles, under the button; Escape closes it. The status bar
+/// has no Toolpaths button.
 #[test]
 fn toolpaths_button_opens_the_popover_and_escape_closes_it() {
     let dir = scratch("toolpaths-popover");
@@ -6160,49 +6399,66 @@ fn toolpaths_button_opens_the_popover_and_escape_closes_it() {
         800.0,
     );
     settle_export(&mut h);
-    assert!(
-        h.query_by_label("Toolpaths").is_none(),
-        "no Toolpaths button without a toolpath"
-    );
+    for absent in ["Layers", "By operation", "By depth", "Toolpaths"] {
+        assert!(
+            h.query_by_label(absent).is_none(),
+            "no {absent} without a toolpath"
+        );
+    }
     assert!(h.query_by_label("Cuts").is_none(), "and no card");
+    assert!(h.query_by_label("Fit").is_some(), "the tools still float");
 
     let mut h = generated_plaque(&dir.join("plaque"), false);
-    let button = h.get_by_role_and_label(Role::Button, "Toolpaths").rect();
     assert!(
-        button.min.y >= 800.0 - STATUS_BAR_PX,
-        "in the status bar: {button:?}"
+        h.query_by_label("Toolpaths").is_none(),
+        "no Toolpaths button in the status bar"
     );
-    assert_eq!(
-        h.query_all_by_label("Toolpaths").count(),
-        1,
-        "the button only"
+    let pane = h.state().layout().viewport;
+    let button = h.get_by_role_and_label(Role::Button, "Layers").rect();
+    assert!(
+        pane.contains_rect(button)
+            && button.center().x > pane.center().x
+            && button.center().y < pane.top() + 48.0,
+        "Layers floats at the Viewport's top right: {button:?} in {pane:?}"
     );
+    // The colour mode is beside it, one control of two.
+    for mode in ["By operation", "By depth"] {
+        let rect = h.get_by_role_and_label(Role::RadioButton, mode).rect();
+        assert!(
+            pane.contains_rect(rect) && rect.right() <= button.left(),
+            "{mode} is left of Layers: {rect:?}"
+        );
+    }
     for toggle in TOOLPATH_TOGGLES {
         assert!(h.query_by_label(toggle).is_none(), "no card: {toggle}");
     }
 
-    h.get_by_role_and_label(Role::Button, "Toolpaths").click();
+    h.get_by_role_and_label(Role::Button, "Layers").click();
     h.run();
-    let titled: Vec<_> = h
-        .query_all_by_label("Toolpaths")
-        .filter(|n| n.accesskit_node().role() != Role::Button)
-        .map(|n| n.rect())
-        .collect();
-    assert_eq!(titled.len(), 1, "the popover's title");
+    assert_eq!(
+        h.query_all_by_label("Toolpaths").count(),
+        1,
+        "the popover's title"
+    );
     for toggle in TOOLPATH_TOGGLES {
         let rect = h.get_by_label(toggle).rect();
         assert!(
-            rect.max.y <= button.min.y,
-            "{toggle} is in the popover above the button: {rect:?}"
+            rect.min.y >= button.max.y && rect.right() <= button.right() + 1.0,
+            "{toggle} is in the popover under the button: {rect:?}"
         );
     }
+    assert_eq!(
+        h.query_all_by_label("By depth").count(),
+        1,
+        "the colour mode is the Viewport's control only"
+    );
 
     h.key_press(egui::Key::Escape);
     h.run();
-    assert_eq!(h.query_all_by_label("Toolpaths").count(), 1, "closed");
     for toggle in TOOLPATH_TOGGLES {
         assert!(h.query_by_label(toggle).is_none(), "closed: {toggle}");
     }
+    assert!(h.query_by_label("Toolpaths").is_none(), "closed");
 
     // Slice 35 (#627), capability 79a: View ▸ Toolpaths… opens it too.
     h.get_by_label("View").click();
@@ -6211,8 +6467,241 @@ fn toolpaths_button_opens_the_popover_and_escape_closes_it() {
     h.run();
     for toggle in TOOLPATH_TOGGLES {
         let rect = h.get_by_label(toggle).rect();
-        assert!(rect.max.y <= button.min.y, "from the menu: {toggle}");
+        assert!(rect.min.y >= button.max.y, "from the menu: {toggle}");
     }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 50b (redesign slice D4): the status bar's cells are quiet
+/// pills in two groups, so that none moves when another comes or goes.
+/// The units and the counts are at the bar's left; the estimate ends at
+/// its right. Hovering a shape adds the pointer's cell left of the
+/// estimate, and an edit puts the generation cell where the estimate
+/// was: through both, the units and the counts stay where they are and
+/// the right-hand cell still ends at the bar's right.
+#[test]
+fn status_bar_cells_hold_still() {
+    let dir = scratch("status-still");
+    let mut h = generated_plaque(&dir, true);
+    let status_top = 800.0 - STATUS_BAR_PX;
+    let in_bar = |h: &Harness<'_, dreamcarve_app::Shell>, label: &str| {
+        h.query_all_by_label(label)
+            .map(|node| node.rect())
+            .find(|rect| rect.top() >= status_top)
+            .unwrap_or_else(|| panic!("{label} is in the status bar"))
+    };
+    let units = in_bar(&h, "mm");
+    let counts = in_bar(&h, "Warnings");
+    let estimate = h.get_by_label_contains("Est. ").rect();
+    assert!(units.left() < counts.left() && counts.right() < estimate.left());
+    // 8 px of window margin and 10 px of pill padding from the right.
+    let right_end = 1280.0 - 8.0 - 10.0;
+    assert!(
+        (estimate.right() - right_end).abs() < 6.0,
+        "the estimate ends at the bar's right: {estimate:?}"
+    );
+    for gone in ["Toolpaths", "X "] {
+        assert!(
+            h.query_all_by_label_contains(gone)
+                .all(|node| node.rect().top() < status_top),
+            "no {gone} cell in the status bar"
+        );
+    }
+
+    // Hovering the square names it, left of the estimate.
+    go_to(&mut h, "Design");
+    let square = h
+        .state()
+        .app()
+        .scene()
+        .shape(&dc_project::InstanceId::new("i4"))
+        .expect("drawn")
+        .bounds
+        .expect("a box");
+    let on_outline = common::on_screen(
+        &h,
+        dc_geometry::Point::new(square.min.x, (square.min.y + square.max.y) / 2.0),
+    );
+    h.event(egui::Event::PointerMoved(on_outline));
+    h.run();
+    let hover = in_bar(&h, "square");
+    assert!(hover.right() < h.get_by_label_contains("Est. ").rect().left());
+    assert_eq!(in_bar(&h, "mm"), units, "the units hold still");
+    assert_eq!(in_bar(&h, "Warnings"), counts, "the counts hold still");
+    assert_eq!(h.get_by_label_contains("Est. ").rect(), estimate);
+    h.event(egui::Event::PointerGone);
+    h.run();
+
+    // An edit: generation takes the estimate's place at the right.
+    let mut stock = h.state().app().project().stock.clone();
+    stock.thickness_mm = Some(12.5);
+    h.state_mut()
+        .app_mut()
+        .run(Command::SetStock(stock))
+        .unwrap();
+    h.step();
+    assert!(h.query_by_label_contains("Est. ").is_none());
+    let stop = in_bar(&h, "Stop");
+    assert!(
+        (stop.right() - (1280.0 - 8.0 - 10.0)).abs() < 6.0,
+        "generation ends at the bar's right: {stop:?}"
+    );
+    assert_eq!(in_bar(&h, "mm"), units, "the units hold still");
+    assert_eq!(in_bar(&h, "Warnings").left(), counts.left());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The polish item of slice D4: a blank, untitled project has nothing to
+/// cut, so nothing is counted against it. The status bar says *No
+/// problems*, the rail's Warnings button has no count, and no step is
+/// marked; `check`'s one error, the unset thickness, is still in the
+/// drawer. Once a drawing is in the project it counts.
+#[test]
+fn a_blank_project_shows_no_problem() {
+    let dir = scratch("blank-no-problem");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    assert!(
+        h.query_all_by_label_contains("1 error").next().is_none(),
+        "no error count anywhere"
+    );
+    assert!(h.query_by_label("No problems").is_some(), "the status bar");
+    assert!(
+        h.query_by_label("Warnings: No problems").is_some(),
+        "the rail's button counts nothing"
+    );
+    // The drawer still lists what check reports.
+    h.get_by_label("Warnings: No problems").click();
+    h.run();
+    assert!(h.state().warnings_open());
+    assert!(
+        h.query_all_by_label_contains("stock.thickness_mm is not set")
+            .next()
+            .is_some(),
+        "the drawer lists check's error"
+    );
+    h.get_by_label("Close the Warnings drawer").click();
+    h.run();
+
+    // The coaster, as its drawing makes it: now it is a problem.
+    h.get_by_role_and_label(Role::Button, "Coaster").click();
+    h.run();
+    assert!(
+        h.query_all_by_label_contains("error").next().is_some(),
+        "the unset thickness counts once there is something to cut"
+    );
+    assert!(h.query_by_label("No problems").is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `redesign.md`, "The window" (slice D4): the Warnings drawer is a card
+/// over the bottom of the Viewport's card, 240 px high and 8 px in from
+/// its edges, not a panel under it: the Viewport's card keeps its size
+/// when the drawer opens. The stock as Fit frames it, and the cursor's
+/// read-out, stand clear of it. The grab handle at its top drags it
+/// taller, and no further than leaves the Viewport's controls in view.
+/// The pointer over the drawer is the drawer's: it names no shape under
+/// it.
+#[test]
+fn warnings_drawer_is_a_card_over_the_viewport() {
+    let dir = scratch("drawer-over");
+    let mut h = generated_plaque(&dir, true);
+    go_to(&mut h, "Design");
+    let before = h.state().layout().viewport;
+    assert_eq!(h.state().layout().drawer, None);
+    let stock_rect = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        let stock = &h.state().app().project().stock;
+        egui::Rect::from_two_pos(
+            common::on_screen(h, dc_geometry::Point::new(0.0, 0.0)),
+            common::on_screen(h, dc_geometry::Point::new(stock.width_mm, stock.height_mm)),
+        )
+    };
+    let fitted_before = stock_rect(&h);
+
+    h.get_by_label_contains("Warnings: ").click();
+    h.run();
+    let pane = h.state().layout().viewport;
+    assert_eq!(pane, before, "the Viewport's card keeps its size");
+    let drawer = h.state().layout().drawer.expect("the drawer is open");
+    assert!(pane.contains_rect(drawer), "{drawer:?} is over {pane:?}");
+    for (edge, gap) in [
+        ("left", drawer.left() - pane.left()),
+        ("right", pane.right() - drawer.right()),
+        ("bottom", pane.bottom() - drawer.bottom()),
+    ] {
+        assert!((gap - 8.0).abs() < 0.5, "8 px in at the {edge}: {gap}");
+    }
+    assert!((drawer.height() - 240.0).abs() < 0.5, "{drawer:?}");
+    let copy = h.get_by_label("Copy").rect();
+    assert!(drawer.contains_rect(copy), "its header is on it: {copy:?}");
+
+    // Fit stands clear of it, and so does the read-out.
+    let stock = stock_rect(&h);
+    assert!(
+        stock.bottom() < drawer.top(),
+        "the stock {stock:?} is clear of the drawer {drawer:?}"
+    );
+    assert!(
+        stock.height() < fitted_before.height(),
+        "it was fitted again"
+    );
+    let over = common::on_screen(&h, dc_geometry::Point::new(85.0, 60.0));
+    h.event(egui::Event::PointerMoved(over));
+    h.run();
+    let readout = h.get_by_label_contains("X 85.0").rect();
+    assert!(
+        readout.bottom() < drawer.top(),
+        "the read-out {readout:?} is above the drawer"
+    );
+
+    // The pointer on the drawer is not on the drawing under it.
+    h.event(egui::Event::PointerMoved(
+        drawer.center() + egui::vec2(0.0, 60.0),
+    ));
+    h.run();
+    assert!(
+        h.query_by_label_contains("X ").is_none(),
+        "no cursor read-out under the drawer"
+    );
+
+    // The grab handle: 60 px up is 60 px taller.
+    let handle = egui::pos2(drawer.center().x, drawer.top() + 6.0);
+    common::drag(
+        &mut h,
+        handle,
+        handle - egui::vec2(0.0, 60.0),
+        egui::PointerButton::Primary,
+    );
+    let taller = h.state().layout().drawer.expect("still open");
+    assert!(
+        (taller.height() - 300.0).abs() < 1.0,
+        "dragged 60 px taller: {taller:?}"
+    );
+    assert_eq!(h.state().layout().viewport, before);
+    // And no taller than leaves the floating controls in view.
+    let handle = egui::pos2(taller.center().x, taller.top() + 6.0);
+    common::drag(
+        &mut h,
+        handle,
+        handle - egui::vec2(0.0, 2000.0),
+        egui::PointerButton::Primary,
+    );
+    let tallest = h.state().layout().drawer.expect("still open");
+    let fit = h.get_by_role_and_label(Role::Button, "Fit").rect();
+    assert!(
+        tallest.top() > fit.bottom(),
+        "the tools stay in view: {tallest:?}"
+    );
+    assert!(
+        h.state().app().selection().is_empty(),
+        "nothing was selected"
+    );
+    assert!(!h.state().app().is_dirty(), "and nothing edited");
+
+    h.get_by_label("Close the Warnings drawer").click();
+    h.run();
+    assert_eq!(h.state().layout().drawer, None);
+    assert_eq!(h.state().layout().viewport, before);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

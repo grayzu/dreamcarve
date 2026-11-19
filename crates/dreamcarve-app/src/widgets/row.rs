@@ -106,6 +106,35 @@ pub(crate) fn label(ui: &mut Ui, text: &str, help: &str, path: Option<&str>) -> 
     })
 }
 
+/// A file path on one line in the mono face, cut at its start with an
+/// ellipsis when it is longer than the room, since a path's end says the
+/// most. Its accessible name and its tooltip are the whole path.
+pub(crate) fn path(ui: &mut Ui, path: &str) {
+    let palette = Palette::current(ui);
+    let font = TextStyle::Monospace.resolve(ui.style());
+    let room = ui.available_width();
+    let layout = |text: String| {
+        ui.painter()
+            .layout_no_wrap(text, font.clone(), palette.text_primary)
+    };
+    let mut galley = layout(path.to_owned());
+    let mut cut = 0;
+    let chars: Vec<char> = path.chars().collect();
+    while galley.size().x > room && cut + 1 < chars.len() {
+        cut += 1;
+        let tail: String = chars.iter().skip(cut).collect();
+        galley = layout(format!("…{tail}"));
+    }
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x.min(room), galley.size().y),
+        Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, path));
+    ui.painter_at(rect.expand(1.0))
+        .galley(rect.min, galley, palette.text_primary);
+    let _ = response.on_hover_text(path);
+}
+
 /// The validation message under a field at the label column's right,
 /// `tier`'s glyph then `text`, wrapped to the field's width.
 pub(crate) fn message(ui: &mut Ui, tier: Tier, text: &str) {

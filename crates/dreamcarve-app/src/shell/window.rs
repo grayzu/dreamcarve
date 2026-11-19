@@ -278,6 +278,9 @@ pub struct Layout {
     pub inspector: Option<egui::Rect>,
     /// The Viewport.
     pub viewport: egui::Rect,
+    /// The Warnings drawer, a card over the Viewport's bottom; `None`
+    /// while it is closed.
+    pub drawer: Option<egui::Rect>,
     /// The window's size.
     pub window: Vec2,
 }
@@ -435,7 +438,7 @@ pub(crate) enum Action {
     /// The target-editing bar's *Cancel* (Escape).
     CancelTargets,
     /// Open the toolpath view's popover (View ▸ Toolpaths…, capability
-    /// 79a), as the status bar's *Toolpaths* button does.
+    /// 79a), as the Viewport's *Layers* button does.
     OpenToolpaths,
     /// Something the Export step asked for: the header's *Export G-code*
     /// among them (#547). File ▸ Export G-code… and ⌘E open the step.
@@ -646,6 +649,7 @@ impl Shell {
                 step_panel: None,
                 inspector: None,
                 viewport: egui::Rect::NOTHING,
+                drawer: None,
                 window: Vec2::ZERO,
             },
             step: Step::Design,
@@ -1490,8 +1494,9 @@ impl Shell {
             Action::FitView => {
                 let app = &self.app;
                 let bounds = dc_app::viewport::camera::fit_bounds(app.project(), app.scene());
-                let reserve = self.viewport.fit_reserve_px();
-                self.app.view_mut().camera.fit_beside(bounds, reserve);
+                // Clear of the Viewport's floating controls.
+                let ways = self.viewport.fit_ways();
+                self.app.view_mut().camera.fit_clear(bounds, &ways);
                 self.viewport.mark_fitted(true);
                 ctx.request_repaint();
             }
@@ -1504,7 +1509,8 @@ impl Shell {
                     .bounds_of(selected)
                     .or_else(|| dc_app::pictures::bounds(self.app.project(), pictures));
                 if let Some(bounds) = bounds {
-                    self.app.view_mut().camera.fit(bounds);
+                    let ways = self.viewport.fit_ways();
+                    self.app.view_mut().camera.fit_clear(bounds, &ways);
                     self.viewport.mark_fitted(false);
                     ctx.request_repaint();
                 }
@@ -2051,7 +2057,6 @@ impl eframe::App for Shell {
         let cells = dc_app::status::cells(
             &self.app,
             &dc_app::status::Inputs {
-                cursor_mm: pointer.cursor_mm,
                 drag: pointer.drag.as_deref(),
                 hover: pointer
                     .hover
@@ -2102,17 +2107,26 @@ impl eframe::App for Shell {
         let margins = viewport::Margins {
             left: step_panel.map_or(theme::GAP_PX, |_| panels::side::HALF_GAP_PX),
             right: docked.map_or(theme::GAP_PX, |_| panels::side::HALF_GAP_PX),
+            overlay_right: if inspecting && overlaid {
+                panels::side::overlay_width(&state)
+            } else {
+                0.0
+            },
+            overlay_bottom: if self.warnings_open {
+                panels::warnings::reserve(&ctx)
+            } else {
+                0.0
+            },
         };
-        // Between the step panel and the Inspector, over the Viewport's
-        // bottom.
-        if self.warnings_open {
-            focus::mark(ui, Region::Drawer);
-            let drawer = panels::warnings::drawer(ui, &state, margins, &mut actions);
-            regions.push((Region::Drawer, drawer));
-        }
         focus::mark(ui, Region::Viewport);
         let viewport = viewport::show(ui, &state, &mut self.viewport, margins, &mut actions);
         regions.push((Region::Viewport, viewport));
+        // The Warnings drawer, a card over the bottom of the Viewport's.
+        let drawer = self.warnings_open.then(|| {
+            focus::mark(ui, Region::Drawer);
+            panels::warnings::drawer(ui, &state, viewport, margins.overlay_right, &mut actions)
+        });
+        regions.extend(drawer.map(|card| (Region::Drawer, card)));
         let floating = (inspecting && overlaid).then(|| {
             focus::mark(ui, Region::Inspector);
             panels::side::inspector_over(ui, &state, viewport, &mut actions)
@@ -2156,6 +2170,7 @@ impl eframe::App for Shell {
             step_panel: step_panel.map(|shown| shown.card),
             inspector,
             viewport,
+            drawer,
             window: size,
         };
 

@@ -417,6 +417,13 @@ pub(crate) fn inspector(
     }
 }
 
+/// How wide the Inspector is when it lies over the Viewport, px, before
+/// the Viewport's own width caps it: what the Viewport's floating
+/// controls and Fit keep clear of.
+pub(crate) fn overlay_width(state: &FrameState<'_>) -> f32 {
+    px(state.prefs.panels.right_width).max(theme::INSPECTOR_MIN_PX)
+}
+
 /// The Inspector over the right side of the Viewport's card `viewport`,
 /// for a window too narrow to hold it beside the Viewport; its
 /// rectangle. It takes every click on it, so none reaches the drawing
@@ -427,9 +434,7 @@ pub(crate) fn inspector_over(
     viewport: Rect,
     out: &mut Vec<Action>,
 ) -> Rect {
-    let width = px(state.prefs.panels.right_width)
-        .max(theme::INSPECTOR_MIN_PX)
-        .min(viewport.width());
+    let width = overlay_width(state).min(viewport.width());
     let rect = Rect::from_min_max(
         egui::pos2(viewport.right() - width, viewport.top()),
         viewport.max,

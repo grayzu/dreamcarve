@@ -161,10 +161,10 @@ fn click(h: &mut H, label: &str) {
     h.run();
 }
 
-/// Opens the toolpath view from the status bar (#616), clicks each of
-/// `labels` in it, and closes it with Escape.
+/// Opens the toolpath view from the Viewport's *Layers* button, clicks
+/// each of `labels` in it, and closes it with Escape.
 fn toolpath_view(h: &mut H, labels: &[&str]) {
-    h.get_by_role_and_label(Role::Button, "Toolpaths").click();
+    h.get_by_role_and_label(Role::Button, "Layers").click();
     h.run();
     for label in labels {
         click(h, label);
@@ -318,14 +318,14 @@ fn scenes(dir: &Path) -> bool {
     go_to(&mut h, "Tools");
     shoot(&mut h, "12-tools-step");
     go_to(&mut h, "Operations");
-    h.get_by_role_and_label(Role::Button, "Toolpaths").click();
+    h.get_by_role_and_label(Role::Button, "Layers").click();
     h.run();
     shoot(&mut h, "13-toolpath-view");
     h.key_press(egui::Key::Escape);
     h.run();
-    toolpath_view(&mut h, &["By depth"]);
+    click(&mut h, "By depth");
     shoot(&mut h, "13-by-depth-legend");
-    toolpath_view(&mut h, &["By operation"]);
+    click(&mut h, "By operation");
     click(&mut h, "Project");
     click(&mut h, "Tool Library…");
     shoot(&mut h, "14-tool-library-sheet");
@@ -376,11 +376,11 @@ fn scenes(dir: &Path) -> bool {
 
     // The minimum window of spec 50, in By depth (#549's first comment).
     let mut h = window(dir, Some(plaque), 1280.0, 768.0).unwrap();
-    toolpath_view(&mut h, &["By depth"]);
+    click(&mut h, "By depth");
     toolpath_view(&mut h, &["Program extents"]);
     shoot(&mut h, "16-minimum-window-by-depth");
     toolpath_view(&mut h, &["Program extents"]);
-    toolpath_view(&mut h, &["By operation"]);
+    click(&mut h, "By operation");
     drop(h);
 
     // The sign: Drill and V-Carve.
@@ -820,9 +820,8 @@ fn d6_pictures(out: &Path, looks: &[dc_app::Theme]) {
     shoot_in(&mut h, out, "02-design-picture-selected", looks);
 
     // The Photo V-Carve in the editor, its grooves over the picture. The
-    // toolpath view shows the cuts alone: a Photo V-Carve lifts and
-    // re-enters all along its grooves, and a start point's circle at each
-    // of some 450 descents hides the grooves this picture is of.
+    // toolpath view shows the cuts alone, so the grooves read over the
+    // picture they are of.
     h.state_mut().app_mut().toggle_hidden(&op);
     h.state_mut().app_mut().select(dc_app::Selection::Nothing);
     let cuts = dc_app::Visibility {
@@ -883,6 +882,137 @@ fn d4_export(out: &Path, looks: &[dc_app::Theme]) {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// The Viewport's part of the slice D4 set, on the plaque: the floating
+/// controls with the toolpaths coloured by operation; by depth, with the
+/// legend hung under them; the Layers popover open; and the window at its
+/// minimum size, 1280 × 768, with an operation in the Inspector and By
+/// depth on, the stock fitted under the legend.
+fn d4_viewport(out: &Path, looks: &[dc_app::Theme]) {
+    let dir = scratch("review-d4-viewport");
+    let plaque = fixture("plaque.dcv");
+    let Some(mut h) = window(&dir, Some(plaque.clone()), 1280.0, 800.0) else {
+        return;
+    };
+    go_to(&mut h, "Operations");
+    // The pointer over the stock, so the read-out says where it is.
+    let over = common::on_screen(&h, dc_geometry::Point::new(64.2, 51.8));
+    h.event(egui::Event::PointerMoved(over));
+    h.run();
+    shoot_in(&mut h, out, "04-viewport-by-operation", looks);
+    click(&mut h, "By depth");
+    toolpath_view(&mut h, &["Program extents"]);
+    let over = common::on_screen(&h, dc_geometry::Point::new(64.2, 51.8));
+    h.event(egui::Event::PointerMoved(over));
+    h.run();
+    shoot_in(&mut h, out, "05-viewport-by-depth-legend", looks);
+    toolpath_view(&mut h, &["Program extents"]);
+    click(&mut h, "By operation");
+    h.get_by_role_and_label(Role::Button, "Layers").click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "06-layers-popover", looks);
+    drop(h);
+
+    let mut h = window(&dir, Some(plaque), 1280.0, 768.0).unwrap();
+    open_operation(&mut h, "Cut out");
+    click(&mut h, "By depth");
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "13-minimum-window-by-depth", looks);
+    click(&mut h, "By operation");
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The Warnings drawer's and the sheets' part of the slice D4 set: the
+/// drawer over the Viewport's bottom on the plaque with an error; the
+/// Import drawing sheet, the Add picture sheet, the Tool Library and the
+/// unsaved-changes sheet; and the start screen of a blank project, which
+/// counts no problem.
+fn d4_sheets(out: &Path, looks: &[dc_app::Theme]) {
+    let dir = scratch("review-d4-sheets");
+
+    // A library to show: the Fusion fixtures as `tools import` writes
+    // them.
+    let mut library = dc_library::Library::default();
+    for name in ["fusion/sample.tools", "fusion/vendors.json"] {
+        let bytes = std::fs::read(fixture(name)).unwrap();
+        library = dc_app::library::import(&library, &bytes, false)
+            .unwrap()
+            .library;
+    }
+    std::fs::create_dir_all(dir.join("config")).unwrap();
+    std::fs::write(
+        dir.join("config/tools.json"),
+        dc_library::save(&library).unwrap(),
+    )
+    .unwrap();
+
+    // The start screen of a blank project: no count, no badge.
+    let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
+        return;
+    };
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "12-start-screen-blank", looks);
+    drop(h);
+
+    let dialogs = QueuedDialogs::default();
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let mut h = window_with(&dir, Some(plaque), 1280.0, 800.0, &dialogs).unwrap();
+
+    // The drawer: an error, a hint, and two groups' worth of rows.
+    delete_a_feed(&mut h);
+    go_to(&mut h, "Operations");
+    h.get_by_label_contains("Warnings:").click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "07-warnings-drawer", looks);
+    h.get_by_label("Close the Warnings drawer").click();
+    h.run();
+
+    // The Import drawing sheet, from a dropped drawing.
+    go_to(&mut h, "Design");
+    h.input_mut()
+        .dropped_files
+        .push(std::sync::Arc::new(Dropped(fixture("sign.svg"))));
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "08-sheet-import-drawing", looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // The Add picture sheet.
+    let picture = common::write_colour_png(&dir, "landscape.png", &common::landscape(480, 320));
+    dialogs.answer(&picture);
+    h.get_by_role_and_label(Role::Button, "Add picture").click();
+    h.run();
+    common::settle_picture(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "09-sheet-add-picture", looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // The Tool Library, a tool selected.
+    click(&mut h, "Project");
+    click(&mut h, "Tool Library…");
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "1/4 in Flat End Mill")
+        .click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "10-sheet-tool-library", looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // The unsaved-changes sheet: the feed was deleted above.
+    common::press_close(&mut h);
+    h.step();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "11-sheet-unsaved-changes", looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// The slice D4 set (`docs/specs/phase-4/redesign.md`, "Slices"): Export
 /// as a step, the Viewport's floating controls, the Warnings drawer and
 /// the sheets, and the status bar's pills. Each in dark and light at 1×,
@@ -899,6 +1029,8 @@ fn redesign_d4_screenshots() {
     let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
     SCALE.set(1.0);
     d4_export(&out, &looks);
+    d4_viewport(&out, &looks);
+    d4_sheets(&out, &looks);
 }
 
 /// The slice D6 set (`docs/alpha-worklog.md`, slice D6): the features

@@ -47,12 +47,15 @@
 //! one selected picture's corner handles resize it with its proportions
 //! kept, and the arrow keys nudge.
 //!
-//! The Viewport is a card. *Fit* and the *Tab tool* float over its top
-//! left corner in one `surface.raised` pill ([`tools_pill`];
-//! `redesign.md`, "The Viewport's floating controls"). While the project
-//! has nothing to cut and the Design step is open, the card shows the
-//! start screen in place of the stock ([`crate::panels::empty`]).
+//! The Viewport is a card. Its controls float over it ([`controls`];
+//! `redesign.md`, "The Viewport's floating controls"): the tools and the
+//! zoom at its top left, the colour mode and *Layers* at its top right
+//! with the depth legend under them, the cursor's read-out at its bottom
+//! left. Fit keeps the stock clear of them. While the project has nothing
+//! to cut and the Design step is open, the card shows the start screen in
+//! place of the stock ([`crate::panels::empty`]).
 
+mod controls;
 mod layers;
 mod legend;
 mod lod;
@@ -67,7 +70,7 @@ use std::sync::Arc;
 
 use dc_app::view::{ColourMode, DepthLegend, DepthRamp, ProgramExtents};
 use dc_app::viewport::arrows::{ArrowCache, ArrowMove};
-use dc_app::viewport::camera::{self, Camera, Pos};
+use dc_app::viewport::camera::{self, Camera, Insets, Pos};
 use dc_app::viewport::grid::Grid;
 use dc_app::viewport::handles::{self, Grab, Handles};
 use dc_app::viewport::pick::{self, ClickCycle, Hit, PICK_TOLERANCE_PX};
@@ -87,6 +90,7 @@ use crate::shell::window::{Action, FrameState, shortcut_action};
 use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
 use crate::widgets::card::mask_corners;
 use crate::widgets::icon::Icon;
+pub use controls::FIT_INSETS;
 use renderer::{Frame, Layer, LayerData, StyleId, StyleTable, ToolpathData};
 
 /// What the Viewport leaves of the gap to the card on each side, px: 8
@@ -98,6 +102,13 @@ pub(crate) struct Margins {
     pub left: f32,
     /// Right of the card.
     pub right: f32,
+    /// How much of the card's right side an Inspector lies over, px: in a
+    /// window too narrow to hold it beside the Viewport. The floating
+    /// controls and Fit keep clear of it.
+    pub overlay_right: f32,
+    /// How much of the card's bottom the Warnings drawer lies over, px,
+    /// while it is open. The read-out and Fit keep clear of it.
+    pub overlay_bottom: f32,
 }
 
 impl Margins {
@@ -116,11 +127,6 @@ impl Margins {
     }
 }
 
-/// A floating control's height, px: a 28-px button and the pill round
-/// it.
-const PILL_PX: f32 = 36.0;
-/// A floating control's button, px square.
-const PILL_BUTTON_PX: f32 = 28.0;
 /// The margin under the card, px: the status bar's pills stand 2 px in
 /// from its top, which makes the gap.
 const BOTTOM_PX: i8 = 6;
@@ -232,10 +238,13 @@ pub(crate) struct ViewportState {
     fit_pending: bool,
     /// The camera is as Fit left it, so a resized pane fits again.
     fitted: bool,
-    /// The strip at the pane's left that the depth legend keeps, px, as
-    /// the last frame laid it out: what Fit leaves free (0 without the
-    /// legend).
-    legend_px: f32,
+    /// The ways Fit can stand clear of what floats over the pane, as the
+    /// last frame laid it out ([`controls::ways`]).
+    ways: Vec<Insets>,
+    /// How much of the pane's bottom the Warnings drawer lay over in the
+    /// last frame, px: the pointer there is the drawer's, not the
+    /// drawing's.
+    covered_bottom: f32,
     drag: Option<Drag>,
     /// The transform being dragged, drawn but not yet a command.
     preview: Option<Preview>,
@@ -283,11 +292,11 @@ struct Derived {
     extents: Option<ProgramExtents>,
 }
 
-/// What the status bar shows of the pointer: its project point and the
-/// name of the shape under it, locked or not.
+/// What the status bar shows of the pointer: the name of the shape under
+/// it, locked or not, and the drag in progress. Its project point is the
+/// Viewport's own read-out's ([`controls`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Pointer {
-    pub cursor_mm: Option<Point>,
     pub hover: Option<(String, bool)>,
     /// The drag in progress, as the status bar reads it.
     pub drag: Option<String>,
@@ -317,10 +326,16 @@ impl ViewportState {
         self.fit_pending = true;
     }
 
-    /// The strip at the pane's left that Fit leaves for the depth legend,
-    /// px.
-    pub(crate) fn fit_reserve_px(&self) -> f64 {
-        f64::from(self.legend_px)
+    /// The ways Fit can stand clear of what floats over the pane: the
+    /// room the floating controls keep, and beside or under the depth
+    /// legend while it shows. Fit takes the one that draws the stock
+    /// largest (`Camera::fit_clear`).
+    pub(crate) fn fit_ways(&self) -> Vec<Insets> {
+        if self.ways.is_empty() {
+            vec![FIT_INSETS]
+        } else {
+            self.ways.clone()
+        }
     }
 
     /// Records that the camera was just fitted (F), so a resize refits.
@@ -344,8 +359,10 @@ impl ViewportState {
     /// Reads where the pointer is over last frame's `pane`, for the status
     /// bar and this frame's hover.
     pub(crate) fn read_pointer(&mut self, ctx: &egui::Context, pane: Rect, app: &App) -> Pointer {
+        let covered = pane.bottom() - self.covered_bottom;
         let over = ctx.pointer_hover_pos().filter(|p| {
             pane.contains(*p)
+                && p.y < covered
                 && ctx
                     .layer_id_at(*p)
                     .is_none_or(|layer| layer.order == egui::Order::Background)
@@ -401,7 +418,6 @@ impl ViewportState {
             Some((op.name.clone(), false))
         });
         Pointer {
-            cursor_mm: self.cursor_mm,
             hover: male.map_or_else(
                 || {
                     self.hover
@@ -785,7 +801,7 @@ fn start_picture_drag(
 }
 
 /// `value_mm` for the status bar's readout: one decimal in mm, three in
-/// inches, as the cursor cell.
+/// inches, as the cursor's read-out.
 fn readout_length(value_mm: f64, units: dc_project::Units) -> String {
     let decimals = match units {
         dc_project::Units::Mm => 1,
@@ -1655,77 +1671,6 @@ fn target_bar(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Vec<Act
     });
 }
 
-/// The floating tools at the top left of the Viewport's card `pane`
-/// (`redesign.md`, "The Viewport's floating controls"): *Fit* and the
-/// *Tab tool* in one `surface.raised` pill with the one shadow, 12 px in
-/// from the card's edge, under the target-editing bar while that shows.
-/// The pill takes the clicks on it, so none reaches the drawing.
-fn tools_pill(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Vec<Action>) {
-    let palette = Palette::current(ui);
-    let strings = state.app.strings();
-    let editing_targets = state.app.target_editing().is_some();
-    let top =
-        pane.top() + theme::FLOAT_INSET_PX + if editing_targets { TARGET_BAR_PX } else { 0.0 };
-    let padding = (PILL_PX - PILL_BUTTON_PX) / 2.0;
-    let gap = 2.0;
-    let rect = Rect::from_min_size(
-        egui::pos2(pane.left() + theme::FLOAT_INSET_PX, top),
-        egui::vec2(2.0 * padding + 2.0 * PILL_BUTTON_PX + gap, PILL_PX),
-    );
-    ui.interact(
-        rect,
-        egui::Id::unique("dc.viewport.tools_pill"),
-        egui::Sense::click_and_drag(),
-    );
-    let radius = theme::pill(PILL_PX);
-    ui.painter()
-        .add(theme::shadow(palette).as_shape(rect, radius));
-    ui.painter().rect(
-        rect,
-        radius,
-        palette.surface_raised,
-        Stroke::new(1.0, palette.border_default),
-        egui::StrokeKind::Inside,
-    );
-    let mut pill = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rect.shrink(padding))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    pill.spacing_mut().item_spacing.x = gap;
-    let tool = |key: StrKey, icon: Icon| {
-        ButtonSpec::new(ButtonKind::Quiet, "")
-            .icon(icon, theme::ICON_SMALL_PX)
-            .width(PILL_BUTTON_PX)
-            .height(PILL_BUTTON_PX)
-            .named(strings.get(key))
-    };
-    let fit_keys = keyboard::binding(Shortcut::FitView)
-        .map(|(modifiers, key)| crate::shell::window::shortcut_text(ui.ctx(), modifiers, key));
-    let fit_tip = match &fit_keys {
-        Some(keys) => format!("{} ({keys})", strings.get(StrKey::AppViewportFit)),
-        None => strings.get(StrKey::AppViewportFit).to_owned(),
-    };
-    if button(
-        &mut pill,
-        tool(StrKey::AppViewportFit, Icon::Maximize).tooltip(&fit_tip),
-    )
-    .clicked()
-    {
-        out.push(Action::FitView);
-    }
-    // The Tab tool (#546): armed, it shows as pressed. Target editing
-    // has the drawing to itself.
-    let armed = tab_tool::armed(ui.ctx());
-    let tab = tool(StrKey::AppViewportTabTool, Icon::BookmarkPlus)
-        .tooltip(strings.get(StrKey::AppViewportTabToolHelp))
-        .pressed(armed)
-        .enabled(!editing_targets);
-    if button(&mut pill, tab).clicked() {
-        tab_tool::arm(ui.ctx(), !armed);
-    }
-}
-
 /// Draws the Viewport in the central panel, `margins` from the cards
 /// beside it; returns its rectangle.
 pub(crate) fn show(
@@ -1756,28 +1701,40 @@ pub(crate) fn show(
             let resized = (camera.viewport_px.x - size.x).abs() > 0.5
                 || (camera.viewport_px.y - size.y).abs() > 0.5;
             camera.viewport_px = size;
-            // The depth legend's strip, while By depth is on: Fit leaves
-            // it free, and a fitted view refits when it comes or goes.
-            let legend_px = view
+            // What floats over the pane besides its pills: an Inspector
+            // over its right in a narrow window, the Warnings drawer over
+            // its bottom, and the depth legend while By depth is on. Fit
+            // stands clear of them, and a fitted view refits when one
+            // comes or goes. The target-editing bar only moves the pills
+            // down.
+            let bar_px = if app.target_editing().is_some() {
+                TARGET_BAR_PX
+            } else {
+                0.0
+            };
+            let legend = view
                 .derived(app)
                 .legend
                 .filter(|_| app.view().colour == ColourMode::ByDepth)
-                .filter(|_| !state.show_empty)
-                .map_or(0.0, |legend| legend::reserve_px(ui, app, &legend));
-            let reserve_changed = (legend_px - view.legend_px).abs() > 0.5;
-            view.legend_px = legend_px;
-            if view.fit_pending || (view.fitted && (resized || reserve_changed)) {
-                camera.fit_beside(
-                    camera::fit_bounds(app.project(), app.scene()),
-                    f64::from(legend_px),
-                );
+                .filter(|_| !state.show_empty);
+            let legend_size = legend.as_ref().map(|legend| legend::size(ui, app, legend));
+            let over = (margins.overlay_right, margins.overlay_bottom);
+            let ways = controls::ways(over, legend_size);
+            let ways_changed = view.ways != ways;
+            view.ways = ways;
+            if view.fit_pending || (view.fitted && (resized || ways_changed)) {
+                camera.fit_clear(camera::fit_bounds(app.project(), app.scene()), &view.ways);
                 view.fit_pending = false;
                 view.fitted = true;
             }
 
+            // The pointer over the Warnings drawer is the drawer's: its
+            // wheel scrolls the rows and does not zoom the drawing.
+            view.covered_bottom = margins.overlay_bottom;
+            let clear = pane.bottom() - margins.overlay_bottom;
             let at = ui
                 .input(|i| i.pointer.hover_pos())
-                .filter(|p| pane.contains(*p) && response.contains_pointer());
+                .filter(|p| pane.contains(*p) && p.y < clear && response.contains_pointer());
             let mut moved = false;
             if let Some(at) = at {
                 moved |= scroll_and_pinch(ui, pane, pane_pos(pane, at), &mut camera);
@@ -1875,20 +1832,51 @@ pub(crate) fn show(
             painter.add(renderer::callback(pane, frame));
             overlay(ui, pane, state, view, &camera);
             target_bar(ui, pane, state, out);
-            tools_pill(ui, pane, state, out);
-            let derived = view.derived.clone();
+            // The floating controls, at 60 % while a drag is under way.
+            let pointer = ui.input(|i| i.pointer.interact_pos());
+            let dragging = match &view.drag {
+                Some(
+                    Drag::Pan { .. }
+                    | Drag::Transform { .. }
+                    | Drag::Tab { .. }
+                    | Drag::Picture { .. },
+                ) => true,
+                Some(Drag::Marquee { start } | Drag::Press { start, .. }) => {
+                    pointer.is_some_and(|at| start.distance(at) >= CLICK_SLOP_PX)
+                }
+                Some(Drag::Refused) | None => false,
+            };
+            let opacity = controls::opacity(ui, dragging);
+            let place = controls::Place {
+                pane,
+                top: pane.top() + bar_px,
+                right: pane.right() - margins.overlay_right,
+                bottom: pane.bottom() - margins.overlay_bottom,
+                opacity,
+            };
+            let floats = controls::show(ui, place, state, &camera, view.cursor_mm, out);
+            if let Some(zoomed) = floats.camera {
+                // A zoom control's camera, shown from the next frame on.
+                out.push(Action::SetCamera(zoomed));
+                view.fitted = false;
+            }
             // Capability 73a: the depth legend while By depth is on,
-            // whether or not the toolpath view is open.
-            let covers: Vec<Rect> = derived
-                .as_ref()
-                .and_then(|d| d.legend.as_ref())
-                .filter(|_| app.view().colour == ColourMode::ByDepth)
-                .map(|legend| legend::draw_legend(ui, pane, app, legend))
-                .into_iter()
-                .collect();
+            // whether or not the toolpath view is open, hung under the
+            // top-right controls.
+            let mut covers = floats.rects();
+            if let Some(legend) = &legend {
+                let mut fading = painter.clone();
+                fading.set_opacity(opacity);
+                let hung = floats.view.map_or(
+                    egui::pos2(place.right - theme::FLOAT_INSET_PX, place.top),
+                    |pill| egui::pos2(pill.right(), pill.bottom()),
+                ) + egui::vec2(0.0, controls::LEGEND_GAP_PX);
+                covers.push(legend::draw_legend(ui, &fading, hung, app, legend));
+            }
             // After the legend, so the caption can step out from under
-            // it; it stays on the pane's layer, below it.
-            if let Some(extents) = derived
+            // it and the controls.
+            if let Some(extents) = view
+                .derived
                 .as_ref()
                 .and_then(|d| d.extents)
                 .filter(|_| app.view().visibility.extents)

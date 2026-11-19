@@ -33,6 +33,11 @@ pub const FIT_MARGIN_PX: f64 = 48.0;
 pub const MIN_PX_PER_MM: f64 = 0.05;
 /// The closest in: 2000 px per mm, a micron a pixel at 2× scale.
 pub const MAX_PX_PER_MM: f64 = 2000.0;
+/// The scale the zoom read-out calls 100 %: 96 logical pixels per inch,
+/// which is the work at about its real size on most displays. The app
+/// does not know a display's true size, so this is the convention
+/// drawing programs share.
+pub const ACTUAL_PX_PER_MM: f64 = 96.0 / 25.4;
 /// What [`Camera::fit`] treats as the least extent of what it frames, mm,
 /// so a single point or a straight line still gives a finite zoom.
 const MIN_FIT_EXTENT_MM: f64 = 1.0;
@@ -146,34 +151,126 @@ impl Camera {
     /// [`FIT_MARGIN_PX`] round it on both axes, within the zoom limits.
     /// Extents under a millimetre count as one.
     pub fn fit(&mut self, bounds: Rect) {
-        self.fit_beside(bounds, 0.0);
+        self.fit_inside(bounds, Insets::all(FIT_MARGIN_PX));
     }
 
-    /// [`Camera::fit`] in the pane less a strip `left_px` wide at its left
-    /// edge, which something drawn over the pane keeps (the depth legend;
-    /// `experience.md`, section 9: "Fit leaves room for it on the left").
-    /// A strip that is not finite and positive counts as none.
-    pub fn fit_beside(&mut self, bounds: Rect, left_px: f64) {
-        let left_px = if left_px.is_finite() && left_px > 0.0 {
-            left_px.min(self.viewport_px.x / 2.0)
-        } else {
-            0.0
+    /// Frames `bounds` (mm) in the pane less `insets`, the room each edge
+    /// keeps for what floats over the pane (`redesign.md`, "The
+    /// Viewport's floating controls": they "never cover the stock at
+    /// Fit"): centred in what is left, at the largest zoom that fits it
+    /// on both axes, within the zoom limits. Extents under a millimetre
+    /// count as one, and an inset that is not finite and positive as
+    /// none.
+    pub fn fit_inside(&mut self, bounds: Rect, insets: Insets) {
+        if let Some((px_per_mm, centre_mm)) = self.framed(bounds, insets) {
+            self.px_per_mm = px_per_mm;
+            self.centre_mm = centre_mm;
+        }
+    }
+
+    /// [`Camera::fit_inside`] by whichever of `ways` draws `bounds`
+    /// largest. Something that floats in a corner of the pane (the depth
+    /// legend) can be stood clear of in two ways, beside it or under it,
+    /// and which leaves more room depends on the pane's shape and the
+    /// work's. With no way given the camera stays as it is.
+    pub fn fit_clear(&mut self, bounds: Rect, ways: &[Insets]) {
+        let best = ways
+            .iter()
+            .filter_map(|way| self.framed(bounds, *way))
+            .max_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((px_per_mm, centre_mm)) = best {
+            self.px_per_mm = px_per_mm;
+            self.centre_mm = centre_mm;
+        }
+    }
+
+    /// The scale and the centre that frame `bounds` in the pane less
+    /// `insets`; `None` when the scale is not a number.
+    fn framed(&self, bounds: Rect, insets: Insets) -> Option<(f64, Point)> {
+        let inset = |px: f64, pane_px: f64| {
+            if px.is_finite() && px > 0.0 {
+                px.min(pane_px / 2.0)
+            } else {
+                0.0
+            }
         };
-        let room = |px: f64| (px - 2.0 * FIT_MARGIN_PX).max(1.0);
+        let (left, right) = (
+            inset(insets.left_px, self.viewport_px.x),
+            inset(insets.right_px, self.viewport_px.x),
+        );
+        let (top, bottom) = (
+            inset(insets.top_px, self.viewport_px.y),
+            inset(insets.bottom_px, self.viewport_px.y),
+        );
         let width_mm = bounds.width_mm().max(MIN_FIT_EXTENT_MM);
         let height_mm = bounds.height_mm().max(MIN_FIT_EXTENT_MM);
-        let px_per_mm = (room(self.viewport_px.x - left_px) / width_mm)
-            .min(room(self.viewport_px.y) / height_mm)
+        let px_per_mm = ((self.viewport_px.x - left - right).max(1.0) / width_mm)
+            .min((self.viewport_px.y - top - bottom).max(1.0) / height_mm)
             .clamp(MIN_PX_PER_MM, MAX_PX_PER_MM);
         if !px_per_mm.is_finite() {
-            return;
+            return None;
         }
-        self.px_per_mm = px_per_mm;
-        // The bounds' centre sits half the strip right of the pane's.
-        self.centre_mm = Point::new(
-            (bounds.min.x + bounds.max.x) / 2.0 - left_px / 2.0 / px_per_mm,
-            (bounds.min.y + bounds.max.y) / 2.0,
+        // The bounds' centre sits at the centre of what the insets leave:
+        // off the pane's by half the difference of each pair, with screen
+        // Y down and project Y up.
+        let centre_mm = Point::new(
+            (bounds.min.x + bounds.max.x) / 2.0 - (left - right) / 2.0 / px_per_mm,
+            (bounds.min.y + bounds.max.y) / 2.0
+                - SCREEN_Y_PER_PROJECT_Y * (top - bottom) / 2.0 / px_per_mm,
         );
+        Some((px_per_mm, centre_mm))
+    }
+
+    /// The zoom as the Viewport's read-out shows it, percent: 100 is
+    /// [`ACTUAL_PX_PER_MM`], an inch of the work on 96 logical pixels.
+    #[must_use]
+    pub fn zoom_percent(&self) -> f64 {
+        self.px_per_mm / ACTUAL_PX_PER_MM * 100.0
+    }
+
+    /// Scales the zoom by `factor` about the pane's centre (the
+    /// Viewport's zoom in and zoom out), within the zoom limits; a factor
+    /// that is not finite and positive changes nothing.
+    pub fn zoom_by(&mut self, factor: f64) {
+        let centre = Pos::new(self.viewport_px.x / 2.0, self.viewport_px.y / 2.0);
+        self.zoom_about(centre, factor);
+    }
+
+    /// Sets the zoom to `percent` of [`ACTUAL_PX_PER_MM`] about the pane's
+    /// centre, within the zoom limits; a percentage that is not finite
+    /// and positive changes nothing.
+    pub fn set_zoom_percent(&mut self, percent: f64) {
+        if percent.is_finite() && percent > 0.0 {
+            self.px_per_mm =
+                (percent / 100.0 * ACTUAL_PX_PER_MM).clamp(MIN_PX_PER_MM, MAX_PX_PER_MM);
+        }
+    }
+}
+
+/// The room what floats over the pane keeps at each of its edges, logical
+/// pixels: what [`Camera::fit_inside`] leaves free.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Insets {
+    /// At the pane's left edge.
+    pub left_px: f64,
+    /// At its top edge.
+    pub top_px: f64,
+    /// At its right edge.
+    pub right_px: f64,
+    /// At its bottom edge.
+    pub bottom_px: f64,
+}
+
+impl Insets {
+    /// `px` at every edge.
+    #[must_use]
+    pub const fn all(px: f64) -> Self {
+        Self {
+            left_px: px,
+            top_px: px,
+            right_px: px,
+            bottom_px: px,
+        }
     }
 }
 

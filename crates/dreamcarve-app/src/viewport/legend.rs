@@ -4,9 +4,9 @@
 //! What the Viewport draws over its toolpaths (functional spec,
 //! capabilities 73a and 74; `experience.md`, section 9, "Depth legend"
 //! and "Program extents"; mock-up `09-preview-legend.svg`): in *By depth*,
-//! the depth legend at the pane's bottom-left, and the extents' caption
-//! pill. The toolpath view's controls are a popover from the status bar
-//! (`shell::toolpaths`), so the Viewport's corner holds no card (#616).
+//! the depth legend, hung under the floating controls at the pane's top
+//! right (`redesign.md`, "The Viewport's floating controls"), and the
+//! extents' caption pill.
 
 use dc_app::view::{DepthLegend, ProgramExtents, range_label};
 use dc_app::{App, StrKey};
@@ -15,10 +15,8 @@ use eframe::egui::{self, Align2, Rect, Stroke, TextStyle, Ui};
 use crate::shell::theme::{self, Palette};
 use crate::viewport::renderer::gpu_f32;
 
-/// The legend's inset from the pane's corner, px.
-const INSET_PX: f32 = 12.0;
-/// Its inner margin, px.
-const PAD_PX: f32 = 8.0;
+/// The legend's inner margin, px.
+const PAD_PX: f32 = 12.0;
 /// The cutting ramp's bar, px.
 const RAMP_BAR: egui::Vec2 = egui::vec2(12.0, 160.0);
 /// The non-cutting band's height above it, px.
@@ -26,14 +24,11 @@ const BAND_PX: f32 = 40.0;
 /// Two legend labels closer than this stack side by side, px.
 const LABEL_GAP_PX: f32 = 14.0;
 
-/// The room the legend takes from the pane's left edge, px, inset
-/// included: what Fit leaves free when the legend is on (`experience.md`,
-/// section 9: "It never overlaps the stock at fit"). Measured as the
-/// legend lays itself out.
-pub(crate) fn reserve_px(ui: &Ui, app: &App, legend: &DepthLegend) -> f32 {
-    let painter = ui.painter();
-    let layout = Layout::of(ui, painter, app, legend);
-    INSET_PX + layout.size.x + INSET_PX
+/// The legend's size, px, as it lays itself out: what Fit stands clear
+/// of when the legend is on (`experience.md`, section 9: "It never
+/// overlaps the stock at fit").
+pub(crate) fn size(ui: &Ui, app: &App, legend: &DepthLegend) -> egui::Vec2 {
+    Layout::of(ui, ui.painter(), app, legend).size
 }
 
 /// The legend's parts, laid out against an origin at its top-left inside
@@ -114,48 +109,35 @@ impl Layout {
     }
 }
 
-/// The depth legend at `pane`'s bottom-left: the band where the bit moves
-/// without cutting, in the rapid grey with diagonal hatching, ticked at
-/// the clearance height and each safe Z; the stock top; the cutting ramp
-/// as a 12 × 160 px bar, ticked at each operation's depth and the deepest
-/// cut; labels that would overlap stacked to the right; on a
-/// `viewport.label.bg` card so it reads over the toolpaths. Drawn in its
-/// own non-interactive area rather than a bare layer: egui orders areas,
-/// so a sheet opened later stacks above it (#549), where a bare layer
-/// would paint over the sheet. Returns the legend's rectangle.
-pub(crate) fn draw_legend(ui: &Ui, pane: Rect, app: &App, legend: &DepthLegend) -> Rect {
-    egui::Area::new(egui::Id::unique("viewport.depth_legend"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(pane.min)
-        .interactable(false)
-        .show(ui.ctx(), |ui| {
-            let painter = ui.painter().clone();
-            paint_legend(ui, &painter, pane, app, legend)
-        })
-        .inner
-}
-
-/// [`draw_legend`]'s painting, on `painter`; returns the legend's frame.
-fn paint_legend(
+/// The depth legend, its top-right corner at `top_right`: the band where
+/// the bit moves without cutting, in the rapid grey with diagonal
+/// hatching, ticked at the clearance height and each safe Z; the stock
+/// top; the cutting ramp as a 12 × 160 px bar, ticked at each operation's
+/// depth and the deepest cut; labels that would overlap stacked to the
+/// right; on a `surface.raised` card with a hairline and the one shadow,
+/// as the floating controls it hangs under. Painted with `painter`, the
+/// pane's own, after the toolpaths: a sheet or a popover opened over the
+/// Viewport is a layer above (#549). Returns the legend's rectangle.
+pub(crate) fn draw_legend(
     ui: &Ui,
     painter: &egui::Painter,
-    pane: Rect,
+    top_right: egui::Pos2,
     app: &App,
     legend: &DepthLegend,
 ) -> Rect {
     let palette = Palette::current(ui);
     let layout = Layout::of(ui, painter, app, legend);
     let frame = Rect::from_min_size(
-        egui::pos2(
-            pane.left() + INSET_PX,
-            (pane.bottom() - INSET_PX - layout.size.y).max(pane.top() + INSET_PX),
-        ),
+        egui::pos2(top_right.x - layout.size.x, top_right.y),
         layout.size,
     );
-    painter.rect_filled(
+    painter.add(theme::shadow(palette).as_shape(frame, theme::POPOVER_RADIUS_PX));
+    painter.rect(
         frame,
-        theme::INNER_CARD_RADIUS_PX,
-        palette.viewport_label_bg,
+        theme::POPOVER_RADIUS_PX,
+        palette.surface_raised,
+        Stroke::new(1.0, palette.border_default),
+        egui::StrokeKind::Inside,
     );
     let origin = frame.min + egui::vec2(PAD_PX, PAD_PX);
     painter.galley(origin, layout.title, palette.text_primary);

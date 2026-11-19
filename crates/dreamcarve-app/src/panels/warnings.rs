@@ -3,9 +3,12 @@
 
 //! The Warnings drawer (functional spec, capability 76; mock-up
 //! `10-warnings-panel.svg`; `experience.md`, section 2, "Warnings
-//! drawer"): above the status bar over the Viewport's bottom 240 px,
-//! resizable down to 120, a card of its own under the Viewport's; never
-//! a window. Its rows are `dc_app::warnings::panel`'s, `check` on the
+//! drawer"; `redesign.md`, "The window"): a card over the bottom of the
+//! Viewport's card, 240 px high, with a hairline and the one shadow,
+//! 8 px in from the card's edges; never a window. The grab handle at its
+//! top drags it taller or shorter, down to 120 px. The Viewport keeps its
+//! size under it, and its read-out and Fit stand clear of it
+//! ([`reserve`]). Its rows are `dc_app::warnings::panel`'s, `check` on the
 //! project as it stands: grouped by operation with the project's rows
 //! first, each with its tier glyph and word, its code in mono linking to
 //! the code's entry in the Warnings chapter, the message, and the field
@@ -22,19 +25,28 @@
 use dc_app::StrKey;
 use dc_app::status::counted;
 use dc_app::warnings::{self, CarveNote, Counts, Group, Level, Row};
-use eframe::egui::{self, Rangef, Sense, TextStyle, Ui};
+use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui, UiBuilder};
 
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
-use crate::widgets::card::card;
+use crate::widgets::card::floating;
 use crate::widgets::chip::{Tone, chip};
 use crate::widgets::icon::Icon;
 use crate::widgets::row::INSET_PX;
 
-/// The drawer's header, px: a control between the card's padding above
-/// it and the gap under it.
-const HEADER_PX: f32 = 52.0;
+/// The drawer's header, px: a control under the grab handle, and the gap
+/// under it.
+const HEADER_PX: f32 = 44.0;
+/// The strip at the drawer's top that drags it taller or shorter, px.
+const GRAB_PX: f32 = 14.0;
+/// The grab handle's mark, px.
+const GRAB_MARK: egui::Vec2 = egui::vec2(36.0, 4.0);
+/// How far the drawer sits in from the Viewport card's edges, px.
+const INSET_OVER_PX: f32 = theme::GAP_PX;
+/// The least the drawer leaves of the Viewport above it, px: its
+/// floating controls stay in view.
+const ABOVE_PX: f32 = 96.0;
 /// A group's header, px.
 const GROUP_PX: f32 = theme::SECTION_HEADER_PX;
 /// A row, px (`experience.md`, section 7, "Table rows").
@@ -142,70 +154,132 @@ fn group_title(state: &FrameState<'_>, group: &Group) -> String {
     )
 }
 
-/// Draws the drawer under the Viewport's card, `margins` from the cards
-/// beside it as the Viewport's are; its card's rectangle.
+/// Where the drawer's height is kept between frames.
+fn height_id() -> Id {
+    Id::unique("dc.warnings.height")
+}
+
+/// The drawer's height, px, as the user left it.
+fn height(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(height_id()))
+        .unwrap_or(DEFAULT_PX)
+        .max(MIN_PX)
+}
+
+/// The room the open drawer takes of the Viewport card's bottom, px: its
+/// height and its inset from the card's edge. What the Viewport's
+/// read-out and Fit stand clear of.
+pub(crate) fn reserve(ctx: &egui::Context) -> f32 {
+    height(ctx) + INSET_OVER_PX
+}
+
+/// Draws the drawer over the bottom of the Viewport's card `viewport`,
+/// short of `right_px` of its right side (an Inspector lying over it in
+/// a narrow window); the drawer's rectangle. It is drawn after the
+/// Viewport, in its layer, and takes every click on it, so none reaches
+/// the drawing under it; the Viewport leaves the pointer over it alone
+/// (`viewport::Margins::overlay_bottom`). Not an area of its own: egui
+/// lays a new area out unseen for a frame, and the drawer answers the
+/// click that opens it in the next one (acceptance 87).
 pub(crate) fn drawer(
     ui: &mut Ui,
     state: &FrameState<'_>,
-    margins: crate::viewport::Margins,
+    viewport: Rect,
+    right_px: f32,
     out: &mut Vec<Action>,
-) -> egui::Rect {
-    let palette = Palette::current(ui);
+) -> Rect {
     let groups = warnings::panel(state.app);
     let counts = warnings::counts(state.app);
-    egui::Panel::bottom("warnings_drawer")
-        .resizable(true)
-        .show_separator_line(false)
-        .default_size(DEFAULT_PX)
-        .size_range(Rangef::new(MIN_PX, f32::INFINITY))
-        // The backdrop: the Viewport's card ends 6 px above, so 2 px
-        // more make the gap between the two cards.
-        .frame(
-            egui::Frame::NONE
-                .fill(palette.surface_window)
-                .inner_margin(margins.frame(2, 6)),
-        )
-        .show(ui, |ui| {
-            let rect = ui.available_rect_before_wrap();
-            card(ui, |ui| {
-                if state.inert() {
-                    ui.disable();
-                }
-                ui.spacing_mut().item_spacing.y = 0.0;
-                header(ui, state, counts, out);
-                egui::ScrollArea::vertical()
-                    .auto_shrink(false)
-                    .show(ui, |ui| {
-                        if groups.is_empty() {
-                            ui.add_space(24.0);
-                            ui.vertical_centered(|ui| {
-                                text(
-                                    ui,
-                                    state.app.strings().get(StrKey::AppWarningsNone),
-                                    TextStyle::Body,
-                                    palette.text_secondary,
-                                );
-                            });
-                        }
-                        let mut stripe = false;
-                        for group in &groups {
-                            if group.heading {
-                                group_header(ui, &group_title(state, group));
-                            }
-                            for row in &group.rows {
-                                match &row.note {
-                                    Some(note) => draw_note(ui, state, row, note, stripe, out),
-                                    None => draw_row(ui, state, row, stripe, out),
-                                }
-                                stripe = !stripe;
-                            }
-                        }
-                        ui.add_space(INSET_PX);
+    let tallest = (viewport.height() - ABOVE_PX - INSET_OVER_PX).max(MIN_PX);
+    let tall = height(ui.ctx()).min(tallest);
+    let rect = Rect::from_min_max(
+        egui::pos2(
+            viewport.left() + INSET_OVER_PX,
+            viewport.bottom() - INSET_OVER_PX - tall,
+        ),
+        egui::pos2(
+            (viewport.right() - INSET_OVER_PX - right_px).max(viewport.left() + INSET_OVER_PX),
+            viewport.bottom() - INSET_OVER_PX,
+        ),
+    );
+    ui.interact(
+        rect,
+        Id::unique("dc.warnings.drawer.surface"),
+        Sense::click_and_drag(),
+    );
+    let mut child = ui.new_child(
+        UiBuilder::new()
+            .id_salt("dc.warnings.drawer")
+            .max_rect(rect),
+    );
+    floating(&mut child, |ui| {
+        if state.inert() {
+            ui.disable();
+        }
+        ui.spacing_mut().item_spacing.y = 0.0;
+        grab(ui, tall, tallest);
+        header(ui, state, counts, out);
+        let palette = Palette::current(ui);
+        egui::ScrollArea::vertical()
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                if groups.is_empty() {
+                    ui.add_space(24.0);
+                    ui.vertical_centered(|ui| {
+                        text(
+                            ui,
+                            state.app.strings().get(StrKey::AppWarningsNone),
+                            TextStyle::Body,
+                            palette.text_secondary,
+                        );
                     });
+                }
+                let mut stripe = false;
+                for group in &groups {
+                    if group.heading {
+                        group_header(ui, &group_title(state, group));
+                    }
+                    for row in &group.rows {
+                        match &row.note {
+                            Some(note) => draw_note(ui, state, row, note, stripe, out),
+                            None => draw_row(ui, state, row, stripe, out),
+                        }
+                        stripe = !stripe;
+                    }
+                }
+                ui.add_space(INSET_PX);
             });
-            rect
-        })
-        .inner
+    });
+    rect
+}
+
+/// The grab handle: a strip across the drawer's top with a small pill at
+/// its centre. Dragging it makes the drawer taller or shorter, between
+/// its least height and `tallest`; the pill takes the accent while the
+/// pointer is on it.
+fn grab(ui: &mut Ui, tall: f32, tallest: f32) {
+    let palette = Palette::current(ui);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), GRAB_PX), Sense::hover());
+    let response = ui.interact(rect, Id::unique("dc.warnings.grab"), Sense::drag());
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    if response.dragged() {
+        let next = (tall - response.drag_delta().y).clamp(MIN_PX, tallest);
+        ui.data_mut(|d| d.insert_temp(height_id(), next));
+    }
+    let colour = if response.hovered() || response.dragged() {
+        palette.accent
+    } else {
+        palette.border_strong
+    };
+    let mark = Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.top() + 4.0 + GRAB_MARK.y / 2.0),
+        GRAB_MARK,
+    );
+    ui.painter()
+        .rect_filled(mark, theme::pill(GRAB_MARK.y), colour);
 }
 
 /// The header: the title left; *Copy* and the close button right. No
