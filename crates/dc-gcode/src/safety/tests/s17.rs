@@ -1,9 +1,9 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! S17 in the safety pass (#408; `docs/specs/phase-3/design.md`,
-//! "Safety pass", the S17 and clearing-run S9 bullets; functional S17;
-//! security review H3, H4, M1 and M3).
+//! S17 in the safety pass (`docs/specs/phase-3/design.md`, "Safety
+//! pass", the S17 and clearing-run S9 bullets; functional S17, H4, M1
+//! and M3).
 //!
 //! The hand-written programs carve the sample rectangle (X 10 to 60, Y 10
 //! to 40, 6 mm stock, stock-top origin, so machine Z is project Z less 6)
@@ -768,16 +768,15 @@ fn generated_v_carves_pass_s17() {
     }
 }
 
-/// S17 imports no generator (`docs/rust-guidelines.md`, "Crate
-/// boundaries"; security review M3): the `use dc_cam::` lines of the
-/// crate's code outside its tests name only toolpath data types and the
-/// entry constants, and no other path into `dc_cam` appears there but
-/// phase 2's two documented rules (`last_pass_step_reach_mm`, the
-/// last-pass step's length, and `placed_tabs::place`, the tab layout
-/// rule, with `placed_tabs::place_shared`, the same rule for a cut-out
-/// the board's edge leaves in pieces, #710). A V-Carve's regions, floor and engagement, and a countersink's
-/// holes, depth and engagement (S18, #427), come from
-/// `dc_geometry` and `dc_project`.
+/// S17 imports no generator (`docs/rust-guidelines.md`, "Crate boundaries"):
+/// the `use dc_cam::` lines of the crate's code outside its tests name only
+/// toolpath data types and the entry constants, and no other path into `dc_cam`
+/// appears there but phase 2's two documented rules (`last_pass_step_reach_mm`,
+/// the last-pass step's length, and `placed_tabs::place`, the tab layout rule,
+/// with `placed_tabs::place_shared`, the same rule for a cut-out the board's
+/// edge leaves in pieces). A V-Carve's regions, floor and engagement, and a
+/// countersink's holes, depth and engagement (S18), come from `dc_geometry` and
+/// `dc_project`.
 #[test]
 fn s17_uses_no_generator() {
     const DATA_TYPES: [&str; 10] = [
@@ -799,8 +798,8 @@ fn s17_uses_no_generator() {
     ];
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     // Every source file, in submodules too (`material/cone.rs`,
-    // `material/countersink.rs`, #427), but the `tests` directories,
-    // which hold test-only modules.
+    // `material/countersink.rs`), but the `tests` directories and the
+    // `tests.rs` files, which hold test-only modules.
     let mut files = Vec::new();
     let mut dirs = vec![dir.clone()];
     while let Some(at) = dirs.pop() {
@@ -809,7 +808,7 @@ fn s17_uses_no_generator() {
                 if !path.ends_with("tests") {
                     dirs.push(path);
                 }
-            } else if path.extension().is_some_and(|x| x == "rs") {
+            } else if path.extension().is_some_and(|x| x == "rs") && !path.ends_with("tests.rs") {
                 files.push(path);
             }
         }
@@ -942,7 +941,7 @@ fn imported_names(statement: &str) -> Vec<String> {
     }
 }
 
-/// A sign like the one slice 11 (#411) draws: a 150 × 70 mm board whose
+/// A sign like the one slice 11 draws: a 150 × 70 mm board whose
 /// border, round a 110 × 40 mm stadium, is carved with the 90° bit to a
 /// 2.5 mm flat depth, and five letters (I, L, T, O and D, 16 mm tall,
 /// strokes 3 mm wide) carved in the stadium with the 60° bit, medial.
@@ -1157,13 +1156,13 @@ fn export_line_end(
     export_carve(&project, &op)
 }
 
-/// #467: the line-end regions of #463's sweep whose export S3 refused
-/// (`cuts at 415.463 mm/min, which is not a rate of its tool`) export
-/// through the whole safety pass. A medial chain's step there fell less
-/// than 0.001 mm at a feed scaled to the plunge rate; written to three
+/// The line-end regions of #463's sweep whose export S3 refused (`cuts
+/// at 415.463 mm/min, which is not a rate of its tool`) export through
+/// the whole safety pass. A medial chain's step there fell less than
+/// 0.001 mm at a feed scaled to the plunge rate; written to three
 /// decimals it did not fall, and its scaled feed was not a rate of its
 /// tool. As `(h, wedge length in medial steps, half angle, tilt, flat
-/// depth)`. The eighth, which S17 then refuses (#469), passes S3.
+/// depth)`. The eighth, which S17 then refuses, passes S3.
 #[test]
 fn sub_quantum_descents_export() {
     let cases = [
@@ -1187,28 +1186,28 @@ fn sub_quantum_descents_export() {
     );
 }
 
-/// #469: the eighth of #467's line-end regions exports through the whole
-/// safety pass. Its medial chain ran 0.3° off a wall of the wedge at the
-/// start plane; written to three decimals, its start was inside the wedge
-/// and the move crossed the wall 0.02 mm along, which S17 refused. Since
-/// #465 the axis wraps round the wedge's tip and that chain is gone, and
-/// the generator keeps every tip path clear of the walls by what writing
-/// can move it (`sharp_corners_export_at_any_placement`).
+/// The eighth of #467's line-end regions exports through the whole safety
+/// pass. Its medial chain ran 0.3° off a wall of the wedge at the start
+/// plane; written to three decimals, its start was inside the wedge and
+/// the move crossed the wall 0.02 mm along, which S17 refused. Since #465
+/// the axis wraps round the wedge's tip and that chain is gone, and the
+/// generator keeps every tip path clear of the walls by what writing can
+/// move it (`sharp_corners_export_at_any_placement`).
 #[test]
 fn sub_quantum_descent_beside_a_line_end_exports() {
     export_line_end(20.0, 1.5, 6.0, 52.0, 3.0).unwrap();
 }
 
-/// #469: V-Carves of sharp corners, placed off the written grid, export
-/// through the whole safety pass, in millimetres and in inches. A chain
-/// from a corner's tip runs half the corner's angle off each wall; written
-/// to the program's places its start could move into the material and
-/// the move cross the wall a few hundredths along, which S17 refuses
-/// (before #469, 5 of the 48 carves in mm did, 2° and 3° corners, and 17
-/// in inches, 2°, 3° and 5°). The generator now
-/// keeps every tip path at least `quantum / √2` from the walls. Each
-/// region is a 20 mm wedge of angle `θ` closed by a 3 mm point, turned by
-/// `0.37 k` rad and moved by sub-micrometre steps with `k`.
+/// V-Carves of sharp corners, placed off the written grid, export through
+/// the whole safety pass, in millimetres and in inches. A chain from a
+/// corner's tip runs half the corner's angle off each wall; written to the
+/// program's places its start could move into the material and the move
+/// cross the wall a few hundredths along, which S17 refuses (before #469,
+/// 5 of the 48 carves in mm did, 2° and 3° corners, and 17 in inches, 2°,
+/// 3° and 5°). The generator now keeps every tip path at least `quantum /
+/// √2` from the walls. Each region is a 20 mm wedge of angle `θ` closed by
+/// a 3 mm point, turned by `0.37 k` rad and moved by sub-micrometre steps
+/// with `k`.
 #[test]
 fn sharp_corners_export_at_any_placement() {
     for units in [dc_project::Units::Mm, dc_project::Units::Inch] {
@@ -1239,18 +1238,18 @@ fn sharp_corners_export_at_any_placement() {
     }
 }
 
-/// #481: V-Carves of crescents, whose horns are acute tips drawn with
-/// arcs, export through the whole safety pass at any placement, in
-/// millimetres and in inches, with a 15° and a 30° bit. The generator
-/// kept its chains `quantum / √2` from the walls it measures, the arcs
-/// flattened to chords (#469); beside the crescent's inner arc, which
-/// bows into the region, a chord lies up to the flatten tolerance beyond
-/// the drawn wall, so a chain into a horn ran a ten-thousandth of a
-/// millimetre from the arc, and written to the program's places it
-/// crossed it (line-art seed `0x40`: "takes operation `o2`'s V-bit
-/// 0.002 mm past the material it may cut"). Each crescent is two arcs
-/// between horns 5 mm apart, of bulges `b` and `−0.8 b`, turned by
-/// `0.37 k` rad and moved by sub-micrometre steps with `k`.
+/// V-Carves of crescents, whose horns are acute tips drawn with arcs,
+/// export through the whole safety pass at any placement, in millimetres
+/// and in inches, with a 15° and a 30° bit. The generator kept its
+/// chains `quantum / √2` from the walls it measures, the arcs flattened
+/// to chords; beside the crescent's inner arc, which bows into the
+/// region, a chord lies up to the flatten tolerance beyond the drawn
+/// wall, so a chain into a horn ran a ten-thousandth of a millimetre
+/// from the arc, and written to the program's places it crossed it
+/// (line-art seed `0x40`: "takes operation `o2`'s V-bit 0.002 mm past
+/// the material it may cut"). Each crescent is two arcs between horns 5
+/// mm apart, of bulges `b` and `−0.8 b`, turned by `0.37 k` rad and
+/// moved by sub-micrometre steps with `k`.
 #[test]
 fn arc_horns_export_at_any_placement() {
     let mut failures = Vec::new();

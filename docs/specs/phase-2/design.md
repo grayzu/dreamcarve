@@ -516,90 +516,239 @@ z_mm, cut_mm }` (S15 on the parsed program), `EntryTooSteep { op, line }` (S10),
 op, line }` (S9 on the parsed program), and `ArcFitViolation { op, line }`
 (S12).
 
-S9 on the parsed program (`dc-gcode::material`) works out each
-operation's material from the project, never from the generator. A
-Pocket's tool centre stays in its regions, `r + stock to leave` from their
-walls. A Drill's stays in its holes, and an Engrave's on its lines. A
-Pocket's corner-relief notches may cut into their corners' relief zones.
-An arc is held to that point by point: every piece of it keeps its
-clearance from the walls or lies in one corner's relief zone. (changed
-2026-11-18, found by the Profile property's seed `cc 67e54832…`: the
-notch rule took straight cuts only. A 1 mm bit's 0.05 helix is 0.05 mm
-across, so its last chords, its handoff to the corner the lap starts at
-and that corner's dogbone lie within the arc-fit tolerance of one circle;
-the program wrote them as one arc from clear stock to the notch's end,
-0.005 mm off the moves, and S9 refused it. The arc cuts nothing the two
-straight moves do not, so the rule now judges it by its pieces, each
-clear or in the zone; an arc on to the corner, out of the zone through a
-wall, or into the zone along a wall still fails.
-`safety::arc_from_clear_stock_into_a_notch_passes_s9`,
-`safety::arc_into_a_notch_off_its_zone_fails_s9`,
-`properties::cases::helix_handoff_fitted_into_a_dogbone_notch_exports`.)
-A Bore's stays within `ρ − r − stock to leave` of the centre of one of its
-holes (radius `ρ`, Drill's circle test), the same hole for a move's ends
-and middle (changed: maintainer decision 2026-10-24).
-A Profile is held to its waste (#177). Inside, the tool centre stays in a
-target region, `r` from its walls, as a Pocket with no stock to leave
-(changed: maintainer decision 2026-10-25, #394: "allowance"). Outside,
-it stays outside every target region, `r` from every outline. Which side
-of an outline an Outside cut or a lap is on is judged at the cut's
-middle, not its start. (changed in #231: judged at its start, a T-bone's
-return leg, which starts on the wall it slots into, failed on a rotated
-part once the program's rounding moved that start up to a quantum into
-the part; a cut that does reach into the part still fails the clearance
-test.) On line,
-it stays on a target's line, at least `d` from every other line of that
-line's region. (changed in #199: On line was held to the line only, so a
-ring narrower than the tool passed; dc-cam now refuses it, see "Profile
-bands".) A cut on an open path stays on that path, at least `d` from
-every line of the region whose material holds the path and from every
-other open path that region holds, the stretches within `√2·d` of a
-point where the two meet set aside. (changed in #210: a cut on an open
-path was held to the path only, so a line drawn beside its part's wall
-passed; dc-cam now refuses it, see "Profile bands".) A cut on a region's
-line, or on an open path it holds, also keeps `d` from the stretches of
-that line more than `√2·d` along it from where the cut runs, the
-stretches within `√2·d` of where the line meets itself set aside, and on
-a closed line only where the part lies between them; an open path drawn
-twice is one path. (changed in #221: a cut was never measured against
-its own line, so a hand-written hairpin passed; dc-cam now refuses it,
-see "Profile bands".) No cut runs on a line of a region whose outline,
-offset inward by `r` less the slack, is empty: the cut would remove the
-whole part. (changed in #223: a cut round a part smaller than the bit
-passed, because it stays on its line and the part has no stretches far
-apart along it; dc-cam now refuses it, see "Profile bands".) Left and
-Right stay on a target open path offset by `r` to their side, at least
-`r` from every open path of the targets and from every path's kept edge
-(added in #207, see "Profile left and right of an open path"). The notch rule applies Inside and Outside,
-so every Profile cutting move is checked: laps, descents, lead arcs and
-notches. One exception is the lap of one outline, a cut at `r` from that
-outline on its waste side. It passes even where an outline of another
-region comes nearer, because that gouge is the one `ToolpathsOverlap`
-warns of. It still keeps `r` from every outline of its own region. A
-relief notch that runs within `r` of its outline counts as that lap
-here too: a T-bone in a hole's corner beside an island part closer than
-the tool starts at the lap's corner and runs away from the island, so
-it comes no nearer the island than the lap does (#231).
-An Inside or Outside Profile's ramp or helix below the stock top, in a
-run of falling moves that started below it, runs only on the bit's path
-round its targets or along an earlier cut of the operation (#352). An
-earlier cut counts only where it ran below the stock top itself, no
-slack taken: the part of each cut below the top is recorded, not the
-whole cut. (changed in #356: a whole cut was recorded once any of it ran
-below the top less the slack, which includes the arc-fit tolerance, so a
-ramp leg that dipped 0.015 mm below the top at its end counted as trench
-along its whole length with arc fitting off, and not at all with it on.)
-(changed in #192: the exception covered every other outline, so an
-Inside island's lap in a band narrower than the tool passed although
-`ToolpathsOverlap` never compares one region's lines; dc-cam now refuses
-that band, see "Profile bands".) dc-cam's
-domain also keeps entries out of other shapes' kerfs. That is waste too,
-so S9 does not check it. (changed in #177: Profile was left to S6 and
-dc-cam.) `ExportWarning` adds `ArcFitFallback { op, runs }`,
+`ExportWarning` adds `ArcFitFallback { op, runs }`,
 `CannedCycleExpanded { op, reason }` (the emitter wrote a Drill as plain
 moves although `use_canned_cycles` is on) and `UnitsSetByController {
 post, units }` (a definition with no units words; the CLI prints it once
 per export).
+
+#### S9 on the parsed program (dc-gcode::material)
+
+S9 on the parsed program works out each operation's material from the
+project, found the way the generators find their targets, and never from
+the generator: dc-gcode uses only dc-cam's toolpath types and trusts none
+of its callers (`docs/rust-guidelines.md`, "Errors and warnings"). Below,
+`r` is the tool's radius and `d` its diameter. The runs phase 3 adds (a
+V-bit's, a carve's clearing run, an Inlay's and its cut-out's, a
+countersink's and a Photo V-Carve's) are in
+`docs/specs/phase-3/design.md`, "Safety pass". Per operation:
+
+- **Pocket.** The tool, swept along every cutting move, stays inside the
+  Pocket's regions (its targets' closed profiles, nested) shrunk by its
+  stock to leave, and outside their islands. For a round tool that is
+  exactly: the move's tool-centre path lies inside a region and at least
+  `r + stock to leave` from its outline and from every island's. The
+  check measures that distance segment against segment, arcs as arcs
+  (`dc_geometry::segment_distance_mm`), against only the outline
+  segments whose bounds come near the move. A helix of a thousand chords
+  costs a thousand such tests, not the union of a thousand swept
+  capsules that `dc_cam::footprint` builds (#158). Rest machining is
+  held to its own region the same way (S14).
+- **Drill.** Every cut stays inside one of the Drill's holes, the closed
+  targets that are circles (`dc_geometry::as_circle`, as
+  `dc_cam::generate_drill` finds them): its ends and middle lie within
+  the hole's radius of its centre. A Drill only plunges, so that is the
+  hole it drills.
+- **Bore** (format 18). Every cut stays in one of the Bore's holes, the
+  closed targets that are circles, as for a Drill: its ends and middle
+  lie within `ρ − r − stock to leave` of the hole's centre (radius `ρ`),
+  all three in the same hole. That is the helix's own circle, so a
+  helix, circle or move to the centre that reaches wider would cut the
+  wall beyond its drawn size; a hole narrower than the tool allows no
+  cut at all. (changed: maintainer decision 2026-10-24)
+- **Engrave.** The tool centre stays on the line: every cut's ends and
+  middle lie on one of the Engrave's target paths.
+- **Corner relief, the notch rule** (a Pocket's; a Profile's since
+  #177). A Pocket or an inside or outside Profile with `corner_relief`
+  cuts dogbone or T-bone notches past its walls on purpose, so a
+  straight cut that fails the clearance above is still in the material
+  when it lies in a corner's relief zone. A corner is a vertex of a
+  target outline where the outline turns toward the waste by more than
+  15° between two edges at least the tool's diameter long (dc-cam's
+  corner test, re-derived from the project). The zone is the corner's
+  wedge, between its two edge lines, at least `r` from the corner (the
+  cutter at most touches it) and at most `(r + stock to leave) /
+  sin(θ/2)` from it (the tool-centre path's miter point, where a notch
+  starts); the cut must also keep its clearance from every other edge.
+  So a notch can bite at most `r` past one of its corner's two walls,
+  and nowhere else.
+  An arc is held to that point by point: every piece of it keeps its
+  clearance from the walls or lies in one corner's relief zone, so it
+  may run from clear stock into a notch and nowhere a straight cut may
+  not. (changed
+  2026-11-18, found by the Profile property's seed `cc 67e54832…`: the
+  notch rule took straight cuts only. A 1 mm bit's 0.05 helix is 0.05 mm
+  across, so its last chords, its handoff to the corner the lap starts at
+  and that corner's dogbone lie within the arc-fit tolerance of one circle;
+  the program wrote them as one arc from clear stock to the notch's end,
+  0.005 mm off the moves, and S9 refused it. The arc cuts nothing the two
+  straight moves do not, so the rule now judges it by its pieces, each
+  clear or in the zone; an arc on to the corner, out of the zone through a
+  wall, or into the zone along a wall still fails.
+  `safety::arc_from_clear_stock_into_a_notch_passes_s9`,
+  `safety::arc_into_a_notch_off_its_zone_fails_s9`,
+  `properties::cases::helix_handoff_fitted_into_a_dogbone_notch_exports`.)
+- **Profile** (#177). A Profile is held to its waste, from its targets'
+  closed profiles nested as `dc_cam::generate_profile` nests them. The
+  notch rule applies Inside and Outside, so every Profile cutting move
+  is checked: laps, tab rises, ramp and helix descents, lead arcs and
+  overcuts, and notches. (changed in #177: Profile was left to S6 and
+  dc-cam.)
+  - **Inside.** As a Pocket with no stock to leave: the tool centre
+    stays in a target region (the hole being cut, outside its islands),
+    at least `r` from its walls, so no cut enters the part around the
+    hole or an island left in it. (changed: maintainer decision
+    2026-10-25, #394: "allowance")
+  - **Outside.** The reverse: the tool centre stays outside every target
+    region (the parts; a part's own holes are waste), at least `r` from
+    every outline, so a ramp, helix or lead arc enters neither its own
+    part nor a neighbour. The stock edge is S7's. Which side
+    of an outline an Outside cut or a lap is on is judged at the cut's
+    middle, not its start. (changed in #231: judged at its start, a T-bone's
+    return leg, which starts on the wall it slots into, failed on a rotated
+    part once the program's rounding moved that start up to a quantum into
+    the part; a cut that does reach into the part still fails the clearance
+    test.)
+  - **On line.** As an Engrave, the tool centre stays on a target's
+    line, and also at least `d` from every other line of that line's
+    region (the targets nested as for Inside): the bit cuts `r` of the
+    part beside each line, so two lines of one region closer than the
+    diameter would cut through the ring or web between them. Lines of
+    different regions are not looked at: a gouge there is the overlap
+    check's warning, as for a lap. The On line ramp runs along the
+    line; there is no lead or notch. (changed in #199: On line was held
+    to the line only, so a ring narrower than the tool passed; dc-cam
+    now refuses it, `CamError::BandNarrowerThanTool`, see "Profile
+    bands".)
+
+    A cut on one of the targets' open paths (#175) stays on that path,
+    as an Engrave's. When a region's material holds the path (every
+    vertex and segment middle, lines included), the cut also keeps `d`
+    from every line of that region and from every other open path that
+    region holds, the stretches of both within `√2·d` of a point where
+    the two meet (touch, cross, or come within the flatten tolerance)
+    set aside: so a slot drawn from the edge passes and one beside a
+    wall fails. (changed in #210: a cut on an open path was held to the
+    path only, so a line drawn beside its part's wall passed; dc-cam now
+    refuses it, see "Profile bands".)
+
+    A cut on a region's line, or on an open path it holds, also keeps
+    `d` from the stretches of that line more than `√2·d` along it from
+    where the cut runs (`dc_geometry::SelfBand`), the stretches within
+    `√2·d` of where the line meets itself (a corner sharper than 90°,
+    or where it touches or crosses itself) set aside, and on a closed
+    line only where the part lies between them; an open path drawn
+    twice is one path. So a cut along a hairpin, a tight spiral or an
+    outline's narrow neck fails and one along a narrow notch passes, as
+    dc-cam decides. (changed in #221: a cut was never measured against
+    its own line, so a hand-written hairpin passed; dc-cam now refuses
+    it, see "Profile bands".)
+
+    No cut runs on a line of a region whose outline, offset inward by
+    `r` less the slack, is empty, as for a small circle or a strip
+    narrower than the bit: the cut would remove the whole part.
+    (changed in #223: a cut round a part smaller than the bit passed,
+    because it stays on its line and the part has no stretches far
+    apart along it; dc-cam now refuses it,
+    `CamError::PartNarrowerThanTool`, see "Profile bands".)
+  - **Left and Right** (added in #207, see "Profile left and right of
+    an open path"). The tool centre stays on one of the targets' open
+    paths offset by `r` to that side (`dc_geometry::offset_open`,
+    looking from each path's first vertex to its last), its ends and
+    middle within the slack of it. The whole cut keeps `r` from every
+    open path of the targets, from every path's kept edge (the path
+    offset by `r` to its other side) and from the strip's two ends, the
+    normals through the path's end vertices one radius long, each cut
+    short at the first line it meets (`dc_geometry::strip_ends`, #342):
+    the cutter never crosses a line nor reaches the strip one radius
+    wide that a line keeps, past an end included, wherever the offset
+    runs, as dc-cam refuses (`CamError::CutsIntoKeptSide`). Closed
+    targets are not cut. The ramp and the tabs run along the offset
+    path; there is no lead or notch. With a last pass the path offset by
+    `r + stock to leave` is a tool-centre path too, and the last pass's
+    level step runs between the two: A8, "Left and Right", step 8.
+  - **A lap** is the one exception: a cut of one outline that runs at
+    `r` from it on its waste side passes even where an outline of
+    another region comes nearer than `r`. That cut is the outline's
+    offset, which S6 holds the program to, and the gouge into the other
+    shape is the one `ToolpathsOverlap` warns of: the project asked for
+    two shapes closer than the bit, and phase 1 decided to warn there,
+    not to refuse. The lap still keeps `r` from every outline of its
+    own region: within one region the overlap check never warns, and a
+    lap that comes nearer another line of it, an island's lap in a band
+    narrower than the bit, is a gouge. (changed in #192: the exception
+    covered every other outline, so an Inside island's lap in a band
+    narrower than the tool passed although `ToolpathsOverlap` never
+    compares one region's lines; dc-cam now refuses that band, see
+    "Profile bands".) Entries, leads and notches never run along an
+    outline at `r`, so the lap rule never lets one through, but a
+    relief notch that runs within `r` of its outline counts as that lap
+    here too: a T-bone in a hole's corner beside an island part closer
+    than the tool starts at the lap's corner and runs away from the
+    island, so it comes no nearer the island than the lap does (#231).
+    dc-cam's domain also keeps entries out of other shapes' kerfs. That
+    is waste too, so S9 does not check it.
+- **Tabs** (#337). A Profile leaves its tabs standing. A straight
+  plunge (Z falls, XY stays) that ends below a tab's top is refused
+  when it lies on the bit's path round the tab's outline (the outline
+  offset by `r` either way, within the slack) less than half the tab's
+  width plus `r` from the tab's centre along that path, the stretch a
+  lap rises over (ADR-0005), less a tenth of `r` for a rect tab's step
+  at its end. On the path of the passes before a last pass (`r` plus
+  its stock to leave, #353), which run beside the tab rather than over
+  it, it is refused when its cutter reaches into the tab material the
+  laps leave: A9, "Start", has that rule. The tabs are the project's
+  placed tabs on the Profile's targets and those its tab request places
+  (`dc_cam::placed_tabs::place`, the documented layout rule, not the
+  toolpath). So a lap that starts on a tab and plunges there, below its
+  top, is refused, wherever on the tab it starts. A tab on an open
+  outline an On line Profile cuts (#175) is held the same way along
+  that outline and its open offsets, its span never wrapping from one
+  end to the other, and a tab on an open path of a Left or Right
+  Profile (#207) along that path's offset to the cut side alone, where
+  its request centres it and the bit runs
+  (`docs/specs/phase-3/design.md`, "S9, an Inlay cut-out", which also
+  has the cut-out's own tabs).
+- **Trenches** (#352). An inside or outside Profile cuts only a trench,
+  its kerf, and the lines its entries ramp on; the waste beside them
+  stands full height. So a ramp or helix below the stock top must run
+  where the operation's earlier cuts ran. A cut that falls while it
+  runs in XY (a ramp leg, a helix chord), in a run of such cuts that
+  started below the stock top, is refused at the first point below the
+  stock top, checked a tenth of `r` apart, that lies neither on the
+  ring the laps cut (within `r`, plus a last pass's stock to leave and
+  the slack, of a target outline) nor within twice the slack of the
+  tool-centre path of an earlier cut of the operation where it ran
+  below the stock top. An
+  earlier cut counts only where it ran below the stock top itself, no
+  slack taken: the part of each cut below the top is recorded, not the
+  whole cut. (changed in #356: a whole cut was recorded once any of it ran
+  below the top less the slack, which includes the arc-fit tolerance, so a
+  ramp leg that dipped 0.015 mm below the top at its end counted as trench
+  along its whole length with arc fitting off, and not at all with it on.)
+  A run that starts at or above the stock top (a first pass's ramp or
+  helix, a helix that starts again from above the stock) clears its own
+  way and is not held to it, and a straight plunge is the tab rule's. A
+  level move too short to fall a unit in the last place does not end a
+  run. Pockets clear their whole region and are not held to it.
+
+**Slack.** A move may depart from where the toolpath put it by what the
+program may already differ by: one unit in the last written place (the
+numbers' rounding), the flatten tolerance (arcs written as chords, and
+the tool-centre outlines and raster ends the generator flattens), and
+the arc-fit tolerance when arc fitting is on (a run of chords written as
+an arc, S12).
+
+**Fail closed.** A check that cannot be finished has not passed: project
+data that does not resolve leaves the run no material, and a move whose
+position is not known is refused by each rule that needs the position
+(`docs/specs/phase-1/design.md`, "The safety pass fails closed").
+
+**Cost.** Every move is tested only against the outline segments whose
+bounds come within the clearance of its own, and for an outside Profile
+only against the parts whose bounds do; the lap rule runs only for a
+move the plain rule rejects. A 20-part outside Profile with ramps, leads
+and tabs checks in a few milliseconds (#177).
 
 ### dc-library
 
@@ -4268,8 +4417,8 @@ and `cli::left_right_last_pass_exports_and_without_is_byte_identical`,
 whose projects without a last pass export the programs the build before
 #311 wrote. The Left and Right property projects get random last passes.
 #358 adds
-`material::stock_to_leave_band_tests::last_pass_step_between_starts_trimmed_by_the_end_vertex_is_allowed`,
-`material::stock_to_leave_band_tests::last_pass_step_past_an_open_end_or_on_the_kept_side_fails`
+`material::stock_to_leave_band::last_pass_step_between_starts_trimmed_by_the_end_vertex_is_allowed`,
+`material::stock_to_leave_band::last_pass_step_past_an_open_end_or_on_the_kept_side_fails`
 and the property case `left_open_path_last_pass_plunge_exports`.
 
 Tests: `migrate::v12_to_v13_adds_null_last_pass`,

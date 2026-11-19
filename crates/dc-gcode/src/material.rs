@@ -1,347 +1,34 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! S9 on the parsed program: every operation's cuts stay in its own
-//! material (`docs/specs/phase-2/functional.md`, S9;
-//! `docs/specs/phase-2/design.md`, "Data model → dc-gcode",
-//! [`ExportError::OffMaterial`]).
+//! The material rules of the safety pass, on the parsed program: every
+//! operation's cuts stay in its own material (S9), a V-bit cuts only its
+//! own (S17, [`cone`]), a countersink's depth is derived (S18,
+//! [`countersink`]) and a Photo V-Carve's grooves stay in the picture
+//! (S19, [`photo`]).
 //!
-//! The material comes from the project, found the way the generators find
-//! their targets, and never from the generator: dc-gcode uses only
-//! dc-cam's toolpath types and trusts none of its callers
-//! (`docs/rust-guidelines.md`, "Export preconditions"). Per operation:
+//! [`Material`] is what one run may cut. It is worked out from the
+//! project, the way the generators find their targets, and never from a
+//! generator or a toolpath: dc-gcode uses only dc-cam's toolpath types
+//! and trusts none of its callers. [`check`] holds every cutting move of
+//! a run to it, within the slack the program may already differ from the
+//! toolpath by ([`slack_mm`]): one unit in the last written place, the
+//! flatten tolerance and, when arc fitting is on, the arc-fit tolerance.
 //!
-//! - **Pocket:** the tool, swept along every cutting move, stays inside
-//!   the Pocket's regions (its targets' closed profiles, nested) shrunk by
-//!   its stock to leave, and outside their islands. For a round tool of radius
-//!   `r` that is exactly: the move's tool-centre path lies inside a region
-//!   and at least `r + stock to leave` from its outline and from every island's.
-//!   The check measures that distance segment against segment, arcs as
-//!   arcs ([`dc_geometry::segment_distance_mm`]), against only the outline
-//!   segments whose bounds come near the move. A helix of a thousand chords
-//!   costs a thousand such tests, not the union of a thousand swept
-//!   capsules that `dc_cam::footprint` builds (#158). Rest machining is
-//!   held to its own region the same way (S14).
-//! - **Corner relief, the notch rule** (slice 12; Profile since #177): a
-//!   Pocket or an inside or outside Profile with `corner_relief` cuts
-//!   dogbone or T-bone notches past its walls on purpose, so a straight cut
-//!   that fails the clearance above is still in the material when it lies
-//!   in a corner's relief zone. A corner is a vertex of a target outline
-//!   where the outline turns toward the waste by more than 15° between two
-//!   edges at least the tool's diameter long (`dc_cam`'s corner test,
-//!   re-derived here from the project). The zone is the corner's wedge,
-//!   between its two edge lines, at least `r` from the corner (the cutter
-//!   at most touches it) and at most `(r + stock to leave) / sin(θ/2)` from it
-//!   (the tool-centre path's miter point, where a notch starts); the cut
-//!   must also keep its clearance from every other edge. So a notch can
-//!   bite at most `r` past one of its corner's two walls, and nowhere else.
-//!   An arc is held to the same material point by point: every piece of
-//!   it keeps the clearance above or lies in one corner's zone, so it may
-//!   run from clear stock into a notch and nowhere a straight cut may
-//!   not. Arc fitting writes such an arc for an entry's handoff to a
-//!   corner and the notch that starts there when they lie within the
-//!   tolerance of one circle, as they do after a helix a few hundredths
-//!   of a millimetre across (2026-11-18, the Profile property's seed
-//!   `cc 67e54832…`: the rule took straight cuts only and refused it).
-//! - **Profile** (#177): the waste the Profile removes, from its targets'
-//!   closed profiles nested as `dc_cam::generate_profile` nests them, and
-//!   every cutting move is held to it: laps, tab rises, ramp and helix
-//!   descents, lead arcs and overcuts, and notches.
-//!   - **Inside:** as a Pocket with no stock to leave: the tool centre stays in
-//!     a target region (the hole being cut, outside its islands), at least
-//!     `r` from its walls, so no cut enters the part around the hole or an
-//!     island left in it.
-//!   - **Outside:** the reverse: the tool centre stays outside every
-//!     target region (the parts; a part's own holes are waste), at least
-//!     `r` from every outline, so a ramp, helix or lead arc enters neither
-//!     its own part nor a neighbour. The stock edge is S7's.
-//!   - **On line:** as an Engrave, the tool centre stays on a target's
-//!     line, and also at least the tool's diameter from every other line
-//!     of that line's region (the targets nested as for Inside): the bit
-//!     cuts `r` of the part beside each line, so two lines of one region
-//!     closer than the diameter would cut through the ring or web between
-//!     them, which dc-cam refuses (`CamError::BandNarrowerThanTool`,
-//!     #199). Lines of different regions are not looked at: a gouge there
-//!     is the overlap check's warning, as for a lap. The On line ramp runs
-//!     along the line; there is no lead or notch. A cut on one of the
-//!     targets' open paths (#175) stays on that path, as an Engrave's.
-//!     When a region's material holds the path (every vertex and segment
-//!     middle, lines included), the cut also keeps the diameter from
-//!     every line of that region and from every other open path it holds,
-//!     the stretches of both within `√2·d` of a point where the two meet
-//!     (touch, cross, or come within the flatten tolerance) set aside: so
-//!     a slot drawn from the edge passes and one beside a wall fails, as
-//!     dc-cam refuses it (`BandNarrowerThanTool`, #210).
-//!     A cut also keeps the diameter from the stretches of its own line
-//!     that lie more than `√2·d` along it from where it runs (#221,
-//!     [`dc_geometry::SelfBand`]): a loop of a region, or an open path a
-//!     region holds. The stretches within `√2·d` of a point where the line
-//!     meets itself (a corner sharper than 90°, or where it touches or
-//!     crosses itself) are set aside, and a loop counts only the pairs with
-//!     the region's material between them, so a cut along a hairpin, a
-//!     tight spiral or an outline's narrow neck fails and one along a
-//!     narrow notch passes, as dc-cam decides. No cut may run on a loop
-//!     of a region the cut removes whole (#223): its outline shrunk by the
-//!     radius, less the slack, is empty, as for a small circle or a strip
-//!     narrower than the bit (`CamError::PartNarrowerThanTool`).
-//!   - **Left and Right** (#207): the tool centre stays on one of the
-//!     targets' open paths offset by the tool radius to that side
-//!     ([`dc_geometry::offset_open`], looking from each path's first vertex
-//!     to its last), its ends and middle within the slack of it, and the
-//!     whole cut keeps the radius from every open path of the targets and
-//!     from every path's kept edge (the path offset by the radius to its
-//!     other side) and from the strip's two ends, the normals through the
-//!     path's end vertices one radius long, each cut short at the first
-//!     line it meets ([`dc_geometry::strip_ends`], #342): the cutter never
-//!     crosses a line nor reaches the strip one radius wide that a line
-//!     keeps, past an end included, wherever the offset runs, as `dc_cam`
-//!     refuses (`CamError::CutsIntoKeptSide`). Closed targets are not cut. The
-//!     ramp and the tabs run along the offset path; there is no lead or
-//!     notch. With a last pass (#311) the path offset by the radius plus
-//!     the stock to leave is a tool-centre path too, for the passes before the
-//!     last; the kept edges stay one radius off.
-//!     The last pass's level step across the stock to leave from the earlier
-//!     passes' path onto its own (#339) runs between the two paths, or
-//!     between one segment's two offsets taken whole (#358): where an
-//!     end vertex comes back beside another segment, the two paths stop
-//!     on circles of `r` and `r + a` round it rather than on one normal.
-//!   - **A lap** of one outline, a cut that runs at the tool radius from
-//!     it on its waste side, passes even where an outline of another
-//!     region comes nearer than the radius. That cut is the outline's
-//!     offset, which S6 holds the program to, and the gouge into the other
-//!     shape is the one `dc_cam`'s overlap check warns about
-//!     (`toolpaths_overlap`): the project asked for two shapes closer than
-//!     the bit, and phase 1 decided to warn there, not to refuse. The lap
-//!     must still keep its clearance from every outline of its own region
-//!     (#192): within one region the overlap check never warns, and a lap
-//!     that comes nearer another line of it, an island's lap in a band
-//!     narrower than the bit, is a gouge dc-cam refuses
-//!     (`CamError::BandNarrowerThanTool`). Entries, leads and notches never
-//!     run along an outline at the radius, so the lap rule never lets one
-//!     through. dc-cam's waste domain also keeps entries out of other
-//!     shapes' kerfs; that is waste too, so S9 does not hold the program
-//!     to it.
-//! - **Tabs** (#337): a Profile leaves its tabs standing. A straight
-//!   plunge (Z falls, XY stays) that ends below a tab's top is refused
-//!   when it lies on the bit's path round the tab's outline (the outline
-//!   offset by the tool radius either way, within the slack) less than
-//!   half the tab's width plus the radius from the tab's centre along
-//!   that path, the stretch a lap rises over (ADR-0005), less a tenth of
-//!   the radius for a rect tab's step at its end. On the path of the
-//!   passes before a last pass (the radius plus its stock to leave, #353),
-//!   which run beside the tab rather than over it, it is refused when its
-//!   cutter reaches into the tab material the laps leave: within the
-//!   radius of a lap held above the plunge's Z by that stretch (without
-//!   the tenth) and at least the radius from the rest of the outline's
-//!   laps, which cut to their floor. The tabs are the project's placed tabs
-//!   on the Profile's targets and those its tab request places
-//!   (`dc_cam::placed_tabs::place`, the documented layout rule, not the
-//!   toolpath); a male Inlay's cut-out's are those its request places on
-//!   the path this pass derives, the open pieces of one outline taking
-//!   the request between them (`dc_cam::placed_tabs::place_shared`,
-//!   #710). So a lap that starts on a tab and plunges there, below
-//!   its top, is refused, wherever on the tab it starts. A tab on an
-//!   open outline an On line Profile cuts (#175) is held the same way
-//!   along that outline and its open offsets, its span never wrapping
-//!   from one end to the other: each open piece of a clipped cut-out
-//!   holds its own tabs. A tab on an open path of a Left or Right Profile
-//!   (#207) is held along that path's offset to the cut side alone, where
-//!   its request centres it and the bit runs ([`tab_spine`]).
-//! - **Trenches** (#352): an inside or outside Profile cuts only a trench,
-//!   its kerf, and the lines its entries ramp on; the waste beside them
-//!   stands full height. So a ramp below the stock top must run where
-//!   the operation's earlier cuts ran. A cut that falls while it runs in
-//!   XY (a ramp leg, a helix chord), in a run of such cuts that started
-//!   below the stock top, is refused at the first point below the stock
-//!   top, checked a tenth of the tool radius apart, that lies neither on
-//!   the ring the laps cut (within the tool radius, plus a last pass's
-//!   stock to leave and the slack, of a target outline) nor within twice the
-//!   slack of the tool-centre path of an earlier cut of the operation
-//!   where it ran below the stock top: the stock top itself, with no
-//!   slack, so a ramp leg that dips below it only at its end cut a trench
-//!   only there (#356). A run that starts at or above the stock top (a
-//!   first pass's ramp or helix, a helix that starts again from above the
-//!   stock) clears its own way and is not held to it, and a straight
-//!   plunge is the tab rule's. A level move too short to fall a unit in
-//!   the last place does not end a run. Pockets clear their whole region
-//!   and are not held to it.
-//! - **Drill:** every cut stays inside one of the Drill's holes, the
-//!   closed targets that are circles ([`dc_geometry::as_circle`], as
-//!   `dc_cam::generate_drill` finds them): its ends and middle lie within
-//!   the hole's radius of its centre. A Drill only plunges, so that is the
-//!   hole it drills.
-//! - **Photo V-Carve, S19** (format 27, #646; [`photo`] has the rule):
-//!   every line of its span. Every cut a `G1`; one that ends at or below
-//!   the start plane inside the picture's footprint, no deeper than its
-//!   maximum depth, its flanks engaged no deeper than the cone (S17's tip,
-//!   depth and shank rules with the footprint as the region; the picture's
-//!   edge is no wall, so no disc test); one that moves across above the
-//!   start plane at the link height, fed; no rapid across below safe Z.
-//!   The groove's width is S7's, which widens each cut by its width at
-//!   the stock top.
-//! - **Countersink Drill, S18** (format 21, #427; [`countersink`] has the
-//!   rule): every line of its span, not only its cuts. No canned cycle;
-//!   every cut a `G1` straight down at the centre of one of its holes
-//!   (the target circles less those the mouth rule skips), from no higher
-//!   than the retract plane to exactly the start plane less the depth its
-//!   mouth and its V-bit's angle derive, within rounding; every rapid at
-//!   or above the retract plane; and the flank engaged no deeper than the
-//!   cone, from the start plane when the stock top is it or an enabled
-//!   earlier Pocket or V-Carve floor at the start depth cleared it
-//!   ([`dc_project::cleared_start_plane`]), else from the stock top. The
-//!   tool must be the operation's, a V-bit; anything else is unresolved.
-//! - **Bore** (format 18; maintainer decision 2026-10-24): every cut stays
-//!   in one of the Bore's holes, the closed targets that are circles, as
-//!   for a Drill: its ends and middle lie within `ρ − r − stock to leave` of the
-//!   hole's centre (radius `ρ`, tool radius `r`), all three in the same
-//!   hole. That is the helix's own circle, so a helix, circle or move to
-//!   the centre that reaches wider would cut the wall beyond its drawn
-//!   size; a hole narrower than the tool allows no cut at all.
-//! - **Engrave:** the tool centre stays on the line: every cut's ends and
-//!   middle lie on one of the Engrave's target paths.
-//! - **V-Carve, the V-bit's run: S17** (format 20, #404, exact since #408;
-//!   `docs/specs/phase-3/design.md`, "Safety pass"; [`cone`] has the
-//!   geometry). The regions are the targets' closed profiles nested as for
-//!   a Pocket, the start plane is `start_depth_mm` below the stock top, and
-//!   the flank is engaged from the stock top unless an earlier floor at
-//!   the start depth holds the targets, an enabled Pocket's or an enabled
-//!   V-Carve's flat floor ([`dc_project::cleared_start_plane`], #426, as
-//!   the generator and validation decide it; security review H4). Every
-//!   cutting move:
-//!   - its tip (the tool-centre path) stays in the regions: its ends and
-//!     middle inside or within the slack of an outline, and it meets no
-//!     outline away from its ends;
-//!   - a straight descent (no XY motion beyond the slack) that stays above
-//!     the start plane runs through the air over the carve and is held
-//!     only to that; any other descent is held at its lowest point, where
-//!     its cone is widest, as a cut (H3, see below);
-//!   - any other cut runs no higher than the start plane;
-//!   - nothing reaches below the flat depth (`ConeOffMaterial`), nor
-//!     engages the flank deeper than the cone is tall
-//!     (`ConeHeightExceeded`; a tip below the cone height is this too);
-//!   - the cone's disc at the start plane stays inside the regions all
-//!     along the move, measured exactly ([`cone`]): segment against
-//!     segment, arcs as arcs, at constant Z; in closed form for a straight
-//!     move whose Z varies. No sampling.
+//! **Fail closed.** A check that cannot be finished has not passed.
+//! Project data that does not resolve is [`Material::Unresolved`], which
+//! no cut is in, and a move whose position is not known is refused by
+//! each rule that needs the position.
 //!
-//!   **H3.** The design's exemption skips S17 for a straight descent from
-//!   the stock top plus the entry clearance that ends no lower than a
-//!   later cut through its XY, relying on that later cut. This pass skips
-//!   nothing below the start plane: every descent's lowest point is held
-//!   to the tip, depth, shank and cone tests directly. A cone at one XY
-//!   contains every cone above it there, so that point is the whole of
-//!   what the descent cuts, and the rule is the stricter of the two. It
-//!   also accepts a descent that starts lower, where S2 lets the rapid
-//!   stop above an earlier cut (#214), which the design's literal form
-//!   would refuse in generated programs: with a 0.5 mm flat depth the
-//!   floor rings are re-entered from 0.5 mm above the start plane.
+//! The rules themselves are in the specs:
 //!
-//!   The tool must be the operation's, a V-bit with an angle in (0°,
-//!   180°) or a tapered ball nose with every value set and usable
-//!   ([`Tool::carve_profile`]); the rule is the same for the medial and
-//!   the offset strategy, floors and links included. Anything else is
-//!   unresolved.
-//!
-//!   **A tapered ball nose** (3.6, #680) is held to the same rule on its
-//!   profile: the disc at the start plane is `w(d)` across, ball, cone or
-//!   cylinder, measured exactly by the shared
-//!   [`dc_geometry::profile::least_room`] ([`cone`]); the shank's limit is
-//!   its cutting height `min(flute_length_mm, h_R)`
-//!   ([`Tool::cutting_height_mm`]), named in `ConeHeightExceeded`; its
-//!   floor inset is `w(F)`. S7 widens its cuts by its cut radius
-//!   `min(w(flute_length_mm), R)` ([`Tool::cut_radius_mm`]). An Inlay
-//!   side cut with one (slice 27e, #681) is held the same way to its
-//!   design rounded for the bit ([`dc_project::rounded_for_bit`]), on
-//!   either board, as the generator rounds it; a design the rounding
-//!   refuses is unresolved.
-//! - **V-Carve, a clearing run** (#406, security review M3): the run
-//!   labelled with one of the carve's passes and cut with that pass's flat
-//!   end mill is held as a Pocket of the carve's floor regions with no
-//!   stock to leave: the end mill's centre stays inside one, at least its
-//!   radius from its outline and islands, and no lower than the floor. The
-//!   floor regions are re-derived from the project: the targets' regions
-//!   inset by `w(F)`, `F · tan(α/2)` for a V-bit
-//!   ([`dc_geometry::floor_regions`]), less those
-//!   too thin to cut (area at most the flatten tolerance times the
-//!   perimeter), as the generator's floor drops them. The earlier passes'
-//!   reach does not bound the run: a rest pass's footprint runs into what
-//!   they cleared, and only its centres must touch what they left.
-//!
-//! - **Inlay** (format 22, #436): each side is held as a V-Carve, its
-//!   V-bit's run to S17 and its clearing runs to its floor, with its
-//!   regions, start plane and floor re-derived from the project. On
-//!   either side the design's parts that come closer than
-//!   [`INLAY_MERGE_MM`] are one shape ([`merge_near_parts`], #479), as the
-//!   generator merges them. The
-//!   female carves the targets' regions from the stock top, flat at
-//!   `depth_mm` `D`. The male carves the **surround** of its design: the
-//!   targets' closed outlines mirrored about the centre line of their
-//!   joint bounding box (`Transform::mirror_x_about`), nested, and
-//!   [`dc_geometry::surround_within`] `margin_mm` wide, the band's edge at
-//!   the project's flatten tolerance and the plug's outline at the V-bit's
-//!   [`dc_geometry::wall_tolerance_mm`] (#478), the generator's
-//!   construction, never the generator; where the band runs past the
-//!   board it is clipped to [`MaleBand::board`] of the project's stock
-//!   (#495, [`dc_geometry::band_on_board`]) and the surround is the
-//!   clipped band less the design. Its
-//!   start plane is `D − G` below the stock top (`glue_gap_mm` `G`), its
-//!   floor `plug_depth_mm` below that. Either side's flank is engaged from
-//!   the stock top (security review H4): the plug above the male's start
-//!   plane is never cleared. A cut inside the plug, or sideways above the
-//!   male's start plane, fails as it would for a V-Carve. Each board is
-//!   its own (#498): a run tagged [`dc_project::Board::Male`] is held
-//!   against the project on the Inlay's male board
-//!   ([`Project::on_male_board`], which the emitter hands this pass), so
-//!   "the stock" above, its top, its rectangle and its bottom, is the
-//!   male board's for the male, and the female's design and the male's
-//!   surround each follow from the board the run is tagged with.
-//! - **Inlay cut-out** (format 23, #443): a male's run labelled with its
-//!   cut-out's flat end mill, and cut with it, is held to the band's flat
-//!   floor rings: the floor regions of its surround (the surround inset
-//!   by `P·tan(α/2)`, less noise, as its clearing runs are held), less
-//!   those inside a design outline (the floors of the design's holes,
-//!   which stay in the plug). The tool centre stays inside a ring, at
-//!   least its radius from both its edges, at every depth: above the
-//!   floor the carve has cleared the ring to the top, and below it the
-//!   cut-out cuts the board's base, which S1 bounds with the cut-out's own
-//!   through-cut allowance ([`Material::floor_mm`]). And it stays on the
-//!   cut-out's path (#461), derived here: the band's edge round the
-//!   mirrored design ([`dc_geometry::rounded_band`]) inset by the tool's radius with
-//!   an open edge, or by `P·tan(α/2)` plus it with a V wall
-//!   ([`dc_geometry::inset_outers`], [`MaleBand::cut_out_inset_mm`]), on
-//!   the band clipped to the board where it runs past it, less, with an
-//!   open edge, the stretches along the board's edge, which frees the
-//!   plug there (#495, [`dc_geometry::without_rect_sides`]). S7 still
-//!   holds every cut, its tool's full radius, on the stock. Its
-//!   tabs are held as an On line Profile's: the Profile the cut-out is,
-//!   built here on that path, and its tab request placed by the
-//!   documented layout rule. Nothing comes from the generator.
-//!
-//! A move is allowed to depart from where the toolpath put it by what the
-//! program may already differ by: one unit in the last written place (the
-//! numbers' rounding), the flatten tolerance (arcs written as chords, and
-//! the tool-centre outlines and raster ends the generator flattens), and
-//! the arc-fit tolerance when arc fitting is on (a run of chords written
-//! as an arc, S12).
-//!
-//! **Fail closed** (code review 1.1, #711). A check that cannot be
-//! finished has not passed. Project data that does not resolve (targets,
-//! a tool, a stock top, a tab's outline, a tab request the layout rule
-//! cannot place) is [`Material::Unresolved`]: the run has no material, so
-//! every cut of it is off it ([`Material::held_run`]). A move whose
-//! position is not known is refused by each rule that needs the position.
-//! The rules read their own data without a lookup that could miss: a loop
-//! owns its edges, and a wall test takes its whole area. Where the pass
-//! must still look into data it built itself, in S6's matching
-//! (`crate::safety`), a miss is [`ExportError::SafetyCheckDefect`], which
-//! stops export. The audit of every fallback in the pass, site by site,
-//! is in `docs/specs/phase-1/design.md`, "The safety pass fails closed".
-//!
-//! **Cost.** Every move is tested only against the outline segments whose
-//! bounds come within the clearance of its own, and for an outside
-//! Profile only against the parts whose bounds do; the lap rule runs only
-//! for a move the plain rule rejects. A 20-part outside Profile with
-//! ramps, leads and tabs checks in a few milliseconds (#177).
+//! - S9 for a Pocket, Profile, Drill, Bore and Engrave, with the notch,
+//!   lap, tab and trench rules: `docs/specs/phase-2/design.md`, "S9 on
+//!   the parsed program"; `docs/specs/phase-2/functional.md`, S9.
+//! - S17 to S19, a carve's clearing runs, an Inlay and its cut-out:
+//!   `docs/specs/phase-3/design.md`, "Safety pass".
+//! - Failing closed, site by site: `docs/specs/phase-1/design.md`, "The
+//!   safety pass fails closed".
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -371,7 +58,7 @@ use photo::Picture;
 
 use crate::ExportError;
 use crate::parse::{Block, MachineMove, MotionKind};
-use crate::safety::{OpSpan, Tolerances, quantum_mm, r_centre};
+use crate::safety::{OpSpan, Tolerances, quantum_mm};
 use crate::transform::MachineTransform;
 
 /// The material one operation may cut, worked out from the project.
@@ -390,7 +77,7 @@ pub(crate) enum Material {
         relief: bool,
         /// A Profile: the lap rule applies.
         laps: bool,
-        /// A Profile: the trench rule applies (#352). `None` for a
+        /// A Profile: the trench rule applies. `None` for a
         /// Pocket, which clears its whole region.
         trench: Option<TrenchRule>,
     },
@@ -401,7 +88,7 @@ pub(crate) enum Material {
         areas: Vec<Area>,
         /// Corner relief is on, so the notch rule applies.
         relief: bool,
-        /// The trench rule (#352).
+        /// The trench rule.
         trench: TrenchRule,
     },
     /// A Drill's holes: centre and radius, mm.
@@ -419,9 +106,9 @@ pub(crate) enum Material {
     },
     /// An On line Profile's regions: the tool centre stays on one of
     /// their lines, at least the tool's diameter from the region's other
-    /// lines (#199), or on one of its targets' open paths (#175), as far
-    /// from the lines beside that path away from where they meet (#210),
-    /// and as far from its own line's stretches far along it (#221).
+    /// lines, or on one of its targets' open paths, as far from the
+    /// lines beside that path away from where they meet, and as far from
+    /// its own line's stretches far along it.
     OnLineProfile {
         /// The regions, outer and holes, from the targets' closed
         /// profiles.
@@ -429,17 +116,17 @@ pub(crate) enum Material {
         /// The targets' open paths.
         open: Vec<OpenPath>,
     },
-    /// A Left or Right Profile's open paths (#207): the tool centre stays
-    /// on one path's offset, clear of every path and every kept edge.
+    /// A Left or Right Profile's open paths: the tool centre stays on one
+    /// path's offset, clear of every path and every kept edge.
     SideProfile {
         /// Every segment of every offset path, as cut.
         centres: Vec<Edge>,
         /// Every segment of every open path, of every path's kept edge
-        /// and of its strip's two ends (#342): what the cut keeps the
-        /// tool radius from.
+        /// and of its strip's two ends: what the cut keeps the tool
+        /// radius from.
         keep_clear: Vec<Edge>,
-        /// With a last pass (#339): where its step across the stock to leave,
-        /// from the earlier passes' path to its own, may run.
+        /// With a last pass: where its step across the stock to leave, from
+        /// the earlier passes' path to its own, may run.
         steps: Option<StockToLeaveBand>,
     },
     /// An Engrave's target paths, as segments.
@@ -448,17 +135,15 @@ pub(crate) enum Material {
         edges: Vec<Edge>,
     },
     /// The V-bit's run of a V-Carve (format 20) or of an Inlay side
-    /// (format 22): S17 (module docs, [`cone`]).
+    /// (format 22): S17 ([`cone`]).
     VBit(Cone),
-    /// A countersink Drill (format 21): S18 (module docs,
-    /// [`countersink`]).
+    /// A countersink Drill (format 21): S18 ([`countersink`]).
     Countersink(Sink),
-    /// A Photo V-Carve (format 27, #646): S19 (module docs, [`photo`]).
+    /// A Photo V-Carve (format 27): S19 ([`photo`]).
     Photo(Picture),
-    /// A clearing run of a V-Carve or an Inlay side (#406, #436; security
-    /// review M3): the end
-    /// mill's centre stays inside the carve's floor regions, at least its
-    /// radius from their outlines, and no lower than the floor.
+    /// A clearing run of a V-Carve or an Inlay side: the end mill's
+    /// centre stays inside the carve's floor regions, at least its radius
+    /// from their outlines, and no lower than the floor.
     Floor {
         /// The floor regions, outer and islands.
         areas: Vec<Area>,
@@ -467,12 +152,12 @@ pub(crate) enum Material {
         /// The pass's end mill's radius, mm.
         radius_mm: f64,
     },
-    /// A male Inlay's cut-out run (format 23, #443): the end mill's
-    /// centre stays inside the band's floor rings, at least its radius
-    /// from their outlines, at any depth: above the floor the carve has
+    /// A male Inlay's cut-out run (format 23): the end mill's centre
+    /// stays inside the band's floor rings, at least its radius from
+    /// their outlines, at any depth: above the floor the carve has
     /// cleared the ring to the top, below it the cut-out cuts the board's
     /// base, which S1 bounds with the cut-out's own allowance. And it
-    /// stays on the cut-out's path (#461).
+    /// stays on the cut-out's path.
     CutOut {
         /// The floor rings, outer and holes.
         areas: Vec<Area>,
@@ -490,10 +175,6 @@ pub(crate) enum Material {
     /// a run whose label or tool the operation does not have: no cut is in
     /// the material, fail-closed.
     Unresolved,
-    /// Tests of the other rules on hand-written programs: S9 is not
-    /// checked.
-    #[cfg(test)]
-    Unchecked,
 }
 
 /// One region, its outline segments, the corners a relief notch may cut
@@ -514,18 +195,18 @@ pub(crate) struct Area {
 struct Loop {
     /// Its segments, in order: its own copy of its part of
     /// [`Area::edges`], so no rule looks them up by a range that could
-    /// miss (#711).
+    /// miss.
     edges: Vec<Edge>,
     /// The loop alone, to tell its sides apart.
     alone: Option<Region>,
-    /// The loop as wound, for measuring it against itself (#221).
+    /// The loop as wound, for measuring it against itself.
     line: Polyline,
     /// The waste is inside the loop.
     waste_inside: bool,
 }
 
 /// Bounds that are near every cut: those of an [`Area`] whose own are not
-/// known, so that no rule passes it by (#711).
+/// known, so that no rule passes it by.
 const EVERYWHERE: Rect = Rect {
     min: Point {
         x: f64::NEG_INFINITY,
@@ -624,12 +305,12 @@ const NOTCH_PIECE_SLACKS: f64 = 0.125;
 
 impl Notch {
     /// Whether tool-centre path `path`, which comes nearer a wall of
-    /// `area` than `clearance_mm`, is a relief notch (module docs). A
+    /// `area` than `clearance_mm`, is a relief notch (the spec's notch rule). A
     /// straight path is one when it lies in the relief zone of one of the
     /// area's corners, clear of the area's other edges. An arc is one
     /// when every piece of it is clear of the area's walls or in one
     /// corner's zone: the fitted arc that stands for a handoff and the
-    /// notch after it (module docs).
+    /// notch after it.
     fn allows(self, area: &Area, path: Segment, clearance_mm: f64) -> bool {
         if path.is_line() {
             return area
@@ -727,13 +408,13 @@ impl Edge {
 }
 
 /// One open path an On line Profile cuts, and the lines it must keep the
-/// tool's diameter from (#210).
+/// tool's diameter from.
 #[derive(Debug, Clone)]
 pub(crate) struct OpenPath {
     /// The path's segments.
     edges: Vec<Edge>,
     /// The path, when a region's material holds it: then it is measured
-    /// against itself too (#221).
+    /// against itself too.
     held: Option<Polyline>,
     /// When a region's material holds the path: each line of that region
     /// and each other open path it holds.
@@ -750,8 +431,8 @@ struct Beside {
 /// How far from a point where two lines of one region meet their On line
 /// cuts may come closer than the tool's diameter, as a multiple of the
 /// diameter: √2, so straight lines meeting at 45° or more pass. The same
-/// as `dc_cam::generate_profile`'s rule (#210), re-stated here because S9
-/// trusts no generator.
+/// as `dc_cam::generate_profile`'s rule, re-stated here because S9 trusts
+/// no generator.
 const MEETING_REACH_DIAMETERS: f64 = std::f64::consts::SQRT_2;
 
 /// The open paths of `paths` with length, each with the lines beside it:
@@ -760,7 +441,7 @@ const MEETING_REACH_DIAMETERS: f64 = std::f64::consts::SQRT_2;
 /// paths that region holds, with the points where each meets it within
 /// `tolerance_mm`. A path no region holds has nothing beside it.
 fn open_paths_of(paths: &[Polyline], regions: &[Region], tolerance_mm: f64) -> Vec<OpenPath> {
-    // A path drawn twice, either way round, is cut once (#221).
+    // A path drawn twice, either way round, is cut once.
     let mut open: Vec<&Polyline> = Vec::new();
     for path in paths
         .iter()
@@ -782,9 +463,8 @@ fn open_paths_of(paths: &[Polyline], regions: &[Region], tolerance_mm: f64) -> V
             .all(|p| region.contains_point(p))
     };
     // The region that holds each path, with its place among `regions`:
-    // found once and kept, not looked up again by that place (#711: a
-    // miss there left a held path with no line beside it to keep clear
-    // of).
+    // found once and kept, not looked up again by that place (a miss
+    // there left a held path with no line beside it to keep clear of).
     let held: Vec<Option<(usize, &Region)>> = open
         .iter()
         .map(|path| regions.iter().enumerate().find(|(_, r)| holds(r, path)))
@@ -892,10 +572,10 @@ fn areas_of(regions: Vec<Region>, waste_inside: bool) -> Vec<Area> {
                     waste_inside: inside,
                 });
             }
-            // #711: an area with no edge has no bounds to be far from, so
-            // it is near every cut and no rule skips it (a point at the
-            // origin stood in before, which an outside Profile's cut
-            // elsewhere was "clear" of).
+            // An area with no edge has no bounds to be far from, so it is
+            // near every cut and no rule skips it (a point at the origin
+            // stood in before, which an outside Profile's cut elsewhere
+            // was "clear" of).
             let bounds = edges
                 .iter()
                 .map(|e| e.bounds)
@@ -914,14 +594,14 @@ fn areas_of(regions: Vec<Region>, waste_inside: bool) -> Vec<Area> {
 
 impl Material {
     /// The material the run `label` of `op`, cut with `tool`, may cut in
-    /// `project` (#406): a V-Carve's or an Inlay side's own run is held to
-    /// S17 and only when cut with the carve's tool; its clearing run with
-    /// end mill `t` to its floor, and only when `t` is one of its passes
-    /// and the run's tool. Every other operation has only its own run,
-    /// which is held as [`Material::of`] says; a clearing run of one is
-    /// unresolved. An Inlay's run is held as its `board`'s (#498): the
-    /// female's design on the stock, or the male's surround on its male
-    /// board, `project` then being the project on that board
+    /// `project`: a V-Carve's or an Inlay side's own run is held to S17
+    /// and only when cut with the carve's tool; its clearing run with end
+    /// mill `t` to its floor, and only when `t` is one of its passes and
+    /// the run's tool. Every other operation has only its own run, which
+    /// is held as [`Material::of`] says; a clearing run of one is
+    /// unresolved. An Inlay's run is held as its `board`'s: the female's
+    /// design on the stock, or the male's surround on its male board,
+    /// `project` then being the project on that board
     /// ([`Project::on_male_board`]); a cut-out on the female board is
     /// unresolved.
     pub(crate) fn of_run(
@@ -938,14 +618,14 @@ impl Material {
             (Operation::VCarve(carve), RunLabel::Clearing(pass)) if tool.id == *pass => {
                 floor_material(project, carve, pass)
             }
-            // Format 22 (#436): an Inlay side's runs, as a V-Carve's.
+            // Format 22: an Inlay side's runs, as a V-Carve's.
             (Operation::Inlay(inlay), RunLabel::Main) if tool.id == inlay.tool => {
                 inlay_material(project, inlay, board)
             }
             (Operation::Inlay(inlay), RunLabel::Clearing(pass)) if tool.id == *pass => {
                 inlay_floor_material(project, inlay, pass, board)
             }
-            // Format 23 (#443): a male's cut-out, with its own end mill.
+            // Format 23: a male's cut-out, with its own end mill.
             (Operation::Inlay(inlay), RunLabel::CutOut(cut)) if tool.id == *cut => {
                 cut_out_material(project, inlay, tool, board)
             }
@@ -968,9 +648,9 @@ impl Material {
     /// What the run `label` of `op`, cut with `tool` on `board`, is held
     /// to in `project`: its material ([`Self::of_run`]) and the tabs it
     /// must leave standing ([`run_tab_spines`]). When the tabs do not
-    /// resolve the run has no material at all, [`Material::Unresolved`]
-    /// (#711): a tab the pass cannot lay out is not a tab the run need
-    /// not leave.
+    /// resolve the run has no material at all, [`Material::Unresolved`]:
+    /// a tab the pass cannot lay out is not a tab the run need not
+    /// leave.
     pub(crate) fn held_run(
         project: &Project,
         op: &Operation,
@@ -986,7 +666,7 @@ impl Material {
 
     /// The lowest Z, mm, a run of `op` held to this material may reach
     /// (S1): a male Inlay's cut-out's own through-cut allowance below the
-    /// stock bottom (#443), else the operation's.
+    /// stock bottom, else the operation's.
     pub(crate) fn floor_mm(&self, op: &Operation) -> f64 {
         match self {
             Self::CutOut { floor_mm, .. } => *floor_mm,
@@ -1030,8 +710,8 @@ impl Material {
                         }
                         _ => Self::Unresolved,
                     },
-                    // #711: without a stock top there is no trench rule,
-                    // and a Profile is not held without one.
+                    // Without a stock top there is no trench rule, and a
+                    // Profile is not held without one.
                     Side::Inside => match (
                         regions_of(project, &profile.targets),
                         trench_rule(project, profile),
@@ -1074,8 +754,8 @@ impl Material {
                     None => Self::Unresolved,
                 }
             }
-            // Format 21: S18 (#427), the plunge at each hole's centre to
-            // the derived depth.
+            // Format 21: S18, the plunge at each hole's centre to the
+            // derived depth.
             Operation::Drill(drill) if drill.cycle.is_countersink() => {
                 Sink::of(project, drill).map_or(Self::Unresolved, Self::Countersink)
             }
@@ -1113,11 +793,11 @@ impl Material {
                 None => Self::Unresolved,
             },
             Operation::VCarve(carve) => v_bit_material(project, carve),
-            // Format 22 (#436): S17 on the side's carve, the male's being
-            // the surround of its mirrored targets.
+            // Format 22: S17 on the side's carve, the male's being the
+            // surround of its mirrored targets.
             Operation::Inlay(inlay) => inlay_material(project, inlay, Board::Female),
-            // Format 27 (#646): S19, the picture's footprint, depth range
-            // and link height.
+            // Format 27: S19, the picture's footprint, depth range and
+            // link height.
             Operation::PhotoVCarve(photo) => {
                 Picture::of(project, photo).map_or(Self::Unresolved, Self::Photo)
             }
@@ -1125,7 +805,7 @@ impl Material {
     }
 }
 
-/// The carving bit's material of V-Carve `carve` (module docs, [`cone`]):
+/// The carving bit's material of V-Carve `carve` ([`cone`]):
 /// its regions, start plane, bit profile, flat-depth floor, engagement
 /// and cutting height, all from the project; [`Material::Unresolved`]
 /// when its tool is not a usable V-bit or tapered ball nose, its start or
@@ -1137,8 +817,8 @@ fn v_bit_material(project: &Project, carve: &VCarveOp) -> Material {
     }
 }
 
-/// The carving bit `id` of `project` as S17 needs it (slice 27d, #680):
-/// its profile ([`Tool::carve_profile`]) and its cutting height, mm
+/// The carving bit `id` of `project` as S17 needs it: its profile
+/// ([`Tool::carve_profile`]) and its cutting height, mm
 /// ([`Tool::cutting_height_mm`]: a V-bit's cone height, a tapered ball
 /// nose's `min(flute_length_mm, h_R)`); `None` when it is missing or not
 /// a V-bit with an angle in (0°, 180°) and a positive diameter, nor a
@@ -1174,9 +854,9 @@ fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
     }
     let regions = regions_of(project, &carve.targets)?;
     let start_plane_z_mm = thickness_mm - start_depth_mm;
-    // H4: the flank is engaged from the stock top unless an earlier
-    // floor at the start depth (a Pocket's, or a V-Carve's flat floor,
-    // #426) holds the targets, as the generator and validation decide it.
+    // H4: the flank is engaged from the stock top unless an earlier floor
+    // at the start depth (a Pocket's, or a V-Carve's flat floor) holds
+    // the targets, as the generator and validation decide it.
     let cleared_at_start = start_depth_mm <= 0.0
         || cleared_start_plane(project, &Operation::VCarve(carve.clone()))
             .is_some_and(|plane| plane.is_at(start_depth_mm));
@@ -1195,13 +875,13 @@ fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
     })
 }
 
-/// The V-bit material of Inlay side `inlay` (#436; module docs, [`cone`]):
+/// The V-bit material of Inlay side `inlay` ([`cone`]):
 /// [`Material::Unresolved`] when [`inlay_cone`] is.
 fn inlay_material(project: &Project, inlay: &InlayOp, board: Board) -> Material {
     inlay_cone(project, inlay, board).map_or(Material::Unresolved, |(cone, _)| Material::VBit(cone))
 }
 
-/// A male Inlay's band as the safety pass derives it (#448; module docs):
+/// A male Inlay's band as the safety pass derives it:
 /// the band's edge rule from [`dc_project::male_band`], the geometry from
 /// `dc_geometry`, never the generator.
 struct MaleGeometry {
@@ -1210,27 +890,27 @@ struct MaleGeometry {
     /// The mirrored design, nested ([`male_design`]).
     design: Vec<Region>,
     /// The male's mirror ([`male_design`]), which a drawn boundary is
-    /// mirrored by too ([`dc_project::band_edge`], #603).
+    /// mirrored by too ([`dc_project::band_edge`]).
     mirror: Option<Transform>,
     /// The carved regions: the band less the design ([`surround_within`]).
     surround: Vec<Region>,
-    /// The band `B` ([`dc_geometry::rounded_band`]) when its edge is open; empty with
-    /// a V wall. Clipped to the board when it runs past it (#495).
+    /// The band `B` ([`dc_geometry::rounded_band`]) when its edge is open;
+    /// empty with a V wall. Clipped to the board when it runs past it.
     edge: Vec<Region>,
 }
 
 impl MaleGeometry {
-    /// The male Inlay `inlay`'s; `None` when its band, its design or its
-    /// bit does not resolve. Where the band `B` runs past the board it is clipped to
-    /// [`MaleBand::board`] (#495; [`male_band_on_board`]), and the
-    /// surround is the clipped band less the design.
+    /// The male Inlay `inlay`'s; `None` when its band, its design or its bit
+    /// does not resolve. Where the band `B` runs past the board it is clipped
+    /// to [`MaleBand::board`] ([`male_band_on_board`]), and the surround is the
+    /// clipped band less the design.
     fn of(project: &Project, inlay: &InlayOp) -> Option<Self> {
         let band = male_band(project, inlay)?;
         let (design, mirror) = male_design(project, inlay)?;
         let tolerance_mm = project.flatten_tolerance_mm;
-        // #478: the plug's outline within the bit's wall tolerance, as the
-        // generator draws it (#681: a tapered ball nose's `tan β`). #711:
-        // without a usable bit there is no such tolerance, and no band.
+        // The plug's outline within the bit's wall tolerance, as the
+        // generator draws it (a tapered ball nose's `tan β`). Without a
+        // usable bit there is no such tolerance, and no band.
         let (profile, _) = carve_bit_of(project, &inlay.tool)?;
         let plug_tolerance_mm = wall_tolerance_mm(tolerance_mm, profile.slope());
         let (edge, clipped) = male_band_on_board(project, inlay, &band, mirror, &design)?;
@@ -1274,18 +954,17 @@ impl MaleGeometry {
 }
 
 /// The cone of Inlay side `inlay`, every value re-derived from the project
-/// (design "Inlay" steps 1 to 4, "Safety pass" S17; security review H4),
-/// with the male's band geometry:
+/// (design "Inlay" steps 1 to 4, "Safety pass" S17), with the male's band
+/// geometry:
 ///
 /// - **Female:** the targets' regions, their near parts merged
 ///   ([`merged_design`]), from the stock top, flat at `depth_mm` `D`.
 /// - **Male:** the surround of the targets mirrored about the centre line
 ///   of their closed outlines' joint bounding box ([`MaleGeometry`]): the
-///   band `margin_mm` wide, closed by its edge rounding (#448), less the
-///   design; the start plane `D − G` below the stock top, flat at
-///   `plug_depth_mm` `P` below that. When a clearing pass cuts the band's
-///   edge upright, the cone is also held to the band at the stock top
-///   ([`Cone::edge`]).
+///   band `margin_mm` wide, closed by its edge rounding, less the design;
+///   the start plane `D − G` below the stock top, flat at `plug_depth_mm`
+///   `P` below that. When a clearing pass cuts the band's edge upright,
+///   the cone is also held to the band at the stock top ([`Cone::edge`]).
 ///
 /// Either side's flank is engaged from the stock top: the female starts
 /// there, and the plug above the male's start plane is never cleared.
@@ -1297,7 +976,7 @@ fn inlay_cone(
     board: Board,
 ) -> Option<(Cone, Option<MaleGeometry>)> {
     let thickness_mm = project.stock.thickness_mm.filter(|t| t.is_finite())?;
-    // #681: a V-bit or a tapered ball nose, on its profile.
+    // A V-bit or a tapered ball nose, on its profile.
     let (profile, cone_mm) = carve_bit_of(project, &inlay.tool)?;
     let depth_mm = inlay.depth_mm.filter(|d| d.is_finite() && *d > 0.0)?;
     let glue_gap_mm = inlay
@@ -1345,14 +1024,13 @@ fn inlay_cone(
     Some((cone, male))
 }
 
-/// The band `B` of male `design` ([`dc_project::band_edge_of`]: the
-/// design grown by `band`'s margin and closed by its edge rounding, or the
-/// drawn boundary mirrored, #603) on the board (#495): clipped to [`MaleBand::board`]
-/// of the project's stock ([`band_on_board`]) when it runs past it, and
-/// whether it was; as it is when it stays on the board. `None` when a
-/// drawn boundary does not resolve (#711): the band computed from the
-/// margin stood in for it before, and the run was held to an edge the
-/// project does not draw.
+/// The band `B` of male `design` ([`dc_project::band_edge_of`]: the design
+/// grown by `band`'s margin and closed by its edge rounding, or the drawn
+/// boundary mirrored) on the board: clipped to [`MaleBand::board`] of the
+/// project's stock ([`band_on_board`]) when it runs past it, and whether it
+/// was; as it is when it stays on the board. `None` when a drawn boundary does
+/// not resolve: the band computed from the margin stood in for it before, and
+/// the run was held to an edge the project does not draw.
 fn male_band_on_board(
     project: &Project,
     inlay: &InlayOp,
@@ -1361,7 +1039,7 @@ fn male_band_on_board(
     design: &[Region],
 ) -> Option<(Vec<Region>, bool)> {
     let tolerance_mm = project.flatten_tolerance_mm;
-    // #603: `dc_project::band_edge`, as the generator derives it.
+    // `dc_project::band_edge`, as the generator derives it.
     let edge = band_edge_of(project, inlay, band, mirror, design)?;
     Some(
         match band_on_board(&edge, band.board(&project.stock), tolerance_mm) {
@@ -1405,14 +1083,14 @@ fn male_design(project: &Project, inlay: &InlayOp) -> Option<(Vec<Region>, Optio
     Some((merged_design(project, inlay, design)?, mirror))
 }
 
-/// Inlay `inlay`'s `design` (nested) with the parts that come closer
-/// than [`INLAY_MERGE_MM`] merged into one shape, drawn within its bit's
-/// wall tolerance ([`wall_tolerance_mm`], #478), as the generator merges
-/// them (#479; [`merge_near_parts`]), then rounded for a tapered ball nose
-/// ([`dc_project::rounded_design`], #681), as the generator rounds it.
-/// `None` when the Inlay has no usable bit to take the wall tolerance
-/// from (#711), or when the rounding refuses the design, which the
-/// generator refuses too: no program of it is held to anything.
+/// Inlay `inlay`'s `design` (nested) with the parts that come closer than
+/// [`INLAY_MERGE_MM`] merged into one shape, drawn within its bit's wall
+/// tolerance ([`wall_tolerance_mm`]), as the generator merges them
+/// ([`merge_near_parts`]), then rounded for a tapered ball nose
+/// ([`dc_project::rounded_design`]), as the generator rounds it. `None`
+/// when the Inlay has no usable bit to take the wall tolerance from, or
+/// when the rounding refuses the design, which the generator refuses too:
+/// no program of it is held to anything.
 fn merged_design(project: &Project, inlay: &InlayOp, design: Vec<Region>) -> Option<Vec<Region>> {
     let tolerance_mm = project.flatten_tolerance_mm;
     let (profile, _) = carve_bit_of(project, &inlay.tool)?;
@@ -1423,7 +1101,7 @@ fn merged_design(project: &Project, inlay: &InlayOp, design: Vec<Region>) -> Opt
         .map(|rounded| rounded.regions)
 }
 
-/// What a male Inlay's cut-out run is held to (#443, #448; module docs):
+/// What a male Inlay's cut-out run is held to:
 /// the rings of the band's flat floor round the outer outlines of the
 /// mirrored design, re-derived from the project with `dc_geometry` and
 /// [`dc_project::male_band`] alone, and the cut-out's paths, for its tabs.
@@ -1433,18 +1111,17 @@ struct CutOutGeometry {
     /// clearing runs are held), except those inside a design outline, the
     /// floors of the design's holes, which stay in the plug.
     rings: Vec<Region>,
-    /// The tool-centre paths (#461): the outer outlines of the band's
-    /// edge round the mirrored design ([`dc_geometry::rounded_band`], closed by the
-    /// edge's rounding, clipped to the board where it runs past it, #495)
-    /// inset by [`MaleBand::cut_out_inset_mm`]
-    /// ([`dc_geometry::inset_outers`]); with an open edge clipped to the
-    /// board, less their stretches along the board's edge inset by the
-    /// same ([`without_rect_sides`]), so open from the board's edge to the
-    /// board's edge.
+    /// The tool-centre paths: the outer outlines of the band's edge round the
+    /// mirrored design ([`dc_geometry::rounded_band`], closed by the edge's
+    /// rounding, clipped to the board where it runs past it) inset by
+    /// [`MaleBand::cut_out_inset_mm`] ([`dc_geometry::inset_outers`]); with an
+    /// open edge clipped to the board, less their stretches along the board's
+    /// edge inset by the same ([`without_rect_sides`]), so open from the
+    /// board's edge to the board's edge.
     paths: Vec<Polyline>,
     /// For each outline the board's edge leaves as open paths, where its
-    /// pieces are in `paths` (#710): they are one cut, and take the
-    /// cut-out's tab request between them.
+    /// pieces are in `paths`: they are one cut, and take the cut-out's
+    /// tab request between them.
     pieces: Vec<Range<usize>>,
 }
 
@@ -1483,8 +1160,8 @@ fn cut_out_geometry(
     let outlines = inset_outers(&edge, inset_mm, tolerance_mm);
     let mut pieces = Vec::new();
     let paths = if clipped && male.band.is_open() {
-        // #495: the board's edge frees the plug where the band is clipped
-        // to it.
+        // The board's edge frees the plug where the band is clipped to
+        // it.
         let board = male.band.board(&project.stock);
         let within = Rect {
             min: Point::new(board.min.x + inset_mm, board.min.y + inset_mm),
@@ -1511,8 +1188,8 @@ fn cut_out_geometry(
     })
 }
 
-/// The material of Inlay `inlay`'s cut-out run with `tool` (#443): its
-/// floor rings, the tool's radius and the cut-out's own through-cut
+/// The material of Inlay `inlay`'s cut-out run with `tool`: its floor
+/// rings, the tool's radius and the cut-out's own through-cut
 /// allowance; [`Material::Unresolved`] when [`cut_out_geometry`] is
 /// `None`.
 fn cut_out_material(project: &Project, inlay: &InlayOp, tool: &Tool, board: Board) -> Material {
@@ -1534,7 +1211,7 @@ fn cut_out_material(project: &Project, inlay: &InlayOp, tool: &Tool, board: Boar
 }
 
 /// The material of carve `carve`'s clearing run with end mill `pass`
-/// (#406, security review M3; module docs): the floor regions re-derived
+/// (the spec's "S9, clearing runs"): the floor regions re-derived
 /// from the targets, the V-bit's angle and the flat depth
 /// ([`floor_regions`], less noise as the generator drops it), at the
 /// floor's Z. [`Material::Unresolved`] when `pass` is none of the carve's
@@ -1553,8 +1230,8 @@ fn floor_material(project: &Project, carve: &VCarveOp, pass: &ToolId) -> Materia
 }
 
 /// The material of male or female Inlay `inlay`'s clearing run with end
-/// mill `pass` (#436): its floor, out to the band's edge when a clearing
-/// pass cuts that edge upright (#448, [`MaleGeometry::floors`]).
+/// mill `pass`: its floor, out to the band's edge when a clearing pass
+/// cuts that edge upright ([`MaleGeometry::floors`]).
 fn inlay_floor_material(
     project: &Project,
     inlay: &InlayOp,
@@ -1580,8 +1257,8 @@ fn inlay_floor_material(
 
 /// [`floor_material`] for a carve with passes `clearing`: the floor
 /// regions `floors` gives with its V-bit material's cone (a V-Carve's, or
-/// an Inlay side's, #436), at the floor's Z. `floors` is handed a function
-/// that gives a cone's floor inset, `F · tan(α/2)`, and the tolerance.
+/// an Inlay side's), at the floor's Z. `floors` is handed a function that
+/// gives a cone's floor inset, `F · tan(α/2)`, and the tolerance.
 fn floor_of(
     project: &Project,
     clearing: &[ClearingPass],
@@ -1619,13 +1296,13 @@ fn is_noise(region: &Region, tolerance_mm: f64) -> bool {
     region.area_mm2() <= tolerance_mm * perimeter_mm
 }
 
-/// The material of a Left or Right Profile of `paths` (#207): the open
-/// ones with length, offset by `left_mm` (positive to the left) to give
-/// the tool-centre paths, and offset the other way to give their kept
-/// edges, with the strip's two ends along the normals through the end
-/// vertices ([`strip_ends`], #342). With a last pass `stock_to_leave_mm` (#311) each is offset by
-/// `left_mm` plus the stock to leave, to the same side, too: the path every
-/// pass but the last cuts. The kept edges stay one radius off.
+/// The material of a Left or Right Profile of `paths`: the open ones with
+/// length, offset by `left_mm` (positive to the left) to give the tool-centre
+/// paths, and offset the other way to give their kept edges, with the strip's
+/// two ends along the normals through the end vertices ([`strip_ends`]). With a
+/// last pass `stock_to_leave_mm` each is offset by `left_mm` plus the stock to
+/// leave, to the same side, too: the path every pass but the last cuts. The
+/// kept edges stay one radius off.
 fn side_profile(paths: &[Polyline], left_mm: f64, stock_to_leave_mm: Option<f64>) -> Material {
     let open: Vec<&Polyline> = paths
         .iter()
@@ -1643,7 +1320,7 @@ fn side_profile(paths: &[Polyline], left_mm: f64, stock_to_leave_mm: Option<f64>
     let near = offsets(left_mm);
     let far = stock_to_leave_left_mm.map(offsets);
     let centres = near.iter().chain(far.iter().flatten()).copied().collect();
-    // #342: the strip closed at each end by the normal through the end
+    // The strip closed at each end by the normal through the end
     // vertex, cut short at the first line it meets, so a cutter that
     // reaches past an end into the strip fails however the offset runs.
     let kept = open.iter().flat_map(|p| {
@@ -1658,7 +1335,7 @@ fn side_profile(paths: &[Polyline], left_mm: f64, stock_to_leave_mm: Option<f64>
         .collect();
     let steps = far.zip(stock_to_leave_left_mm).map(|(far, far_left_mm)| {
         let stock_to_leave_mm = far_left_mm.abs() - left_mm.abs();
-        // #358: each segment's own band, its two offsets whole.
+        // Each segment's own band, its two offsets whole.
         let strips = open
             .iter()
             .flat_map(|p| p.segments())
@@ -1684,8 +1361,8 @@ fn side_profile(paths: &[Polyline], left_mm: f64, stock_to_leave_mm: Option<f64>
 }
 
 /// The band between a Left or Right Profile's last pass path and the
-/// path its earlier passes cut, `stock_to_leave_mm` farther to the side
-/// (#339): the last pass steps across it at its start, from the earlier
+/// path its earlier passes cut, `stock_to_leave_mm` farther to the
+/// side: the last pass steps across it at its start, from the earlier
 /// passes' kerf onto its own path.
 #[derive(Debug, Clone)]
 pub(crate) struct StockToLeaveBand {
@@ -1694,7 +1371,7 @@ pub(crate) struct StockToLeaveBand {
     /// The earlier passes' paths' segments.
     far: Vec<Edge>,
     /// Each segment of each open path offset whole, by the radius and by
-    /// the radius plus the stock to leave (#358): the band beside that one
+    /// the radius plus the stock to leave: the band beside that one
     /// segment, before [`offset_open`] trims each offset where it comes
     /// nearer another part of the path.
     strips: Vec<(Edge, Edge)>,
@@ -1720,8 +1397,8 @@ impl StockToLeaveBand {
     }
 
     /// True when `p` lies between the two paths, or between one
-    /// segment's two whole offsets (#358): its distances to them add up
-    /// to the stock to leave, within `slack_mm` each.
+    /// segment's two whole offsets: its distances to them add up to the
+    /// stock to leave, within `slack_mm` each.
     ///
     /// The second covers where the two paths are trimmed short of each
     /// other: near an open path's end vertex that comes back beside
@@ -1751,105 +1428,6 @@ impl StockToLeaveBand {
                         + point_segment_distance_mm(f.segment, p)
                         <= within
             })
-    }
-}
-
-#[cfg(test)]
-mod stock_to_leave_band_tests {
-    use super::*;
-    use dc_geometry::Vertex;
-
-    const RADIUS_MM: f64 = 1.0;
-    const STOCK_TO_LEAVE_MM: f64 = 0.3;
-    const SLACK_MM: f64 = 0.012;
-
-    fn line_path(points: &[(f64, f64)]) -> Polyline {
-        Polyline::new(
-            points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
-            false,
-        )
-    }
-
-    /// The stock to leave band of a Left Profile of `path` with a last pass.
-    fn band(path: &Polyline) -> StockToLeaveBand {
-        match side_profile(
-            std::slice::from_ref(path),
-            RADIUS_MM,
-            Some(STOCK_TO_LEAVE_MM),
-        ) {
-            Material::SideProfile {
-                steps: Some(band), ..
-            } => band,
-            other => panic!("not a Left Profile with a last pass: {other:?}"),
-        }
-    }
-
-    /// The first point of `path` offset `left_mm`, which must be one piece.
-    fn offset_start(path: &Polyline, left_mm: f64) -> Point {
-        let pieces = offset_open(path, left_mm);
-        assert_eq!(pieces.len(), 1, "{pieces:?}");
-        let v = pieces[0].vertices()[0];
-        Point::new(v.x, v.y)
-    }
-
-    fn level(start: Point, end: Point, bulge: f64) -> Segment {
-        Segment { start, end, bulge }
-    }
-
-    /// #358 case 1: an open path that nearly closes, cut Left (inside the
-    /// loop), its end vertex E 1.5 mm above the line its first segment
-    /// runs along. Both offsets start where they come `r` and `r + a`
-    /// from E, so the two passes' starts are not on one normal: the last
-    /// pass's step from the stock path's start onto its own ends
-    /// 0.52 mm from the stock path, farther than the stock to leave. It
-    /// still runs between the first segment's own two offsets, at least
-    /// `r` from every line, and is a step S9 accepts.
-    #[test]
-    fn last_pass_step_between_starts_trimmed_by_the_end_vertex_is_allowed() {
-        let path = line_path(&[
-            (0.0, 0.0),
-            (10.0, 0.0),
-            (10.0, 5.0),
-            (-0.5, 5.0),
-            (-0.5, 1.5),
-        ]);
-        let far = offset_start(&path, RADIUS_MM + STOCK_TO_LEAVE_MM);
-        let near = offset_start(&path, RADIUS_MM);
-        // Each pass starts on its circle round E, not on the first
-        // segment's normal through (0, 0).
-        let e = Point::new(-0.5, 1.5);
-        assert!((far.distance_to(e) - (RADIUS_MM + STOCK_TO_LEAVE_MM)).abs() < 1e-6);
-        assert!((near.distance_to(e) - RADIUS_MM).abs() < 1e-6);
-        assert!((far.x - near.x).abs() > 0.4, "{far:?} {near:?}");
-        let band = band(&path);
-        let step = level(far, near, 0.0);
-        assert!(step.length_mm() <= band.step_mm, "{}", step.length_mm());
-        assert!(band.allows(step, true, SLACK_MM));
-        // A step that is not level is no step.
-        assert!(!band.allows(step, false, SLACK_MM));
-    }
-
-    /// #358: the band at an open end stays the strip's. A level arc from
-    /// the stock path's end to the last pass's path that bows past
-    /// the path's end vertex, `r` to `r + a` from it, cuts past the open
-    /// end and still fails, and no point on the kept side, `r` to `r + a`
-    /// from the path, lies in the band.
-    #[test]
-    fn last_pass_step_past_an_open_end_or_on_the_kept_side_fails() {
-        let path = line_path(&[(0.0, 0.0), (10.0, 0.0)]);
-        let band = band(&path);
-        let (far_end, near) = (Point::new(10.0, 1.3), Point::new(9.9, 1.0));
-        assert!(band.allows(level(far_end, near, 0.0), true, SLACK_MM));
-        let bowed = level(far_end, near, -1.5);
-        let (middle, _) = bowed.point_at(bowed.length_mm() / 2.0).expect("an arc");
-        assert!(middle.x > 10.1, "{middle:?}");
-        let from_end_mm = middle.distance_to(Point::new(10.0, 0.0));
-        assert!((RADIUS_MM..=RADIUS_MM + STOCK_TO_LEAVE_MM).contains(&from_end_mm));
-        assert!(bowed.length_mm() <= band.step_mm, "{}", bowed.length_mm());
-        assert!(!band.allows(bowed, true, SLACK_MM));
-        assert!(!band.holds(Point::new(10.4, 1.15), SLACK_MM));
-        assert!(!band.holds(Point::new(5.0, -1.15), SLACK_MM));
-        assert!(band.holds(Point::new(5.0, 1.15), SLACK_MM));
     }
 }
 
@@ -1889,7 +1467,7 @@ fn placed(project: &Project, targets: &[InstanceId]) -> Option<Vec<Polyline>> {
     Some(paths)
 }
 
-/// One tab a Profile must leave standing (S9, #337), measured as the
+/// One tab a Profile must leave standing (S9), measured as the
 /// generator's span rule measures it (ADR-0005): along the bit's path
 /// round its outline, from the path's point nearest the tab.
 #[derive(Debug, Clone, PartialEq)]
@@ -1908,9 +1486,9 @@ pub(crate) struct TabSpine {
     /// Left or Right Profile), project space. Empty for an On line
     /// Profile, whose lap is the outline.
     laps: Vec<Polyline>,
-    /// The paths of the passes before a last pass (#284): the outline
-    /// offset by the radius plus the last pass's stock to leave, the ways
-    /// the laps are, project space. Empty without a last pass.
+    /// The paths of the passes before a last pass: the outline offset by
+    /// the radius plus the last pass's stock to leave, the ways the laps
+    /// are, project space. Empty without a last pass.
     stock_paths: Vec<Polyline>,
     /// The tab's point, project space.
     point: Point,
@@ -1942,27 +1520,26 @@ pub(crate) struct TabSpine {
 
 /// Fraction of the tool radius a plunge may come inside a tab's span (the
 /// tab's width plus the tool diameter, along the bit's path) without being
-/// refused (#337): a rect tab steps down at the span's end, and the
-/// offsets S9 builds round the outline may differ that much from the
-/// generator's along the path.
+/// refused: a rect tab steps down at the span's end, and the offsets S9
+/// builds round the outline may differ that much from the generator's
+/// along the path.
 const TAB_SPAN_MARGIN: f64 = 0.1;
 
 /// How many cells S9 looks at for tab material under one stock to leave
-/// pass's plunge (#353) before it gives up and refuses the plunge: the
-/// search halves cells only where the cutter comes within a cell of the
-/// tab, so a plunge clear of it by more than the slack needs a few
-/// hundred.
+/// pass's plunge before it gives up and refuses the plunge: the search
+/// halves cells only where the cutter comes within a cell of the tab,
+/// so a plunge clear of it by more than the slack needs a few hundred.
 const TAB_SEARCH_CELLS: usize = 200_000;
 
 /// The tabs run `label` of `op`, cut with `tool`, must leave standing in
 /// `project` (S9): a Profile's ([`tab_spines`]), and a male Inlay's
-/// cut-out's (#443). The cut-out is held as the On line Profile it is
+/// cut-out's. The cut-out is held as the On line Profile it is
 /// ([`dc_cam::inlay::cut_out_profile`]) on the paths this pass derives
 /// itself ([`cut_out_geometry`]), so its tabs are those its tab request
 /// places there, by the documented layout rule ([`cut_out_placed`]).
 /// Empty for every other run. `None` when the tabs do not resolve
-/// ([`tab_spines`]) or the cut-out does not (#711): the run is then
-/// unresolved ([`Material::held_run`]), where it was held to no tab.
+/// ([`tab_spines`]) or the cut-out does not: the run is then unresolved
+/// ([`Material::held_run`]), where it was held to no tab.
 pub(crate) fn run_tab_spines(
     project: &Project,
     op: &Operation,
@@ -1980,18 +1557,17 @@ pub(crate) fn run_tab_spines(
     }
 }
 
-/// `project` as S9 holds Inlay `inlay`'s cut-out run with `tool` (#443,
-/// #710): the On line Profile the cut-out is, on the paths this pass
-/// derives itself ([`cut_out_geometry`], [`cut_out_profile`]), with the
-/// cut-out's tab request placed on them as placed tabs, as the generator
-/// places it before it cuts (ADR-0005). The request is for each outline;
-/// the open paths the board's edge leaves of one outline take it between
-/// them, by the documented layout rule
-/// ([`dc_cam::placed_tabs::place_shared`]), so a cut-out asked for four
-/// tabs is held to four however many pieces it is cut in. `None` when
-/// the cut-out does not resolve, or its request cannot be placed (#711:
-/// no tab was placed then, so the run was held to none; the generator
-/// refuses such a request).
+/// `project` as S9 holds Inlay `inlay`'s cut-out run with `tool`: the On
+/// line Profile the cut-out is, on the paths this pass derives itself
+/// ([`cut_out_geometry`], [`cut_out_profile`]), with the cut-out's tab
+/// request placed on them as placed tabs, as the generator places it
+/// before it cuts (ADR-0005). The request is for each outline; the open
+/// paths the board's edge leaves of one outline take it between them, by
+/// the documented layout rule ([`dc_cam::placed_tabs::place_shared`]),
+/// so a cut-out asked for four tabs is held to four however many pieces
+/// it is cut in. `None` when the cut-out does not resolve, or its
+/// request cannot be placed (no tab was placed then, so the run was held
+/// to none; the generator refuses such a request).
 pub(crate) fn cut_out_placed(
     project: &Project,
     inlay: &InlayOp,
@@ -2010,15 +1586,15 @@ pub(crate) fn cut_out_placed(
     Some(copy)
 }
 
-/// `project` holding the On line Profile a male Inlay's cut-out is
-/// (#443), as its only operation: `paths` (project space; closed, or
-/// open where the board's edge frees the plug) as the
-/// profiles of one definition placed in place, which the Profile targets
-/// with the cut-out's tool and through-cut allowance, through the
-/// stock `thickness_mm` thick, climb, plunging, its start where the
-/// paths start, with the Inlay's id. It carries no tab request: the
-/// cut-out's is placed on these paths ([`cut_out_placed`]), as
-/// `docs/book`'s Inlay chapter documents the cut-out.
+/// `project` holding the On line Profile a male Inlay's cut-out is, as
+/// its only operation: `paths` (project space; closed, or open where the
+/// board's edge frees the plug) as the profiles of one definition placed
+/// in place, which the Profile targets with the cut-out's tool and
+/// through-cut allowance, through the stock `thickness_mm` thick, climb,
+/// plunging, its start where the paths start, with the Inlay's id. It
+/// carries no tab request: the cut-out's is placed on these paths
+/// ([`cut_out_placed`]), as `docs/book`'s Inlay chapter documents the
+/// cut-out.
 fn cut_out_profile(
     project: &Project,
     inlay: &InlayOp,
@@ -2076,26 +1652,26 @@ fn cut_out_profile(
     copy
 }
 
-/// The tabs Profile `op` must leave standing in `project` (S9, #337): its
-/// placed tabs on the outlines of its targets that it cuts, and those its
-/// tab request places (`dc_cam::placed_tabs::place`, the documented layout
-/// rule, not the toolpath). Empty for another kind of operation, and for
-/// a Profile with no tab on its targets.
+/// The tabs Profile `op` must leave standing in `project` (S9): its placed
+/// tabs on the outlines of its targets that it cuts, and those its tab
+/// request places (`dc_cam::placed_tabs::place`, the documented layout
+/// rule, not the toolpath). Empty for another kind of operation, and for a
+/// Profile with no tab on its targets.
 ///
 /// A tab's spine runs along its outline ([`tab_spine`]): a closed one, or
-/// an open one an On line Profile cuts (#175), such as each piece the
-/// board's edge leaves of a male Inlay's cut-out (#495). A tab on an open
-/// outline of an inside or outside Profile, which cuts closed outlines
-/// only, is no tab of that Profile. A tab on an open outline of a Left or
-/// Right Profile (#207) has its spine along the path offset to the cut
-/// side (`docs/specs/phase-3/design.md`, "S9, an Inlay cut-out").
+/// an open one an On line Profile cuts, such as each piece the board's
+/// edge leaves of a male Inlay's cut-out. A tab on an open outline of an
+/// inside or outside Profile, which cuts closed outlines only, is no tab
+/// of that Profile. A tab on an open outline of a Left or Right Profile
+/// has its spine along the path offset to the cut side
+/// (`docs/specs/phase-3/design.md`, "S9, an Inlay cut-out").
 ///
-/// `None` when a tab cannot be laid out (#711), and the run is then
-/// unresolved ([`Material::held_run`]): the request cannot be placed, the
-/// tool or the cut's floor (the stock thickness and the depth) is
-/// missing, or a tab's instance, definition or profile is, or its outline
-/// cannot be placed or is no contour. Each of those dropped the tab
-/// before, and the run was held to the tabs that were left.
+/// `None` when a tab cannot be laid out, and the run is then unresolved
+/// ([`Material::held_run`]): the request cannot be placed, the tool or
+/// the cut's floor (the stock thickness and the depth) is missing, or a
+/// tab's instance, definition or profile is, or its outline cannot be
+/// placed or is no contour. Each of those dropped the tab before, and the
+/// run was held to the tabs that were left.
 pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Option<Vec<TabSpine>> {
     let Operation::Profile(profile) = op else {
         return Some(Vec::new());
@@ -2148,13 +1724,13 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Option<Vec<TabSpi
 /// cuts they are the same, each offset the open paths beside it
 /// ([`offset_open`]): a spine was built on a closed outline only, so a
 /// plunge into a tab on a piece of a cut-out the board's edge had left
-/// open was not held. On an open one a Left or Right Profile cuts (#207)
-/// they are its offset by the radius to that side alone, to the left or
-/// the right looking from its first vertex to its last, as the generator
-/// cuts it and [`side_profile`] holds it; with a last pass, the stock
-/// path the same way. The bit runs nowhere else beside such a path, and a
-/// tab its request lays is centred on that offset, so its span is
-/// measured along the path the generator laid it on.
+/// open was not held. On an open one a Left or Right Profile cuts they
+/// are its offset by the radius to that side alone, to the left or the
+/// right looking from its first vertex to its last, as the generator cuts
+/// it and [`side_profile`] holds it; with a last pass, the stock path the
+/// same way. The bit runs nowhere else beside such a path, and a tab its
+/// request lays is centred on that offset, so its span is measured along
+/// the path the generator laid it on.
 fn tab_spine(
     project: &Project,
     profile: &ProfileOp,
@@ -2172,8 +1748,8 @@ fn tab_spine(
     let contour = if outline.is_closed() {
         match Contour::new(outline.clone()) {
             Ok(contour) => Some(contour),
-            // A Left or Right Profile cuts open paths only (#207), so a
-            // closed outline that is no contour is none of its to resolve.
+            // A Left or Right Profile cuts open paths only, so a closed
+            // outline that is no contour is none of its to resolve.
             Err(_) if matches!(profile.side, Side::Left | Side::Right) => return Some(None),
             Err(_) => return None,
         }
@@ -2243,15 +1819,15 @@ impl TabSpine {
     /// the bit's paths round the tab's outline, goes below the tab there.
     /// On a lap's path (or the outline) that is a cut within the tab's
     /// span ([`TabSpine::lowest_z_mm`]). On the path of the passes before
-    /// a last pass (#353) it is a cut into the tab material the laps leave
+    /// a last pass it is a cut into the tab material the laps leave
     /// standing ([`TabSpine::cuts_material`]), the tabs of the outline
     /// `tabs` merged; on an On line Profile, which has no such laps, the
     /// span again. Along a closed path the span runs either way round it;
-    /// along an open one (a piece of a clipped cut-out, #495) only along
-    /// it, never from one end round to the other.
+    /// along an open one (a piece of a clipped cut-out) only along it,
+    /// never from one end round to the other.
     ///
-    /// A path with no length, on which no point is nearest (#711), is one
-    /// the cut cannot be told to be clear of: the cut goes below the tab.
+    /// A path with no length, on which no point is nearest, is one the
+    /// cut cannot be told to be clear of: the cut goes below the tab.
     fn cuts_into(&self, p: Point, z_mm: f64, slack_mm: f64, tabs: &[TabSpine]) -> bool {
         let by_span = |path: &Polyline| {
             let (Some(at), Some(centre)) =
@@ -2328,8 +1904,8 @@ impl TabSpine {
     }
 
     /// Whether the cutter plunged to `z_mm` at `p` cuts the tab material
-    /// the laps round this tab's outline leave standing above `z_mm`
-    /// (#353), the outline's `tabs` merged.
+    /// the laps round this tab's outline leave standing above `z_mm`,
+    /// the outline's `tabs` merged.
     ///
     /// The laps run at their floor except where the tab rule holds them
     /// above `z_mm` ([`TabSpine::held_mm`]): every lap point is "high" or
@@ -2340,15 +1916,15 @@ impl TabSpine {
     ///
     /// The search halves square cells over the cutter, the radius round
     /// `p`. A cell is dropped when no point of it can be inside the cutter
-    /// and `slack_mm` inside the tab (its centre's distances, give or
-    /// take its half diagonal, rule it out), and the plunge is refused
-    /// when a cell's centre lies in both, or the centre of a cell whose
-    /// half diagonal is at most the slack lies in the tab and within that
-    /// half diagonal of the cutter. So the rule refuses every cutter that
+    /// and `slack_mm` inside the tab (its centre's distances, give or take
+    /// its half diagonal, rule it out), and the plunge is refused when a
+    /// cell's centre lies in both, or the centre of a cell whose half
+    /// diagonal is at most the slack lies in the tab and within that half
+    /// diagonal of the cutter. So the rule refuses every cutter that
     /// reaches the slack into the tab, and passes every cutter that, grown
     /// by the slack, misses it. A search that needs more than
     /// [`TAB_SEARCH_CELLS`] cells refuses the plunge, and so does a lap a
-    /// tab cannot be found on or that cannot be split whole (#711).
+    /// tab cannot be found on or that cannot be split whole.
     fn cuts_material(&self, p: Point, z_mm: f64, slack_mm: f64, tabs: &[TabSpine]) -> bool {
         let r = self.radius_mm;
         let reach_mm = 2.0 * r + slack_mm;
@@ -2429,10 +2005,10 @@ impl TabSpine {
 /// the ends of the stretches `held` (from and to, mm along it from its
 /// start, either possibly past an end of a closed lap, where it wraps)
 /// and hands each piece to `f` with whether it lies in one of them.
-/// Segments no longer than [`EPS_MM`] are skipped, as
-/// [`nearest_point`] measures along a path. `false` when a piece could
-/// not be cut out of its segment (#711): the lap was not handed over
-/// whole, and the caller must not read what it got as all of it.
+/// Segments no longer than [`EPS_MM`] are skipped, as [`nearest_point`]
+/// measures along a path. `false` when a piece could not be cut out of
+/// its segment: the lap was not handed over whole, and the caller must
+/// not read what it got as all of it.
 #[must_use]
 fn split_lap(
     lap: &Polyline,
@@ -2499,12 +2075,12 @@ fn sub_segment(segment: Segment, length_mm: f64, from_mm: f64, to_mm: f64) -> Op
     Some(Segment { start, end, bulge })
 }
 
-/// S9's tab rule (#337) for one move `mv` of `span`: `false` when it is a
+/// S9's tab rule for one move `mv` of `span`: `false` when it is a
 /// straight plunge that ends below a tab's top within the tab's span
 /// along the bit's path, or, on the path of the passes before a last
-/// pass, into the tab material the laps leave (#353) ([`TabSpine`]); and
-/// `false` when the span has tabs and where the move starts or ends is
-/// not known (#711), since it cannot then be told from such a plunge.
+/// pass, into the tab material the laps leave ([`TabSpine`]); and `false`
+/// when the span has tabs and where the move starts or ends is not known,
+/// since it cannot then be told from such a plunge.
 fn keeps_tabs(
     mv: &MachineMove,
     transform: &MachineTransform,
@@ -2528,7 +2104,7 @@ fn keeps_tabs(
         })
 }
 
-/// What S9's trench rule (#352) needs from the project for an inside or
+/// What S9's trench rule needs from the project for an inside or
 /// outside Profile.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct TrenchRule {
@@ -2560,8 +2136,8 @@ const TRENCH_STEP_FRACTION: f64 = 0.1;
 
 /// The part of `path`, a cut falling or rising linearly from `from_z` to
 /// `to_z`, that runs below `top_mm`: the stock it cut. `None` when it runs
-/// wholly at or above it. (#356: the whole path was taken when any of it
-/// ran below the stock top less the slack, so a ramp leg that dipped below
+/// wholly at or above it. (the whole path was taken when any of it ran
+/// below the stock top less the slack, so a ramp leg that dipped below
 /// only at its end counted as trench along its whole length, or not at
 /// all, as the arc-fit tolerance in the slack fell.)
 fn below_top(path: Segment, from_z: f64, to_z: f64, top_mm: f64) -> Option<Segment> {
@@ -2580,14 +2156,14 @@ fn below_top(path: Segment, from_z: f64, to_z: f64, top_mm: f64) -> Option<Segme
     }
 }
 
-/// S9's trench rule (#352) over one operation's moves, in order (module
-/// docs, "Trenches").
+/// S9's trench rule over one operation's moves, in order (module docs,
+/// "Trenches").
 struct Trench<'a> {
     rule: TrenchRule,
     areas: &'a [Area],
     radius_mm: f64,
     /// The tool-centre path in XY, project space, of every cut so far,
-    /// where it ran below the stock top (#356).
+    /// where it ran below the stock top.
     cuts: Vec<Segment>,
     /// For each cell, the cuts whose bounds, grown by the reach a point
     /// is measured to, meet it.
@@ -2633,8 +2209,8 @@ impl<'a> Trench<'a> {
     /// within twice the slack of the tool-centre path an earlier cut ran
     /// below the stock top. The points are checked a tenth of the radius
     /// apart. Only the part of `mv` below the stock top is recorded
-    /// ([`below_top`]). Nor does a cut whose start or end is not known
-    /// (#711): it cannot be told from such a ramp, and ends the run.
+    /// ([`below_top`]). Nor does a cut whose start or end is not known:
+    /// it cannot be told from such a ramp, and ends the run.
     fn allows(&mut self, mv: &MachineMove, transform: &MachineTransform, slack_mm: f64) -> bool {
         let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz), Some(path)) = (
             mv.from.x,
@@ -2673,8 +2249,8 @@ impl<'a> Trench<'a> {
             loop {
                 let s = s_mm.min(length_mm);
                 let z = from_z + (to_z - from_z) * (s / length_mm);
-                // #711: a point of the path that cannot be found is in
-                // no trench (the path's end stood in for it before).
+                // A point of the path that cannot be found is in no
+                // trench (the path's end stood in for it before).
                 let in_trench = path
                     .point_at(s)
                     .is_some_and(|(p, _)| self.on_ring(p, ring_mm) || self.on_earlier(p, near_mm));
@@ -2736,7 +2312,7 @@ impl<'a> Trench<'a> {
 }
 
 /// How far a move may depart from where the toolpath put it, rounding
-/// aside (module docs): the flatten tolerance, and the arc-fit tolerance
+/// aside: the flatten tolerance, and the arc-fit tolerance
 /// when arc fitting is on, mm.
 fn departure_mm(tolerances: Tolerances) -> f64 {
     tolerances.flatten_mm + tolerances.arc_fit_mm.unwrap_or(0.0) + EPS_MM
@@ -2767,10 +2343,6 @@ pub(crate) fn check(
     tolerances: Tolerances,
     span: &OpSpan<'_>,
 ) -> Result<(), ExportError> {
-    #[cfg(test)]
-    if matches!(span.material, Material::Unchecked) {
-        return Ok(());
-    }
     // S18 holds every line of a countersink's span, not only its cuts.
     if let Material::Countersink(sink) = span.material {
         return sink.check(blocks, post, transform, span);
@@ -2780,7 +2352,7 @@ pub(crate) fn check(
         return picture.check(blocks, post, transform, tolerances, span);
     }
     let radius_mm = span.tool.diameter_mm / 2.0;
-    // #221: each On line loop and held open path, measured against itself.
+    // Each On line loop and held open path, measured against itself.
     let departure_mm = departure_mm(tolerances);
     let selves = match span.material {
         Material::OnLineProfile { areas, open } => Some(SelfBands::new(
@@ -2860,8 +2432,6 @@ pub(crate) fn check(
             }
         }
         let inside = path.is_some_and(|path| match span.material {
-            #[cfg(test)]
-            Material::Unchecked => true,
             Material::Unresolved => false,
             Material::Inside {
                 areas,
@@ -2976,8 +2546,8 @@ pub(crate) fn check(
 /// Whether tool-centre path `path` keeps `clearance_mm` from every edge
 /// of `area`, or is a relief notch at one of its corners when `notch` is
 /// set. It took a range of the area's edges to hold the path to, and read
-/// a range outside them as no wall at all (#711); every caller meant the
-/// whole area, so there is no range now.
+/// a range outside them as no wall at all; every caller meant the whole
+/// area, so there is no range now.
 fn walls_allow(area: &Area, path: Segment, clearance_mm: f64, notch: Option<Notch>) -> bool {
     clear_of(area, path, clearance_mm) || notch.is_some_and(|n| n.allows(area, path, clearance_mm))
 }
@@ -3020,11 +2590,11 @@ fn in_regions(
 }
 
 /// The point of `path` that tells which side of an outline it is on: its
-/// middle, not an end (#231). A T-bone notch's return leg starts on the
-/// wall it slots into, and the program's rounding moves that end up to a
-/// quantum to either side, so its start tells nothing; its middle lies in
-/// the waste. A path whose middle is on the waste side but which reaches
-/// into the part crosses a wall, which the clearance test after this one
+/// middle, not an end. A T-bone notch's return leg starts on the wall it
+/// slots into, and the program's rounding moves that end up to a quantum
+/// to either side, so its start tells nothing; its middle lies in the
+/// waste. A path whose middle is on the waste side but which reaches into
+/// the part crosses a wall, which the clearance test after this one
 /// refuses.
 fn side_point(path: Segment) -> Point {
     let [_, middle, _] = points_of(path);
@@ -3045,11 +2615,11 @@ fn outside_regions(areas: &[Area], path: Segment, clearance_mm: f64, notch: Opti
         .all(|a| !a.region.contains_point(side) && walls_allow(a, path, clearance_mm, notch))
 }
 
-/// The lap rule (module docs): whether tool-centre path `path` runs along
-/// one loop of `areas`, its ends and middle within `reach_mm` of it, on
-/// its waste side (judged at [`side_point`]), and clear of every loop of that loop's own area (or a
-/// notch at one of their corners). Other areas' outlines are not looked
-/// at; the loop's own area's always are (#192).
+/// The lap rule (the spec's S9): whether tool-centre path `path` runs along one
+/// loop of `areas`, its ends and middle within `reach_mm` of it, on its waste
+/// side (judged at [`side_point`]), and clear of every loop of that loop's own
+/// area (or a notch at one of their corners). Other areas' outlines are not
+/// looked at; the loop's own area's always are.
 fn is_lap(
     areas: &[Area],
     path: Segment,
@@ -3077,13 +2647,13 @@ fn is_lap(
         })
 }
 
-/// The On line Profile rule (module docs): whether tool-centre path
+/// The On line Profile rule (the spec's S9): whether tool-centre path
 /// `path` lies on one loop of `areas`, its ends and middle within the
 /// slack of it, at least the band from every other loop of that loop's
-/// area (#199), and from the stretches of its own loop far along it
-/// (#221, [`keeps_self`]; `selves` holds each loop's [`SelfBand`]), and
-/// on no loop of an area the cut removes whole (#223, `gone`). Other
-/// areas' loops are not looked at.
+/// area, and from the stretches of its own loop far along it
+/// ([`keeps_self`]; `selves` holds each loop's [`SelfBand`]), and on no
+/// loop of an area the cut removes whole (`gone`). Other areas' loops
+/// are not looked at.
 fn on_own_line(
     areas: &[Area],
     selves: &[Vec<SelfBand>],
@@ -3122,13 +2692,12 @@ fn on_own_line(
         })
 }
 
-/// The On line rule for open paths (module docs, #210): whether tool-centre
+/// The On line rule for open paths (the spec's S9): whether tool-centre
 /// path `path` lies on one of `open`, its ends and middle within the
 /// slack of it, and keeps the band from every line beside that path once
 /// the stretches of both within the reach of a point where they meet are
 /// set aside, and from the stretches of the path itself far along it
-/// when a region holds it (#221; `selves` holds each path's
-/// [`SelfBand`]).
+/// when a region holds it (`selves` holds each path's [`SelfBand`]).
 fn on_open_path(open: &[OpenPath], selves: &[Option<SelfBand>], path: Segment, band: Band) -> bool {
     let Band {
         band_mm,
@@ -3160,9 +2729,9 @@ fn on_open_path(open: &[OpenPath], selves: &[Option<SelfBand>], path: Segment, b
     })
 }
 
-/// The On line band rule for one move and one line (#221): the band,
-/// mm, the reach about a meeting point within which a pair is set aside,
-/// mm, and the slack a written move may depart by, mm.
+/// The On line band rule for one move and one line: the band, mm, the
+/// reach about a meeting point within which a pair is set aside, mm, and
+/// the slack a written move may depart by, mm.
 #[derive(Debug, Clone, Copy)]
 struct Band {
     band_mm: f64,
@@ -3170,10 +2739,10 @@ struct Band {
     slack_mm: f64,
 }
 
-/// Each On line loop of each area, and each open path a region holds,
-/// as a [`SelfBand`] (#221): the loops in [`Area::loops`] order, the open
-/// paths in `open` order, `None` for a path no region holds. And whether
-/// each area is a part the cut removes whole (#223).
+/// Each On line loop of each area, and each open path a region holds, as
+/// a [`SelfBand`]: the loops in [`Area::loops`] order, the open paths in
+/// `open` order, `None` for a path no region holds. And whether each area
+/// is a part the cut removes whole.
 struct SelfBands {
     areas: Vec<Vec<SelfBand>>,
     open: Vec<Option<SelfBand>>,
@@ -3222,12 +2791,12 @@ impl SelfBands {
     }
 }
 
-/// #221: whether tool-centre path `path`, which runs on the line `own`
+/// Whether tool-centre path `path`, which runs on the line `own`
 /// measures, keeps `band.band_mm` from the stretches of that line that
 /// lie more than the reach along it from where `path` runs, for every
 /// pair of closest points `counts` accepts. The stretches of both within
 /// `band.reach_mm` of a point where the line meets itself are set aside,
-/// as for two lines (#210).
+/// as for two lines.
 fn keeps_self(
     own: &SelfBand,
     path: Segment,
@@ -3253,9 +2822,9 @@ fn keeps_self(
 }
 
 /// Whether the part lies between points `p` and `q` of one loop of
-/// `region`, whose segments are `edges` (#221, as `dc_cam` decides it):
-/// the point midway lies in the region's material, a quarter of their gap
-/// or more from the loop. Across a notch or a hole's neck it lies in the
+/// `region`, whose segments are `edges` (as `dc_cam` decides it): the
+/// point midway lies in the region's material, a quarter of their gap or
+/// more from the loop. Across a notch or a hole's neck it lies in the
 /// waste; between two points along one edge it lies on the loop.
 fn material_between(region: &Region, edges: &[Edge], p: Point, q: Point) -> bool {
     let middle = p + (q - p) * 0.5;
@@ -3328,10 +2897,7 @@ pub(crate) fn project_path(mv: &MachineMove, transform: &MachineTransform) -> Op
             });
         }
     };
-    let machine_centre = match mv.arc.r {
-        Some(r) => r_centre(sx, sy, ex, ey, r, machine_cw),
-        None => Point::new(sx + mv.arc.i.unwrap_or(0.0), sy + mv.arc.j.unwrap_or(0.0)),
-    };
+    let machine_centre = mv.arc_centre()?;
     let centre = to_project(machine_centre.x, machine_centre.y);
     let ccw = machine_cw == transform.mirrors_xy();
     let sweep_rad = Arc::from_ends(start, end, centre, ccw).sweep_rad;
@@ -3344,634 +2910,4 @@ pub(crate) fn project_path(mv: &MachineMove, transform: &MachineTransform) -> Op
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "tests")]
-mod tests {
-    use super::*;
-    use crate::parse::{ArcWords, MachinePosition};
-    use dc_cam::Toolpath;
-    use dc_geometry::Vertex;
-    use dc_project::test_support::{profile_mut, sample_project, sample_tab};
-
-    /// Format 18: the farthest a cut comes from a Bore hole's centre is an
-    /// end of a line, or the arc's point straight away from the centre when
-    /// the arc passes it, so an arc that bulges between its ends and middle
-    /// is measured there.
-    #[test]
-    fn farthest_point_of_an_arc_is_where_it_bulges() {
-        let centre = Point::new(0.0, 0.0);
-        let line = Segment {
-            start: Point::new(1.0, 0.0),
-            end: Point::new(0.0, 2.0),
-            bulge: 0.0,
-        };
-        assert!((farthest_mm(line, centre) - 2.0).abs() < 1e-12);
-        // A counter-clockwise half circle about (1, 0), radius 1, from
-        // (1, −1) to (1, 1): it passes (2, 0), 2 mm out.
-        let half = Segment {
-            start: Point::new(1.0, -1.0),
-            end: Point::new(1.0, 1.0),
-            bulge: 1.0,
-        };
-        assert!((farthest_mm(half, centre) - 2.0).abs() < 1e-9);
-        // The other way round it passes (0, 0) and its ends are farthest.
-        let back = Segment {
-            start: Point::new(1.0, 1.0),
-            end: Point::new(1.0, -1.0),
-            bulge: 1.0,
-        };
-        assert!((farthest_mm(back, centre) - 2.0_f64.sqrt()).abs() < 1e-9);
-        // About the centre itself an arc is its radius out everywhere.
-        let round = Segment {
-            start: Point::new(1.5, 0.0),
-            end: Point::new(0.0, 1.5),
-            bulge: (std::f64::consts::FRAC_PI_2 / 4.0).tan(),
-        };
-        assert!((farthest_mm(round, centre) - 1.5).abs() < 1e-9);
-    }
-
-    /// A 10 mm square at X 100, and a 30 mm square at the origin with a
-    /// 10 mm square hole in its middle (X and Y 10 to 20), as areas with
-    /// the waste inside.
-    fn square_and_frame() -> Vec<Area> {
-        let contours = [
-            Polyline::rect(Point::new(100.0, 0.0), 10.0, 10.0),
-            Polyline::rect(Point::new(0.0, 0.0), 30.0, 30.0),
-            Polyline::rect(Point::new(10.0, 10.0), 10.0, 10.0),
-        ]
-        .into_iter()
-        .map(|p| Contour::new(p).unwrap())
-        .collect();
-        let (regions, _) = nest(contours).unwrap();
-        areas_of(regions, true)
-    }
-
-    /// Review 1.1 (#711). `walls_allow` took a range of the area's edges
-    /// and read one outside them as no wall: the issue's
-    /// `walls_allow_refuses_a_scope_outside_the_area`, written against
-    /// that signature, failed (a cut through the wall was "clear" of the
-    /// edges `4..8` of a square). The range is gone, as every caller
-    /// meant the whole area, so the miss cannot be written: a cut is held
-    /// to every edge of the area, the outline's and each island's.
-    #[test]
-    fn walls_allow_holds_a_cut_to_every_edge_of_the_area() {
-        let areas = square_and_frame();
-        let frame = areas
-            .iter()
-            .find(|a| a.loops.len() == 2)
-            .expect("the frame");
-        let level = |from: (f64, f64), to: (f64, f64)| Segment {
-            start: Point::new(from.0, from.1),
-            end: Point::new(to.0, to.1),
-            bulge: 0.0,
-        };
-        // In the band, 5 mm from the outline and from the island.
-        assert!(walls_allow(
-            frame,
-            level((5.0, 5.0), (25.0, 5.0)),
-            1.0,
-            None
-        ));
-        // Through the outline, the first loop.
-        assert!(!walls_allow(
-            frame,
-            level((5.0, 5.0), (35.0, 5.0)),
-            1.0,
-            None
-        ));
-        // Into the island, the second loop.
-        assert!(!walls_allow(
-            frame,
-            level((5.0, 15.0), (15.0, 15.0)),
-            1.0,
-            None
-        ));
-    }
-
-    /// #711: each loop holds its own edges, in order, and together they
-    /// are the area's, so the lap and On line rules read a loop's edges
-    /// without a range into the area's that could miss.
-    #[test]
-    fn each_loop_owns_its_edges() {
-        for area in square_and_frame() {
-            let owned: Vec<Segment> = area
-                .loops
-                .iter()
-                .flat_map(|l| l.edges.iter().map(|e| e.segment))
-                .collect();
-            let all: Vec<Segment> = area.edges.iter().map(|e| e.segment).collect();
-            assert_eq!(owned, all);
-            assert!(area.loops.iter().all(|l| l.edges.len() == 4));
-        }
-    }
-
-    /// #711: an area with no edge has no bounds to be far from. A point
-    /// at the origin stood in for them, and an outside Profile's cut
-    /// inside a part elsewhere passed that part by; with bounds that are
-    /// everywhere, the part is looked at, and the cut is in it.
-    #[test]
-    fn outside_regions_fails_closed_on_an_area_without_bounds() {
-        let part = Contour::new(Polyline::rect(Point::new(500.0, 500.0), 10.0, 10.0)).unwrap();
-        let (regions, _) = nest(vec![part]).unwrap();
-        let region = regions.into_iter().next().unwrap();
-        let area = |bounds: Rect| Area {
-            region: region.clone(),
-            edges: Vec::new(),
-            corners: Vec::new(),
-            loops: Vec::new(),
-            bounds,
-        };
-        let inside = Segment {
-            start: Point::new(504.0, 505.0),
-            end: Point::new(506.0, 505.0),
-            bulge: 0.0,
-        };
-        let at_origin = area(Rect::from_point(Point::new(0.0, 0.0)));
-        assert!(outside_regions(&[at_origin], inside, 1.0, None));
-        assert!(!outside_regions(&[area(EVERYWHERE)], inside, 1.0, None));
-    }
-
-    /// The sample project's Profile, its tool, and the machine transform.
-    fn sample() -> (Project, Operation, Tool, MachineTransform) {
-        let project = sample_project();
-        let op = project.operations.first().cloned().unwrap();
-        let tool = project.tools.first().cloned().unwrap();
-        let post = project.post_processor.resolve().unwrap();
-        let transform = MachineTransform::new(&project, &post).unwrap();
-        (project, op, tool, transform)
-    }
-
-    /// #711: an inside or outside Profile is held to the trench rule,
-    /// which needs the stock top. Without a thickness the rule was left
-    /// out and the Profile held without it; now it has no material.
-    #[test]
-    fn material_of_fails_closed_on_a_profile_without_a_stock_top() {
-        let (mut project, _, _, _) = sample();
-        for side in [Side::Outside, Side::Inside] {
-            project.stock.thickness_mm = Some(6.0);
-            profile_mut(&mut project).side = side;
-            let op = project.operations.first().cloned().unwrap();
-            assert!(
-                matches!(
-                    Material::of(&project, &op),
-                    Material::Outside { .. }
-                        | Material::Inside {
-                            trench: Some(_),
-                            ..
-                        }
-                ),
-                "{side:?}"
-            );
-            project.stock.thickness_mm = None;
-            assert!(
-                matches!(Material::of(&project, &op), Material::Unresolved),
-                "{side:?}"
-            );
-        }
-    }
-
-    /// #711: the tab rule tells a straight plunge by where a cut starts
-    /// and ends. A cut whose start is not known cannot be told from one,
-    /// so in a span with tabs it does not keep them (it passed before).
-    #[test]
-    fn keeps_tabs_fails_closed_on_an_unknown_position() {
-        let (project, op, tool, transform) = sample();
-        let tabs = tab_spines(&project, &op).unwrap();
-        assert_eq!(tabs.len(), 4);
-        let material = Material::of(&project, &op);
-        let toolpath = Toolpath::default();
-        let span = |tabs| OpSpan {
-            op: &op,
-            tool: &tool,
-            toolpath: &toolpath,
-            material: &material,
-            tabs,
-            lines: 1..2,
-        };
-        // A plunge to the stock bottom in a corner, far from every tab.
-        let known = cut(
-            &transform,
-            1,
-            Point3::new(90.0, 90.0, 11.0),
-            Point3::new(90.0, 90.0, 0.0),
-        );
-        assert!(keeps_tabs(&known, &transform, &span(&tabs), 0.01));
-        for axis in 0..3 {
-            let mut unknown = known;
-            match axis {
-                0 => unknown.from.x = None,
-                1 => unknown.from.y = None,
-                _ => unknown.from.z = None,
-            }
-            assert!(!keeps_tabs(&unknown, &transform, &span(&tabs), 0.01));
-            // A span with no tab has none to keep.
-            assert!(keeps_tabs(&unknown, &transform, &span(&[]), 0.01));
-        }
-    }
-
-    /// #711: the trench rule tells a ramp by where a cut starts and ends.
-    /// A cut whose start is not known cannot be told from one, so it is
-    /// not in the trench (it passed before).
-    #[test]
-    fn trench_allows_fails_closed_on_an_unknown_position() {
-        let (_, _, _, transform) = sample();
-        let rule = TrenchRule {
-            stock_top_mm: TOP_MM,
-            stock_to_leave_mm: 0.0,
-        };
-        let known = cut(
-            &transform,
-            1,
-            Point3::new(0.0, 0.0, TOP_MM + 0.5),
-            Point3::new(20.0, 0.0, TOP_MM - 0.015),
-        );
-        assert!(Trench::new(rule, &[], RADIUS_MM).allows(&known, &transform, 0.01));
-        let mut unknown = known;
-        unknown.from.z = None;
-        assert!(!Trench::new(rule, &[], RADIUS_MM).allows(&unknown, &transform, 0.01));
-    }
-
-    /// #711: a tab request the layout rule cannot place (here a width
-    /// below 0, which the generator refuses) left the Profile with no
-    /// tab to keep. Now the tabs do not resolve, and the run has no
-    /// material.
-    #[test]
-    fn tab_spines_fails_closed_on_a_request_that_cannot_be_placed() {
-        let (mut project, _, tool, _) = sample();
-        profile_mut(&mut project).tabs.as_mut().unwrap().width_mm = -1.0;
-        let op = project.operations.first().cloned().unwrap();
-        assert!(tab_spines(&project, &op).is_none());
-        let (material, tabs) =
-            Material::held_run(&project, &op, &RunLabel::Main, &tool, Board::Female);
-        assert!(matches!(material, Material::Unresolved), "{material:?}");
-        assert!(tabs.is_empty());
-    }
-
-    /// #711: a Profile with a tab on its target but no tool, no depth or
-    /// no stock thickness to build the tab's spine from kept no tab. Now
-    /// its tabs do not resolve. With no tab on its targets there is
-    /// nothing to resolve.
-    #[test]
-    fn tab_spines_fails_closed_on_a_missing_tool_or_floor() {
-        let (mut project, _, _, _) = sample();
-        profile_mut(&mut project).tabs = None;
-        project.tabs = vec![sample_tab("tab1", 25.0, 0.0)];
-        let spines =
-            |project: &Project| tab_spines(project, &project.operations.first().cloned().unwrap());
-        assert_eq!(spines(&project).map(|t| t.len()), Some(1));
-
-        let mut no_tool = project.clone();
-        profile_mut(&mut no_tool).tool = ToolId::new("gone");
-        assert!(spines(&no_tool).is_none());
-        let mut no_depth = project.clone();
-        profile_mut(&mut no_depth).depth_mm = None;
-        assert!(spines(&no_depth).is_none());
-        let mut no_thickness = project.clone();
-        no_thickness.stock.thickness_mm = None;
-        assert!(spines(&no_thickness).is_none());
-
-        no_tool.tabs.clear();
-        assert_eq!(spines(&no_tool).map(|t| t.len()), Some(0));
-    }
-
-    /// #711: a placed tab whose outline is not in its definition, or
-    /// whose instance is gone, was dropped, and the Profile held to the
-    /// tabs that were left. Now the tabs do not resolve.
-    #[test]
-    fn tab_spine_fails_closed_on_an_outline_that_does_not_resolve() {
-        let (mut project, _, _, _) = sample();
-        profile_mut(&mut project).tabs = None;
-        let spines =
-            |project: &Project| tab_spines(project, &project.operations.first().cloned().unwrap());
-        let mut no_profile = project.clone();
-        no_profile.tabs = vec![PlacedTab {
-            profile: 7,
-            ..sample_tab("tab1", 25.0, 0.0)
-        }];
-        assert!(spines(&no_profile).is_none());
-
-        let mut no_instance = project.clone();
-        no_instance.tabs = vec![PlacedTab {
-            instance: InstanceId::new("gone"),
-            ..sample_tab("tab1", 25.0, 0.0)
-        }];
-        // A tab of another instance is none of this Profile's.
-        assert_eq!(spines(&no_instance).map(|t| t.len()), Some(0));
-        profile_mut(&mut no_instance)
-            .targets
-            .push(InstanceId::new("gone"));
-        assert!(spines(&no_instance).is_none());
-    }
-
-    /// A tab on an open outline has a spine for an On line Profile, which
-    /// cuts along it (#175): the outline and its open offsets by the tool
-    /// radius either side. A Left or Right Profile's has one too
-    /// (`tab_spine_on_an_open_path_of_a_left_or_right_profile_is_on_its_cut_side`).
-    /// An inside or outside Profile does not cut an open outline. A
-    /// closed outline that is no contour (a bow tie) leaves an On line
-    /// Profile's tabs unresolved; a Left Profile, which cuts open paths
-    /// only, has no tab on it.
-    #[test]
-    fn tab_spine_on_an_open_outline_is_an_on_line_profiles() {
-        let (mut project, _, _, _) = sample();
-        profile_mut(&mut project).tabs = None;
-        project.tabs = vec![sample_tab("tab1", 20.0, 0.0)];
-        let spines = |project: &Project, side: Side| {
-            let mut project = project.clone();
-            profile_mut(&mut project).side = side;
-            tab_spines(&project, &project.operations.first().cloned().unwrap())
-        };
-        let outline = |project: &mut Project, vertices: &[(f64, f64)], closed: bool| {
-            let vertices = vertices.iter().map(|&(x, y)| Vertex::line(x, y)).collect();
-            project
-                .definitions
-                .get_mut(&DefinitionId::new("d1"))
-                .unwrap()
-                .profiles = vec![Polyline::new(vertices, closed)];
-        };
-
-        let mut open = project.clone();
-        outline(&mut open, &[(0.0, 0.0), (40.0, 0.0)], false);
-        let on_line = spines(&open, Side::OnLine).unwrap();
-        assert_eq!(on_line.len(), 1);
-        let spine = on_line.first().unwrap();
-        assert_eq!(spine.paths.len(), 3, "the line and an offset either side");
-        assert!(spine.paths.iter().all(|p| !p.is_closed()));
-        assert!(spine.laps.is_empty());
-        for side in [Side::Left, Side::Right] {
-            assert_eq!(spines(&open, side).map(|t| t.len()), Some(1), "{side:?}");
-        }
-        for side in [Side::Inside, Side::Outside] {
-            assert_eq!(spines(&open, side).map(|t| t.len()), Some(0), "{side:?}");
-        }
-
-        let mut bow_tie = project.clone();
-        outline(
-            &mut bow_tie,
-            &[(0.0, 0.0), (40.0, 20.0), (40.0, 0.0), (0.0, 20.0)],
-            true,
-        );
-        assert!(spines(&bow_tie, Side::OnLine).is_none());
-        assert_eq!(spines(&bow_tie, Side::Left).map(|t| t.len()), Some(0));
-    }
-
-    /// A tab on an open path of a Left or Right Profile (#207) is measured
-    /// as the generator lays it: along the path offset by the tool radius
-    /// to the cut side, from the point of that offset nearest the tab. The
-    /// sample's 6.35 mm bit and a 40 mm line from (10, 10) in project
-    /// space, with one smooth tab 6 mm wide and 2 mm tall asked for at
-    /// distance 0: cut Left the spine's one path is the line 3.175 mm to
-    /// its left (Y 13.175), Right to its right (Y 6.825), with no path on
-    /// the line or on the other side, and with a 0.5 mm last pass stock to
-    /// leave its stock path is 3.675 mm off. The tab is centred on the
-    /// offset's first point, where its request puts it. The top is held
-    /// for the radius along the offset from there, then slopes to the
-    /// floor over half the tab's width: a cut at the centre or 2.5 mm
-    /// along may not go below the top; one 5.175 mm along, 2 mm down the
-    /// 3 mm slope and the margin (0.1 of the radius) further, may go to
-    /// 0.455 mm above the floor and no lower; one 6.5 mm along is clear.
-    /// A cut on the line itself or on the other side is on no path of
-    /// the tab's.
-    #[test]
-    fn tab_spine_on_an_open_path_of_a_left_or_right_profile_is_on_its_cut_side() {
-        const R_MM: f64 = 6.35 / 2.0;
-        let (mut project, _, _, _) = sample();
-        project
-            .definitions
-            .get_mut(&DefinitionId::new("d1"))
-            .unwrap()
-            .profiles = vec![Polyline::new(
-            vec![Vertex::line(0.0, 0.0), Vertex::line(40.0, 0.0)],
-            false,
-        )];
-        {
-            let op = profile_mut(&mut project);
-            op.direction = dc_project::CutDirection::Conventional;
-            let tabs = op.tabs.as_mut().unwrap();
-            tabs.placement = dc_project::TabPlacement::AtDistances {
-                distances_mm: vec![0.0],
-            };
-            tabs.shape = TabShape::Smooth;
-        }
-        let spines = |project: &Project, side: Side| {
-            let mut project = project.clone();
-            profile_mut(&mut project).side = side;
-            tab_spines(&project, &project.operations.first().cloned().unwrap()).unwrap()
-        };
-        let line_at = |path: &Polyline, y_mm: f64| {
-            let ends: Vec<Point> = path.vertices().iter().map(|v| v.point()).collect();
-            assert_eq!(ends.len(), 2, "{path:?}");
-            assert!(!path.is_closed());
-            for (end, x_mm) in ends.iter().zip([10.0, 50.0]) {
-                assert!(
-                    end.distance_to(Point::new(x_mm, y_mm)) < 1e-9,
-                    "{end:?} is not ({x_mm}, {y_mm})"
-                );
-            }
-        };
-        for (side, sign) in [(Side::Left, 1.0), (Side::Right, -1.0)] {
-            let found = spines(&project, side);
-            assert_eq!(found.len(), 1, "{side:?}");
-            let spine = found.first().unwrap();
-            let y_mm = 10.0 + sign * R_MM;
-            assert_eq!(
-                spine.paths.len(),
-                1,
-                "{side:?}: the cut side's offset alone"
-            );
-            line_at(&spine.paths[0], y_mm);
-            assert_eq!(spine.laps, spine.paths);
-            assert!(spine.stock_paths.is_empty());
-            assert!(
-                spine.point.distance_to(Point::new(10.0, y_mm)) < 1e-9,
-                "{side:?}: the tab is centred at {:?}",
-                spine.point
-            );
-
-            let cuts = |x_mm: f64, y_mm: f64, z_mm: f64| {
-                spine.cuts_into(Point::new(x_mm, y_mm), z_mm, 0.01, &found)
-            };
-            // The top is held for the radius from the centre, less the
-            // margin.
-            for along_mm in [0.0, 2.5] {
-                assert!(cuts(10.0 + along_mm, y_mm, 1.9), "{side:?}, {along_mm} mm");
-                assert!(!cuts(10.0 + along_mm, y_mm, 2.0), "{side:?}, {along_mm} mm");
-            }
-            // On the slope: (5.175 + 0.3175 − 3.175) / 3 of the way down.
-            let allowed_mm = 2.0 * (1.0 - (2.0 + 0.1 * R_MM) / 3.0);
-            assert!((allowed_mm - 0.455).abs() < 1e-3);
-            assert!(cuts(15.175, y_mm, allowed_mm - 0.02), "{side:?}");
-            assert!(!cuts(15.175, y_mm, allowed_mm), "{side:?}");
-            // Clear of the span, and off the tab's path.
-            assert!(!cuts(16.5, y_mm, 0.0), "{side:?}");
-            assert!(!cuts(10.0, 10.0, 0.0), "{side:?}: on the line");
-            assert!(
-                !cuts(10.0, 10.0 - sign * R_MM, 0.0),
-                "{side:?}: the other side"
-            );
-
-            let mut with_last_pass = project.clone();
-            profile_mut(&mut with_last_pass).last_pass = Some(dc_project::LastPass {
-                stock_to_leave_mm: 0.5,
-                thickness_mm: None,
-                reverse: false,
-            });
-            let found = spines(&with_last_pass, side);
-            let spine = found.first().unwrap();
-            assert_eq!(spine.paths.len(), 1);
-            assert_eq!(spine.stock_paths.len(), 1);
-            line_at(&spine.stock_paths[0], 10.0 + sign * (R_MM + 0.5));
-        }
-    }
-
-    /// A tab's span on an open path runs along it only. A rect tab 4 mm
-    /// wide for a 1.5 mm bit holds 2.75 mm either side of its centre. On a
-    /// 20 mm open line with the tab 1 mm from its start, a plunge below
-    /// the tab's top 0.5 mm from the far end is 18.5 mm along from the
-    /// tab, clear of it; measured round, as on a closed path, it would be
-    /// 1.5 mm from it. A plunge 3 mm along is in the span, one 5 mm along
-    /// is clear, and one off the line is not on the path.
-    #[test]
-    fn tab_span_does_not_wrap_round_an_open_path() {
-        let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(20.0, 0.0)], false);
-        let spine = TabSpine {
-            outline_id: (InstanceId::new("i1"), 0),
-            paths: vec![line],
-            laps: Vec::new(),
-            stock_paths: Vec::new(),
-            point: Point::new(1.0, 0.0),
-            hold_mm: 2.75,
-            slope_mm: 0.0,
-            margin_mm: 0.075,
-            shape: TabShape::Rect,
-            floor_z_mm: 0.0,
-            reach_mm: 2.75,
-            radius_mm: 0.75,
-            top_z_mm: 2.0,
-        };
-        let cuts = |x: f64, y: f64| {
-            spine.cuts_into(Point::new(x, y), 0.0, 0.01, std::slice::from_ref(&spine))
-        };
-        assert!(cuts(1.0, 0.0));
-        assert!(cuts(3.0, 0.0));
-        assert!(!cuts(5.0, 0.0));
-        assert!(!cuts(19.5, 0.0));
-        assert!(!cuts(1.0, 1.0));
-        // The same line closed (back along itself) wraps: 19.5 is 1.5
-        // from the tab round its start.
-        let closed = TabSpine {
-            paths: vec![Polyline::new(
-                vec![
-                    Vertex::line(0.0, 0.0),
-                    Vertex::line(20.0, 0.0),
-                    Vertex::line(20.0, 0.5),
-                    Vertex::line(0.0, 0.5),
-                ],
-                true,
-            )],
-            ..spine.clone()
-        };
-        assert!(closed.cuts_into(
-            Point::new(0.0, 0.5),
-            0.0,
-            0.01,
-            std::slice::from_ref(&closed)
-        ));
-    }
-
-    /// #711: a path of a tab's spine with no length has no nearest point,
-    /// so a plunge cannot be measured along it. That read as "not on this
-    /// path"; now the plunge goes below the tab. The same for a lap the
-    /// tab cannot be found on.
-    #[test]
-    fn cuts_into_fails_closed_on_a_path_without_length() {
-        let (project, op, _, _) = sample();
-        let spines = tab_spines(&project, &op).unwrap();
-        let spine = spines.first().cloned().unwrap();
-        // A corner of the stock, far from every tab.
-        let far = Point::new(90.0, 90.0);
-        assert!(!spine.cuts_into(far, 0.0, 0.01, &spines));
-        assert!(!spine.cuts_material(far, 0.0, 0.01, &spines));
-
-        let dot = Polyline::new(vec![Vertex::line(1.0, 1.0), Vertex::line(1.0, 1.0)], false);
-        assert!(nearest_point(&dot, far).is_none());
-        let mut on_path = spine.clone();
-        on_path.paths.push(dot.clone());
-        assert!(on_path.cuts_into(far, 0.0, 0.01, std::slice::from_ref(&on_path)));
-        let mut on_lap = spine;
-        on_lap.laps = vec![dot];
-        assert!(on_lap.cuts_material(far, 0.0, 0.01, std::slice::from_ref(&on_lap)));
-    }
-
-    const TOP_MM: f64 = 20.0;
-    const RADIUS_MM: f64 = 3.6;
-
-    /// The cut from `from` to `to`, project space, written in mm on line
-    /// `line`.
-    fn cut(transform: &MachineTransform, line: usize, from: Point3, to: Point3) -> MachineMove {
-        let at = |p: Point3| {
-            let m = transform.to_machine(p);
-            MachinePosition {
-                x: Some(m.x),
-                y: Some(m.y),
-                z: Some(m.z),
-            }
-        };
-        MachineMove {
-            line,
-            kind: MotionKind::Linear,
-            from: at(from),
-            to: at(to),
-            feed: Some(1000.0),
-            units: Units::Mm,
-            arc: ArcWords::default(),
-        }
-    }
-
-    /// #356: a first pass's ramp leg from 0.5 mm above the stock top to
-    /// 0.015 mm below it, 20 mm along X, then a later pass's ramp leg back
-    /// from its end, from Z `TOP_MM` − 0.1 to X `back_to_x`: whether the
-    /// trench rule allows that later leg, with `arc_fit_mm`. Only the last
-    /// 0.58 mm of the first leg (X 19.42 to 20) is below the stock top.
-    fn later_leg_allowed(back_to_x: f64, arc_fit_mm: Option<f64>) -> bool {
-        let project = sample_project();
-        let post = project.post_processor.resolve().unwrap();
-        let transform = MachineTransform::new(&project, &post).unwrap();
-        let tolerances = Tolerances {
-            flatten_mm: project.flatten_tolerance_mm,
-            arc_fit_mm,
-        };
-        let slack = slack_mm(&post, Units::Mm, tolerances);
-        let rule = TrenchRule {
-            stock_top_mm: TOP_MM,
-            stock_to_leave_mm: 0.0,
-        };
-        let mut trench = Trench::new(rule, &[], RADIUS_MM);
-        let first = cut(
-            &transform,
-            1,
-            Point3::new(0.0, 0.0, TOP_MM + 0.5),
-            Point3::new(20.0, 0.0, TOP_MM - 0.015),
-        );
-        assert!(trench.allows(&first, &transform, slack), "a fresh ramp");
-        trench.lift();
-        let later = cut(
-            &transform,
-            2,
-            Point3::new(20.0, 0.0, TOP_MM - 0.1),
-            Point3::new(back_to_x, 0.0, TOP_MM - 0.2),
-        );
-        trench.allows(&later, &transform, slack)
-    }
-
-    /// #356: a ramp leg above the stock top but for its last 0.015 mm is
-    /// trench only along that last part. A later ramp leg within that part
-    /// is allowed; one that runs past it, along the part above the top,
-    /// fails S9, with arc fitting off and on alike.
-    #[test]
-    fn only_the_part_of_a_cut_below_the_top_is_trench() {
-        for arc_fit_mm in [None, Some(0.01)] {
-            assert!(later_leg_allowed(19.6, arc_fit_mm), "{arc_fit_mm:?}");
-            assert!(!later_leg_allowed(10.0, arc_fit_mm), "{arc_fit_mm:?}");
-            assert!(!later_leg_allowed(19.2, arc_fit_mm), "{arc_fit_mm:?}");
-        }
-    }
-}
+mod tests;
