@@ -20,6 +20,7 @@
 //! upstream does not have.
 
 use crate::block::CutBlock;
+use crate::context::OpContext;
 use crate::entry::{CLEARED_POINT_TOLERANCE_MM, ENTRY_CLEARANCE_MM};
 use crate::error::{BlockProblem, CamError, ShapeRef, at, at_mut};
 use crate::toolpath::{Move, MoveKind, Toolpath};
@@ -131,6 +132,30 @@ pub struct SequenceInput<'a> {
     /// writes between two Pocket blocks, nor a raster Pocket's stay-down
     /// links (`pocket::raster`): both run at the cut's own depth.
     pub groove_link_z_mm: Option<f64>,
+}
+
+impl SequenceInput<'_> {
+    /// The input for `blocks` of the operation `ctx` describes: its safe
+    /// Z, clearance Z, stock top, tool diameter and rates, with what most
+    /// generators leave unset: full depth first, no containment, no
+    /// step-over, nothing cut before and no groove link. A generator sets
+    /// the fields it differs in over this.
+    pub(crate) fn new(ctx: &OpContext<'_>, blocks: Vec<CutBlock>) -> Self {
+        Self {
+            blocks,
+            order: MachiningOrder::FullDepthFirst,
+            containment: &[],
+            safe_z_mm: ctx.safe_z_mm,
+            clearance_z_mm: clearance_z_mm(ctx.project, ctx.thickness_mm, ctx.safe_z_mm),
+            stock_top_mm: ctx.thickness_mm,
+            tool_diameter_mm: ctx.tool.diameter_mm,
+            stepover_mm: 0.0,
+            feed_mm_min: ctx.rates.feed_mm_min,
+            plunge_mm_min: ctx.rates.plunge_mm_min,
+            cut_before: &[],
+            groove_link_z_mm: None,
+        }
+    }
 }
 
 /// The clearance Z, mm, absolute, for [`SequenceInput::clearance_z_mm`]

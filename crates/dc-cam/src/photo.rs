@@ -47,9 +47,9 @@
 //! [`Bitmap::pixels`] and [`sample`] are the only readers of pixel data.
 
 use crate::block::CutBlock;
+use crate::context::rates_of;
 use crate::entry::{ENTRY_CLEARANCE_MM, plunge_limited_feed_mm_min};
 use crate::error::{CamError, PhotoProblem, ShapeRef};
-use crate::profile::rates_of;
 use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::stock_overhang;
 use crate::toolpath::{Move, MoveKind, Toolpath};

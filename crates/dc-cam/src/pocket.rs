@@ -26,11 +26,12 @@ pub mod rest;
 pub mod rings;
 
 use crate::block::CutBlock;
+use crate::context::rates_of;
 use crate::entry::{self, CutSide, EntryDomain, EntryPlan, EntryTool, EntryWarnings};
 use crate::error::{CamError, ShapeRef, at};
 use crate::footprint::footprint_at;
 use crate::passes::pass_z_mm;
-use crate::profile::{contour_contains, crossing_error, rates_of, region_outer, resolve_targets};
+use crate::profile::{contour_contains, crossing_error, region_outer, resolve_targets};
 use crate::relief::{self, Site};
 use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};

@@ -65,9 +65,10 @@ mod tests;
 use std::borrow::Cow;
 use std::ops::Range;
 
+use crate::context::rates_of;
 use crate::error::{CamError, ShapeRef, at};
 use crate::placed_tabs;
-use crate::profile::{generate_profile_below, rates_of};
+use crate::profile::generate_profile_below;
 use crate::run::{RunLabel, ToolRun};
 use crate::stock::StockEdge;
 use crate::vcarve::{

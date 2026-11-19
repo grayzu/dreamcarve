@@ -20,11 +20,11 @@
 //! Y-up or Y-down: the tool follows the line as drawn.
 
 use crate::block::CutBlock;
+use crate::context::{self, OpContext, check_diameter, check_safe_z, rates_of, tool_of};
 use crate::error::{CamError, ShapeRef};
 use crate::passes::pass_z_mm;
-use crate::profile::{containment_pairs, rates_of};
-use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
-use crate::stock::{stock_overhang, swept_bounds};
+use crate::profile::containment_pairs;
+use crate::sequence::{SequenceInput, sequence};
 use crate::tabs::segment_kind;
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
@@ -63,43 +63,13 @@ pub fn generate_engrave(
 /// [`generate_engrave`], before a defect it finds
 /// ([`CamError::Internal`]) names `op`.
 fn engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>), CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: op.tool.clone(),
-        })?;
+    let tool = tool_of(project, &op.id, &op.tool)?;
     let rates = rates_of(tool)?;
-    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
-        return Err(CamError::InvalidToolDiameter {
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            diameter_mm: tool.diameter_mm,
-        });
-    }
-    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
-        return Err(CamError::InvalidSafeZ {
-            op: op.id.clone(),
-            safe_z_mm: op.safe_z_mm,
-        });
-    }
-    let step_down_mm =
-        op.step_down_mm
-            .or(tool.step_down_mm)
-            .ok_or_else(|| CamError::MissingStepDown {
-                op: op.id.clone(),
-                tool: tool.name.clone(),
-                tool_id: tool.id.clone(),
-            })?;
-    let thickness_mm = project
-        .stock
-        .thickness_mm
-        .ok_or(CamError::MissingThickness)?;
-    let depth_mm = op
-        .depth_mm
-        .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
+    check_diameter(tool)?;
+    check_safe_z(&op.id, op.safe_z_mm)?;
+    let step_down_mm = context::step_down_mm(&op.id, op.step_down_mm, tool)?;
+    let thickness_mm = context::thickness_mm(project)?;
+    let depth_mm = context::depth_mm(&op.id, op.depth_mm)?;
     let pass_z = pass_z_mm(
         &op.id,
         thickness_mm,
@@ -107,7 +77,8 @@ fn engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>)
         step_down_mm,
         op.through_cut_allowance_mm,
     )?;
-    let safe_z_mm = thickness_mm + op.safe_z_mm;
+    let ctx = OpContext::new(project, &op.id, tool, rates, thickness_mm, op.safe_z_mm);
+    let safe_z_mm = ctx.safe_z_mm;
 
     let mut warnings = Vec::new();
     let paths = resolve_targets(project, op, &mut warnings)?;
@@ -163,29 +134,13 @@ fn engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>)
         }
     }
     let input = SequenceInput {
-        blocks,
         order: op.machining_order,
         containment: &containment,
-        safe_z_mm,
-        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
-        stock_top_mm: thickness_mm,
-        tool_diameter_mm: tool.diameter_mm,
-        stepover_mm: 0.0,
-        feed_mm_min: rates.feed_mm_min,
-        plunge_mm_min: rates.plunge_mm_min,
-        cut_before: &[],
-        groove_link_z_mm: None,
+        ..SequenceInput::new(&ctx, blocks)
     };
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
-    if let Some(overhang) = swept_bounds(&toolpath, tool.cut_radius_mm())
-        .and_then(|swept| stock_overhang(&project.stock, swept))
-    {
-        return Err(CamError::OffStock {
-            op: op.id.clone(),
-            overhang,
-        });
-    }
+    ctx.check_on_stock(&toolpath, tool.cut_radius_mm())?;
     Ok((toolpath, warnings))
 }
 

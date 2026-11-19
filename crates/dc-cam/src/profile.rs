@@ -26,10 +26,11 @@ mod tab_descent;
 mod waste;
 
 use crate::block::CutBlock;
+use crate::context::rates_of;
 use crate::entry::{
     self, CutSide, EntryKind, EntryTool, EntryWarnings, FallbackReason, MIN_BOUNDARY_SAFETY_MM,
 };
-use crate::error::{CamError, FeedField, ShapeRef, at, at_mut};
+use crate::error::{CamError, ShapeRef, at, at_mut};
 use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadWarnings};
 use crate::overlap::{CutPath, overlap_warnings, region_holds_path, within};
 use crate::relief;
@@ -166,25 +167,6 @@ enum Offset {
     Shrink,
     /// Not at all: the tool centre follows the line.
     None,
-}
-
-/// A rate the user set to a positive number, or `None`.
-fn usable_rate(rate_mm_min: Option<f64>) -> Option<f64> {
-    rate_mm_min.filter(|r| r.is_finite() && *r > 0.0)
-}
-
-/// The rates every cut of this operation uses, exactly as the user set
-/// them on the tool.
-pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
-    let missing = |field| CamError::MissingFeed {
-        tool: tool.name.clone(),
-        tool_id: tool.id.clone(),
-        field,
-    };
-    Ok(LapRates {
-        feed_mm_min: usable_rate(tool.feed_mm_min).ok_or_else(|| missing(FeedField::Feed))?,
-        plunge_mm_min: usable_rate(tool.plunge_mm_min).ok_or_else(|| missing(FeedField::Plunge))?,
-    })
 }
 
 /// Generates the Profile toolpath for `op` in `project`, in project space

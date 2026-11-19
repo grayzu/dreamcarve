@@ -22,6 +22,7 @@
 
 mod block;
 mod bore;
+mod context;
 mod drill;
 mod engrave;
 pub mod entry;

@@ -65,10 +65,11 @@
 //! descend point at the deepest level.
 
 use crate::block::CutBlock;
+use crate::context::rates_of;
 use crate::error::{CamError, ShapeRef};
 use crate::footprint::{capsule, move_bulge};
 use crate::passes::pass_z_mm;
-use crate::profile::{Wall, rates_of, shape_of};
+use crate::profile::{Wall, shape_of};
 use crate::sequence::{SequenceInput, clearance_z_mm, nearest_of, sequence};
 use crate::tabs::LapRates;
 use crate::toolpath::{Move, MoveKind, Toolpath};

@@ -39,9 +39,10 @@ mod tests;
 mod written;
 
 use crate::block::CutBlock;
+use crate::context::rates_of;
 use crate::error::{CamError, ShapeRef, at};
 use crate::pocket::rest::Reference;
-use crate::profile::{crossing_error, rates_of, region_outer};
+use crate::profile::{crossing_error, region_outer};
 use crate::run::{RunLabel, ToolRun};
 use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
