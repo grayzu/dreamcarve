@@ -42,7 +42,27 @@ fn near_project() -> Project {
 /// [`SMALL_V_BIT_MM`] across, `t2` an end mill [`SMALL_END_MILL_MM`]
 /// across.
 fn small_bits_project() -> Project {
-    let mut p = near_project();
+    with_small_bits(near_project())
+}
+
+/// The star with its circle centred at `at` on `width_mm` × `height_mm`
+/// stock, with the small bits ([`small_bits_project`]). Each tip is 30 mm
+/// from the centre, so a centre 32 mm from an edge leaves a tip
+/// [`NEAR_MM`] from it and the 8 mm band 6 mm past it.
+fn small_bits_star(at: (f64, f64), width_mm: f64, height_mm: f64) -> Project {
+    with_small_bits(project_of(
+        vec![
+            polygon(&star_points()),
+            Polyline::circle(Point::new(0.0, 0.0), CIRCLE_MM),
+        ],
+        at,
+        width_mm,
+        height_mm,
+    ))
+}
+
+/// `p` with the small bits for its tools.
+fn with_small_bits(mut p: Project) -> Project {
     p.tools = vec![
         Tool {
             diameter_mm: SMALL_V_BIT_MM,
@@ -78,6 +98,129 @@ fn small_cut_out_male() -> InlayOp {
         cut_out: cut_out_male().cut_out,
         ..small_inlay(Board::Male)
     }
+}
+
+/// [`small_cut_out_male`] with `placement` for its tab request.
+fn small_cut_out_male_with(placement: dc_project::TabPlacement) -> InlayOp {
+    let mut op = small_cut_out_male();
+    if let Some(tabs) = op.cut_out.as_mut().and_then(|c| c.tabs.as_mut()) {
+        tabs.placement = placement;
+    }
+    op
+}
+
+/// The cut-out of `op` in `project` as it is cut (#710): its tool-centre
+/// paths, and where the tabs its request places are centred, mm in
+/// project space.
+fn cut_out_tabs(project: &Project, op: &InlayOp) -> (Vec<Polyline>, Vec<Point>) {
+    let band = male_band(&with_op(project, Operation::Inlay(op.clone())), op).expect("a male band");
+    let side = side(project, op, Board::Male, &mut Vec::new()).expect("the side resolves");
+    let project = &on_board(project, op, Board::Male);
+    let cut = op.cut_out.as_ref().expect("a cut-out");
+    let diameter_mm = project
+        .tools
+        .iter()
+        .find(|t| t.id == cut.tool)
+        .expect("the cut-out's tool")
+        .diameter_mm;
+    let paths = cut_out_paths(
+        &side.band_edge,
+        &band,
+        diameter_mm,
+        band.board(&project.stock),
+        project.flatten_tolerance_mm,
+    );
+    let thickness_mm = project.stock.thickness_mm.expect("a thickness");
+    let (copy, profile) = cut_out_profile(project, op, cut, &paths, thickness_mm);
+    let tabs = cut.tabs.as_ref().expect("tabs");
+    let placed = crate::placed_tabs::place(&copy, &profile.id, tabs).expect("placed");
+    let points = placed
+        .tabs
+        .iter()
+        .map(|t| Point::new(t.x_mm, t.y_mm))
+        .collect();
+    (paths, points)
+}
+
+/// Where a Profile that carries `op`'s cut-out's tab request, On line on
+/// the closed `paths`, has its tabs placed ([`crate::placed_tabs::place`],
+/// a count for each path): what a cut-out placed before #710.
+fn requested_tabs(project: &Project, op: &InlayOp, paths: &[Polyline]) -> Vec<Point> {
+    let project = &on_board(project, op, Board::Male);
+    let cut = op.cut_out.as_ref().expect("a cut-out");
+    let thickness_mm = project.stock.thickness_mm.expect("a thickness");
+    let (mut copy, mut profile) = cut_out_profile(project, op, cut, paths, thickness_mm);
+    copy.tabs.clear();
+    profile.tabs.clone_from(&cut.tabs);
+    copy.operations = vec![Operation::Profile(profile.clone())];
+    let tabs = cut.tabs.as_ref().expect("tabs");
+    crate::placed_tabs::place(&copy, &profile.id, tabs)
+        .expect("placed")
+        .tabs
+        .iter()
+        .map(|t| Point::new(t.x_mm, t.y_mm))
+        .collect()
+}
+
+/// How many of `tabs` sit on each of `paths`: each tab counts for the
+/// path nearest it.
+fn tabs_per_path(paths: &[Polyline], tabs: &[Point]) -> Vec<usize> {
+    let mut counts = vec![0; paths.len()];
+    for &tab in tabs {
+        let (nearest, _) = paths
+            .iter()
+            .enumerate()
+            .map(|(i, path)| (i, distance_to(std::slice::from_ref(path), tab)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .expect("a path");
+        counts[nearest] += 1;
+    }
+    counts
+}
+
+/// Where the cut-out run of `runs` lifts over a tab: the middle of each
+/// stretch it cuts level at `top_z_mm`, the tabs' top, one per place (a
+/// tab is lifted over once by every pass below its top). A stretch longer
+/// than 20 mm is a pass at that height, not a tab.
+fn tab_lifts(runs: &[ToolRun], top_z_mm: f64) -> Vec<Point> {
+    let toolpath = &runs
+        .iter()
+        .find(|r| matches!(r.label, RunLabel::CutOut(_)))
+        .expect("a cut-out run")
+        .toolpath;
+    let mut stretches: Vec<(Point, Point, f64)> = Vec::new();
+    let mut on_top = false;
+    let mut from: Option<Point3> = None;
+    for mv in &toolpath.moves {
+        let start = from;
+        from = Some(mv.to);
+        let Some(a) = start else {
+            continue;
+        };
+        let level = mv.is_cut()
+            && (a.z - top_z_mm).abs() < 1e-9
+            && (mv.to.z - top_z_mm).abs() < 1e-9
+            && a.xy().distance_to(mv.to.xy()) > 1e-9;
+        if level {
+            let length_mm = a.xy().distance_to(mv.to.xy());
+            match stretches.last_mut() {
+                Some(last) if on_top => {
+                    last.1 = mv.to.xy();
+                    last.2 += length_mm;
+                }
+                _ => stretches.push((a.xy(), mv.to.xy(), length_mm)),
+            }
+        }
+        on_top = level;
+    }
+    let mut places: Vec<Point> = Vec::new();
+    for (a, b, length_mm) in stretches {
+        let middle = Point::new(f64::midpoint(a.x, b.x), f64::midpoint(a.y, b.y));
+        if length_mm < 20.0 && places.iter().all(|p| p.distance_to(middle) > 1.0) {
+            places.push(middle);
+        }
+    }
+    places
 }
 
 /// Every sample of every cutting move of `run` ([`cut_samples`]) whose
@@ -257,7 +400,9 @@ fn cut_out_runs_edge_to_edge_when_clipped() {
     let (copy, profile) = cut_out_profile(&project, &op, cut, &paths, thickness_mm);
     let tabs = cut.tabs.as_ref().expect("tabs");
     let placed = crate::placed_tabs::place(&copy, &profile.id, tabs).expect("placed");
-    assert!(!placed.tabs.is_empty(), "the open paths hold tabs");
+    // #710: the request's four, on the one piece the left edge leaves.
+    assert_eq!(paths.len(), 1, "one edge clips the band into one piece");
+    assert_eq!(placed.tabs.len(), 4, "the four tabs asked for");
     for tab in &placed.tabs {
         let at = Point::new(tab.x_mm, tab.y_mm);
         let gap = distance_to(&paths, at);
@@ -266,6 +411,122 @@ fn cut_out_runs_edge_to_edge_when_clipped() {
             "a tab at {at:?} is {gap} mm off the paths"
         );
         assert!(at.x >= radius_mm, "a tab at {at:?} is off the stock");
+    }
+}
+
+/// #710: a cut-out is one cut, however many pieces the board's edge leaves
+/// of it. The star 2 mm from the left, bottom and top edges of 100 × 64 mm
+/// stock: its band is clipped at all three, so its cut-out is three open
+/// paths, and a request for four tabs places four on the cut-out as a
+/// whole (before, four were asked of each piece). Each is on one of the
+/// paths and on the stock, and the run lifts over those four places and
+/// no other.
+#[test]
+fn clipped_cut_out_places_the_tabs_it_was_asked_for() {
+    let project = small_bits_star((30.0 + NEAR_MM, 30.0 + NEAR_MM), 100.0, 64.0);
+    let op = small_cut_out_male();
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let radius_mm = SMALL_END_MILL_MM / 2.0;
+    let (paths, tabs) = cut_out_tabs(&project, &op);
+    assert!(paths.len() >= 3, "{} pieces", paths.len());
+    assert!(paths.iter().all(|p| !p.is_closed()), "open pieces");
+    assert_eq!(tabs.len(), 4, "the four tabs asked for: {tabs:?}");
+    let (w, h) = (project.stock.width_mm, project.stock.height_mm);
+    for &tab in &tabs {
+        let gap = distance_to(&paths, tab);
+        assert!(gap <= tolerance_mm, "a tab at {tab:?} is {gap} mm off");
+        assert!(
+            tab.x >= radius_mm
+                && tab.x <= w - radius_mm
+                && tab.y >= radius_mm
+                && tab.y <= h - radius_mm,
+            "a tab at {tab:?} is off the stock"
+        );
+    }
+    let (runs, _) = inlay_runs(&project, &op);
+    let lifts = tab_lifts(&runs, TAB_TOP_MM);
+    assert_eq!(lifts.len(), 4, "the run lifts over four tabs: {lifts:?}");
+    for lift in &lifts {
+        assert!(
+            tabs.iter().any(|t| t.distance_to(*lift) <= TAB_WIDTH_MM),
+            "the run lifts at {lift:?}, where no tab is placed: {tabs:?}"
+        );
+    }
+}
+
+/// #710: the pieces share the count by length. The star 2 mm from the
+/// left and bottom edges of 100 × 100 mm stock: its cut-out is two open
+/// paths, a short one between those two tips and a long one round the
+/// other three quarters. Of four tabs the long one holds more than the
+/// short one, and they hold four between them.
+#[test]
+fn clipped_cut_out_shares_its_tabs_by_length() {
+    let project = small_bits_star((30.0 + NEAR_MM, 30.0 + NEAR_MM), 100.0, 100.0);
+    let op = small_cut_out_male();
+    let (paths, tabs) = cut_out_tabs(&project, &op);
+    assert_eq!(paths.len(), 2, "two pieces");
+    let lengths: Vec<f64> = paths.iter().map(Polyline::length_mm).collect();
+    let (short, long) = if lengths[0] < lengths[1] {
+        (0, 1)
+    } else {
+        (1, 0)
+    };
+    assert!(
+        lengths[long] > 2.0 * lengths[short],
+        "clearly different lengths: {lengths:?}"
+    );
+    let counts = tabs_per_path(&paths, &tabs);
+    assert_eq!(counts.iter().sum::<usize>(), 4, "{counts:?}");
+    assert!(counts[long] > counts[short], "{counts:?} on {lengths:?}");
+    let (runs, _) = inlay_runs(&project, &op);
+    assert_eq!(tab_lifts(&runs, TAB_TOP_MM).len(), 4);
+}
+
+/// #710: tabs at distances are placed once each too, the distances
+/// counted along the pieces end to end: two distances on the three-piece
+/// cut-out place two tabs (before, two on each piece).
+#[test]
+fn clipped_cut_out_places_tabs_at_distances_once() {
+    let project = small_bits_star((30.0 + NEAR_MM, 30.0 + NEAR_MM), 100.0, 64.0);
+    let op = small_cut_out_male_with(dc_project::TabPlacement::AtDistances {
+        distances_mm: vec![15.0, 120.0],
+    });
+    let (paths, tabs) = cut_out_tabs(&project, &op);
+    assert!(paths.len() >= 3, "{} pieces", paths.len());
+    assert_eq!(tabs.len(), 2, "one tab for each distance: {tabs:?}");
+    let (runs, _) = inlay_runs(&project, &op);
+    assert_eq!(tab_lifts(&runs, TAB_TOP_MM).len(), 2);
+}
+
+/// #710: a cut-out the board does not clip places what it placed before:
+/// the tabs `placed_tabs::place` lays for its request on its closed
+/// path, the same count at the same points. The star's (V wall and open
+/// edge) and the tutorial's "DC".
+#[test]
+fn unclipped_cut_out_tabs_are_unchanged() {
+    let (dc, dc_op) = fixture(include_str!("../../../../../tests/fixtures/dc.dcv"));
+    let star = star_project(THICKNESS_MM);
+    let open = InlayOp {
+        clearing: vec![clearing_pass()],
+        ..cut_out_male()
+    };
+    let cases = [
+        ("DC", dc, dc_op),
+        ("star open", star.clone(), open),
+        ("star V wall", star, cut_out_male()),
+    ];
+    for (name, project, op) in cases {
+        let (paths, tabs) = cut_out_tabs(&project, &op);
+        assert!(paths.iter().all(Polyline::is_closed), "{name}");
+        let before = requested_tabs(&project, &op, &paths);
+        assert_eq!(tabs.len(), before.len(), "{name}: {tabs:?} for {before:?}");
+        assert_eq!(tabs.len(), 4 * paths.len(), "{name}: four on each outline");
+        for (tab, was) in tabs.iter().zip(&before) {
+            assert!(
+                tab.distance_to(*was) <= 1e-9,
+                "{name}: a tab at {tab:?} was at {was:?}"
+            );
+        }
     }
 }
 

@@ -815,11 +815,16 @@ fn generated_cut_outs_pass() {
 /// small bits, as the stock-boundary rule holds a V-bit to its full
 /// radius: `t6` a 60° V-bit 3.175 mm across, `t7` a 1.5 mm end mill.
 fn near_edge(width_mm: f64) -> Project {
-    let mut p = drawn(
+    with_small_bits(drawn(
         vec![Polyline::rect(Point::new(28.0, 20.0), 30.0, 10.0)],
         width_mm,
         50.0,
-    );
+    ))
+}
+
+/// `p` with the small bits: `t6` a 60° V-bit 3.175 mm across, `t7` a
+/// 1.5 mm end mill.
+fn with_small_bits(mut p: Project) -> Project {
     p.tools.push(Tool {
         id: ToolId::new("t6"),
         name: "60° V-bit, 3.175 mm".into(),
@@ -928,6 +933,75 @@ fn cut_out_off_the_stock_still_fails() {
     let label = RunLabel::CutOut(ToolId::new("t7"));
     let along_the_edge = program_at(59.25, 22.0, "G1 Z-12.2 F300\nY28 F1000\n");
     assert_off(check_run(&along_the_edge, &narrow, &op, &label, "t7"), 6);
+}
+
+/// The inlay test part's star, 60 mm tip to tip, centred at (32, 32) on
+/// 100 × 64 mm stock with the small bits ([`with_small_bits`]): its left,
+/// bottom and top tips are 2 mm from the board's edges, so [`near_male`]'s
+/// 8 mm band is clipped at all three and its cut-out is three open paths.
+fn star_near_three_edges() -> Project {
+    let inner = 12.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let points = [
+        (30.0, 0.0),
+        (inner, inner),
+        (0.0, 30.0),
+        (-inner, inner),
+        (-30.0, 0.0),
+        (-inner, -inner),
+        (0.0, -30.0),
+        (inner, -inner),
+    ];
+    let star = Polyline::new(
+        points
+            .iter()
+            .map(|&(x, y)| Vertex::line(x + 32.0, y + 32.0))
+            .collect(),
+        true,
+    );
+    with_small_bits(drawn(
+        vec![star, Polyline::circle(Point::new(32.0, 32.0), 6.0)],
+        100.0,
+        64.0,
+    ))
+}
+
+/// How often `program` rises from `from_z` straight to `to_z` (machine
+/// Z as written, three decimals): on a cut-out's last pass, once for each
+/// rect tab it lifts over.
+fn rises(program: &str, from_z: &str, to_z: &str) -> usize {
+    let mut at: Option<&str> = None;
+    let mut count = 0;
+    for line in program.lines() {
+        let Some(z) = line
+            .split_whitespace()
+            .find_map(|word| word.strip_prefix('Z'))
+        else {
+            continue;
+        };
+        if at == Some(from_z) && z == to_z {
+            count += 1;
+        }
+        at = Some(z);
+    }
+    count
+}
+
+/// #710: a clipped cut-out's tabs are counted for the cut-out, not for
+/// each piece the board's edge leaves of it. The star near three edges
+/// exports through the whole safety pass, and on its last pass, at Z
+/// −12.2, the cut-out rises to the tabs' top (2 mm above the board's
+/// bottom, Z −10) four times, once for each tab its request asks for
+/// (before, once for each of the four asked of every piece that could
+/// hold them). The safety pass places the same four on the paths it
+/// derives itself.
+#[test]
+fn clipped_cut_out_with_tabs_passes_safety() {
+    let project = star_near_three_edges();
+    let op = near_male(true);
+    let programs = export_inlay(&project, &op).expect("the clipped male exports");
+    let cut_out = programs.last().expect("a cut-out program");
+    assert!(cut_out.contains("cut-out t7"), "{cut_out}");
+    assert_eq!(rises(cut_out, "-12.200", "-10.000"), 4, "{cut_out}");
 }
 
 // #479: an Inlay's parts closer than the merge distance are one shape.
