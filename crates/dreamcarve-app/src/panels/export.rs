@@ -679,11 +679,10 @@ fn split(ui: &mut Ui, app: &App, export: &Export, out: &mut Vec<Action>) {
     let m6 = project_model::offers(project).m6;
     // The choices are sentences, so the list takes the row's whole width,
     // under its label.
-    let label = row::label(
+    let label = row::caption(
         ui,
         strings.get(StrKey::ExportSplit),
         strings.get(StrKey::ExportSplitHelp),
-        None,
     );
     egui::ComboBox::from_id_salt("export.split")
         .icon(crate::widgets::icon::combo_chevron)
@@ -802,7 +801,7 @@ fn programs(ui: &mut Ui, app: &App, ready: &Ready, stem: &str) {
         egui::Frame::NONE
             .fill(fill)
             .corner_radius(theme::CONTROL_RADIUS_PX)
-            .inner_margin(egui::Margin::symmetric(8, 8))
+            .inner_margin(egui::Margin::symmetric(8, 6))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 // One text line high, so the three lines sit evenly.

@@ -7,7 +7,7 @@
 //! written. A card inside the step's card holds **Status**, one 15-px
 //! SemiBold line with `circle-check`, *Done* at its right (which brings
 //! the plan back) and the CLI's own lines under it; **Files**, a table
-//! of 32-px rows (number, file name in the monospace face, tool, time
+//! of 30-px rows (number, file name in the monospace face, tool, time
 //! right-aligned) grouped by board with an Inlay, and the totals; and the
 //! **Folder**, one mono line cut at its start, with a `copy` button, over
 //! *Show in folder* and *Save setup sheet…*. Under the card, **Run
@@ -32,9 +32,9 @@ use crate::widgets::row;
 use crate::widgets::section::section;
 
 /// A Files row, px.
-const ROW_PX: f32 = 32.0;
+const ROW_PX: f32 = 30.0;
 /// The Files table's header row, px.
-const HEADER_ROW_PX: f32 = 26.0;
+const HEADER_ROW_PX: f32 = 24.0;
 /// The result card's padding, px.
 const PADDING_PX: i8 = 16;
 /// The number column, px.
@@ -62,7 +62,6 @@ pub(crate) fn show(
             ui.add_space(PART_GAP_PX - 4.0);
             folder(ui, strings, result, out);
         });
-    ui.add_space(4.0);
     let toggled = section(
         ui,
         egui::Id::unique("export.result.instructions"),

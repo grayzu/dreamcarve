@@ -24,6 +24,8 @@ use crate::widgets::unit_field::HEIGHT_PX;
 pub(crate) const LABEL_PX: f32 = 112.0;
 /// The gap between a label and its field, px.
 pub(crate) const GAP_PX: f32 = 8.0;
+/// A caption's height, px: a label on a line of its own.
+const CAPTION_PX: f32 = 22.0;
 /// How far a list row's surface sits in from its card's edges, px: with
 /// the row's own 8 px of padding, its content starts at the card padding.
 pub(crate) const INSET_PX: f32 = 8.0;
@@ -104,6 +106,41 @@ pub(crate) fn label(ui: &mut Ui, text: &str, help: &str, path: Option<&str>) -> 
             );
         }
     })
+}
+
+/// A field's label on a line of its own, over a control that takes the
+/// row's whole width (a list whose choices are sentences): `text` across
+/// the width, a text line high, with `help` on hover as [`label`] shows
+/// it.
+pub(crate) fn caption(ui: &mut Ui, text: &str, help: &str) -> Response {
+    let palette = Palette::current(ui);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), CAPTION_PX), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
+    let colour = if ui.is_enabled() {
+        palette.text_primary
+    } else {
+        palette.text_disabled
+    };
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), TextStyle::Body.resolve(ui.style()), colour);
+    let at = egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+    let width = galley.size().x;
+    ui.painter().galley(at, galley, colour);
+    if response.hovered() {
+        let y = rect.center().y + 8.0;
+        ui.painter().extend(egui::Shape::dashed_line(
+            &[
+                egui::pos2(rect.left(), y),
+                egui::pos2(rect.left() + width, y),
+            ],
+            Stroke::new(1.0, palette.text_disabled),
+            1.0,
+            2.0,
+        ));
+    }
+    response.on_hover_text(help)
 }
 
 /// A file path on one line in the mono face, cut at its start with an
