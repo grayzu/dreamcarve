@@ -35,7 +35,7 @@ use crate::mixed::{common_bool, common_number};
 use crate::units;
 
 /// Decimals a placement field shows, trailing zeros dropped: a thousandth
-/// of an inch in mm, a tenth of a thou in inches (as the Tools tab's
+/// of an inch in mm, a tenth of a thou in inches (as the Tools step's
 /// fields).
 const FIELD_DECIMALS: usize = 4;
 /// Two rotations within this many degrees are the same rotation, for

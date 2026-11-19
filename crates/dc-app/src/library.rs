@@ -635,7 +635,7 @@ pub fn edit(
     set_tool(lib, id, tool)
 }
 
-/// *New tool* in the library (capability 64a): the Tools tab's
+/// *New tool* in the library (capability 64a): the Tools step's
 /// placeholder (63; an end mill, 6.35 mm, 2 flutes, no rate), named
 /// `tool<n>` within the library ([`crate::tools::new_tool_name`]), added
 /// at the end under the next `lt<n>` id with no `source`. Returns the

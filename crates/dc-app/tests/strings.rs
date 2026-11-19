@@ -222,7 +222,7 @@ fn placeholders_are_filled() {
 /// never *Remove*, names a deletion. The values that say `Remove` are the
 /// target actions (the target-editing bar, and the Design Tree's `Remove
 /// from “{name}”` and its hover text), which take a shape out of an
-/// operation's targets and delete nothing; the Tools tab's, the Tool
+/// operation's targets and delete nothing; the Tools step's, the Tool
 /// Library's and the undo step's deletions read *Delete*.
 #[test]
 fn no_deletion_is_labelled_remove() {

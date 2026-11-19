@@ -1,9 +1,10 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The Project panel's model (`docs/specs/phase-4/functional.md`,
-//! capabilities 60, 61 and 62; mock-up `03-stock-origin.svg`): every
-//! field the panel shows, the `.dcv` field it writes, the text it shows,
+//! The project's settings as the Stock and Export steps show them
+//! (`docs/specs/phase-4/functional.md`, capabilities 60, 61 and 62;
+//! mock-up `03-stock-origin.svg`; `redesign.md`, "The steps"): every
+//! field the two steps show, the `.dcv` field it writes, the text it shows,
 //! the command a typed value becomes, the validation message located on
 //! it, and what the post-processor's definition offers. The shell draws
 //! the rows and runs the commands; nothing here holds state.
@@ -888,9 +889,10 @@ impl Group {
     }
 }
 
-/// Whether a Project Settings field has an error (the thickness unset is
-/// one), so the panel opens (functional spec, capability 60). Errors
-/// about an operation, a tool or a shape are not the panel's.
+/// Whether a field of the project's settings (the Stock step's, or the
+/// Export step's output settings) has an error; the thickness unset is
+/// one (functional spec, capability 60). Errors about an operation, a
+/// tool or a shape are not among them.
 #[must_use]
 pub fn settings_error(findings: &[Finding]) -> bool {
     findings
@@ -898,8 +900,8 @@ pub fn settings_error(findings: &[Finding]) -> bool {
         .any(|f| f.tier == Tier::Error && f.field.as_deref().is_some_and(is_settings_path))
 }
 
-/// Whether `path`, as validation names a field, is one Project Settings
-/// edits.
+/// Whether `path`, as validation names a field, is one of the project's
+/// settings.
 fn is_settings_path(path: &str) -> bool {
     ["stock", "origin", "heights", "post_processor"]
         .iter()

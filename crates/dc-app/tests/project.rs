@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Slice 7 of phase 4 (`docs/specs/phase-4/design.md`, "Test plan →
-//! Project panel"; #536): the Project panel's fields write the `.dcv`
+//! Project panel"; #536): the fields of the project's settings, which the
+//! Stock and Export steps show, write the `.dcv`
 //! fields `check` reads (functional spec, capability 60, acceptance 69),
 //! offer the tool-change height, `M6` and canned cycles only where the
 //! post-processor's definition has them, switch post-processors as
@@ -525,9 +526,9 @@ fn thickness_unset_disables_export() {
     assert_eq!(project::export_refusal(&h.app), None);
 }
 
-/// Slice 23 (#615), capability 60: Project Settings opens on an error in
-/// one of its own fields (the thickness unset), not on an operation's or
-/// a tool's, and not on a warning.
+/// Slice 23 (#615), capability 60: an error in a field of the project's
+/// settings (the thickness unset) is told from an operation's or a
+/// tool's, and from a warning.
 #[test]
 fn settings_error_is_a_project_settings_field_only() {
     let mut h = Harness::open(&plaque_bytes()).expect("the plaque opens");

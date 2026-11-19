@@ -208,7 +208,7 @@ fn dimension(mm: f64, units: Units) -> String {
 }
 
 /// Capability 50b, acceptance 94: for every fixture, generated or not, no
-/// cell's text contains the stock's dimensions; Project Settings shows
+/// cell's text contains the stock's dimensions; the Stock step shows
 /// them.
 #[test]
 fn stock_size_is_never_a_cell() {

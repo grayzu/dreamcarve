@@ -612,7 +612,7 @@ fn revert_restores_the_tool_as_opened() {
     assert!(session.revert(&with_new, &new_id).is_err());
 }
 
-/// Capability 64a: *New tool* in the library is the Tools tab's `tool<n>`
+/// Capability 64a: *New tool* in the library is the Tools step's `tool<n>`
 /// placeholder (63), numbered within the library, under the next library
 /// id; *Duplicate* copies a tool below itself as `<name> (2)` with a new
 /// id and no `source`, every value kept.
@@ -853,7 +853,7 @@ fn tapered_ball_nose_row_shows_cutting_diameter_tip_and_angle_per_side() {
     assert_eq!(cell_of(&unset, Column::Feed, Units::Mm), Cell::Unset);
     assert_eq!(cell_of(&unset, Column::Plunge, Units::Mm), text("508"));
 
-    // The Tools tab's row: the cutting diameter, the tip, the angle per
+    // The Tools step's row: the cutting diameter, the tip, the angle per
     // side, the number.
     assert_eq!(
         dc_app::tools::row_detail(&strings, &tbn, Units::Mm),

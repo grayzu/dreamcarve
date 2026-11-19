@@ -24,8 +24,8 @@
 //! A locked selection's handles are grey and every transform is refused
 //! with the reason in the status bar. Every position is the camera's: Y
 //! flips once, in `dc_app::Camera::to_screen`, which the painter and the
-//! pointer go through; the GPU never works in Y-down. While the Project
-//! panel's *Click on the view* is armed, a click sets the park point
+//! pointer go through; the GPU never works in Y-down. While the Export
+//! step's *Click on the view* is armed, a click sets the park point
 //! instead of the selection and Escape disarms it (#536). While an
 //! operation is selected, hovered in the list or having its targets
 //! edited, its targets draw over the toolpaths in its colour and the

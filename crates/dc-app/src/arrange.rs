@@ -5,7 +5,7 @@
 //! rotate the selection 90° either way or by a typed angle, flip it
 //! horizontally or vertically, or centre it on the stock. Rotation and
 //! mirroring are actions on the selection, not properties of a shape
-//! (58), so the toolbar's Arrange group, the Arrange menu and the
+//! (58), so the Inspector's Arrange group, the Arrange menu and the
 //! shortcuts R, Shift R, Ctrl Shift H and Ctrl Shift V all ask for an
 //! [`Action`] and this module turns it into one command.
 //!
@@ -25,7 +25,7 @@ use crate::strings::{StrKey, Strings};
 /// A quarter turn, degrees.
 const QUARTER_DEG: f64 = 90.0;
 
-/// The axis a flip mirrors across, named as the toolbar names the flip.
+/// The axis a flip mirrors across, named as the Arrange group names the flip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flip {
     /// Left to right: a scale of −1 in X about the box's centre.
@@ -37,7 +37,7 @@ pub enum Flip {
 /// What the Arrange group, menu or a shortcut asks for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Action {
-    /// The toolbar's Rotate, R: 90° clockwise.
+    /// The Arrange group's Rotate, R: 90° clockwise.
     RotateClockwise,
     /// Shift R: 90° anticlockwise.
     RotateAnticlockwise,

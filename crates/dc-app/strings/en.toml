@@ -69,9 +69,9 @@ rotate_anticlockwise = "Rotate {subject} {angle}° anticlockwise"
 flip_horizontal = "Flip {subject} horizontally"
 flip_vertical = "Flip {subject} vertically"
 
-# Project Settings (slice 7, #536; slice 23, #615; functional spec,
-# capabilities 53, 60 and 62; mock-up 03): the upper collapsible panel of
-# the left column's lower half. Each field has a label and a one-sentence
+# The project's settings (slice 7, #536; slice 23, #615; functional spec,
+# capabilities 53, 60 and 62; mock-up 03): the Stock step's fields and the
+# Export step's output settings. Each field has a label and a one-sentence
 # `_help`, shown on the label's hover above the `.dcv` field it writes
 # (`experience.md`, section 7).
 [project]
@@ -169,7 +169,7 @@ canned = "Canned drill cycles"
 canned_help = "Write Drill operations as the controller's canned cycles."
 no_canned = "Not offered: {name} has no canned cycles."
 
-# The app's window (slice 3, #532): title, menus, toolbar, panels, status
+# The app's window (slice 3, #532): title, menus, header, panels, status
 # bar, the empty state, the unsaved-changes sheet, file dialogs, and the
 # messages the status bar shows after a file action.
 [app]
@@ -507,8 +507,8 @@ summary_separator = ", "
 list_separator = ", "
 open_note = "Show this note in the Warnings drawer"
 
-# The CAM panel's Tools tab (slice 8, #537; functional spec, capability
-# 63): the toolbar, the rows, the editor's labels and the messages the
+# The Tools step (slice 8, #537; functional spec, capability 63): its
+# buttons, the rows, the editor's labels and the messages the
 # status bar shows after Save to library. Slice 29 (#621): *New tool*, and
 # *Delete*, never *Remove*, for deleting.
 [app.tools]
@@ -549,7 +549,7 @@ saved = "Saved “{name}” to the library as {id}"
 already_saved = "“{name}” is already in the library as {id}"
 save_failed = "Cannot save “{name}” to the library: {reason}"
 
-# Cutter types, in the Tools tab and the Tool Library.
+# Cutter types, in the Tools step and the Tool Library.
 [app.kind]
 all = "All types"
 end_mill = "End mill"
@@ -653,7 +653,7 @@ details = "Details"
 details_tooltip = "Show what this import did"
 
 # The Operations list (slice 10, #539; functional spec, capability 65;
-# experience.md, section 7, "List row"): its toolbar, the Add menu with the
+# experience.md, section 7, "List row"): its buttons, the Add menu with the
 # reasons a kind is below the divider, each row's second line and controls.
 [operations]
 add = "Add"
@@ -750,7 +750,7 @@ clearing_delete = "Delete pass {n}"
 clearing_add = "Add pass"
 clearing_add_hint = "picks the next smaller end mill"
 # Slice 26 (#618): the header's inline rename, the required-field look
-# (also the Project Settings' and the Tools tab's), and a closed group's
+# (also the Stock step's and the Tools step's), and a closed group's
 # summary: how a value, a switch off and a list read in it.
 rename = "Rename {name}"
 required = "Required"
@@ -1185,7 +1185,7 @@ picture_not_carved = "No Photo V-Carve carves the selection"
 picture_hover = "Picture “{name}”"
 
 # The Arrange actions (slice 25, #617; functional spec, capability 58a;
-# experience.md, section 7, "Split button"): the toolbar's group, its
+# experience.md, section 7, "Split button"): the Inspector's group, its
 # Rotate popover, the Arrange menu, why the group is disabled, and the
 # status bar's line naming locked shapes that stayed.
 [arrange]
