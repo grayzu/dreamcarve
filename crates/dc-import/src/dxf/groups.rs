@@ -33,6 +33,11 @@ use std::borrow::Cow;
 use super::DxfReadError;
 use super::code_page::CodePage;
 
+/// How many characters of a line a [`DxfReadError`] quotes. A group code
+/// or a number is a few characters; a line longer than this is not one,
+/// and its start says so as well as the whole of it would.
+const MAX_QUOTED_CHARS: usize = 80;
+
 /// The first 22 bytes of a binary DXF file ("Binary DXF Files").
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
 
@@ -179,7 +184,7 @@ fn read_ascii(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError>
         }
         let code: i32 = code_text.parse().map_err(|_| DxfReadError::BadCode {
             line,
-            text: printable(Cow::Borrowed(code_text)).into_owned(),
+            text: quoted(code_text),
         })?;
         let Some(value_text) = lines.next() else {
             return Err(DxfReadError::MissingValue { line, code });
@@ -189,7 +194,7 @@ fn read_ascii(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError>
             line,
             code,
             expected: kind.name(),
-            text: printable(Cow::Borrowed(value_text)).into_owned(),
+            text: quoted(value_text),
         };
         let value = match Kind::of(code) {
             Some(Kind::Real) => Value::Real(value_text.parse().map_err(|_| bad(Kind::Real))?),
@@ -416,6 +421,18 @@ fn printable(text: Cow<'_, str>) -> Cow<'_, str> {
     )
 }
 
+/// `line` as an error quotes it: its first [`MAX_QUOTED_CHARS`]
+/// characters, with `…` after them when there are more, and no control
+/// character ([`printable`]).
+fn quoted(line: &str) -> String {
+    let mut chars = line.chars();
+    let mut start: String = chars.by_ref().take(MAX_QUOTED_CHARS).collect();
+    if chars.next().is_some() {
+        start.push('…');
+    }
+    printable(Cow::Owned(start)).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests")]
@@ -509,6 +526,41 @@ mod tests {
                 code: 10,
                 expected: "number",
                 text: "1\u{fffd}.5".into()
+            }
+        );
+    }
+
+    /// A file that is not a DXF can be one line of any length, and the
+    /// error would print all of it: `init` on 256 MiB of zeros printed
+    /// 256 MiB. An error quotes the first [`MAX_QUOTED_CHARS`] characters
+    /// of a line and marks the cut.
+    #[test]
+    fn a_long_line_is_quoted_by_its_start() {
+        let line = "x".repeat(1 << 20);
+        let expected = format!("{}…", "x".repeat(MAX_QUOTED_CHARS));
+        assert_eq!(
+            read(format!("{line}\nLINE\n").as_bytes()).unwrap_err(),
+            DxfReadError::BadCode {
+                line: 1,
+                text: expected.clone()
+            }
+        );
+        assert_eq!(
+            read(format!("10\n{line}\n").as_bytes()).unwrap_err(),
+            DxfReadError::BadValue {
+                line: 2,
+                code: 10,
+                expected: "number",
+                text: expected
+            }
+        );
+        // A line of exactly that many characters is quoted whole.
+        let whole = "é".repeat(MAX_QUOTED_CHARS);
+        assert_eq!(
+            read(format!("{whole}\nLINE\n").as_bytes()).unwrap_err(),
+            DxfReadError::BadCode {
+                line: 1,
+                text: whole
             }
         );
     }
