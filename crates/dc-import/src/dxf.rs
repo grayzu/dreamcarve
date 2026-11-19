@@ -2954,6 +2954,60 @@ mod tests {
         }
     }
 
+    /// Review 1.8: a layer named with ESC and a newline (as `\U+001B` and
+    /// `\U+000A`, which a file before R2007 may write), an undefined
+    /// block and an entity type named with a raw ESC, and a hatch whose
+    /// handle holds one. No name the import returns, and no warning it
+    /// prints, holds a control character: each is U+FFFD instead.
+    #[test]
+    fn control_characters_never_reach_a_name_or_a_warning() {
+        let layer = "a\\U+001B[31m\\U+000Ab";
+        let open = edge_path(&[line_edge((0.0, 0.0), (10.0, 0.0))]);
+        let entities = format!(
+            "0\nCIRCLE\n8\n{layer}\n10\n0.0\n20\n0.0\n40\n1.0\n\
+             0\nCIRCLE\n8\n{layer}\n10\n5.0\n20\n0.0\n40\n1.0\n\
+             0\nINSERT\n8\n{layer}\n2\ngone\u{1b}[2J\n10\n0.0\n20\n0.0\n\
+             0\nTE\u{1b}XT\n8\n{layer}\n\
+             {}",
+            hatch("D\u{1b}1", layer, UP, &[open])
+        );
+        let (result, warnings) = hatch_import(&entities);
+        let clean = "a\u{fffd}[31m\u{fffd}b";
+        assert_eq!(names(&result), [format!("{clean}-1"), format!("{clean}-2")]);
+        assert_eq!(
+            result
+                .layers
+                .iter()
+                .map(|l| l.name.as_str())
+                .collect::<Vec<_>>(),
+            [clean]
+        );
+        assert!(
+            warnings.contains(&ImportWarning::DxfBlockMissing {
+                block: "gone\u{fffd}[2J".into()
+            }),
+            "{warnings:?}"
+        );
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        let printed: Vec<String> = warnings
+            .iter()
+            .map(ToString::to_string)
+            .chain(result.instances.iter().map(|i| i.name.clone()))
+            .chain(result.layers.iter().flat_map(|l| l.skipped.keys().cloned()))
+            .collect();
+        for text in &printed {
+            assert!(!text.contains(char::is_control), "{text:?}");
+        }
+        assert!(
+            printed.iter().any(|t| t.contains("HATCH `D\u{fffd}1`")),
+            "{printed:?}"
+        );
+        assert!(
+            printed.iter().any(|t| t.contains("TE\u{fffd}XT: 1")),
+            "{printed:?}"
+        );
+    }
+
     /// A DXF, in millimetres, of one LINE on layer `0` per pair of ends.
     fn lines_dxf(lines: impl IntoIterator<Item = ((f64, f64), (f64, f64))>) -> String {
         let entities: String = lines

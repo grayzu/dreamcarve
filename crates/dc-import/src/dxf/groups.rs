@@ -22,6 +22,11 @@
 //! Text is UTF-8 when it is valid UTF-8, else in the code page the caller
 //! names, which `import_dxf` takes from `$DWGCODEPAGE` before R2007
 //! (#209); `\U+XXXX` escapes are decoded.
+//!
+//! No text leaves this module with a control character in it (review
+//! 1.8): layer, block and type names and handles go on into shape names,
+//! warnings and errors that a shell prints, and an ESC there would start
+//! a terminal escape sequence. [`printable`] replaces each one, here, once.
 
 use std::borrow::Cow;
 
@@ -174,7 +179,7 @@ fn read_ascii(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError>
         }
         let code: i32 = code_text.parse().map_err(|_| DxfReadError::BadCode {
             line,
-            text: code_text.to_owned(),
+            text: printable(Cow::Borrowed(code_text)).into_owned(),
         })?;
         let Some(value_text) = lines.next() else {
             return Err(DxfReadError::MissingValue { line, code });
@@ -184,7 +189,7 @@ fn read_ascii(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError>
             line,
             code,
             expected: kind.name(),
-            text: value_text.to_owned(),
+            text: printable(Cow::Borrowed(value_text)).into_owned(),
         };
         let value = match Kind::of(code) {
             Some(Kind::Real) => Value::Real(value_text.parse().map_err(|_| bad(Kind::Real))?),
@@ -194,7 +199,7 @@ fn read_ascii(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError>
             Some(Kind::Binary) => Value::Binary,
             // Codes the reference does not define keep their text: the
             // pair is still framed by its two lines.
-            Some(Kind::Text) | None => Value::Text(unescape(value_text).into_owned()),
+            Some(Kind::Text) | None => Value::Text(printable(unescape(value_text)).into_owned()),
         };
         let group = Group { code, value };
         let eof = group.is_marker("EOF");
@@ -340,7 +345,8 @@ impl<'a> Bytes<'a> {
             })?;
         let bytes = self.take(len)?;
         self.pos += 1;
-        Ok(unescape(&decode(bytes, self.code_page, &mut self.not_utf8)).into_owned())
+        let text = decode(bytes, self.code_page, &mut self.not_utf8);
+        Ok(printable(unescape(&text)).into_owned())
     }
 }
 
@@ -388,6 +394,28 @@ fn unescape(text: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// `text` with each control character replaced by U+FFFD, the replacement
+/// character: C0 (U+0000 to U+001F, which holds ESC, newline and tab), DEL
+/// (U+007F) and C1 (U+0080 to U+009F, which holds the one-character CSI),
+/// Unicode's category Cc. Every other character is kept. Replaced, not
+/// dropped, so a name shows that something was there.
+fn printable(text: Cow<'_, str>) -> Cow<'_, str> {
+    if !text.contains(char::is_control) {
+        return text;
+    }
+    Cow::Owned(
+        text.chars()
+            .map(|c| {
+                if c.is_control() {
+                    char::REPLACEMENT_CHARACTER
+                } else {
+                    c
+                }
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests")]
@@ -429,6 +457,59 @@ mod tests {
                     value: Value::Binary
                 },
             ]
+        );
+    }
+
+    /// Review 1.8: a control character in a file's text would reach the
+    /// terminal in a name or a warning, where ESC starts a sequence that
+    /// can recolour, move the cursor or retitle the window. Each one (C0,
+    /// DEL, C1), written raw or as a `\U+XXXX` escape, is read as U+FFFD;
+    /// every other character is kept.
+    #[test]
+    fn control_characters_in_text_are_replaced() {
+        let groups = read(
+            "8\na\\U+001B[31m\\U+000Ab\n8\nraw\u{1b}[2J\u{7f}\u{9b}x\n8\ncaf\u{e9} \u{65e5}\u{672c}\n"
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            groups,
+            [
+                text(8, "a\u{fffd}[31m\u{fffd}b"),
+                text(8, "raw\u{fffd}[2J\u{fffd}\u{fffd}x"),
+                text(8, "caf\u{e9} \u{65e5}\u{672c}"),
+            ]
+        );
+    }
+
+    /// A binary file's strings end at NUL, so they can hold a newline
+    /// itself; it is replaced like any other control character.
+    #[test]
+    fn control_characters_in_binary_text_are_replaced() {
+        let mut bytes = BINARY_SENTINEL.to_vec();
+        bytes.extend_from_slice(&[8, 0]);
+        bytes.extend_from_slice(b"a\x1b[31m\nb\0");
+        assert_eq!(read(&bytes).unwrap(), [text(8, "a\u{fffd}[31m\u{fffd}b")]);
+    }
+
+    /// The line an error quotes is the file's too.
+    #[test]
+    fn control_characters_in_a_quoted_line_are_replaced() {
+        assert_eq!(
+            read(b"\x1b[2Jx\nLINE\n").unwrap_err(),
+            DxfReadError::BadCode {
+                line: 1,
+                text: "\u{fffd}[2Jx".into()
+            }
+        );
+        assert_eq!(
+            read(b"10\n1\x1b.5\n").unwrap_err(),
+            DxfReadError::BadValue {
+                line: 2,
+                code: 10,
+                expected: "number",
+                text: "1\u{fffd}.5".into()
+            }
         );
     }
 

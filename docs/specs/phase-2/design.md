@@ -2603,7 +2603,11 @@ Reference's "Group Code Value Types" (an ASCII line ends at `\r\n`, `\n`
 or a lone `\r`, mixed within one file, split in one place; #667), then the `$INSUNITS` header
 variable, the blocks, and every entity of the ENTITIES section with a
 POLYLINE's VERTEX rows attached. A malformed pair is
-`ImportError::Dxf(DxfReadError)`. `import_dxf(bytes, options) ->
+`ImportError::Dxf(DxfReadError)`. The reader replaces every control
+character in a text value, and in a line an error quotes, with U+FFFD
+(C0, DEL and C1, written raw or as a `\U+XXXX` escape; review 1.8), so
+no layer, block or type name or handle carries an ESC or a line break
+into a shape name, a warning or an error that a shell prints. `import_dxf(bytes, options) ->
 Result<(Vec<FeatureDefinition>, Vec<ImportWarning>), ImportError>`,
 `options = { units: Option<Units>, join_tolerance_mm: f64, layers:
 Option<Vec<String>> }`.

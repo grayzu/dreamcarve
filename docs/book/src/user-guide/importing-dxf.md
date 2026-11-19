@@ -217,6 +217,11 @@ such as the Japanese, Chinese or Korean ones (`ANSI_932`, `ANSI_936`,
 show wrong characters; a warning names the code page. The geometry is not
 affected; save the file as a 2007 or later DXF to fix the names.
 
+A control character in a layer or block name, such as an escape or a line
+break, is read as `�` (the replacement character), so a name from a
+file can never change what your terminal shows. Two layers whose names
+differ only in such characters become one layer.
+
 ## SVG drawings
 
 This chapter is about DXF, but `init` reads SVG with the same rules and the
