@@ -89,6 +89,68 @@ fn a_new_project_has_every_step_empty() {
     }
 }
 
+/// The status bar's counts and the rail's Warnings badge follow the same
+/// rule as the marks: a new project's unset thickness is `check`'s error,
+/// and the drawer still lists it, but nothing is counted until there is
+/// something to cut. The status bar then says *No problems*.
+#[test]
+fn a_new_project_counts_no_problem() {
+    let harness = new_project();
+    assert_eq!(
+        dc_app::warnings::counts(&harness.app).errors,
+        1,
+        "check reports the unset thickness"
+    );
+    assert_eq!(
+        steps::counts(&harness.app),
+        dc_app::warnings::Counts::default()
+    );
+    let estimate = dc_job::EstimateConfig::default();
+    let bar = dc_app::status::cells(
+        &harness.app,
+        &dc_app::status::Inputs {
+            cursor_mm: None,
+            drag: None,
+            hover: None,
+            message: None,
+            estimate: &estimate,
+        },
+    );
+    assert!(bar.counts.tiers.is_empty(), "{:?}", bar.counts.tiers);
+    assert_eq!(bar.counts.none.as_deref(), Some("No problems"));
+    assert_eq!(bar.counts.counts, steps::counts(&harness.app));
+}
+
+/// Once there is something to cut, the unset thickness is counted: the
+/// coaster as `init` makes it counts what `check` reports, and so does
+/// every project that is not blank.
+#[test]
+fn the_unset_thickness_counts_once_there_is_something_to_cut() {
+    let harness = Harness::from_project(coaster());
+    let counts = steps::counts(&harness.app);
+    assert!(counts.errors >= 1, "{counts:?}");
+    assert_eq!(counts, dc_app::warnings::counts(&harness.app));
+    assert_eq!(
+        states(&harness).of(Step::Stock),
+        State::Attention(Severity::Error),
+        "and the rail marks it"
+    );
+
+    // A blank project with another problem still counts that one.
+    let mut harness = new_project();
+    let mut stock = harness.app.project().stock.clone();
+    stock.width_mm = -5.0;
+    let _ = harness.run(Command::SetStock(stock));
+    let all = dc_app::warnings::counts(&harness.app);
+    assert_eq!(all.errors, 2, "the width and the thickness: {all:?}");
+    let counted = steps::counts(&harness.app);
+    assert_eq!(
+        counted.errors + 1,
+        all.errors,
+        "only the unset thickness waits: {all:?}"
+    );
+}
+
 /// Design is complete once the project has a shape.
 #[test]
 fn design_is_complete_with_a_shape() {

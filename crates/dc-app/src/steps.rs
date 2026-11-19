@@ -24,7 +24,9 @@
 //! blank project (no shape, picture or operation) has no marks: its unset
 //! thickness is the Stock step's error only once there is something to
 //! cut, and Export has nothing to refuse until an operation is enabled.
-//! And a tool no enabled operation uses asks for nothing, whatever it
+//! The status bar's counts and the rail's Warnings badge follow the same
+//! rule ([`counts`]), so the three agree: a blank project shows no
+//! problem. And a tool no enabled operation uses asks for nothing, whatever it
 //! lacks: validation reports no problem for it, since nothing cuts with
 //! it.
 
@@ -225,6 +227,35 @@ fn worst(app: &App, step: Step) -> Option<Severity> {
         .filter(|f| !(blank && f.field.as_deref() == Some(STOCK_THICKNESS)))
         .filter_map(|f| severity(f.tier))
         .max()
+}
+
+/// How many problems of each tier the status bar and the rail's Warnings
+/// badge count: [`warnings::counts`], less the unset thickness on a blank
+/// project, by the rule the marks follow ([`states`]). `check` reports it
+/// and the Warnings drawer lists it, but with nothing to cut it is not
+/// yet a problem to count.
+#[must_use]
+pub fn counts(app: &App) -> warnings::Counts {
+    let mut counts = warnings::counts(app);
+    if !blank(app.project()) {
+        return counts;
+    }
+    let findings = app.findings();
+    for finding in findings
+        .errors
+        .iter()
+        .chain(&findings.warnings)
+        .filter(|f| f.field.as_deref() == Some(STOCK_THICKNESS))
+    {
+        let tier = match warnings::Level::from(finding.tier) {
+            warnings::Level::Error => &mut counts.errors,
+            warnings::Level::Warning => &mut counts.warnings,
+            warnings::Level::Hint => &mut counts.hints,
+            warnings::Level::Note => &mut counts.notes,
+        };
+        *tier = tier.saturating_sub(1);
+    }
+    counts
 }
 
 /// `attention` as a state, else complete when `complete`, else empty.

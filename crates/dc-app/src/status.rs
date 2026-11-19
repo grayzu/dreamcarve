@@ -280,10 +280,12 @@ fn generation(app: &App) -> Option<GenerationCell> {
     }
 }
 
-/// The counts cell: each tier with rows, or *No problems*.
+/// The counts cell: each tier with problems, or *No problems*. A blank
+/// project's unset thickness is not counted ([`crate::steps::counts`]),
+/// so the cell, the rail's badge and the rail's marks agree.
 fn counts(app: &App) -> CountsCell {
     let strings = app.strings();
-    let counts = warnings::counts(app);
+    let counts = crate::steps::counts(app);
     let tiers: Vec<(Level, String)> = [
         (
             Level::Error,
