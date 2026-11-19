@@ -185,11 +185,381 @@ fn sample_root_at(version: u32) -> Value {
     root
 }
 
+/// Every older format's sample fixture loads as the current sample
+/// project. Each row is one former `version_N_fixture_loads` test, and
+/// the loop checks what each of them did: all, the version and the
+/// project; from version 8, that validation finds nothing; from 21, that
+/// the file says its version in so many words; from 24, that the
+/// migration notes nothing. Version 18 has no plain sample and versions
+/// 26 to 28 hold more than one fixture; their tests are further down.
 #[test]
-fn version_0_fixture_loads() {
-    let loaded = load(V0_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
+fn every_older_sample_fixture_loads_as_the_sample_project() {
+    let fixtures: [(u32, &[u8]); 25] = [
+        (0, V0_FIXTURE),
+        (1, V1_FIXTURE),
+        (2, V2_FIXTURE),
+        (3, V3_FIXTURE),
+        (4, V4_FIXTURE),
+        (5, V5_FIXTURE),
+        (6, V6_FIXTURE),
+        (7, V7_FIXTURE),
+        (8, V8_FIXTURE),
+        (9, V9_FIXTURE),
+        (10, V10_FIXTURE),
+        (11, V11_FIXTURE),
+        (12, V12_FIXTURE),
+        (13, V13_FIXTURE),
+        (14, V14_FIXTURE),
+        (15, V15_FIXTURE),
+        (16, V16_FIXTURE),
+        (17, V17_FIXTURE),
+        (19, V19_FIXTURE),
+        (20, V20_FIXTURE),
+        (21, V21_FIXTURE),
+        (22, V22_FIXTURE),
+        (23, V23_FIXTURE),
+        (24, V24_FIXTURE),
+        (25, V25_FIXTURE),
+    ];
+    for (version, bytes) in fixtures {
+        let case = format!("version_{version}_fixture_loads");
+        if version >= 21 {
+            let text = std::str::from_utf8(bytes).unwrap();
+            assert!(
+                text.contains(&format!("\"version\": {version},")),
+                "{case}: a version {version} file"
+            );
+        }
+        let loaded = load(bytes).unwrap_or_else(|err| panic!("{case}: {err}"));
+        assert_eq!(loaded.project.version, CURRENT_VERSION, "{case}");
+        assert_eq!(loaded.project, sample_project(), "{case}");
+        if version >= 8 {
+            assert_eq!(loaded.problems, vec![], "{case}");
+        }
+        if version >= 24 {
+            assert_eq!(loaded.notes, vec![], "{case}: no Inlay, nothing to note");
+        }
+        // The sample's heights are unset, so the version 11 file exports
+        // what it did before version 12.
+        if version == 11 {
+            assert_eq!(loaded.project.heights, crate::Heights::unset(), "{case}");
+        }
+        if version == 15 {
+            for tool in &loaded.project.tools {
+                assert_eq!((&tool.vendor, &tool.product_id), (&None, &None), "{case}");
+            }
+        }
+    }
+}
+
+/// A reader of the version before each bump refuses the bumped file as
+/// newer, which is what the bump is for (ADR-0002): a version 17 reader
+/// must not meet a Bore, nor a version 19 one a V-Carve. Each row is one
+/// former `version_N_is_newer_than_N-1` test: the version it bumped to,
+/// and the lowest `CURRENT_VERSION` it accepted.
+#[test]
+fn each_bump_makes_an_older_reader_refuse_the_file_as_newer() {
+    let bumps: [(u32, u32); 10] = [
+        (18, 19),
+        (19, 20),
+        (20, 21),
+        (21, 22),
+        (22, 23),
+        (23, 23),
+        (24, 24),
+        (25, 25),
+        (26, 26),
+        (27, 27),
+    ];
+    for (version, least_current) in bumps {
+        let case = format!("version_{version}_is_newer_than_{}", version - 1);
+        assert!(CURRENT_VERSION >= least_current, "{case}");
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(
+            matches!(err, LoadError::NewerVersion { .. }),
+            "{case}: {err:?}"
+        );
+    }
+}
+
+/// One file that is not of the version it says: it holds something only
+/// a later version writes.
+struct NotOfItsVersion {
+    /// The test this case was, and what the file holds.
+    case: &'static str,
+    /// The version the file says, which `migrate` starts from.
+    says: u32,
+    /// The version whose step must refuse it.
+    step: u32,
+    /// The file's root.
+    root: fn() -> Value,
+    /// What the message must name; empty where the case checked only
+    /// which step failed.
+    names: &'static [&'static str],
+}
+
+/// A root made by `edit` from `root`.
+fn edited(mut root: Value, edit: impl FnOnce(&mut Value)) -> Value {
+    edit(&mut root);
+    root
+}
+
+/// The version 18 fixture's root: a Profile with a last pass, a Pocket and
+/// a Bore, each with an `allowance_mm`.
+fn v18_stock_to_leave_root() -> Value {
+    serde_json::from_slice(V18_STOCK_TO_LEAVE_FIXTURE).unwrap()
+}
+
+/// A file that already holds a key its next version adds is not a file of
+/// its version, and the step to that version refuses it, naming the key.
+/// Each row is one case of a former `vN_with_X_already_present_fails`
+/// test, named in `case`.
+#[test]
+fn a_file_holding_what_a_later_version_adds_fails_at_that_step() {
+    let cases = [
+        NotOfItsVersion {
+            case: "v0_with_flatten_tolerance_already_present_fails",
+            says: 0,
+            step: 0,
+            root: || edited(sample_root_at(1), |root| root["version"] = Value::from(0)),
+            names: &[],
+        },
+        NotOfItsVersion {
+            case: "v1_with_spindle_control_already_present_fails",
+            says: 1,
+            step: 1,
+            root: || edited(sample_root_at(2), |root| root["version"] = Value::from(1)),
+            names: &[],
+        },
+        NotOfItsVersion {
+            case: "v4_with_tool_change_mode_already_present_fails",
+            says: 4,
+            step: 4,
+            root: || edited(sample_root_at(5), |root| root["version"] = Value::from(4)),
+            names: &[],
+        },
+        NotOfItsVersion {
+            case: "v7_with_phase_2_field_already_present_fails: arc_fit_tolerance_mm",
+            says: 7,
+            step: 7,
+            root: || {
+                edited(sample_root_at(7), |root| {
+                    root["arc_fit_tolerance_mm"] = json!(0.02);
+                })
+            },
+            names: &["arc_fit_tolerance_mm"],
+        },
+        NotOfItsVersion {
+            case: "v7_with_phase_2_field_already_present_fails: number",
+            says: 7,
+            step: 7,
+            root: || {
+                edited(sample_root_at(7), |root| {
+                    root["tools"][0]["number"] = json!(1);
+                })
+            },
+            names: &["number"],
+        },
+        NotOfItsVersion {
+            case: "v7_with_phase_2_field_already_present_fails: entry",
+            says: 7,
+            step: 7,
+            root: || {
+                edited(sample_root_at(7), |root| {
+                    root["operations"][0]["entry"] = json!("plunge");
+                })
+            },
+            names: &["entry"],
+        },
+        NotOfItsVersion {
+            case: "v7_with_phase_2_field_already_present_fails: use_canned_cycles",
+            says: 7,
+            step: 7,
+            root: || {
+                edited(sample_root_at(7), |root| {
+                    root["post_processor"]["use_canned_cycles"] = json!(true);
+                })
+            },
+            names: &["use_canned_cycles"],
+        },
+        NotOfItsVersion {
+            case: "v8_with_on_holes_already_present_fails",
+            says: 8,
+            step: 8,
+            root: || {
+                edited(sample_root_at(8), |root| {
+                    root["operations"][0]["tabs"]["on_holes"] = json!(false);
+                })
+            },
+            names: &["on_holes"],
+        },
+        NotOfItsVersion {
+            case: "v10_with_tabs_already_present_fails",
+            says: 10,
+            step: 10,
+            root: || edited(sample_root_at(10), |root| root["tabs"] = json!([])),
+            names: &["tabs"],
+        },
+        NotOfItsVersion {
+            case: "v12_with_last_pass_already_present_fails",
+            says: 12,
+            step: 12,
+            root: || {
+                edited(sample_root_at(12), |root| {
+                    root["operations"][0]["last_pass"] = Value::Null;
+                })
+            },
+            names: &["last_pass"],
+        },
+        NotOfItsVersion {
+            case: "v13_with_start_already_present_fails: start",
+            says: 13,
+            step: 13,
+            root: || {
+                edited(sample_root_at(13), |root| {
+                    root["operations"][0]["start"] = json!("auto");
+                })
+            },
+            names: &["start"],
+        },
+        NotOfItsVersion {
+            case: "v13_with_start_already_present_fails: tabs.avoid_corners",
+            says: 13,
+            step: 13,
+            root: || {
+                edited(sample_root_at(13), |root| {
+                    root["operations"][0]["tabs"]["avoid_corners"] = json!(true);
+                })
+            },
+            names: &["tabs.avoid_corners"],
+        },
+        NotOfItsVersion {
+            case: "v14_with_holds_slug_already_present_fails",
+            says: 14,
+            step: 14,
+            root: || {
+                edited(v14_root_with_tabs(), |root| {
+                    root["tabs"][1]["holds_slug"] = json!(true);
+                })
+            },
+            names: &["`tabs[1].holds_slug`"],
+        },
+        NotOfItsVersion {
+            case: "v16_with_allow_tool_wider_than_hole_already_present_fails",
+            says: 16,
+            step: 16,
+            root: || {
+                edited(v16_root_with_drill(), |root| {
+                    root["operations"][1]["allow_tool_wider_than_hole"] = json!(true);
+                })
+            },
+            names: &["`operations[1].allow_tool_wider_than_hole`"],
+        },
+        // A Pocket, Bore or last pass that already has `stock_to_leave_mm`
+        // is not a version 18 file.
+        NotOfItsVersion {
+            case: "v18_with_stock_to_leave_already_present_fails: a Profile's last pass",
+            says: 18,
+            step: 18,
+            root: || {
+                edited(v18_stock_to_leave_root(), |root| {
+                    root["operations"][0]["last_pass"]["stock_to_leave_mm"] = json!(0.0);
+                })
+            },
+            names: &["`operations[0].last_pass.stock_to_leave_mm`"],
+        },
+        NotOfItsVersion {
+            case: "v18_with_stock_to_leave_already_present_fails: operations[1]",
+            says: 18,
+            step: 18,
+            root: || {
+                edited(v18_stock_to_leave_root(), |root| {
+                    root["operations"][1]["stock_to_leave_mm"] = json!(0.0);
+                })
+            },
+            names: &["`operations[1].stock_to_leave_mm`"],
+        },
+        NotOfItsVersion {
+            case: "v18_with_stock_to_leave_already_present_fails: operations[2]",
+            says: 18,
+            step: 18,
+            root: || {
+                edited(v18_stock_to_leave_root(), |root| {
+                    root["operations"][2]["stock_to_leave_mm"] = json!(0.0);
+                })
+            },
+            names: &["`operations[2].stock_to_leave_mm`"],
+        },
+        // A file that says 26 and holds `bitmaps`, or a `photo_v_carve`
+        // operation, is not a version 26 file: the kind and the list
+        // arrive together in 27, and the migration refuses it, naming
+        // what it found.
+        NotOfItsVersion {
+            case: "v26_with_bitmaps_already_present_fails: an empty list",
+            says: 26,
+            step: 26,
+            root: || edited(sample_root_at(26), |root| root["bitmaps"] = json!([])),
+            names: &["`bitmaps`"],
+        },
+        NotOfItsVersion {
+            case: "v26_with_bitmaps_already_present_fails: a bitmap",
+            says: 26,
+            step: 26,
+            root: || {
+                edited(sample_root_at(26), |root| {
+                    root["bitmaps"] = json!([{ "id": "b1" }]);
+                })
+            },
+            names: &["`bitmaps`"],
+        },
+        NotOfItsVersion {
+            case: "v26_with_bitmaps_already_present_fails: null",
+            says: 26,
+            step: 26,
+            root: || edited(sample_root_at(26), |root| root["bitmaps"] = json!(null)),
+            names: &["`bitmaps`"],
+        },
+        NotOfItsVersion {
+            case: "v26_with_bitmaps_already_present_fails: a photo_v_carve",
+            says: 26,
+            step: 26,
+            root: || {
+                edited(sample_root_at(26), |root| {
+                    root["operations"][0]["kind"] = json!("photo_v_carve");
+                })
+            },
+            names: &["`operations[0]`", "photo_v_carve"],
+        },
+        // An older file is refused by the same step, at the end of its
+        // chain.
+        NotOfItsVersion {
+            case: "v26_with_bitmaps_already_present_fails: a version 20 file",
+            says: 20,
+            step: 26,
+            root: || edited(sample_root_at(20), |root| root["bitmaps"] = json!([])),
+            names: &[],
+        },
+    ];
+    for NotOfItsVersion {
+        case,
+        says,
+        step,
+        root,
+        names,
+    } in cases
+    {
+        let err = migrate(root(), says).unwrap_err();
+        let LoadError::Migration {
+            from, to, message, ..
+        } = &err
+        else {
+            panic!("{case}: {err:?}");
+        };
+        assert_eq!((*from, *to), (step, step + 1), "{case}: {err:?}");
+        for name in names {
+            assert!(message.contains(name), "{case}: {name}: {message}");
+        }
+    }
 }
 
 #[test]
@@ -200,13 +570,6 @@ fn version_0_fixture_gets_default_flatten_tolerance() {
         FLATTEN_TOLERANCE_DEFAULT_MM,
         0.0
     );
-}
-
-#[test]
-fn version_1_fixture_loads() {
-    let loaded = load(V1_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
 }
 
 /// Every file before version 2 was exported with the spindle switched by
@@ -224,27 +587,6 @@ fn version_1_fixture_gets_automatic_spindle_control() {
         sample_root_at(CURRENT_VERSION),
         "the key lands at the end of feed_speed, where version 2 declares it"
     );
-}
-
-#[test]
-fn version_2_fixture_loads() {
-    let loaded = load(V2_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-}
-
-#[test]
-fn version_3_fixture_loads() {
-    let loaded = load(V3_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-}
-
-#[test]
-fn version_4_fixture_loads() {
-    let loaded = load(V4_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
 }
 
 /// #95: a file before version 5 has no tool-change mode. The migration
@@ -265,24 +607,6 @@ fn version_4_fixture_gets_separate_programs() {
         sample_root_at(CURRENT_VERSION),
         "the key lands at the end of tool_change, where version 5 declares it"
     );
-}
-
-#[test]
-fn v4_with_tool_change_mode_already_present_fails() {
-    let mut root = sample_root_at(5);
-    root["version"] = Value::from(4);
-    let err = migrate(root, 4).unwrap_err();
-    assert!(
-        matches!(err, LoadError::Migration { from: 4, to: 5, .. }),
-        "{err:?}"
-    );
-}
-
-#[test]
-fn version_5_fixture_loads() {
-    let loaded = load(V5_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
 }
 
 /// #99: version 6 lets the instance depths be unset, but the migration
@@ -422,36 +746,7 @@ fn migrate_sets_current_version() {
     assert_eq!(migrated["version"], Value::from(CURRENT_VERSION));
 }
 
-#[test]
-fn v1_with_spindle_control_already_present_fails() {
-    let mut root = sample_root_at(2);
-    root["version"] = Value::from(1);
-    let err = migrate(root, 1).unwrap_err();
-    assert!(
-        matches!(err, LoadError::Migration { from: 1, to: 2, .. }),
-        "{err:?}"
-    );
-}
-
-#[test]
-fn v0_with_flatten_tolerance_already_present_fails() {
-    let mut root = sample_root_at(1);
-    root["version"] = Value::from(0);
-    let err = migrate(root, 0).unwrap_err();
-    assert!(
-        matches!(err, LoadError::Migration { from: 0, to: 1, .. }),
-        "{err:?}"
-    );
-}
-
 const V6_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v6/sample.dcv");
-
-#[test]
-fn version_6_fixture_loads() {
-    let loaded = load(V6_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-}
 
 /// #106: the migrated block is the reference, in the order a version 7
 /// file writes it.
@@ -602,13 +897,6 @@ fn v6_with_unbundled_id_fails_to_load() {
 
 const V7_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v7/sample.dcv");
 
-#[test]
-fn version_7_fixture_loads() {
-    let loaded = load(V7_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-}
-
 /// Design spec, "Migration v6 → v7" (version 7 → 8 here, #117): each
 /// Profile plunges, cuts each shape to full depth first, has no lead
 /// and no corner relief, exactly as phase 1 cut it; arc fitting is on
@@ -651,50 +939,10 @@ fn v7_to_v8_writes_the_defaults() {
     );
 }
 
-/// An edit to a raw root, and the key it adds.
-type Edit = (fn(&mut Value), &'static str);
-
-#[test]
-fn v7_with_phase_2_field_already_present_fails() {
-    let edits: [Edit; 4] = [
-        (
-            |root| root["arc_fit_tolerance_mm"] = json!(0.02),
-            "arc_fit_tolerance_mm",
-        ),
-        (|root| root["tools"][0]["number"] = json!(1), "number"),
-        (
-            |root| root["operations"][0]["entry"] = json!("plunge"),
-            "entry",
-        ),
-        (
-            |root| root["post_processor"]["use_canned_cycles"] = json!(true),
-            "use_canned_cycles",
-        ),
-    ];
-    for (edit, key) in edits {
-        let mut root = sample_root_at(7);
-        edit(&mut root);
-        let err = migrate(root, 7).unwrap_err();
-        assert!(
-            matches!(&err, LoadError::Migration { from: 7, to: 8, message, .. }
-                if message.contains(key)),
-            "{key}: {err:?}"
-        );
-    }
-}
-
 // Version 8 → 9 (#109): holes get no tabs unless `tabs.on_holes` is
 // set, so a project from before keeps them on its holes.
 
 const V8_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v8/sample.dcv");
-
-#[test]
-fn version_8_fixture_loads() {
-    let loaded = load(V8_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
 
 /// #109: a version 8 Profile put its tabs on every outline it cut,
 /// holes included. The migration writes `on_holes: true` into every
@@ -720,39 +968,11 @@ fn v8_tabs_keep_their_holes_tabbed() {
     assert_eq!(migrated["operations"][0]["tabs"], Value::Null);
 }
 
-#[test]
-fn v8_with_on_holes_already_present_fails() {
-    let mut root = sample_root_at(8);
-    root["operations"][0]["tabs"]["on_holes"] = json!(false);
-    let err = migrate(root, 8).unwrap_err();
-    assert!(
-        matches!(&err, LoadError::Migration { from: 8, to: 9, message, .. }
-            if message.contains("on_holes")),
-        "{err:?}"
-    );
-}
-
 // Version 10 → 11 (#105): placed tabs. The tab setting stays as a
 // request, which `dreamcarve` places when it loads the project.
 
 const V9_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v9/sample.dcv");
 const V10_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v10/sample.dcv");
-
-#[test]
-fn version_9_fixture_loads() {
-    let loaded = load(V9_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
-
-#[test]
-fn version_10_fixture_loads() {
-    let loaded = load(V10_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
 
 /// #105: a version 10 project gains an empty list of placed tabs right
 /// after its operations; each Profile keeps its tab setting, now a
@@ -772,18 +992,6 @@ fn v10_project_gains_an_empty_tab_list() {
     assert_eq!(
         migrate(sample_root_at(10), 10).unwrap(),
         sample_root_at(CURRENT_VERSION)
-    );
-}
-
-#[test]
-fn v10_with_tabs_already_present_fails() {
-    let mut root = sample_root_at(10);
-    root["tabs"] = json!([]);
-    let err = migrate(root, 10).unwrap_err();
-    assert!(
-        matches!(&err, LoadError::Migration { from: 10, to: 11, message, .. }
-            if message.contains("tabs")),
-        "{err:?}"
     );
 }
 
@@ -872,14 +1080,6 @@ fn v11_to_v12_adds_null_heights() {
 
 const V12_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v12/sample.dcv");
 
-#[test]
-fn version_12_fixture_loads() {
-    let loaded = load(V12_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
-
 /// #284: every Profile of a version 12 file gains `last_pass: null`
 /// right after `corner_relief`, so each pass cuts on the line as
 /// before; other operations are unchanged. The fixture then loads as
@@ -923,18 +1123,6 @@ fn v12_to_v13_adds_null_last_pass() {
     assert_eq!(
         crate::test_support::profile_mut(&mut loaded.project).last_pass,
         None
-    );
-}
-
-#[test]
-fn v12_with_last_pass_already_present_fails() {
-    let mut root = sample_root_at(12);
-    root["operations"][0]["last_pass"] = Value::Null;
-    let err = migrate(root, 12).unwrap_err();
-    assert!(
-        matches!(&err, LoadError::Migration { from: 12, to: 13, message, .. }
-            if message.contains("last_pass")),
-        "{err:?}"
     );
 }
 
@@ -988,14 +1176,6 @@ fn last_pass_round_trips() {
 // Version 13 → 14 (#285): tabs off corners, and the start point.
 
 const V13_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v13/sample.dcv");
-
-#[test]
-fn version_13_fixture_loads() {
-    let loaded = load(V13_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
 
 /// #285: every Profile of a version 13 file gains `start: "auto"`
 /// right after `last_pass`, and its tab request, when it has one,
@@ -1051,26 +1231,6 @@ fn v13_to_v14_adds_corner_and_start_defaults() {
     assert!(!op.tabs.as_ref().unwrap().avoid_corners);
 }
 
-#[test]
-fn v13_with_start_already_present_fails() {
-    let mut root = sample_root_at(13);
-    root["operations"][0]["start"] = json!("auto");
-    let err = migrate(root, 13).unwrap_err();
-    assert!(
-        matches!(&err, LoadError::Migration { from: 13, to: 14, message, .. }
-            if message.contains("start")),
-        "{err:?}"
-    );
-    let mut root = sample_root_at(13);
-    root["operations"][0]["tabs"]["avoid_corners"] = json!(true);
-    let err = migrate(root, 13).unwrap_err();
-    assert!(
-        matches!(&err, LoadError::Migration { from: 13, to: 14, message, .. }
-            if message.contains("tabs.avoid_corners")),
-        "{err:?}"
-    );
-}
-
 /// #285: each start saves as the spec writes it and loads back; a
 /// `near` point takes inch input as every length does.
 #[test]
@@ -1119,14 +1279,6 @@ fn start_round_trips() {
 // Version 14 → 15 (#302): whether a placed tab holds its slug.
 
 const V14_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v14/sample.dcv");
-
-#[test]
-fn version_14_fixture_loads() {
-    let loaded = load(V14_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
 
 /// The sample at `version` with two placed tabs, its request placed:
 /// one on the rectangle's bottom edge and one a tool radius below it.
@@ -1199,18 +1351,6 @@ fn v14_placed_tabs_migrate_with_holds_slug_unset() {
     // A file with no tabs changes only its version.
     let migrated = migrate(sample_root_at(14), 14).unwrap();
     assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
-}
-
-#[test]
-fn v14_with_holds_slug_already_present_fails() {
-    let mut root = v14_root_with_tabs();
-    root["tabs"][1]["holds_slug"] = json!(true);
-    let err = migrate(root, 14).unwrap_err();
-    assert!(
-        matches!(&err, LoadError::Migration { from: 14, to: 15, message, .. }
-            if message.contains("`tabs[1].holds_slug`")),
-        "{err:?}"
-    );
 }
 
 /// #302: loaded from a file, the version 14 file with a
@@ -1307,32 +1447,10 @@ fn invalid_holds_slug_says_where() {
     );
 }
 
-/// #283: the version 11 fixture loads as the sample project, whose
-/// heights are unset, so it exports what it did before version 12.
-#[test]
-fn version_11_fixture_loads() {
-    let loaded = load(V11_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project.heights, crate::Heights::unset());
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
-
 // Version 15 → 16 (maintainer decision 2026-10-24): a tool's vendor
 // and product id.
 
 const V15_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v15/sample.dcv");
-
-#[test]
-fn version_15_fixture_loads() {
-    let loaded = load(V15_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-    for tool in &loaded.project.tools {
-        assert_eq!((&tool.vendor, &tool.product_id), (&None, &None));
-    }
-}
 
 /// Every tool of a version 15 file gains `vendor: null` and
 /// `product_id: null` right after its `name`, and nothing else
@@ -1409,14 +1527,6 @@ fn vendor_and_product_id_round_trip() {
 
 const V16_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v16/sample.dcv");
 
-#[test]
-fn version_16_fixture_loads() {
-    let loaded = load(V16_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
-
 /// The sample at version 16 with the sample Drill after its Profile.
 fn v16_root_with_drill() -> Value {
     let mut root = sample_root_at(16);
@@ -1466,18 +1576,6 @@ fn v16_drill_migrates_with_allow_tool_wider_than_hole_false() {
     assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
 }
 
-#[test]
-fn v16_with_allow_tool_wider_than_hole_already_present_fails() {
-    let mut root = v16_root_with_drill();
-    root["operations"][1]["allow_tool_wider_than_hole"] = json!(true);
-    let err = migrate(root, 16).unwrap_err();
-    assert!(
-        matches!(&err, LoadError::Migration { from: 16, to: 17, message, .. }
-            if message.contains("`operations[1].allow_tool_wider_than_hole`")),
-        "{err:?}"
-    );
-}
-
 /// Both values save as written, at the end of the Drill, and load
 /// back.
 #[test]
@@ -1500,14 +1598,6 @@ fn allow_tool_wider_than_hole_round_trips() {
 
 const V17_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v17/sample.dcv");
 
-#[test]
-fn version_17_fixture_loads() {
-    let loaded = load(V17_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
-
 /// Format 18 (maintainer decision 2026-10-24): the Bore is a new
 /// operation kind no version 17 file holds, so the step changes only
 /// the version, with a Drill too.
@@ -1525,15 +1615,6 @@ fn v17_to_v18_changes_only_the_version() {
         migrate(sample_root_at(17), 17).unwrap(),
         sample_root_at(CURRENT_VERSION)
     );
-}
-
-/// A version 17 reader refuses a file with a Bore as newer, which is
-/// what the bump is for (ADR-0002).
-#[test]
-fn version_18_is_newer_than_17() {
-    const { assert!(CURRENT_VERSION > 18) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
 }
 
 // Version 18 → 19 (#394): `allowance_mm` is `stock_to_leave_mm` on a
@@ -1576,62 +1657,9 @@ fn v18_allowance_loads_as_stock_to_leave() {
     );
 }
 
-/// A Pocket, Bore or last pass that already has `stock_to_leave_mm` is
-/// not a version 18 file.
-#[test]
-fn v18_with_stock_to_leave_already_present_fails() {
-    let root: Value = serde_json::from_slice(V18_STOCK_TO_LEAVE_FIXTURE).unwrap();
-    for (path, named) in [
-        (
-            &["operations", "0", "last_pass"][..],
-            "`operations[0].last_pass.stock_to_leave_mm`",
-        ),
-        (
-            &["operations", "1"][..],
-            "`operations[1].stock_to_leave_mm`",
-        ),
-        (
-            &["operations", "2"][..],
-            "`operations[2].stock_to_leave_mm`",
-        ),
-    ] {
-        let mut root = root.clone();
-        let mut at = &mut root;
-        for key in path {
-            at = match key.parse::<usize>() {
-                Ok(i) => &mut at[i],
-                Err(_) => &mut at[*key],
-            };
-        }
-        at["stock_to_leave_mm"] = json!(0.0);
-        let err = migrate(root, 18).unwrap_err();
-        assert!(
-            matches!(&err, LoadError::Migration { from: 18, to: 19, message, .. }
-                if message.contains(named)),
-            "{named}: {err:?}"
-        );
-    }
-}
-
-/// A version 18 reader refuses a version 19 file as newer (ADR-0002).
-#[test]
-fn version_19_is_newer_than_18() {
-    const { assert!(CURRENT_VERSION > 19) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
-}
-
 // Version 19 → 20 (sub-phase 3.1): the V-Carve operation.
 
 const V19_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v19/sample.dcv");
-
-#[test]
-fn version_19_fixture_loads() {
-    let loaded = load(V19_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
 
 /// Format 20: the V-Carve is a new operation kind no version 19 file
 /// holds, so the step changes only the version, whatever operations
@@ -1666,25 +1694,9 @@ fn v19_to_v20_bumps_the_version_only() {
     );
 }
 
-/// A version 19 reader refuses a version 20 file as newer (ADR-0002).
-#[test]
-fn version_20_is_newer_than_19() {
-    const { assert!(CURRENT_VERSION > 20) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
-}
-
 // Version 20 → 21 (sub-phase 3.2): the countersink Drill cycle.
 
 const V20_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v20/sample.dcv");
-
-#[test]
-fn version_20_fixture_loads() {
-    let loaded = load(V20_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
 
 /// Format 21: the countersink is a new Drill cycle no version 20 file
 /// holds, so the step changes only the version, whatever operations
@@ -1729,27 +1741,9 @@ fn v20_to_v21_bumps_the_version_only() {
     );
 }
 
-/// A version 20 reader refuses a version 21 file as newer (ADR-0002).
-#[test]
-fn version_21_is_newer_than_20() {
-    const { assert!(CURRENT_VERSION > 21) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
-}
-
 // Version 21 → 22 (sub-phase 3.3): the Inlay operation kind.
 
 const V21_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v21/sample.dcv");
-
-#[test]
-fn version_21_fixture_loads() {
-    let text = std::str::from_utf8(V21_FIXTURE).unwrap();
-    assert!(text.contains("\"version\": 21,"), "a version 21 file");
-    let loaded = load(V21_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
 
 /// Format 22: the Inlay is a new operation kind no version 21 file
 /// holds, so the step changes only the version, whatever operations
@@ -1821,27 +1815,9 @@ fn v21_to_v22_bumps_the_version_only() {
     );
 }
 
-/// A version 21 reader refuses a version 22 file as newer (ADR-0002).
-#[test]
-fn version_22_is_newer_than_21() {
-    const { assert!(CURRENT_VERSION > 22) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
-}
-
 // Version 22 → 23 (#443): a male Inlay's cut-out.
 
 const V22_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v22/sample.dcv");
-
-#[test]
-fn version_22_fixture_loads() {
-    let text = std::str::from_utf8(V22_FIXTURE).unwrap();
-    assert!(text.contains("\"version\": 22,"), "a version 22 file");
-    let loaded = load(V22_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
 
 /// Format 23: every Inlay gains `"cut_out": null` right after its
 /// `safe_z_mm`, whatever its side and clearing; no other operation
@@ -1917,27 +1893,9 @@ fn v22_to_v23_adds_a_null_cut_out() {
     );
 }
 
-/// A version 22 reader refuses a version 23 file as newer (ADR-0002).
-#[test]
-fn version_23_is_newer_than_22() {
-    const { assert!(CURRENT_VERSION > 22) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
-}
-
 // Version 23 → 24 (#448): a male Inlay's outline rounding.
 
 const V23_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v23/sample.dcv");
-
-#[test]
-fn version_23_fixture_loads() {
-    let text = std::str::from_utf8(V23_FIXTURE).unwrap();
-    assert!(text.contains("\"version\": 23,"), "a version 23 file");
-    let loaded = load(V23_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-}
 
 /// Format 24: every Inlay gains `"outline_rounding_mm": null` right
 /// after its `margin_mm`, whatever its side, clearing and cut-out; no
@@ -2019,14 +1977,6 @@ fn v23_to_v24_adds_null_outline_rounding() {
     );
 }
 
-/// A version 23 reader refuses a version 24 file as newer (ADR-0002).
-#[test]
-fn version_24_is_newer_than_23() {
-    const { assert!(CURRENT_VERSION >= 24) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
-}
-
 #[test]
 fn current_version_is_unchanged() {
     let root = serde_json::to_value(sample_project()).unwrap();
@@ -2036,17 +1986,6 @@ fn current_version_is_unchanged() {
 // Version 24 → 25 (#498): one-file Inlay, both boards from one project.
 
 const V24_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v24/sample.dcv");
-
-#[test]
-fn version_24_fixture_loads() {
-    let text = std::str::from_utf8(V24_FIXTURE).unwrap();
-    assert!(text.contains("\"version\": 24,"), "a version 24 file");
-    let loaded = load(V24_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-    assert_eq!(loaded.notes, vec![], "no Inlay, nothing to note");
-}
 
 /// The sample root at version 24 with one Inlay `inlay` (written at
 /// the current version, then given `side` in place of its
@@ -2206,14 +2145,6 @@ fn v24_to_v25_male_gets_the_stock_as_its_male_board() {
     );
 }
 
-/// A version 24 reader refuses a version 25 file as newer (ADR-0002).
-#[test]
-fn version_25_is_newer_than_24() {
-    const { assert!(CURRENT_VERSION >= 25) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
-}
-
 // Version 25 → 26 (#449, #602): the Inlay's drawn boundary.
 
 const V25_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v25/sample.dcv");
@@ -2289,17 +2220,6 @@ fn v25_to_v26_adds_an_empty_boundary() {
         matches!(err, LoadError::Migration { from: 25, .. }),
         "{err:?}"
     );
-}
-
-#[test]
-fn version_25_fixture_loads() {
-    let text = std::str::from_utf8(V25_FIXTURE).unwrap();
-    assert!(text.contains("\"version\": 25,"), "a version 25 file");
-    let loaded = load(V25_FIXTURE).unwrap();
-    assert_eq!(loaded.project.version, CURRENT_VERSION);
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-    assert_eq!(loaded.notes, vec![], "no Inlay, nothing to note");
 }
 
 /// The version 26 fixtures load as they are: the plain sample, and
@@ -2382,14 +2302,6 @@ fn a_v25_project_exports_the_same_programs() {
     );
 }
 
-/// A version 25 reader refuses a version 26 file as newer (ADR-0002).
-#[test]
-fn version_26_is_newer_than_25() {
-    const { assert!(CURRENT_VERSION >= 26) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
-}
-
 // Version 26 → 27 (sub-phase 3.5, #644): bitmaps and the Photo V-Carve.
 
 const V27_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v27/sample.dcv");
@@ -2441,58 +2353,6 @@ fn v26_to_v27_adds_an_empty_bitmap_list() {
     bare.as_object_mut().unwrap().shift_remove("instances");
     let migrated = migrate(bare, 26).unwrap();
     assert_eq!(migrated["bitmaps"], json!([]));
-}
-
-/// A file that says 26 and holds `bitmaps`, or a `photo_v_carve`
-/// operation, is not a version 26 file: the kind and the list arrive
-/// together in 27, and the migration refuses it, naming what it found.
-#[test]
-fn v26_with_bitmaps_already_present_fails() {
-    for bitmaps in [json!([]), json!([{ "id": "b1" }]), json!(null)] {
-        let mut root = sample_root_at(26);
-        root["bitmaps"] = bitmaps.clone();
-        let err = migrate(root, 26).unwrap_err();
-        match &err {
-            LoadError::Migration {
-                from: 26,
-                to: 27,
-                message,
-                ..
-            } => assert!(message.contains("`bitmaps`"), "{message}"),
-            _ => panic!("{bitmaps}: {err:?}"),
-        }
-    }
-
-    let mut root = sample_root_at(26);
-    root["operations"][0]["kind"] = json!("photo_v_carve");
-    let err = migrate(root, 26).unwrap_err();
-    match &err {
-        LoadError::Migration {
-            from: 26,
-            to: 27,
-            message,
-            ..
-        } => {
-            assert!(message.contains("`operations[0]`"), "{message}");
-            assert!(message.contains("photo_v_carve"), "{message}");
-        }
-        _ => panic!("{err:?}"),
-    }
-    // An older file is refused by the same step, at the end of its chain.
-    let mut root = sample_root_at(20);
-    root["bitmaps"] = json!([]);
-    let err = migrate(root, 20).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            LoadError::Migration {
-                from: 26,
-                to: 27,
-                ..
-            }
-        ),
-        "{err:?}"
-    );
 }
 
 /// The version 27 fixtures load as they are: the plain sample, whose
@@ -2569,14 +2429,6 @@ fn a_v26_project_loads_as_the_same_project() {
             );
         assert_eq!(saved, expected, "one line added, after the instances");
     }
-}
-
-/// A version 26 reader refuses a version 27 file as newer (ADR-0002).
-#[test]
-fn version_27_is_newer_than_26() {
-    const { assert!(CURRENT_VERSION >= 27) };
-    let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
-    assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
 }
 
 // Version 27 → 28 (sub-phase 3.6, #677): the tapered ball nose.
