@@ -724,3 +724,14 @@ fn every_problem_reads_as_the_snapshot_says() {
         "problem_snapshot.txt has a different number of lines"
     );
 }
+
+/// A variant added to [`Problem`] needs a sample here: every code its
+/// `code` method is generated for is one a sample has, so the snapshot
+/// cannot fall behind the enum.
+#[test]
+fn every_variant_has_a_sample_in_the_snapshot() {
+    let sampled: BTreeSet<&str> = samples().iter().map(Problem::code).collect();
+    for code in Problem::CODES {
+        assert!(sampled.contains(code), "no sample of `{code}`");
+    }
+}

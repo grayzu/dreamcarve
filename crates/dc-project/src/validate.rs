@@ -1406,193 +1406,142 @@ pub const INLAY_MIN_PLUG_BASE_MM: f64 = 6.0;
 /// axis's chords scale with it.
 pub const MAX_FLATTEN_TOLERANCE_MM: f64 = 0.1;
 
-impl Problem {
-    /// The stable `snake_case` code of the problem, the variant's name:
-    /// what `check` and `export` print before a warning's message
-    /// (phase 2 functional spec, capability 25).
-    #[must_use]
-    pub const fn code(&self) -> &'static str {
-        match self {
-            Self::DefinitionKeyMismatch { .. } => "definition_key_mismatch",
-            Self::DuplicateInstanceId { .. } => "duplicate_instance_id",
-            Self::DuplicateToolId { .. } => "duplicate_tool_id",
-            Self::DuplicateOperationId { .. } => "duplicate_operation_id",
-            Self::DanglingDefinition { .. } => "dangling_definition",
-            Self::DanglingTool { .. } => "dangling_tool",
-            Self::DanglingInstance { .. } => "dangling_instance",
-            Self::DuplicateTabId { .. } => "duplicate_tab_id",
-            Self::TabDanglingInstance { .. } => "tab_dangling_instance",
-            Self::TabProfileMissing { .. } => "tab_profile_missing",
-            Self::OutOfRange { .. } => "out_of_range",
-            Self::NonFinite { .. } => "non_finite",
-            Self::OperationDisabled { .. } => "operation_disabled",
-            Self::ToolValueUnset { .. } => "tool_value_unset",
-            Self::UnusedTool { .. } => "unused_tool",
-            Self::StockThicknessUnset => "stock_thickness_unset",
-            Self::OperationValueUnset { .. } => "operation_value_unset",
-            Self::ToolOutOfRange { .. } => "tool_out_of_range",
-            Self::OpenProfile { .. } => "open_profile",
-            Self::UnsafeFileExtension { .. } => "unsafe_file_extension",
-            Self::ToolChangeModeNeedsM6 { .. } => "tool_change_mode_needs_m6",
-            Self::StepDownAboveDiameter { .. } => "step_down_above_diameter",
-            Self::CutterNotFlat { .. } => "cutter_not_flat",
-            Self::OperationHasNoTargets { .. } => "operation_has_no_targets",
-            Self::SpindleSpeedHigh { .. } => "spindle_speed_high",
-            Self::PlungeAboveFeed { .. } => "plunge_above_feed",
-            Self::LargeDiameter { .. } => "large_diameter",
-            Self::DuplicateToolNumber { .. } => "duplicate_tool_number",
-            Self::RestOfInvalid { .. } => "rest_of_invalid",
-            Self::HelixNeedsWasteSide { .. } => "helix_needs_waste_side",
-            Self::CannedCyclesUnsupported { .. } => "canned_cycles_unsupported",
-            Self::DrillCutterUnusual { .. } => "drill_cutter_unusual",
-            Self::ReliefNeedsStepDown { .. } => "relief_needs_step_down",
-            Self::EngraveDeeperThanCone { .. } => "engrave_deeper_than_cone",
-            Self::LastPassStockToLeave { .. } => "last_pass_stock_to_leave",
-            Self::LastPassNeedsSide { .. } => "last_pass_needs_side",
-            Self::LastPassThickerThanStepDown { .. } => "last_pass_thicker_than_step_down",
-            Self::BorePitchOverStepDown { .. } => "bore_pitch_over_step_down",
-            Self::FlattenToleranceRange { .. } => "flatten_tolerance_range",
-            Self::VCarveNeedsVBit { .. } => "v_carve_needs_v_bit",
-            Self::TaperedBallNoseRange { .. } => "tapered_ball_nose_range",
-            Self::VBitAngleRange { .. } => "v_bit_angle_range",
-            Self::VBitConeExceeded { .. } => "v_bit_cone_exceeded",
-            Self::ClearingNeedsFlatDepth { .. } => "clearing_needs_flat_depth",
-            Self::ClearingNeedsEndMill { .. } => "clearing_needs_end_mill",
-            Self::ClearingDanglingTool { .. } => "clearing_dangling_tool",
-            Self::ClearingNotDescending { .. } => "clearing_not_descending",
-            Self::StartDepthNegative { .. } => "start_depth_negative",
-            Self::StartDepthUncleared { .. } => "start_depth_uncleared",
-            Self::CountersinkNeedsVBit { .. } => "countersink_needs_v_bit",
-            Self::CountersinkDiameterPositive { .. } => "countersink_diameter_positive",
-            Self::CountersinkMouthExceedsTool { .. } => "countersink_mouth_exceeds_tool",
-            Self::CountersinkIgnoresToolWidth { .. } => "countersink_ignores_tool_width",
-            Self::InlayGlueGapNotBelowDepth { .. } => "inlay_glue_gap_not_below_depth",
-            Self::InlayMarginPositive { .. } => "inlay_margin_positive",
-            Self::InlayOutlineRounding { .. } => "inlay_outline_rounding",
-            Self::InlayPlugBaseThin { .. } => "inlay_plug_base_thin",
-            Self::InlayGlueGapBelowBall { .. } => "inlay_glue_gap_below_ball",
-            Self::InlayPlugDepthBelowBall { .. } => "inlay_plug_depth_below_ball",
-            Self::InlayMaleBoardSize { .. } => "inlay_male_board_size",
-            Self::InlayMaleBoardThickness { .. } => "inlay_male_board_thickness",
-            Self::InlayMaleBoardsDiffer { .. } => "inlay_male_boards_differ",
-            Self::InlayCutOutNoRoom { .. } => "inlay_cut_out_no_room",
-            Self::InlayMarginIgnored { .. } => "inlay_margin_ignored",
-            Self::InlayBoundaryUnknown { .. } => "inlay_boundary_unknown",
-            Self::InlayBoundaryOpen { .. } => "inlay_boundary_open",
-            Self::InlayBoundaryIsTarget { .. } => "inlay_boundary_is_target",
-            Self::InlayBoundaryCrossesDesign { .. } => "inlay_boundary_crosses_design",
-            Self::InlayBoundaryEmpty { .. } => "inlay_boundary_empty",
-            Self::InlayBoundaryHoleIgnored { .. } => "inlay_boundary_hole_ignored",
-            Self::PhotoLineAngleRange { .. } => "photo_line_angle_range",
-            Self::PhotoLineSpacingPositive { .. } => "photo_line_spacing_positive",
-            Self::PhotoLinesOverlap { .. } => "photo_lines_overlap",
-            Self::PhotoSamplePositive { .. } => "photo_sample_positive",
-            Self::PhotoRetractPositive { .. } => "photo_retract_positive",
-            Self::PhotoUnknownBitmap { .. } => "photo_unknown_bitmap",
-            Self::BitmapFootprintAspect { .. } => "bitmap_footprint_aspect",
-            Self::BitmapPixelsMismatch { .. } => "bitmap_pixels_mismatch",
-            Self::BitmapNotGrayscale8 { .. } => "bitmap_not_grayscale_8",
-            Self::DuplicateBitmapId { .. } => "duplicate_bitmap_id",
-            Self::BitmapEmpty { .. } => "bitmap_empty",
-            Self::BitmapTooLarge { .. } => "bitmap_too_large",
-            Self::BitmapFootprintPositive { .. } => "bitmap_footprint_positive",
-            Self::BitmapUnreadable { .. } => "bitmap_unreadable",
-            Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
-            Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
-            Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
+/// `name`, a variant's CamelCase name, in snake case, and how many bytes
+/// of the array that takes: a `_` goes before each capital but the first,
+/// and before a digit that follows a lowercase letter (`Grayscale8` is
+/// `grayscale_8`, `M6` is `m6`). `N` is twice the name's length, which
+/// always holds it.
+const fn snake_case<const N: usize>(name: &str) -> ([u8; N], usize) {
+    let mut out = [0; N];
+    let mut free: &mut [u8] = &mut out;
+    let mut bytes = name.as_bytes();
+    let mut previous = b'_';
+    while let [byte, rest @ ..] = bytes {
+        let starts_word =
+            byte.is_ascii_uppercase() || (byte.is_ascii_digit() && previous.is_ascii_lowercase());
+        if starts_word
+            && previous != b'_'
+            && let [slot, tail @ ..] = free
+        {
+            *slot = b'_';
+            free = tail;
         }
+        if let [slot, tail @ ..] = free {
+            *slot = byte.to_ascii_lowercase();
+            free = tail;
+        }
+        previous = *byte;
+        bytes = rest;
     }
+    let len = N - free.len();
+    (out, len)
+}
 
-    /// Whether this problem is an error or a warning.
+/// The first `len` bytes of `snake` as text. Falls back to `name` were
+/// they not UTF-8, which [`snake_case`] of an ASCII name always is.
+const fn code_text(snake: &'static [u8], len: usize, name: &'static str) -> &'static str {
+    match snake.split_at_checked(len) {
+        Some((code, _)) => match core::str::from_utf8(code) {
+            Ok(code) => code,
+            Err(_) => name,
+        },
+        None => name,
+    }
+}
+
+/// A variant's name in snake case, worked out when the crate is compiled.
+macro_rules! variant_code {
+    ($variant:ident) => {{
+        const NAME: &str = stringify!($variant);
+        const SNAKE: ([u8; 2 * NAME.len()], usize) = snake_case(NAME);
+        code_text(&SNAKE.0, SNAKE.1, NAME)
+    }};
+}
+
+/// Writes [`Problem::code`] from the variants' names. The match has no
+/// wildcard, so a variant missing from the list does not compile.
+macro_rules! problem_codes {
+    ($($variant:ident),+ $(,)?) => {
+        impl Problem {
+            /// The stable `snake_case` code of the problem, the variant's name:
+            /// what `check` and `export` print before a warning's message
+            /// (phase 2 functional spec, capability 25).
+            #[must_use]
+            pub const fn code(&self) -> &'static str {
+                match self {
+                    $(Self::$variant { .. } => variant_code!($variant),)+
+                }
+            }
+
+            /// Every code, in the order the variants are declared.
+            #[cfg(test)]
+            pub(crate) const CODES: &[&str] = &[$(variant_code!($variant)),+];
+        }
+    };
+}
+
+problem_codes! {
+    DefinitionKeyMismatch, DuplicateInstanceId, DuplicateToolId,
+    DuplicateOperationId, DanglingDefinition, DanglingTool,
+    DanglingInstance, DuplicateTabId, TabDanglingInstance,
+    TabProfileMissing, OutOfRange, NonFinite, OperationDisabled,
+    ToolValueUnset, UnusedTool, StockThicknessUnset, OperationValueUnset,
+    ToolOutOfRange, OpenProfile, UnsafeFileExtension, ToolChangeModeNeedsM6,
+    StepDownAboveDiameter, CutterNotFlat, OperationHasNoTargets,
+    SpindleSpeedHigh, PlungeAboveFeed, LargeDiameter, DuplicateToolNumber,
+    RestOfInvalid, HelixNeedsWasteSide, CannedCyclesUnsupported,
+    DrillCutterUnusual, ReliefNeedsStepDown, ClearanceBelowSafeZ,
+    MachineZNotBelowHome, MachineZNeedsG53, EngraveDeeperThanCone,
+    LastPassStockToLeave, LastPassNeedsSide, LastPassThickerThanStepDown,
+    BorePitchOverStepDown, FlattenToleranceRange, VCarveNeedsVBit,
+    TaperedBallNoseRange, VBitAngleRange, VBitConeExceeded,
+    ClearingNeedsFlatDepth, ClearingNeedsEndMill, ClearingDanglingTool,
+    ClearingNotDescending, StartDepthNegative, StartDepthUncleared,
+    CountersinkNeedsVBit, CountersinkDiameterPositive,
+    CountersinkMouthExceedsTool, CountersinkIgnoresToolWidth,
+    InlayGlueGapNotBelowDepth, InlayMarginPositive, InlayOutlineRounding,
+    InlayPlugBaseThin, InlayGlueGapBelowBall, InlayPlugDepthBelowBall,
+    InlayMaleBoardSize, InlayMaleBoardThickness, InlayMaleBoardsDiffer,
+    InlayCutOutNoRoom, InlayMarginIgnored, InlayBoundaryUnknown,
+    InlayBoundaryOpen, InlayBoundaryIsTarget, InlayBoundaryCrossesDesign,
+    InlayBoundaryEmpty, InlayBoundaryHoleIgnored, PhotoLineAngleRange,
+    PhotoLineSpacingPositive, PhotoLinesOverlap, PhotoSamplePositive,
+    PhotoRetractPositive, PhotoUnknownBitmap, BitmapFootprintAspect,
+    BitmapPixelsMismatch, BitmapNotGrayscale8, DuplicateBitmapId,
+    BitmapEmpty, BitmapTooLarge, BitmapFootprintPositive, BitmapUnreadable,
+}
+
+impl Problem {
+    /// Whether this problem is an error or a warning. The warnings are
+    /// listed; every other problem is an error, and so is a new variant
+    /// until it is listed.
     pub fn severity(&self) -> Severity {
-        match self {
+        let warning = matches!(
+            self,
             Self::OperationDisabled { .. }
-            | Self::UnusedTool { .. }
-            | Self::OpenProfile { .. }
-            | Self::StepDownAboveDiameter { .. }
-            | Self::SpindleSpeedHigh { .. }
-            | Self::PlungeAboveFeed { .. }
-            | Self::LargeDiameter { .. }
-            | Self::DrillCutterUnusual { .. }
-            | Self::ReliefNeedsStepDown { .. }
-            | Self::EngraveDeeperThanCone { .. }
-            | Self::ClearingNotDescending { .. }
-            | Self::CountersinkIgnoresToolWidth { .. }
-            | Self::InlayPlugBaseThin { .. }
-            | Self::InlayGlueGapBelowBall { .. }
-            | Self::InlayPlugDepthBelowBall { .. }
-            | Self::InlayMarginIgnored { .. }
-            | Self::InlayBoundaryEmpty { .. }
-            | Self::InlayBoundaryHoleIgnored { .. }
-            | Self::PhotoLinesOverlap { .. } => Severity::Warning,
-            Self::PhotoLineAngleRange { .. }
-            | Self::PhotoLineSpacingPositive { .. }
-            | Self::PhotoSamplePositive { .. }
-            | Self::PhotoRetractPositive { .. }
-            | Self::PhotoUnknownBitmap { .. }
-            | Self::BitmapFootprintAspect { .. }
-            | Self::BitmapPixelsMismatch { .. }
-            | Self::BitmapNotGrayscale8 { .. }
-            | Self::DuplicateBitmapId { .. }
-            | Self::BitmapEmpty { .. }
-            | Self::BitmapTooLarge { .. }
-            | Self::BitmapFootprintPositive { .. }
-            | Self::BitmapUnreadable { .. } => Severity::Error,
-            Self::InlayBoundaryUnknown { .. }
-            | Self::InlayBoundaryOpen { .. }
-            | Self::InlayBoundaryIsTarget { .. }
-            | Self::InlayBoundaryCrossesDesign { .. }
-            | Self::CutterNotFlat { .. }
-            | Self::InlayMaleBoardSize { .. }
-            | Self::InlayMaleBoardThickness { .. }
-            | Self::InlayMaleBoardsDiffer { .. }
-            | Self::InlayCutOutNoRoom { .. }
-            | Self::OperationHasNoTargets { .. }
-            | Self::DuplicateToolNumber { .. }
-            | Self::RestOfInvalid { .. }
-            | Self::HelixNeedsWasteSide { .. }
-            | Self::CannedCyclesUnsupported { .. }
-            | Self::LastPassStockToLeave { .. }
-            | Self::LastPassNeedsSide { .. }
-            | Self::LastPassThickerThanStepDown { .. }
-            | Self::BorePitchOverStepDown { .. }
-            | Self::FlattenToleranceRange { .. }
-            | Self::VCarveNeedsVBit { .. }
-            | Self::TaperedBallNoseRange { .. }
-            | Self::VBitAngleRange { .. }
-            | Self::VBitConeExceeded { .. }
-            | Self::ClearingNeedsFlatDepth { .. }
-            | Self::ClearingNeedsEndMill { .. }
-            | Self::ClearingDanglingTool { .. }
-            | Self::StartDepthNegative { .. }
-            | Self::StartDepthUncleared { .. }
-            | Self::CountersinkNeedsVBit { .. }
-            | Self::CountersinkDiameterPositive { .. }
-            | Self::CountersinkMouthExceedsTool { .. }
-            | Self::InlayGlueGapNotBelowDepth { .. }
-            | Self::InlayMarginPositive { .. }
-            | Self::InlayOutlineRounding { .. }
-            | Self::ClearanceBelowSafeZ { .. }
-            | Self::MachineZNotBelowHome { .. }
-            | Self::MachineZNeedsG53 { .. } => Severity::Error,
-            Self::DefinitionKeyMismatch { .. }
-            | Self::DuplicateInstanceId { .. }
-            | Self::DuplicateToolId { .. }
-            | Self::DuplicateOperationId { .. }
-            | Self::DanglingDefinition { .. }
-            | Self::DanglingTool { .. }
-            | Self::DanglingInstance { .. }
-            | Self::DuplicateTabId { .. }
-            | Self::TabDanglingInstance { .. }
-            | Self::TabProfileMissing { .. }
-            | Self::OutOfRange { .. }
-            | Self::NonFinite { .. }
-            | Self::ToolValueUnset { .. }
-            | Self::StockThicknessUnset
-            | Self::OperationValueUnset { .. }
-            | Self::ToolOutOfRange { .. }
-            | Self::UnsafeFileExtension { .. }
-            | Self::ToolChangeModeNeedsM6 { .. } => Severity::Error,
+                | Self::UnusedTool { .. }
+                | Self::OpenProfile { .. }
+                | Self::StepDownAboveDiameter { .. }
+                | Self::SpindleSpeedHigh { .. }
+                | Self::PlungeAboveFeed { .. }
+                | Self::LargeDiameter { .. }
+                | Self::DrillCutterUnusual { .. }
+                | Self::ReliefNeedsStepDown { .. }
+                | Self::EngraveDeeperThanCone { .. }
+                | Self::ClearingNotDescending { .. }
+                | Self::CountersinkIgnoresToolWidth { .. }
+                | Self::InlayPlugBaseThin { .. }
+                | Self::InlayGlueGapBelowBall { .. }
+                | Self::InlayPlugDepthBelowBall { .. }
+                | Self::InlayMarginIgnored { .. }
+                | Self::InlayBoundaryEmpty { .. }
+                | Self::InlayBoundaryHoleIgnored { .. }
+                | Self::PhotoLinesOverlap { .. }
+        );
+        if warning {
+            Severity::Warning
+        } else {
+            Severity::Error
         }
     }
 
