@@ -26,7 +26,7 @@ mod tab_descent;
 mod waste;
 
 use crate::block::CutBlock;
-use crate::context::rates_of;
+use crate::context::{self, OpContext, check_diameter, check_safe_z, rates_of, tool_of};
 use crate::entry::{
     self, CutSide, EntryKind, EntryTool, EntryWarnings, FallbackReason, MIN_BOUNDARY_SAFETY_MM,
 };
@@ -34,8 +34,7 @@ use crate::error::{CamError, ShapeRef, at, at_mut};
 use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadWarnings};
 use crate::overlap::{CutPath, overlap_warnings, region_holds_path, within};
 use crate::relief;
-use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
-use crate::stock::{stock_overhang, swept_bounds};
+use crate::sequence::{SequenceInput, plan, sequence};
 use crate::tabs::{
     LapRates, Least, PathEnds, PathTabs, Reduced, Request, TabCut, Tabs, check_size,
     coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
@@ -345,14 +344,7 @@ fn profile_below(
     op: &ProfileOp,
     start_depth_mm: f64,
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: op.tool.clone(),
-        })?;
+    let tool = tool_of(project, &op.id, &op.tool)?;
     // Outside and Inside offset by half the diameter, right only for a flat
     // end mill at every depth (#67). On the line the tool centre follows
     // the line, so any cutter cuts it as drawn.
@@ -365,38 +357,15 @@ fn profile_below(
         });
     }
     let rates = rates_of(tool)?;
-    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
-        return Err(CamError::InvalidToolDiameter {
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            diameter_mm: tool.diameter_mm,
-        });
-    }
-    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
-        return Err(CamError::InvalidSafeZ {
-            op: op.id.clone(),
-            safe_z_mm: op.safe_z_mm,
-        });
-    }
+    check_diameter(tool)?;
+    check_safe_z(&op.id, op.safe_z_mm)?;
     entry::check(&op.id, &op.entry)?;
     if !op.side.has_waste_area() && matches!(op.entry, Entry::Helix { .. }) {
         return Err(CamError::HelixNeedsWasteSide { op: op.id.clone() });
     }
-    let step_down_mm =
-        op.step_down_mm
-            .or(tool.step_down_mm)
-            .ok_or_else(|| CamError::MissingStepDown {
-                op: op.id.clone(),
-                tool: tool.name.clone(),
-                tool_id: tool.id.clone(),
-            })?;
-    let thickness_mm = project
-        .stock
-        .thickness_mm
-        .ok_or(CamError::MissingThickness)?;
-    let depth_mm = op
-        .depth_mm
-        .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
+    let step_down_mm = context::step_down_mm(&op.id, op.step_down_mm, tool)?;
+    let thickness_mm = context::thickness_mm(project)?;
+    let depth_mm = context::depth_mm(&op.id, op.depth_mm)?;
     // #284: a last pass, with its own depth when it sets a thickness.
     let last_pass = op.last_pass.as_ref();
     if let Some(last_pass) = last_pass {
@@ -418,7 +387,8 @@ fn profile_below(
         .filter(|_| pass_z.len() > 1)
         .map(|l| l.stock_to_leave_mm);
     let reverse_last = last_pass.is_some_and(|l| l.reverse);
-    let safe_z_mm = thickness_mm + op.safe_z_mm;
+    let op_ctx = OpContext::new(project, &op.id, tool, rates, thickness_mm, op.safe_z_mm);
+    let safe_z_mm = op_ctx.safe_z_mm;
     let start_z_mm = entry::descent_start_z_mm(thickness_mm, safe_z_mm);
 
     // A tab request is checked before the targets, as phase 2 checked
@@ -906,18 +876,9 @@ fn profile_below(
     }
     let containment = containment_pairs(&regions, &shapes)?;
     let mut input = SequenceInput {
-        blocks,
         order: op.machining_order,
         containment: &containment,
-        safe_z_mm,
-        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
-        stock_top_mm: thickness_mm,
-        tool_diameter_mm: tool.diameter_mm,
-        stepover_mm: 0.0,
-        feed_mm_min: rates.feed_mm_min,
-        plunge_mm_min: rates.plunge_mm_min,
-        cut_before: &[],
-        groove_link_z_mm: None,
+        ..SequenceInput::new(&op_ctx, blocks)
     };
 
     // Warnings name contours by their position in the cut order, which
@@ -1021,14 +982,7 @@ fn profile_below(
     input.blocks.extend(notches);
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
-    if let Some(overhang) =
-        swept_bounds(&toolpath, radius_mm).and_then(|swept| stock_overhang(&project.stock, swept))
-    {
-        return Err(CamError::OffStock {
-            op: op.id.clone(),
-            overhang,
-        });
-    }
+    op_ctx.check_on_stock(&toolpath, radius_mm)?;
     // #310 review: a one-pass cut has no pass to leave the stock to leave.
     if last_pass.is_some() && pass_z.len() < 2 {
         warnings.push(Warning::LastPassUnused { op: op.id.clone() });
@@ -1552,14 +1506,7 @@ pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamEr
 /// [`op_tabs`], before a defect it finds ([`CamError::Internal`]) names
 /// `op`.
 fn op_tabs_unnamed(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: op.tool.clone(),
-        })?;
+    let tool = tool_of(project, &op.id, &op.tool)?;
     if op.side != Side::OnLine && !tool.cutter.is_flat() {
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
@@ -1568,13 +1515,7 @@ fn op_tabs_unnamed(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError
             cutter: tool.cutter.describe(),
         });
     }
-    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
-        return Err(CamError::InvalidToolDiameter {
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            diameter_mm: tool.diameter_mm,
-        });
-    }
+    check_diameter(tool)?;
     let request = op
         .tabs
         .as_ref()
