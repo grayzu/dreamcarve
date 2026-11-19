@@ -79,7 +79,7 @@ Notes from the fixes:
 | --- | --- | --- |
 | C1 | Import drawings and pictures (#535): the headless half is done; the window half (picture sheet, tree rows, textured quads, drop) is slice D6 | doing |
 | C2 | Photo V-Carve editor and bitmaps (#544) | todo |
-| C3 | Tapered ball nose in the app (#685) | doing |
+| C3 | Tapered ball nose in the app (#685): the headless half is done; the window half is slice D6 | doing |
 
 ### D. UI redesign
 
@@ -117,6 +117,30 @@ Notes from the fixes:
 - **Not built yet:** selecting, picking and moving a picture (new
   `Selection` and `Hit` variants); *Add ▸ Photo V-Carve* is still disabled.
   Both belong to C2.
+
+#### What the window must draw for slice C3 (tapered ball nose)
+
+- **Tool editor:** draw `tools::rows(tool, units)` (`FieldRow { field,
+  label, text, unit, required }`), ordered by `tools::fields_for(kind)`,
+  in place of the hard-coded field list. Until then the type dropdown
+  offers Tapered ball nose but its three fields (`ToolField::TipDiameter`,
+  `Taper`, `FluteLength`) are not drawn. `KindChoice::ALL` has six
+  entries.
+- **Required marks:** `FieldRow.required`; `tools::lacks_value(tool)` is
+  the row's red dot. The message goes in the tooltip (capability 66b).
+- **Tables:** `library::Column::ALL` (Name, Type, Ø, Tip, Angle, Flutes,
+  Feed, Plunge, RPM, Product) with `heading()` and `numeric()`;
+  `library::row`/`cell` return `Cell::{Text, Empty, Unset}`. The Tools
+  list's second line is `tools::row_detail`.
+- **`KindFilter`** has no tapered ball nose entry yet: the window matches
+  it exhaustively. Switch the window to `KindFilter::label()`, then add
+  the variant.
+- **Pickers:** `editor::offered_for` and `offered_tools`, unchanged
+  signatures. **Notes:** `editor::tool_note`, `editor::notes` on the
+  Inlay's `male_board` row, `editor::seat_line`.
+- **Import review:** `library::review_status`, `review_unset`, `skipped`.
+- Still open: `operations::new_operation` defaults a new carve to the
+  first V-bit even when a tapered ball nose is the only carving tool.
 
 ### E. Docs and release preparation
 
