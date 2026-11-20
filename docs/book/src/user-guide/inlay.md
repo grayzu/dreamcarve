@@ -98,9 +98,13 @@ The four values and the male board's thickness say **Required** until
 you type them. Until the board thickness is set only the female is cut,
 with the warning `inlay_male_board_unset`.
 
-The app has no row for a drawn boundary (`boundary`,
-[The boundary](#the-boundary)). To use one, add it to the project file
-by hand; the app keeps it and cuts it.
+A drawn boundary ([The boundary](#the-boundary)) is the **Boundary** row
+of the **Depth** group, before the band margin. It lists **None (use the
+band margin)** and every shape that can be one: a shape whose outlines
+are all closed and that is not one of the Inlay's targets. When several
+shapes draw the band together, select them and choose **Selected shapes
+(N)**. The male board draws the boundary's edge dashed. It is `boundary`
+in the project file.
 
 **The two boards.** The Viewport draws the **male board** to the right
 of the stock, with the design mirrored and the male's toolpaths, as the
