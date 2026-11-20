@@ -181,6 +181,10 @@ fn placeholders_are_filled() {
         "3 shapes"
     );
     assert_eq!(
+        strings.fmt(StrKey::CommandSubjectMany, &[("count", "1")]),
+        "1 shape"
+    );
+    assert_eq!(
         strings.get(StrKey::CommandLabelReorderOperations),
         "Reorder operations"
     );
@@ -201,13 +205,33 @@ fn placeholders_are_filled() {
                 rest[..end].to_owned()
             })
             .collect();
-        for name in &names {
+        // A count's noun, `{count|tool|tools}`, is its count's name and
+        // exactly two forms.
+        let mut plain = Vec::new();
+        for whole in &names {
+            let mut parts = whole.split('|');
+            let name = parts.next().unwrap_or_default();
+            let forms = parts.count();
             assert!(
                 !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
-                "{}: placeholder {{{name}}} is not a name",
+                "{}: placeholder {{{whole}}} is not a name",
                 key.key()
             );
+            assert!(
+                forms == 0 || forms == 2,
+                "{}: {{{whole}}} needs a form for one and a form for the rest",
+                key.key()
+            );
+            if forms == 2 {
+                assert!(
+                    names.iter().any(|n| n == name),
+                    "{}: {{{whole}}} has no {{{name}}} beside it",
+                    key.key()
+                );
+            }
+            plain.push(name.to_owned());
         }
+        let names = plain;
         let args: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "X")).collect();
         let filled = strings.fmt(key, &args);
         assert!(
