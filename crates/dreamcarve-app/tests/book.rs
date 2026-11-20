@@ -742,3 +742,26 @@ fn stock_screenshots() {
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }
+
+/// The chapter "Checking and exporting"
+/// (`docs/book/src/user-guide/exporting.md`): the plaque's Export step
+/// with a tool that lacks its feed, so an error blocks export, and with
+/// the Post-processor group open.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn exporting_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-export", &dialogs) else {
+        return;
+    };
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    click_button(&mut h, "Post-processor");
+    shoot(&mut h, &out, "export-post-processor", Crop::StepPanel);
+    click_button(&mut h, "Post-processor");
+    delete_a_feed(&mut h);
+    shoot(&mut h, &out, "export-blocked", Crop::StepPanel);
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}

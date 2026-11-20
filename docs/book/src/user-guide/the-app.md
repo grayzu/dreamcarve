@@ -146,7 +146,10 @@ export; a warning and a hint do not. **Copy** puts the list on the
 clipboard as `check` prints it. Drag the handle at the drawer's top edge
 to make it taller.
 
-The [Warnings](warnings.md) chapter lists every message by its code.
+[Checking and exporting](exporting.md) says more about the drawer and
+about the Export step, [Toolpath preview](toolpath-preview.md) about
+what the Viewport draws, and the [Warnings](warnings.md) chapter lists
+every message by its code.
 
 ## The status bar
 

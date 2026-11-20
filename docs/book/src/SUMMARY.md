@@ -38,6 +38,8 @@
 - [Images](user-guide/images.md)
 - [Photo V-Carve operation](user-guide/photo-v-carve.md)
 - [Machining order and cut order](user-guide/machining-order.md)
+- [Toolpath preview](user-guide/toolpath-preview.md)
+- [Checking and exporting](user-guide/exporting.md)
 - [Post-processors](user-guide/post-processors.md)
 - [Configuration](user-guide/configuration.md)
 - [Tool library](user-guide/tool-library.md)
