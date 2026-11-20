@@ -828,7 +828,13 @@ folder are app preferences, kept outside the project.
     stays on the Viewport, faded; when it finishes the new toolpath
     replaces it. A generation error (a tool with no feed, a missing
     thickness) marks the row red and lists in the Warnings drawer; the
-    operation draws nothing. The status bar shows *Generating 2 of 5…*
+    operation draws nothing. So does an error that stops generation
+    before it starts: while validation refuses the project (an operation
+    left with no target, a tool with no feed) no toolpath can be worked
+    out, and every operation the change reaches draws nothing until the
+    error is fixed, not its old toolpath faded, which would look like a
+    cut that is coming; an operation the change does not reach keeps its
+    toolpath, which is still what it cuts. The status bar shows *Generating 2 of 5…*
     while any operation is pending. There is no Generate button, because
     there is nothing to press: an edit is its own request. *Stop* cancels
     generation on a huge project; after a Stop the status bar shows

@@ -1880,10 +1880,27 @@ fn deleting_a_target_lists_the_no_targets_error_in_the_drawer() {
         h.query_all_by_label(&line).count() >= 1,
         "the drawer lists the error: {line}"
     );
+    // Capability 71: it cannot be worked out, so it draws nothing, where
+    // it kept its old toolpath; the other four keep theirs.
+    let cut_out = dc_project::OperationId::new("op4");
+    let toolpaths = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<(String, bool)> {
+        let scene = h.state().app().scene();
+        let drawn = scene.operations().iter();
+        drawn
+            .map(|op| (op.id.to_string(), !op.runs.is_empty()))
+            .collect()
+    };
+    for (id, drawn) in toolpaths(&h) {
+        assert_eq!(drawn, id != cut_out.as_str(), "{id} after the delete");
+    }
 
     command_key(&h, egui::Key::Z);
     h.run();
     settle_generation(&mut h, "the plaque again");
+    assert!(
+        toolpaths(&h).iter().all(|(_, drawn)| *drawn),
+        "undo brings its toolpath back"
+    );
     assert!(
         h.state()
             .app()

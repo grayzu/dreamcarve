@@ -331,7 +331,11 @@ whenever any digest changed, since the order check reads everything.
 
 An operation is **stale** when its stored result's digest differs from the
 current one; the Viewport draws the stored runs at the faded alpha until
-the new result arrives. A result whose `snapshot` is not the current one
+the new result arrives. When none will arrive, because validation
+refuses the project and no generator runs, the operation is **blocked**
+(`Generation::is_blocked`) and the Scene holds no run of it: capability
+71's "the operation draws nothing". Its stored result is kept, so an
+undo that makes its digest current again draws it at once. A result whose `snapshot` is not the current one
 is dropped. **Stop** clears `pending` and marks the running job's result
 to be dropped; the worker thread finishes the job it is on, since the
 generators have no cancellation point, and the UI shows it stopped at
@@ -755,7 +759,7 @@ carries. The CLI's existing tests are the regression net for slice 1.
 - `pick::nearest_outline_within_tolerance_wins` (port: `hitTest.test.ts` cases), `pick::click_cycles_overlapping_instances`, `pick::hidden_is_not_picked_locked_is`, `pick::toolpath_hit_selects_its_operation`, `pick::male_board_shape_selects_the_inlay` (acc 75).
 - `handles::corner_scale_is_about_the_centre`, `handles::rotation_handle_rotates_about_the_centre`, `handles::uniform_unless_unlocked` (acc 66).
 - `arrows::*` (port: `toolpathArrows.test.ts`, the rules and the oracle on its fixture).
-- `scene::marks_equal_the_svg_marks` (acc 79), `scene::male_board_sits_beside_the_stock_in_display_only` (acc 76), `scene::stale_results_are_flagged_until_replaced` (acc 87).
+- `scene::marks_equal_the_svg_marks` (acc 79), `scene::male_board_sits_beside_the_stock_in_display_only` (acc 76), `scene::stale_results_are_flagged_until_replaced` (acc 87), `scene::an_operation_that_cannot_generate_draws_nothing` and `scene::a_waiting_operation_keeps_its_old_toolpath_and_a_blocked_one_does_not` (capability 71).
 - `tabs::tab_drag_snaps_to_the_outline_in_definition_space`, `tabs::add_tab_at_clicked_point_with_last_size`, `tabs::hollow_when_no_profile_crosses` (acc 78).
 
 **Tree and placement (slice 5)**

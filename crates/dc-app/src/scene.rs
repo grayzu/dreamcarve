@@ -16,10 +16,13 @@
 //! marks [`dc_job::preview::marks`] finds in each (the ones `--preview`
 //! draws, acceptance 79), and the operation's colour, which every run of
 //! it draws in ([`crate::operations::colour_at`]: one colour per
-//! operation, its row's). A stale operation keeps its last result's runs,
-//! which the Viewport draws faded, until the new one lands (acceptance
-//! 87). The runs are shared, not copied, between Scenes while their
-//! result stands.
+//! operation, its row's). A stale operation that waits for its new result
+//! keeps its last result's runs, which the Viewport draws faded, until
+//! the new one lands (acceptance 87); one that cannot generate, because
+//! validation refuses the project, holds none, so nothing that is not
+//! what the project cuts is drawn as a toolpath (capability 71: "the
+//! operation draws nothing"). The runs are shared, not copied, between
+//! Scenes while their result stands.
 //!
 //! [`strokes`] reads a toolpath as the Viewport draws it: one stroke per
 //! move, a rapid, a cut or a plunge, with arcs kept; display code
@@ -334,7 +337,8 @@ pub struct SceneOperation {
     /// `--preview` counts a colour per run (`dc_job::preview::render`).
     pub colour: usize,
     /// Its stored result's runs, in cut order; empty before the first
-    /// result and after a generation error.
+    /// result, after a generation error, and while it is stale with no
+    /// result coming ([`Generation::is_blocked`]).
     pub runs: Arc<[SceneRun]>,
     /// Its runs' cutting moves as clicks pick them (#576), built with
     /// `runs` and shared with them.
@@ -505,7 +509,10 @@ impl CutIndex {
 }
 
 /// Each enabled operation of `project` with `generation`'s state and its
-/// stored runs, those of `previous` reused where their result stands.
+/// stored runs, those of `previous` reused where their result stands. An
+/// operation that is stale with no result coming takes none of its
+/// stored runs: they are not what the project cuts, and nothing will
+/// replace them until the project validates again.
 fn operations(
     project: &Project,
     generation: &Generation,
@@ -517,7 +524,9 @@ fn operations(
         .enumerate()
         .filter(|(_, op)| op.enabled())
         .map(|(index, op)| {
-            let stored = generation.result(op.id());
+            let stored = generation
+                .result(op.id())
+                .filter(|_| !generation.is_blocked(op.id()));
             let result = stored.map(|r| (r.snapshot, r.digest));
             let kept = previous
                 .iter()

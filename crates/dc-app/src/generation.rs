@@ -10,7 +10,10 @@
 //! Each enabled operation has a [`digest`] of everything its generator
 //! reads. An operation is current when its stored result carries the
 //! current digest, and stale otherwise: the Viewport draws its old runs
-//! faded until the new result lands. After an edit only the operations
+//! faded until the new result lands. While validation refuses the
+//! project no generator runs, so a stale operation is blocked
+//! ([`Generation::is_blocked`]): no result is coming, and the Viewport
+//! draws nothing for it (capability 71). After an edit only the operations
 //! whose digest changed are pending, so editing one operation regenerates
 //! it and the operations that read it. `finish` reruns on every snapshot,
 //! since the order check and emission read the whole project.
@@ -489,6 +492,17 @@ impl Generation {
     #[must_use]
     pub fn is_stale(&self, op: &OperationId) -> bool {
         self.digests.contains_key(op) && !self.is_current(op)
+    }
+
+    /// Whether `op` is stale and no result is coming for it: validation
+    /// refuses the project, so no generator runs until an edit makes it
+    /// valid. Its stored runs are of an earlier project and are not drawn
+    /// (capability 71: an operation that cannot generate "draws
+    /// nothing"); an operation whose digest the refused edit left alone
+    /// is still current, and keeps its toolpath.
+    #[must_use]
+    pub fn is_blocked(&self, op: &OperationId) -> bool {
+        !self.runnable && self.is_stale(op)
     }
 
     /// Whether `op` is stale and Stop holds it.

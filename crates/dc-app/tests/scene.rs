@@ -760,3 +760,92 @@ fn an_operation_has_one_colour_on_its_row_its_toolpaths_and_the_key() {
         runs.len()
     );
 }
+
+/// Capability 71 ("the operation draws nothing"; slice D9): an operation
+/// that cannot generate keeps no toolpath. Deleting the only shape the
+/// plaque's Square recess cuts leaves it with no target, which validation
+/// refuses, so no generator runs: its row is marked with the error and
+/// the Scene holds no run of it, where it used to keep the old toolpath
+/// as a stale one for good. The operations the deletion does not touch
+/// keep their toolpaths, current. Undo brings the shape back, and with it
+/// the toolpath, without generating again.
+#[test]
+fn an_operation_that_cannot_generate_draws_nothing() {
+    let mut harness = generated("plaque.dcv");
+    let recess = dc_project::OperationId::new("op2");
+    let whole = harness.app.scene().operation(&recess).unwrap().runs.len();
+    assert_eq!(whole, 1);
+
+    harness
+        .run(Command::DeleteInstances(vec![dc_project::InstanceId::new(
+            "i4",
+        )]))
+        .unwrap();
+    assert!(harness.app.pending().is_empty(), "validation refuses it");
+    let scene = harness.app.scene();
+    let op = scene.operation(&recess).expect("still enabled");
+    assert!(op.runs.is_empty(), "no toolpath that looks cuttable");
+    assert!(op.cuts.is_empty(), "and nothing to click");
+    let row = dc_app::operations::rows(&harness.app)
+        .into_iter()
+        .find(|r| r.id == recess)
+        .unwrap();
+    assert_eq!(row.status, dc_app::operations::Status::Error);
+    for other in scene.operations().iter().filter(|o| o.id != recess) {
+        assert!(
+            !other.stale && !other.runs.is_empty(),
+            "{} is untouched",
+            other.name
+        );
+    }
+
+    harness.app.undo();
+    let op = harness.app.scene().operation(&recess).unwrap();
+    assert!(!op.stale && op.runs.len() == whole, "undo brings it back");
+    assert!(harness.app.pending().is_empty(), "with nothing to generate");
+}
+
+/// Capability 71 and acceptance 87, the other half: an operation that is
+/// waiting for its new toolpath keeps the old one, stale, for the
+/// Viewport to draw faded. Taking the feed from the plaque's 1/4 end
+/// mill is an error on the tool, so the three operations that cut with
+/// it can no longer generate and draw nothing, while the two that cut
+/// with the 1/8 end mill are current. With the feed back they generate
+/// again.
+#[test]
+fn a_waiting_operation_keeps_its_old_toolpath_and_a_blocked_one_does_not() {
+    let mut harness = generated("plaque.dcv");
+    let mut stock = harness.app.project().stock.clone();
+    stock.width_mm += 5.0;
+    harness.run(Command::SetStock(stock)).unwrap();
+    for op in harness.app.scene().operations() {
+        assert!(op.stale && !op.runs.is_empty(), "{} waits", op.name);
+    }
+    harness.generate();
+
+    let tool = harness.app.project().tools[1].clone();
+    assert_eq!(tool.name, "1/4 end mill");
+    let mut no_feed = tool.clone();
+    no_feed.feed_mm_min = None;
+    harness.run(Command::UpdateTool(no_feed)).unwrap();
+    assert!(harness.app.pending().is_empty());
+    let project = harness.app.project().clone();
+    for op in harness.app.scene().operations() {
+        let uses = project
+            .operations
+            .iter()
+            .any(|o| o.id() == &op.id && o.tool() == &tool.id);
+        assert_eq!(
+            op.runs.is_empty(),
+            uses,
+            "{}: only what the tool cuts is gone",
+            op.name
+        );
+    }
+
+    harness.run(Command::UpdateTool(tool)).unwrap();
+    harness.generate();
+    for op in harness.app.scene().operations() {
+        assert!(!op.stale && !op.runs.is_empty(), "{} is back", op.name);
+    }
+}
