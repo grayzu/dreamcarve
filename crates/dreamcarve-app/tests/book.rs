@@ -230,6 +230,18 @@ fn type_in(h: &mut H, label: &str, text: &str) {
     h.run();
 }
 
+/// What the text field named `label` shows.
+fn field(h: &H, label: &str) -> String {
+    h.get_by_role_and_label(Role::TextInput, label)
+        .value()
+        .unwrap_or_default()
+}
+
+/// The step **Undo** would take back, as the Edit menu names it.
+fn undo_label(h: &H) -> String {
+    h.state().app().undo_label().unwrap_or_default().to_owned()
+}
+
 /// [`type_in`] for a field of the open sheet.
 fn type_in_sheet(h: &mut H, label: &str, text: &str) {
     h.get_by_role(Role::Dialog)
@@ -745,6 +757,297 @@ fn exporting_screenshots() {
     click_button(&mut h, "Post-processor");
     delete_a_feed(&mut h);
     shoot(&mut h, &out, "export-blocked", Crop::StepPanel);
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
+
+/// A drag of the primary button from `from` to `to` with `modifiers`
+/// held, a frame per step.
+fn drag_with(h: &mut H, from: egui::Pos2, to: egui::Pos2, modifiers: egui::Modifiers) {
+    h.event(egui::Event::PointerMoved(from));
+    h.event(egui::Event::ModifiersChanged(modifiers));
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers,
+    });
+    h.run();
+    for k in 1..=4_u8 {
+        let t = f32::from(k) / 4.0;
+        h.event(egui::Event::PointerMoved(from + (to - from) * t));
+        h.run();
+    }
+    h.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers,
+    });
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run();
+}
+
+/// Ctrl Z, or ⌘Z on macOS.
+fn undo(h: &mut H) {
+    common::command_key(h, egui::Key::Z);
+    h.run();
+}
+
+/// Where project point (`x_mm`, `y_mm`) is on the window.
+fn at_mm(h: &H, x_mm: f64, y_mm: f64) -> egui::Pos2 {
+    common::on_screen(h, dc_geometry::Point::new(x_mm, y_mm))
+}
+
+/// What `check` says of the project, as the Warnings drawer copies it.
+fn problems(h: &H) -> Vec<String> {
+    dc_app::warnings::lines(h.state().app())
+}
+
+/// The chapter "Placing shapes"
+/// (`docs/book/src/user-guide/placing-shapes.md`), on the plaque: every
+/// gesture the chapter names, done as it says and checked against the
+/// values it gives, with a picture of the square selected, of the Rotate
+/// popover, of the list with a hidden row, a locked row and a linked
+/// copy, of a locked shape, and of a row's menu.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn placing_shapes_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-place", &dialogs) else {
+        return;
+    };
+    go_to(&mut h, "Design");
+    let row = |h: &mut H, name: &str| {
+        h.get_by_role_and_label(Role::TreeItem, name).click();
+        h.run();
+    };
+    let size = |h: &H| ["X", "Y", "W", "H"].map(|label| field(h, label));
+    let saved = h.state().app().project().clone();
+
+    // The square, selected from its row: its Properties.
+    row(&mut h, "square");
+    assert_eq!(size(&h), ["70", "18", "30", "30"]);
+    assert!(h.query_by_label("Targeted by: Square recess").is_some());
+    shoot(&mut h, &out, "place-selected", Crop::ViewportAndInspector);
+
+    // Moving: X typed, the arrow keys, a drag.
+    type_in(&mut h, "X", "80");
+    assert_eq!(size(&h), ["80", "18", "30", "30"]);
+    assert_eq!(undo_label(&h), "Move “square”");
+    undo(&mut h);
+    assert_eq!(size(&h), ["70", "18", "30", "30"], "Undo puts it back");
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowUp);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowLeft);
+    h.run();
+    assert_eq!(
+        size(&h),
+        ["70.9", "28", "30", "30"],
+        "1 mm right, 10 mm up, 0.1 mm left"
+    );
+    for _ in 0..3 {
+        undo(&mut h);
+    }
+    let (from, to) = (at_mm(&h, 70.0, 33.0), at_mm(&h, 60.0, 38.0));
+    drag_with(&mut h, from, to, egui::Modifiers::NONE);
+    assert_eq!(size(&h), ["60", "23", "30", "30"], "dragged by its edge");
+    assert_eq!(undo_label(&h), "Move “square”");
+    undo(&mut h);
+
+    // Resizing: W typed with the link closed and open, a corner dragged
+    // with and without Alt.
+    type_in(&mut h, "W", "20");
+    assert_eq!(size(&h), ["75", "23", "20", "20"], "about its centre");
+    assert_eq!(undo_label(&h), "Scale “square”");
+    undo(&mut h);
+    click(&mut h, "Keep proportions");
+    type_in(&mut h, "H", "40");
+    assert_eq!(size(&h), ["70", "13", "30", "40"], "the link open");
+    undo(&mut h);
+    click(&mut h, "Keep proportions");
+    let (from, to) = (at_mm(&h, 100.0, 48.0), at_mm(&h, 105.0, 53.0));
+    drag_with(&mut h, from, to, egui::Modifiers::NONE);
+    assert_eq!(size(&h), ["65", "13", "40", "40"], "a corner, 5 mm out");
+    undo(&mut h);
+    let (from, to) = (at_mm(&h, 100.0, 48.0), at_mm(&h, 110.0, 48.0));
+    drag_with(&mut h, from, to, egui::Modifiers::ALT);
+    assert_eq!(size(&h), ["60", "18", "50", "30"], "with Alt, one side");
+    undo(&mut h);
+
+    // Rotating: the button, R and Shift R, the handle with Shift, and
+    // the popover's angle.
+    click(&mut h, "Rotate 90° clockwise");
+    assert_eq!(undo_label(&h), "Rotate “square” 90° clockwise");
+    undo(&mut h);
+    h.key_press(egui::Key::R);
+    h.run();
+    assert_eq!(undo_label(&h), "Rotate “square” 90° clockwise");
+    undo(&mut h);
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::R);
+    h.run();
+    assert_eq!(undo_label(&h), "Rotate “square” 90° anticlockwise");
+    undo(&mut h);
+    let handle = at_mm(&h, 85.0, 48.0) - egui::vec2(0.0, 20.0);
+    let to = at_mm(&h, 85.0, 33.0) + egui::vec2(-60.0, -50.0);
+    drag_with(&mut h, handle, to, egui::Modifiers::SHIFT);
+    assert_eq!(
+        size(&h),
+        ["63.7868", "11.7868", "42.4264", "42.4264"],
+        "with Shift the handle turns in 15° steps: here 45°"
+    );
+    assert_eq!(undo_label(&h), "Rotate “square”");
+    undo(&mut h);
+    click(&mut h, "Rotate by an angle");
+    h.get_by_label("Angle").click();
+    h.run();
+    h.get_by_label("Angle").type_text("30");
+    h.run();
+    shoot(&mut h, &out, "place-rotate", Crop::ViewportAndInspector);
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(undo_label(&h), "Rotate “square” 30° anticlockwise");
+    assert_eq!(size(&h), ["64.5096", "12.5096", "40.9808", "40.9808"]);
+    undo(&mut h);
+    click_button(&mut h, "Arrange");
+    click(&mut h, "Rotate…");
+    assert!(
+        h.query_by_label("Angle").is_some(),
+        "Arrange ▸ Rotate… opens the same popover"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // Flipping, and Centre on Stock (the stock is 170 × 120).
+    click(&mut h, "Flip horizontal");
+    assert_eq!(undo_label(&h), "Flip “square” horizontally");
+    undo(&mut h);
+    click(&mut h, "Flip vertical");
+    assert_eq!(undo_label(&h), "Flip “square” vertically");
+    undo(&mut h);
+    click_button(&mut h, "Arrange");
+    click(&mut h, "Centre on Stock");
+    assert_eq!(size(&h), ["70", "45", "30", "30"]);
+    assert_eq!(undo_label(&h), "Centre “square” on stock");
+    undo(&mut h);
+    assert_eq!(h.state().app().project(), &saved, "every step was undone");
+
+    // A linked copy; a hidden shape; a locked one.
+    common::command_key(&h, egui::Key::D);
+    h.run();
+    assert_eq!(undo_label(&h), "Duplicate “square”");
+    assert!(h.query_by_label("Properties · square (2)").is_some());
+    assert_eq!(size(&h), ["80", "28", "30", "30"], "10 mm right and up");
+    assert!(
+        h.query_by_label("No operation targets the selection")
+            .is_some()
+    );
+    row(&mut h, "island");
+    h.key_press(egui::Key::H);
+    h.run();
+    assert_eq!(undo_label(&h), "Hide “island”");
+    row(&mut h, "square (2)");
+    h.key_press(egui::Key::L);
+    h.run();
+    assert_eq!(undo_label(&h), "Lock “square (2)”");
+    settle(&mut h);
+    assert!(
+        problems(&h).is_empty() && h.query_by_label("Est. 3 min 39 s").is_some(),
+        "a copy nothing cuts, a hidden shape and a locked one change no cut"
+    );
+    shoot(&mut h, &out, "place-list", Crop::StepPanel);
+    shoot(&mut h, &out, "place-locked", Crop::ViewportAndInspector);
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(size(&h), ["80", "28", "30", "30"], "a locked shape stays");
+    assert!(h.query_by_label("shape “square (2)” is locked").is_some());
+    // With the square selected too: a nudge moves neither, and Rotate
+    // turns the one that is not locked.
+    h.get_by_role_and_label(Role::TreeItem, "square")
+        .click_modifiers(egui::Modifiers::COMMAND);
+    h.run();
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(
+        undo_label(&h),
+        "Lock “square (2)”",
+        "no step: neither moved"
+    );
+    click(&mut h, "Rotate 90° clockwise");
+    assert_eq!(undo_label(&h), "Rotate “square” 90° clockwise");
+    assert!(
+        h.query_by_label_contains("“square (2)” is locked, so it stayed")
+            .is_some(),
+        "the status bar names the shape that stayed"
+    );
+    undo(&mut h);
+    row(&mut h, "square (2)");
+    h.key_press(egui::Key::L);
+    h.run();
+    assert_eq!(undo_label(&h), "Unlock “square (2)”");
+
+    // A shape moved past the stock's right edge: its cut is an error,
+    // and the Stock step says the shape reaches past the stock.
+    row(&mut h, "square");
+    type_in(&mut h, "X", "150");
+    settle(&mut h);
+    assert_eq!(
+        problems(&h),
+        ["error: operation `op4` cuts off the stock: 10.930 mm past the +X (right) edge"]
+    );
+    go_to(&mut h, "Stock");
+    assert!(
+        h.query_by_label_contains("reaches past the stock")
+            .is_some()
+    );
+    go_to(&mut h, "Design");
+    undo(&mut h);
+    row(&mut h, "island");
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::H);
+    h.run();
+    assert_eq!(undo_label(&h), "Show “island”");
+
+    // A row's menu.
+    h.get_by_role_and_label(Role::TreeItem, "pocket")
+        .click_secondary();
+    h.run();
+    for item in ["Rename", "Duplicate", "Zoom to", "Add operation"] {
+        assert!(h.query_by_label(item).is_some(), "the menu has {item}");
+    }
+    shoot(&mut h, &out, "place-menu", Crop::StepPanel);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // Deleting: the copy no operation targets, then the square the
+    // Square recess cuts, which leaves that Pocket with nothing to cut.
+    row(&mut h, "square (2)");
+    h.key_press(egui::Key::Delete);
+    h.run();
+    assert_eq!(undo_label(&h), "Delete “square (2)”");
+    row(&mut h, "square");
+    h.key_press(egui::Key::Delete);
+    h.run();
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Delete “square”");
+    assert_eq!(
+        problems(&h),
+        [
+            "error: operation `Square recess` (`op4`) is enabled but has no targets, so it would \
+          cut nothing; add targets or disable it"
+        ]
+    );
+    let without = h.state().app().project().clone();
+    undo(&mut h);
+    settle(&mut h);
+    let targets = |project: &dc_project::Project| project.operations[3].targets().len();
+    assert_eq!(
+        (targets(&without), targets(h.state().app().project())),
+        (0, 1),
+        "Undo puts the square back among the Square recess's targets"
+    );
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }

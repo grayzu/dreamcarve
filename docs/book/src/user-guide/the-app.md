@@ -97,6 +97,7 @@ it. The Inspector's **Properties** show its **X**, **Y**, **W** and
 **H**, and its header has the **Arrange** buttons (rotate, flip). A
 hidden shape cannot be selected. A locked one can, but it cannot be
 moved, resized, rotated or flipped; operations still cut it.
+[Placing shapes](placing-shapes.md) is the chapter on all of this.
 
 The selection stays when you change step, which is how an operation gets
 its shapes: select them, then **Add** on the Operations step.
