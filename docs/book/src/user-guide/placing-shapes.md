@@ -168,7 +168,7 @@ other.
 
 No operation cuts a new copy: its row counts 0. Add it to an operation's
 targets, or select it and add an operation for it
-([How to add each operation](../quick-start/app.md#how-to-add-each-operation)).
+([Adding an operation](operations.md#adding-an-operation)).
 
 ## Deleting
 

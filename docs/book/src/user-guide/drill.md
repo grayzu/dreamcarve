@@ -34,6 +34,40 @@ a short pause at the bottom of each peck:
 }
 ```
 
+## In the app
+
+Select the circles, then choose **Add ▸ Drill** on the Operations step
+([Operations in the app](operations.md#adding-an-operation)). The menu
+offers **Drill** only when every selected shape is a circle.
+
+![The sign's Hanging holes Drill in the Inspector: Targets 2 shapes, Tool 1/8 end mill (T2), Cycle Simple, Depth 12 mm; the Depth group open with Retract height 1 mm and Through-cut allowance 0.2 mm; the Strategy group open with Dwell 0 s and Allow tool wider than hole unticked; and the Heights group open with Safe Z 15 mm](figures/app/op-drill.png)
+
+The editor's rows, and the field of the project file each one sets. Two
+labels say more than the field's name does: **Retract height** is
+`retract_mm`, and a countersink's **Mouth diameter** is its
+`diameter_mm`.
+
+| Group | Row | Field |
+| --- | --- | --- |
+| **Setup** | **Targets** | `targets` |
+| | **Tool** | `tool` |
+| | **Cycle**: Simple, Peck, Countersink | `cycle` ([Cycles](#cycles), [Countersink](#countersink)) |
+| | **Depth** | `depth_mm` |
+| | With Countersink: **Mouth diameter** | `cycle.countersink.diameter_mm` |
+| | With Countersink: **Depth** reads `derived:` and a value, and cannot be typed | Worked out from the mouth, the start depth and the V-bit's angle ([The depth](#the-depth)) |
+| **Depth** | **Retract height** | `retract_mm` ([Retract height](#retract-height)) |
+| | **Through-cut allowance** | `through_cut_allowance_mm` |
+| **Strategy** | With Peck: **Peck depth** | `cycle.peck.peck_depth_mm`. Empty is `null`, the tool's step-down ([Peck](#peck)) |
+| | With Peck: **Retract**: Full, Chip break; then **Chip-break gap** | `cycle.peck.retract`; `chip_break.gap_mm` |
+| | With Countersink: **Start depth** | `cycle.countersink.start_depth_mm` ([Start depth](#start-depth)) |
+| | With Countersink: **Start plane cleared externally** | `cycle.countersink.start_plane_cleared_externally` |
+| | **Dwell**, in seconds | `dwell_s` ([Dwell](#dwell)) |
+| | **Allow tool wider than hole** | `allow_tool_wider_than_hole` ([Holes smaller than the bit](#holes-smaller-than-the-bit)) |
+| **Heights** | **Safe Z** | `safe_z_mm` |
+
+A Countersink needs a V-bit. With another tool its **Depth** row says
+what is missing in place of a value.
+
 ## Settings
 
 | Field | Meaning |

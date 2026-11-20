@@ -40,6 +40,39 @@ is free, the pocket would be cut in a loose part (`check` warns
 `cut_inside_freed_part`), or with tabs, in a part held only by them
 (`cut_inside_tab_held_part`, for a pocket deeper than half the stock).
 
+## In the app
+
+Select the closed shapes, the pocket's outline and any islands inside
+it, then choose **Add ▸ Pocket** on the Operations step
+([Operations in the app](operations.md#adding-an-operation)).
+
+![The plaque's Panel Pocket in the Inspector: Targets 2 shapes, Tool 1/4 end mill (T1), Depth 4 mm, Strategy Raster; the Strategy group open with Raster angle 0°, Direction Climb, Wall pass Last, Stepover showing "tool's: 40 %" and Rest of None; and the closed groups Depth, Entry and leads "Helix 80 % 15°", Corners and tabs "Relief none", Order and Heights "Safe Z 15 mm"; on the Viewport the green raster lines fill the panel round its island](figures/app/op-pocket.png)
+
+The editor's rows, and the field of the project file each one sets:
+
+| Group | Row | Field |
+| --- | --- | --- |
+| **Setup** | **Targets** | `targets` |
+| | **Tool** | `tool` |
+| | **Depth** | `depth_mm` |
+| | **Strategy**: Offset, Raster | `strategy` ([How the pocket is cleared](#how-the-pocket-is-cleared)) |
+| **Depth** | **Step-down** | `step_down_mm`. Empty is `null`, the tool's |
+| | **Stock to leave** | `stock_to_leave_mm` ([Stock to leave](#stock-to-leave)) |
+| | **Through-cut allowance** | `through_cut_allowance_mm` |
+| **Strategy** | **Raster angle**, with Raster | `strategy.raster.angle_deg` ([Raster](#raster)) |
+| | **Direction**: Climb, Conventional | `direction` ([Direction](#direction)) |
+| | **Wall pass**: Last, First, None | `wall_pass` ([Wall pass](#wall-pass)) |
+| | **Stepover**, a percentage of the bit's diameter | `step_over_fraction`: 40 % is 0.4. Empty is `null`, the tool's ([Stepover](#stepover)) |
+| | **Rest of**: None, or an earlier Pocket | `rest_of` ([Rest machining](#rest-machining)) |
+| **Entry and leads** | **Entry**: Plunge, Ramp, Helix | `entry` ([Entry](#entry)) |
+| | **Ramp angle**; or **Helix diameter**, a percentage of the bit's, and **Helix angle** | `entry.ramp.angle_deg`; `entry.helix.diameter_fraction`, `angle_deg` |
+| **Corners and tabs** | **Corner relief**: None, Dogbone, T-bone | `corner_relief` ([Corner relief](#corner-relief)) |
+| **Order** | **Machining order**: Full depth first, Pass first | `machining_order` |
+| **Heights** | **Safe Z** | `safe_z_mm` |
+
+The **Strategy** row in Setup chooses how the pocket is cleared; the
+**Strategy** group under it holds the settings of that choice.
+
 ## Settings
 
 | Field | Meaning |

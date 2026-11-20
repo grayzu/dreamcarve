@@ -46,6 +46,56 @@ Put a V-Carve **before** the Profile that cuts the part out, as any cut
 inside the part. A V-Carve has no `depth_mm`: its depth comes from the
 shape and the bit's angle.
 
+## In the app
+
+Select the closed shapes, then choose **Add ▸ V-Carve** on the
+Operations step
+([Operations in the app](operations.md#adding-an-operation)). The new
+V-Carve takes the project's first V-bit or tapered ball nose. It has no
+depth to set: the shapes decide how deep the bit goes.
+
+![The sign's Lettering V-Carve in the Inspector: Targets 10 shapes, Tool 1/4 90 degree V-bit with "cone height 3.17 mm" under it, Flat depth off, and under Clearing passes "No clearing passes: the V-bit clears the floor itself" with an Add pass button; the Strategy group open with Strategy Medial and Floor stepover showing "tool's: 40 %"; and the closed groups Depth, Order and Heights; on the Viewport the lettering's carve lines run along the middle of each letter](figures/app/op-v-carve.png)
+
+The editor's rows, and the field of the project file each one sets:
+
+| Group | Row | Field |
+| --- | --- | --- |
+| **Setup** | **Targets** | `targets` |
+| | **Tool**, with the bit's cone height under it | `tool` ([Choosing a bit angle](#choosing-a-bit-angle)) |
+| | **Flat depth**, a switch and a depth | `flat_depth_mm`; off is `null` ([Flat depth](#flat-depth)) |
+| | **Clearing passes**, a list | `clearing` ([Clearing passes](#clearing-passes)) |
+| **Depth** | **Start depth** | `start_depth_mm` ([Start depth](#start-depth)) |
+| | **Start plane cleared externally** | `start_plane_cleared_externally` |
+| | **Through-cut allowance** | `through_cut_allowance_mm` |
+| **Strategy** | **Strategy**: Medial, Offset | `strategy` ([Offset strategy](#offset-strategy)) |
+| | With Offset: **Ring step-over** and **Direction** | `strategy.offset.step_over_mm`, `direction` |
+| | **Floor stepover**, a percentage | `step_over_fraction`. Empty is `null`, the tool's ([The V-bit floor](#the-v-bit-floor)) |
+| **Order** | **Machining order**: Full depth first, Pass first | `machining_order` |
+| **Heights** | **Safe Z** | `safe_z_mm` |
+
+### Clearing passes in the app
+
+**Add pass** adds a clearing pass with the next smaller end mill of the
+project. Each pass is a card with its own rows:
+
+| Row | Field of the pass |
+| --- | --- |
+| **Tool** | `tool`: a flat end mill |
+| **Clearance**: Offset, Raster; with Raster, **Raster angle** | `strategy` |
+| **Direction**: Climb, Conventional | `direction` |
+| **Entry**: Plunge, Ramp, Helix, with its angle rows | `entry` |
+
+Drag a pass by its grip to reorder the list, largest end mill first, and
+delete one with the button at its right.
+[The sign in the app quick start](../quick-start/app.md#the-sign-a-v-carve)
+has a picture of a V-Carve with a flat depth and one clearing pass.
+
+Under the **Tool** row a V-bit shows its **cone height**, and a tapered
+ball nose its cutting height: the deepest the bit can carve. The status
+bar's message is the selected carve in one line, such as `Lettering ·
+deepest cut 1.658 mm, no flat depth`; click it for the full note in the
+Warnings drawer.
+
 ## Settings
 
 | Field | Meaning |

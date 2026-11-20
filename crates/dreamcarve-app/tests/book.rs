@@ -1639,3 +1639,543 @@ fn tapered_ball_nose_screenshots() {
     drop(h);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The names of the project's operations, in cut order.
+fn operation_names(h: &H) -> Vec<String> {
+    let project = h.state().app().project();
+    project
+        .operations
+        .iter()
+        .map(|op| op.name().to_owned())
+        .collect()
+}
+
+/// The names of the shapes operation `name` cuts, in order.
+fn targets_of(h: &H, name: &str) -> Vec<String> {
+    let project = h.state().app().project();
+    let op = project
+        .operations
+        .iter()
+        .find(|op| op.name() == name)
+        .unwrap_or_else(|| panic!("no operation {name}"));
+    op.targets()
+        .iter()
+        .map(|id| {
+            let instance = project.instances.iter().find(|i| i.id == *id);
+            instance.map_or_else(|| id.as_str().to_owned(), |i| i.name.clone())
+        })
+        .collect()
+}
+
+/// The rows of the open menu: each one's label and whether it is off.
+fn menu_rows(h: &H) -> Vec<(String, bool)> {
+    h.query_all_by_role(Role::MenuItem)
+        .map(|n| {
+            let node = n.accesskit_node();
+            (node.label().unwrap_or_default(), node.is_disabled())
+        })
+        .collect()
+}
+
+/// What the empty field named `label` shows in grey.
+fn placeholder(h: &H, label: &str) -> String {
+    h.get_by_role_and_label(Role::TextInput, label)
+        .accesskit_node()
+        .placeholder()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// The chapter "Operations in the app"
+/// (`docs/book/src/user-guide/operations.md`), on the plaque: the list
+/// and its row controls, the Add menu, the editor's header, Setup and
+/// groups, the three ways of changing an operation's targets, the tool
+/// picker, and a value the tool gives.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn operations_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-operations", &dialogs) else {
+        return;
+    };
+    let plaque = [
+        "Screw holes",
+        "Border and squiggle",
+        "Panel",
+        "Square recess",
+        "Cut out",
+    ];
+    open_operation(&mut h, "Cut out");
+    settle(&mut h);
+    assert_eq!(operation_names(&h), plaque);
+    shoot(&mut h, &out, "operations-step", Crop::Window);
+
+    // The header's name is a field once clicked.
+    click_button(&mut h, "Cut out");
+    h.get_by_role_and_label(Role::TextInput, "Rename Cut out")
+        .type_text("Outline");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(undo_label(&h), "Rename “Cut out”");
+    assert_eq!(operation_names(&h)[4], "Outline");
+    undo(&mut h);
+
+    // The checkbox turns an operation off, and its time leaves the
+    // estimate; the eye only hides its toolpath.
+    h.get_by_role_and_label(Role::CheckBox, "Enable Panel")
+        .click();
+    h.run();
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Disable “Panel”");
+    assert!(!painted(&h, "Est. 3 min 39 s"), "the estimate is shorter");
+    assert_eq!(
+        problems(&h),
+        ["warning: operation_disabled: operation `op3` is disabled and will not be exported"]
+    );
+
+    // Text that is no length is refused: the field keeps its value and
+    // says why, and the project is untouched.
+    type_in(&mut h, "Depth", "deep");
+    assert_eq!(undo_label(&h), "Disable “Panel”", "no step was made");
+    assert_eq!(field(&h, "Depth"), "12");
+    assert!(
+        h.query_by_label_contains("`deep` is not a length")
+            .is_some()
+    );
+    h.get_by_role_and_label(Role::TextInput, "Depth").focus();
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_role_and_label(Role::CheckBox, "Enable Panel")
+        .click();
+    h.run();
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Enable “Panel”");
+    assert!(painted(&h, "Est. 3 min 39 s"));
+    let steps = undo_label(&h);
+    click(&mut h, "Hide the toolpath of Panel");
+    assert_eq!(undo_label(&h), steps, "hiding a toolpath is no undo step");
+    assert!(painted(&h, "Est. 3 min 39 s"), "and changes no program");
+    click(&mut h, "Show the toolpath of Panel");
+
+    // Dragging a row by its grip changes the cut order.
+    let grips: Vec<egui::Pos2> = h
+        .query_all_by_label("Drag to reorder")
+        .map(|n| n.rect().center())
+        .collect();
+    assert_eq!(grips.len(), 5, "a grip on each row");
+    common::drag(
+        &mut h,
+        grips[4],
+        grips[0] - egui::vec2(0.0, 12.0),
+        egui::PointerButton::Primary,
+    );
+    assert_eq!(
+        operation_names(&h),
+        [
+            "Cut out",
+            "Screw holes",
+            "Border and squiggle",
+            "Panel",
+            "Square recess"
+        ]
+    );
+    assert_eq!(undo_label(&h), "Reorder operations");
+    undo(&mut h);
+
+    // Duplicate and Delete act on the selected operation.
+    click_button(&mut h, "Duplicate");
+    assert_eq!(undo_label(&h), "Duplicate “Cut out”");
+    assert_eq!(operation_names(&h)[5], "Cut out (2)");
+    click_button(&mut h, "Delete");
+    assert_eq!(undo_label(&h), "Delete “Cut out (2)”");
+    undo(&mut h);
+    undo(&mut h);
+    assert_eq!(operation_names(&h), plaque);
+
+    // Add, with an open path selected: the kinds it can take, then the
+    // rest, each with its reason.
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "squiggle").click();
+    h.run();
+    go_to(&mut h, "Operations");
+    settle(&mut h);
+    click_button(&mut h, "Add");
+    assert_eq!(
+        menu_rows(&h),
+        [
+            ("Profile", false),
+            ("Engrave", false),
+            ("Pocket", true),
+            ("Drill", true),
+            ("Bore", true),
+            ("V-Carve", true),
+            ("Inlay", true),
+            ("Photo V-Carve", true),
+        ]
+        .map(|(kind, off)| (kind.to_owned(), off))
+    );
+    for reason in [
+        "An open path cannot take a Pocket",
+        "A Drill needs circles",
+        "A Photo V-Carve needs a picture",
+    ] {
+        assert!(painted(&h, reason), "the menu says: {reason}");
+    }
+    shoot(&mut h, &out, "operations-add-menu", Crop::Window);
+    h.get_by_role_and_label(Role::MenuItem, "Engrave").click();
+    h.run();
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Add “Engrave 1”");
+    assert_eq!(targets_of(&h, "Engrave 1"), ["squiggle"]);
+    assert!(required(&h, "Depth"), "a new operation's depth is required");
+    assert_eq!(
+        problems(&h),
+        ["error: operations[op6].depth_mm is not set (mm) for operation `Engrave 1`"]
+    );
+    undo(&mut h);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    click_button(&mut h, "Add");
+    assert!(
+        menu_rows(&h).iter().all(|(_, off)| *off),
+        "with nothing selected every kind is off"
+    );
+    assert!(painted(&h, "Select shapes to add an operation"));
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // Edit targets: click a shape to add it, Enter to finish.
+    open_operation(&mut h, "Panel");
+    assert_eq!(targets_of(&h, "Panel"), ["pocket", "island"]);
+    click(&mut h, "Edit targets");
+    let on_the_square = at_mm(&h, 85.0, 20.0);
+    common::click_at(&mut h, on_the_square, egui::Modifiers::NONE);
+    shoot(&mut h, &out, "operations-targets", Crop::Window);
+    assert_eq!(
+        targets_of(&h, "Panel"),
+        ["pocket", "island"],
+        "nothing is written until Done"
+    );
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(targets_of(&h, "Panel"), ["pocket", "island", "square"]);
+    assert_eq!(undo_label(&h), "Set targets of “Panel”");
+    undo(&mut h);
+    click(&mut h, "Edit targets");
+    common::click_at(&mut h, on_the_square, egui::Modifiers::NONE);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(targets_of(&h, "Panel"), ["pocket", "island"], "Cancel");
+
+    // The Targets row's menu takes the selection.
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "square").click();
+    h.run();
+    go_to(&mut h, "Operations");
+    click(&mut h, "Target actions");
+    click(&mut h, "Add selection");
+    assert_eq!(targets_of(&h, "Panel"), ["pocket", "island", "square"]);
+    click(&mut h, "Target actions");
+    click(&mut h, "Use selection");
+    assert_eq!(targets_of(&h, "Panel"), ["square"]);
+    undo(&mut h);
+    undo(&mut h);
+
+    // A shape's row on the Design step offers the selected operation.
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "square")
+        .click_secondary();
+    h.run();
+    click(&mut h, "Add to “Panel”");
+    assert_eq!(targets_of(&h, "Panel"), ["pocket", "island", "square"]);
+    h.get_by_role_and_label(Role::TreeItem, "square")
+        .click_secondary();
+    h.run();
+    click(&mut h, "Remove from “Panel”");
+    assert_eq!(targets_of(&h, "Panel"), ["pocket", "island"]);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // The Tool row lists the project's tools that fit the kind.
+    open_operation(&mut h, "Panel");
+    h.get_by_role_and_label(Role::ComboBox, "Tool").click();
+    h.run();
+    for row in [
+        "1/4 end mill (T1)",
+        "1/8 end mill (T2)",
+        "Add from library…",
+    ] {
+        assert!(
+            h.query_all_by_role_and_label(Role::Button, row)
+                .next()
+                .is_some(),
+            "the picker has {row}"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, "1/8 end mill (T2)")
+        .click();
+    h.run();
+    assert_eq!(undo_label(&h), "Set tool of “Panel”");
+    undo(&mut h);
+
+    // A value the tool gives: empty, the field shows the tool's; typed,
+    // the operation's own, with a button to go back.
+    open_group(&mut h, "Depth");
+    assert_eq!(placeholder(&h, "Step-down"), "tool's: 4 mm");
+    assert!(h.query_by_label("Use the tool's value").is_none());
+    type_in(&mut h, "Step-down", "2");
+    assert_eq!(undo_label(&h), "Set step down of “Panel”");
+    click(&mut h, "Use the tool's value");
+    assert_eq!(placeholder(&h, "Step-down"), "tool's: 4 mm");
+
+    // A problem located at a field.
+    type_in(&mut h, "Step-down", "8");
+    settle(&mut h);
+    let warning = "operation `Panel` (`op3`) cuts 8 mm per pass, deeper than the 6.35 mm \
+                   diameter of tool `1/4 end mill`; passes that deep can break the bit, so use \
+                   a step-down of at most 6.35 mm";
+    assert_eq!(
+        problems(&h),
+        [format!("warning: step_down_above_diameter: {warning}")]
+    );
+    assert!(
+        h.query_by_label(warning).is_some(),
+        "the warning is under its field"
+    );
+    shoot(
+        &mut h,
+        &out,
+        "operations-field-warning",
+        Crop::ViewportAndInspector,
+    );
+    undo(&mut h);
+
+    // A value out of range is kept, and is an error under its field.
+    open_group(&mut h, "Entry and leads");
+    type_in(&mut h, "Helix angle", "60");
+    settle(&mut h);
+    let error = "operations[op3].entry.helix.angle_deg is 60, expected an angle greater than \
+                 0 and at most 45 degrees";
+    assert_eq!(problems(&h), [format!("error: {error}")]);
+    assert!(h.query_by_label(error).is_some());
+    undo(&mut h);
+    settle(&mut h);
+    assert!(problems(&h).is_empty());
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
+
+/// One picture of operation `name`'s editor, with `groups` open: the
+/// Viewport and the Inspector, as `<picture>.png`. Every row in `rows`
+/// must be in the editor and in view, so the chapter's table of field
+/// names is the picture's.
+fn editor_picture(
+    h: &mut H,
+    out: &Path,
+    name: &str,
+    groups: &[&str],
+    rows: &[&str],
+    picture: &str,
+) {
+    open_operation(h, name);
+    for group in groups {
+        open_group(h, group);
+    }
+    settle(h);
+    let inspector = h.state().layout().inspector.expect("the Inspector shows");
+    for row in rows {
+        let shown = h
+            .query_all_by_label(row)
+            .any(|n| inspector.contains_rect(n.rect()) && n.rect().is_positive());
+        assert!(shown, "{picture}: the row {row} is in view in the editor");
+    }
+    shoot(h, out, picture, Crop::ViewportAndInspector);
+}
+
+/// The operation chapters' "In the app" parts (`profile.md`, `pocket.md`,
+/// `drill.md`, `bore.md`, `engrave.md`, `v-carve.md`, `inlay.md`): one
+/// picture of each kind's editor, on the parts the app quick start
+/// builds, with the groups open that the window has room for.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn operation_editor_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-editors", &dialogs) else {
+        return;
+    };
+    editor_picture(
+        &mut h,
+        &out,
+        "Cut out",
+        &["Depth"],
+        &[
+            "Targets",
+            "Tool",
+            "Side",
+            "Depth",
+            "Tab request",
+            "Placement",
+            "Count",
+            "Step-down",
+            "Through-cut allowance",
+            "Strategy",
+            "Entry and leads",
+            "Corners and tabs",
+            "Order",
+            "Heights",
+        ],
+        "op-profile",
+    );
+    editor_picture(
+        &mut h,
+        &out,
+        "Panel",
+        &["Strategy"],
+        &[
+            "Targets",
+            "Tool",
+            "Depth",
+            "Strategy",
+            "Raster angle",
+            "Direction",
+            "Wall pass",
+            "Stepover",
+            "Rest of",
+            "Entry and leads",
+            "Corners and tabs",
+            "Order",
+            "Heights",
+        ],
+        "op-pocket",
+    );
+    editor_picture(
+        &mut h,
+        &out,
+        "Screw holes",
+        &["Depth", "Strategy", "Heights"],
+        &[
+            "Targets",
+            "Tool",
+            "Depth",
+            "Pitch",
+            "Stock to leave",
+            "Through-cut allowance",
+            "Direction",
+            "Safe Z",
+        ],
+        "op-bore",
+    );
+    editor_picture(
+        &mut h,
+        &out,
+        "Border and squiggle",
+        &["Depth", "Strategy", "Order", "Heights"],
+        &[
+            "Targets",
+            "Tool",
+            "Depth",
+            "Step-down",
+            "Through-cut allowance",
+            "Alternate direction",
+            "Machining order",
+            "Safe Z",
+        ],
+        "op-engrave",
+    );
+    drop(h);
+
+    let text = app_steps::chapter();
+    let sign = built(&text, "sign", "sign", &dir);
+    let mut h = window(&dir, Some(sign), &dialogs).unwrap();
+    editor_picture(
+        &mut h,
+        &out,
+        "Hanging holes",
+        &["Depth", "Strategy", "Heights"],
+        &[
+            "Targets",
+            "Tool",
+            "Cycle",
+            "Depth",
+            "Retract height",
+            "Through-cut allowance",
+            "Dwell",
+            "Allow tool wider than hole",
+            "Safe Z",
+        ],
+        "op-drill",
+    );
+    editor_picture(
+        &mut h,
+        &out,
+        "Lettering",
+        &["Strategy"],
+        &[
+            "Targets",
+            "Tool",
+            "Flat depth",
+            "Clearing passes",
+            "Add pass",
+            "Depth",
+            "Strategy",
+            "Floor stepover",
+            "Order",
+            "Heights",
+        ],
+        "op-v-carve",
+    );
+    assert!(
+        painted(&h, "Lettering · deepest cut 1.658 mm, no flat depth"),
+        "the status bar's message is the selected carve's summary"
+    );
+    drop(h);
+
+    let inlay = built(&text, "inlay", "dc", &dir);
+    let mut h = window(&dir, Some(inlay), &dialogs).unwrap();
+    editor_picture(
+        &mut h,
+        &out,
+        "DC",
+        &["Male board"],
+        &[
+            "Targets",
+            "Tool",
+            "Inlay depth",
+            "Glue gap",
+            "Plug depth",
+            "Board thickness",
+            "Depth",
+            "Board width",
+            "Board height",
+            "Strategy",
+            "Cut-out",
+            "Order",
+            "Heights",
+        ],
+        "op-inlay",
+    );
+    drop(h);
+
+    // An Inlay with a drawn boundary, which the editor has no row for:
+    // editing another of its values leaves the boundary as the file had
+    // it.
+    let drawn = common::copy_fixture("dc-boundary.dcv", &dir);
+    let mut h = window(&dir, Some(drawn), &dialogs).unwrap();
+    open_operation(&mut h, "DC");
+    assert!(
+        h.query_by_label("Boundary").is_none(),
+        "no row for the boundary"
+    );
+    type_in(&mut h, "Glue gap", "0.8");
+    let dc_project::Operation::Inlay(inlay) = &h.state().app().project().operations[0] else {
+        panic!("the fixture's Inlay");
+    };
+    assert_eq!(inlay.glue_gap_mm, Some(0.8));
+    assert_eq!(inlay.boundary, [dc_project::InstanceId::new("i3")]);
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}

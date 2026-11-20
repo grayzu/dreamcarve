@@ -60,6 +60,61 @@ The project's stock is the female board. `male_board` is the male's: the
 same width and height as the stock (`null`), 12 mm thick. See [One
 project, two boards](#one-project-two-boards).
 
+## In the app
+
+Select the closed shapes of the design, then choose **Add ▸ Inlay** on
+the Operations step
+([Operations in the app](operations.md#adding-an-operation)). One Inlay
+cuts both boards, so there is no side to choose and nothing to keep in
+step between two files.
+
+![The inlay pair's DC Inlay in the Inspector: Targets 2 shapes, Tool 1/4 60 degree V-bit with "one bit for both boards · cone height 5.49 mm" under it, Inlay depth 4 mm, Glue gap 1 mm, Plug depth 2 mm, Board thickness 12 mm with "base under the band 7 mm (at least 6 mm)"; the Male board group open with Board width "same as stock: 110" and Board height "same as stock: 80"; and the closed groups Depth, Strategy, Cut-out "1/8 end mill, holding tabs", Order and Heights "Safe Z 10 mm"; on the Viewport the stock with the letters DC and, at its right, the Male board with the mirrored plug](figures/app/op-inlay.png)
+
+The editor's rows, and the field of the project file each one sets:
+
+| Group | Row | Field |
+| --- | --- | --- |
+| **Setup** | **Targets** | `targets` |
+| | **Tool**, with "one bit for both boards" and its cone height under it | `tool` ([Choosing the bit](#choosing-the-bit)) |
+| | **Inlay depth** | `depth_mm` ([The four values](#the-four-values)) |
+| | **Glue gap** | `glue_gap_mm` |
+| | **Plug depth** | `plug_depth_mm` |
+| | **Board thickness**, with the base left under the band beneath it | `male_board.thickness_mm` ([The male board](#the-male-board)) |
+| **Depth** | **Band margin** | `margin_mm` |
+| | **Outline rounding**, a switch and a radius | `outline_rounding_mm`; off is `null` ([The band's outer edge](#the-bands-outer-edge)) |
+| | **Through-cut allowance** | `through_cut_allowance_mm` |
+| | **Derived**: lines you read, not rows you set | The male's start plane and band floor, and how deep the bit's flank engages |
+| **Male board** | **Board width**, **Board height** | `male_board.width_mm`, `height_mm`. Empty is `null`, the same as the stock |
+| **Strategy** | **Floor stepover**, a percentage | `step_over_fraction` |
+| | **Clearing passes**, a list | `clearing` ([Clearing passes](#clearing-passes)) |
+| **Cut-out** | **Cut-out**, a switch | `cut_out`; off is `null` ([Cutting the plug free](#cutting-the-plug-free)) |
+| | **Cut-out tool** | `cut_out.tool` |
+| | **Holding tabs**, a switch; then **Placement**, **Count** or **Distances**, **Tab width**, **Tab height**, **Tab shape**, **On holes**, **Avoid corners** | `cut_out.tabs` |
+| | **Cut-out allowance** | `cut_out.through_cut_allowance_mm` |
+| **Order** | **Machining order** | `machining_order` |
+| **Heights** | **Safe Z** | `safe_z_mm` |
+
+The four values and the male board's thickness say **Required** until
+you type them. Until the board thickness is set only the female is cut,
+with the warning `inlay_male_board_unset`.
+
+The app has no row for a drawn boundary (`boundary`,
+[The boundary](#the-boundary)). To use one, add it to the project file
+by hand; the app keeps it and cuts it.
+
+**The two boards.** The Viewport draws the **male board** to the right
+of the stock, with the design mirrored and the male's toolpaths, as the
+board will lie on the machine. Clicking a shape on it selects the Inlay.
+
+**Exporting.** The Export step has a **Boards** row with a tick for the
+**Female board** and one for the **Male board**. Both are on. Untick one
+to write the other board's programs alone, which is how you cut the plug
+again after a test fit; it is `export --board`
+([Cutting one board again](#cutting-one-board-again)). The tick is for
+that export only, and is not saved.
+[The inlay pair in the app quick start](../quick-start/app.md#the-inlay-pair)
+shows it.
+
 ## Settings
 
 | Field | Meaning |

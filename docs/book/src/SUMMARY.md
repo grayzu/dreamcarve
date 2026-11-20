@@ -27,6 +27,7 @@
 - [Stock, origin and heights](user-guide/stock-and-origin.md)
 - [Preparing artwork](user-guide/preparing-artwork.md)
 - [Shapes, holes, and islands](user-guide/shapes-and-holes.md)
+- [Operations in the app](user-guide/operations.md)
 - [Profile operation](user-guide/profile.md)
 - [Tabs](user-guide/tabs.md)
 - [Pocket operation](user-guide/pocket.md)

@@ -26,6 +26,29 @@ Profile. A complete Engrave:
 }
 ```
 
+## In the app
+
+Select the shapes, closed or open, then choose **Add ▸ Engrave** on the
+Operations step
+([Operations in the app](operations.md#adding-an-operation)). Engrave is
+one of the two kinds the menu offers for an open path; the other is a
+Profile.
+
+![The plaque's Border and squiggle Engrave in the Inspector: Targets 2 shapes, Tool 1/8 end mill (T2), Depth 1 mm; the Depth group open with Step-down 1 mm and Through-cut allowance 0 mm; the Strategy group open with Alternate direction unticked; the Order group open with Machining order Full depth first; and the Heights group open with Safe Z 15 mm; on the Viewport the red cut follows the border and the squiggle](figures/app/op-engrave.png)
+
+The editor's rows, and the field of the project file each one sets:
+
+| Group | Row | Field |
+| --- | --- | --- |
+| **Setup** | **Targets** | `targets` |
+| | **Tool** | `tool` |
+| | **Depth** | `depth_mm` |
+| **Depth** | **Step-down** | `step_down_mm`. Empty is `null`, the tool's |
+| | **Through-cut allowance** | `through_cut_allowance_mm` |
+| **Strategy** | **Alternate direction** | `alternate_direction` |
+| **Order** | **Machining order**: Full depth first, Pass first | `machining_order` |
+| **Heights** | **Safe Z** | `safe_z_mm` |
+
 ## Settings
 
 | Field | Meaning |
