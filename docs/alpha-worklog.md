@@ -117,7 +117,7 @@ Notes from the fixes:
 | D2 | Theme tokens and widgets: dark default, teal accent, cards, pills | done |
 | D3 | The shell: `dc_app::steps`, the header, the rail, the step panel, the Inspector, the start screen; capabilities 50, 50a, 50b rewritten | done |
 | D4 | Export inlined into its step (a 440-px panel on that step); the Viewport's floating controls (tools and zoom, By operation / By depth and Layers, the cursor read-out); the drawer as a card; the status bar's cells; a blank project shows no problem count; Fit clears the legend | done |
-| D5 | Window tests and snapshots for the new shell | todo |
+| D5 | The review. Defects the book's screenshots showed: "Added 1 tools" and "1 tools · 1 ticked"; labels cut to "Through-cut all…", "Tool-change m…", "Canned drill cy…"; the focus ring offset from its field after Tab; the import preview drawing circles as coarse polygons; the Z read-out over the origin's `0,0` with extents on; the library pane slicing its last visible row; a closed Cut-out group whose summary reads "Cut-out"; cone height shown as `5.4993 mm`; the first click after *Add to project* closes the Tool Library does nothing. Then `experience.md`'s checklist rewritten for the new design | doing |
 
 | D6 | The three features wired into the new window: the Add picture sheet, pictures as textured quads under the shapes, Photo V-Carve's editor, the tapered ball nose's fields, the library's Tip column | done |
 | D7 | Preview marks follow the kind of cut: a Photo V-Carve draws one start per groove and no tab marks, and V-Carve and Inlay lose their false tab marks (98 on the sign). Still open: importing a 12 MP picture holds the UI thread about 214 ms in dc-app | done |
@@ -133,6 +133,13 @@ Decisions made while wiring, for the maintainer to confirm:
   settings groups closed with a one-line summary each, and widens its
   panel to 440 px. With no folder chosen, **Export G-code** opens the
   folder dialog first.
+- Acceptance 90 holds with two caveats the quick start states: the app
+  names a new operation "Profile 1" and the tool by its library name,
+  where `init` writes "Profile" and "Set me", so the coaster's program
+  differs from the CLI's in two comment lines; and the sign and the inlay
+  match the CLI's programs only when their tools are added in the order
+  the chapter gives, because a clearing run's comment names the tool's id
+  in the file.
 - The zoom percentage is of 96 px per inch, and a click on it sets 100 %.
 - The colour mode (By operation, By depth) is the Viewport control only;
   it left the Layers popover.
@@ -143,7 +150,8 @@ Decisions made while wiring, for the maintainer to confirm:
 
 | Slice | What | Status |
 | --- | --- | --- |
-| E1 | Book chapters and the quick start "From SVG to G-code in the app", with screenshots from the build (#550) | doing |
+| E1 | The quick start "From SVG to G-code in the app" (the coaster, then the plaque, the sign and the inlay pair), tested by `quick_start_parts_from_the_app`; 32 screenshots written by `cargo test -p dreamcarve-app --test book -- --ignored`; chapters The app, Importing, Stock and origin, Toolpath preview, Exporting; `docs::book_builds_and_every_screenshot_exists` (#550) | done |
+| E5 | Chapters still to write or bring up to date: Placing shapes; the operation chapters' editor pictures and field names; Tabs; Tool library; Post-processors; Configuration (`gui.toml`); Warnings; Inlay; Photo V-Carve in the app; the tapered ball nose's fields; Crate map; Porting. `mdbook build` has not been run: mdbook is not installed here | todo |
 | E2 | A local macOS bundle: `tools/bundle-macos.sh` writes `target/bundle/DreamCarve.app` (unsigned, no icon, this Mac's architecture). The phase 4 audit follows E1 | doing |
 | E4 | For the release slice (#551), not done here: the signed and notarised bundles on three platforms through cargo-dist; an app icon; opening a double-clicked `.dcv` on macOS, which arrives as an Apple Event the app does not read yet; the licence texts for the app's crates | owner |
 | E3 | Bench check in the app and the `v0.4.0` tag | owner |
