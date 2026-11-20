@@ -47,18 +47,17 @@
 //! [`Bitmap::pixels`] and [`sample`] are the only readers of pixel data.
 
 use crate::block::CutBlock;
-use crate::context::rates_of;
+use crate::context::{self, OpContext, check_safe_z, rates_of, tool_of};
 use crate::entry::{ENTRY_CLEARANCE_MM, plunge_limited_feed_mm_min};
 use crate::error::{CamError, PhotoProblem, ShapeRef};
-use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
-use crate::stock::stock_overhang;
+use crate::sequence::{SequenceInput, sequence};
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::vcarve::checked_v_bit;
 use crate::warning::Warning;
 use dc_geometry::{EPS_MM, Point, Point3, Rect, Vec2};
 use dc_project::{
-    Bitmap, BitmapError, Grayscale, InstanceId, LoadError, MachiningOrder, Operation, OperationId,
-    PhotoStrategy, PhotoVCarveOp, Project, cleared_start_plane,
+    Bitmap, BitmapError, Grayscale, InstanceId, LoadError, Operation, OperationId, PhotoStrategy,
+    PhotoVCarveOp, Project, cleared_start_plane,
 };
 
 /// The most samples a Photo V-Carve's grooves may hold, both families
@@ -276,22 +275,10 @@ pub fn generate_photo(
 /// [`generate_photo`], before a defect it finds ([`CamError::Internal`])
 /// names `op`.
 fn photo(project: &Project, op: &PhotoVCarveOp) -> Result<(Toolpath, Vec<Warning>), CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: op.tool.clone(),
-        })?;
+    let tool = tool_of(project, &op.id, &op.tool)?;
     let bit = checked_v_bit(&op.id, tool)?;
     let rates = rates_of(tool)?;
-    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
-        return Err(CamError::InvalidSafeZ {
-            op: op.id.clone(),
-            safe_z_mm: op.safe_z_mm,
-        });
-    }
+    check_safe_z(&op.id, op.safe_z_mm)?;
     let max_depth_mm = checked_settings(op)?;
     let bitmap = project
         .bitmaps
@@ -366,7 +353,8 @@ fn photo(project: &Project, op: &PhotoVCarveOp) -> Result<(Toolpath, Vec<Warning
         dark.clamp(0.0, 1.0) * max_depth_mm
     };
     let thickness_mm = plane.thickness_mm;
-    let safe_z_mm = thickness_mm + op.safe_z_mm;
+    let ctx = OpContext::new(project, &op.id, tool, rates, thickness_mm, op.safe_z_mm);
+    let safe_z_mm = ctx.safe_z_mm;
     let mut blocks = Vec::new();
     for (group, family) in families.iter().enumerate() {
         for line in family.sampled(op.sample_mm).lines {
@@ -380,29 +368,17 @@ fn photo(project: &Project, op: &PhotoVCarveOp) -> Result<(Toolpath, Vec<Warning
         }
     }
     let input = SequenceInput {
-        blocks,
-        order: MachiningOrder::FullDepthFirst,
-        containment: &[],
-        safe_z_mm,
-        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
-        stock_top_mm: thickness_mm,
-        tool_diameter_mm: tool.diameter_mm,
-        stepover_mm: 0.0,
-        feed_mm_min: rates.feed_mm_min,
-        plunge_mm_min: rates.plunge_mm_min,
-        cut_before: &[],
         groove_link_z_mm: Some(plane.link_z_mm),
+        ..SequenceInput::new(&ctx, blocks)
     };
     let toolpath = sequence(&input)?;
     // S7: each groove, as wide as it is at the stock top, on the stock.
-    if let Some(overhang) = groove_bounds(&toolpath, thickness_mm, bit.slope, tool.diameter_mm)
-        .and_then(|swept| stock_overhang(&project.stock, swept))
-    {
-        return Err(CamError::OffStock {
-            op: op.id.clone(),
-            overhang,
-        });
-    }
+    ctx.check_swept_on_stock(groove_bounds(
+        &toolpath,
+        thickness_mm,
+        bit.slope,
+        tool.diameter_mm,
+    ))?;
     let mut warnings = Vec::new();
     if op.line_spacing_fraction < 1.0 {
         warnings.push(Warning::PhotoLinesOverlap {
@@ -480,10 +456,7 @@ impl Plane {
     /// The planes of `op` in `project`, cutting `max_depth_mm` deep at
     /// most.
     fn of(project: &Project, op: &PhotoVCarveOp, max_depth_mm: f64) -> Result<Self, CamError> {
-        let thickness_mm = project
-            .stock
-            .thickness_mm
-            .ok_or(CamError::MissingThickness)?;
+        let thickness_mm = context::thickness_mm(project)?;
         let start_depth_mm = op.start_depth_mm;
         if !(start_depth_mm.is_finite() && start_depth_mm >= 0.0 && start_depth_mm <= thickness_mm)
         {

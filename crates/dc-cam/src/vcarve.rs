@@ -39,13 +39,12 @@ mod tests;
 mod written;
 
 use crate::block::CutBlock;
-use crate::context::rates_of;
+use crate::context::{self, OpContext, check_safe_z, rates_of, tool_of};
 use crate::error::{CamError, ShapeRef, at};
 use crate::pocket::rest::Reference;
 use crate::profile::{crossing_error, region_outer};
 use crate::run::{RunLabel, ToolRun};
-use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
-use crate::stock::{stock_overhang, swept_bounds};
+use crate::sequence::{SequenceInput, sequence};
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::Warning;
 use cone::{OpenEdgeWalls, Walls};
@@ -490,10 +489,7 @@ fn carve_blocks(
         .iter()
         .find(|o| o.id() == op)
         .ok_or_else(|| CamError::UnknownOperation { op: op.clone() })?;
-    let thickness_mm = project
-        .stock
-        .thickness_mm
-        .ok_or(CamError::MissingThickness)?;
+    let thickness_mm = context::thickness_mm(project)?;
     let safe_z_mm = thickness_mm + operation.safe_z_mm();
     let floor_z_mm = -operation.through_cut_allowance_mm();
     if let VCarveStrategy::Offset { step_over_mm, .. } = *carve.strategy
@@ -805,22 +801,10 @@ pub fn generate_vcarve(
 /// [`generate_vcarve`], before a defect it finds ([`CamError::Internal`])
 /// names `op`.
 fn v_carve(project: &Project, op: &VCarveOp) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: op.tool.clone(),
-        })?;
+    let tool = tool_of(project, &op.id, &op.tool)?;
     let bit = checked_bit(&op.id, tool)?;
     rates_of(tool)?;
-    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
-        return Err(CamError::InvalidSafeZ {
-            op: op.id.clone(),
-            safe_z_mm: op.safe_z_mm,
-        });
-    }
+    check_safe_z(&op.id, op.safe_z_mm)?;
     if let Some(flat_depth_mm) = op.flat_depth_mm
         && !(flat_depth_mm.is_finite() && flat_depth_mm > 0.0)
     {
@@ -927,42 +911,31 @@ fn finished(
         .iter()
         .find(|o| o.id() == op)
         .ok_or_else(|| CamError::UnknownOperation { op: op.clone() })?;
-    let thickness_mm = project
-        .stock
-        .thickness_mm
-        .ok_or(CamError::MissingThickness)?;
-    let safe_z_mm = thickness_mm + operation.safe_z_mm();
+    let thickness_mm = context::thickness_mm(project)?;
+    let ctx = OpContext::new(
+        project,
+        op,
+        tool,
+        rates,
+        thickness_mm,
+        operation.safe_z_mm(),
+    );
+    let blocks = written_depths(
+        blocks,
+        project,
+        thickness_mm,
+        &bit.profile,
+        rates.feed_mm_min,
+        rates.plunge_mm_min,
+    );
     let input = SequenceInput {
-        blocks: written_depths(
-            blocks,
-            project,
-            thickness_mm,
-            &bit.profile,
-            rates.feed_mm_min,
-            rates.plunge_mm_min,
-        ),
         order,
         containment,
-        safe_z_mm,
-        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
-        stock_top_mm: thickness_mm,
-        tool_diameter_mm: tool.diameter_mm,
-        stepover_mm: 0.0,
-        feed_mm_min: rates.feed_mm_min,
-        plunge_mm_min: rates.plunge_mm_min,
-        cut_before: &[],
-        groove_link_z_mm: None,
+        ..SequenceInput::new(&ctx, blocks)
     };
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
-    if let Some(overhang) = swept_bounds(&toolpath, tool.cut_radius_mm())
-        .and_then(|swept| stock_overhang(&project.stock, swept))
-    {
-        return Err(CamError::OffStock {
-            op: op.clone(),
-            overhang,
-        });
-    }
+    ctx.check_on_stock(&toolpath, tool.cut_radius_mm())?;
     let cone = cone_in_material(
         &toolpath,
         &carve.regions,
@@ -1267,10 +1240,7 @@ fn shape_at(carve: &Carve<'_>, at: Point3) -> Result<ShapeRef, CamError> {
 /// [`CamError::StartDepthUncleared`] for one below the stock top that no
 /// earlier Pocket contains and the operation does not vouch for.
 pub(crate) fn start_plane(project: &Project, op: &VCarveOp) -> Result<(f64, f64), CamError> {
-    let thickness_mm = project
-        .stock
-        .thickness_mm
-        .ok_or(CamError::MissingThickness)?;
+    let thickness_mm = context::thickness_mm(project)?;
     let start_depth_mm = op.start_depth_mm;
     if !(start_depth_mm.is_finite() && start_depth_mm >= 0.0 && start_depth_mm <= thickness_mm) {
         return Err(CamError::InvalidStartDepth {

@@ -65,7 +65,7 @@ mod tests;
 use std::borrow::Cow;
 use std::ops::Range;
 
-use crate::context::rates_of;
+use crate::context::{self, check_diameter, check_safe_z, rates_of, tool_of};
 use crate::error::{CamError, ShapeRef, at};
 use crate::placed_tabs;
 use crate::profile::generate_profile_below;
@@ -486,10 +486,7 @@ fn side_of(
     values: Values,
     warnings: &mut Vec<Warning>,
 ) -> Result<Side, CamError> {
-    let thickness_mm = project
-        .stock
-        .thickness_mm
-        .ok_or(CamError::MissingThickness)?;
+    let thickness_mm = context::thickness_mm(project)?;
     let start_plane_z_mm = thickness_mm - values.start_depth_mm();
     let Some(margin_mm) = values.margin_mm else {
         let design = carve_regions(project, &op.id, &op.targets, warnings)?;
@@ -955,23 +952,11 @@ fn generate_on(
     op: &InlayOp,
     board: Board,
 ) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: op.tool.clone(),
-        })?;
+    let tool = tool_of(project, &op.id, &op.tool)?;
     // #681: a V-bit or a tapered ball nose.
     let bit = checked_bit(&op.id, tool)?;
     rates_of(tool)?;
-    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
-        return Err(CamError::InvalidSafeZ {
-            op: op.id.clone(),
-            safe_z_mm: op.safe_z_mm,
-        });
-    }
+    check_safe_z(&op.id, op.safe_z_mm)?;
     let mut warnings = check_boundary(project, op, board)?;
     let values = Values::of(project, op, board)?;
     let cut_out = checked_cut_out(project, op, values)?;
@@ -1160,14 +1145,7 @@ fn checked_cut_out<'o>(
         // The female ignores the cut-out: only the male's plug is cut out.
         return Ok(None);
     };
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == cut_out.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: cut_out.tool.clone(),
-        })?;
+    let tool = tool_of(project, &op.id, &cut_out.tool)?;
     if !tool.cutter.is_flat() {
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
@@ -1176,13 +1154,7 @@ fn checked_cut_out<'o>(
             cutter: tool.cutter.describe(),
         });
     }
-    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
-        return Err(CamError::InvalidToolDiameter {
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            diameter_mm: tool.diameter_mm,
-        });
-    }
+    check_diameter(tool)?;
     // Values::of has checked every value the band needs, and
     // `generate_inlay` the V-bit, so the band resolves.
     let Some(band) = male_band(project, op) else {
