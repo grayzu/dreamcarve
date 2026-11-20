@@ -1102,6 +1102,7 @@ dependencies = [
  "dreamcarve-shell",
  "eframe",
  "egui_kittest",
+ "png",
  "rfd",
 ]
 

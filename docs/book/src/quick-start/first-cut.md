@@ -8,6 +8,13 @@ You will run four commands and edit one file by hand. Every command here is
 run by DreamCarve's test suite exactly as written, so if it does not work for
 you, that is a bug.
 
+Every step here has its equivalent in the app, where nothing is typed
+into a file: `init` is **New from drawing…** on the start screen, the
+material is the **Stock** step, the bit is the **Tools** step, the depth
+and the tabs are the Profile's editor on the **Operations** step, `check`
+is the **Warnings** drawer, and `export` is the **Export** step.
+[From SVG to G-code in the app](app.md) makes this same coaster there.
+
 ## What you need
 
 - DreamCarve installed and on your `PATH`. See [Installing](installing.md).

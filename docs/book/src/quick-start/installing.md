@@ -1,7 +1,10 @@
 # Installing
 
-DreamCarve is one command line program, `dreamcarve`. It runs on Windows,
-macOS, and Linux.
+DreamCarve is two programs that share one engine: the app,
+`dreamcarve-app`, a window you work in with mouse and keyboard, and the
+command line program, `dreamcarve`, for scripts and for working in a text
+editor. Both read and write the same project files and write the same
+G-code. They run on Windows, macOS, and Linux.
 
 ## Prebuilt binaries
 
@@ -50,6 +53,32 @@ on your `PATH`.
 To build without installing, run `cargo build --release`. The binary is then
 at `target/release/dreamcarve` (`dreamcarve.exe` on Windows).
 
+## The app
+
+The app is not in the release archives yet: build it from source. With
+the prerequisites above, in the checkout:
+
+```sh
+cargo install --locked --path crates/dreamcarve-app
+```
+
+This builds `dreamcarve-app` and copies it to the same folder as
+`dreamcarve`. Start it from a terminal:
+
+```sh
+dreamcarve-app
+```
+
+It opens a window on the start screen. `dreamcarve-app plaque.dcv` opens
+a project, and `dreamcarve-app --version` prints the version and exits.
+To run it without installing, use `cargo run --release -p dreamcarve-app`.
+
+The app keeps your tool library where the command line keeps it, so a
+tool you add in one is there in the other. See
+[Tool library](../user-guide/tool-library.md).
+
+Next: [From SVG to G-code in the app](app.md).
+
 ## Check it runs
 
 ```sh
@@ -79,7 +108,8 @@ uccnc     UCCNC
 generic   Generic RS274/NGC
 ```
 
-Next: [Your first cut from an SVG](first-cut.md).
+Next: [From SVG to G-code in the app](app.md), or the same part from the
+command line in [Your first cut from an SVG](first-cut.md).
 
 ## Run the tests
 

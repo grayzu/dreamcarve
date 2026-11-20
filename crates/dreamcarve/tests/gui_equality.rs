@@ -21,6 +21,11 @@
 //! (slice 32, #624: the sheet no longer writes the preview); and the
 //! result's text is the CLI's report, every line of it in exactly one of
 //! the result's three parts (slice 33, #625).
+//!
+//! Slice 21 (#550, acceptance 90): the coaster, the plaque, the sign and
+//! the inlay pair built in the app by the steps of the quick start "From
+//! SVG to G-code in the app", read from the chapter itself (`app_steps`),
+//! export the programs the command-line quick starts write.
 
 #![allow(
     clippy::expect_used,
@@ -29,6 +34,8 @@
     clippy::indexing_slicing,
     reason = "test helpers fail the test on a broken setup"
 )]
+
+mod app_steps;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -459,4 +466,142 @@ fn app_export_equals_cli_export_on_six_posts() {
             .sum()
     });
     assert!(compared > 0, "some files were compared");
+}
+
+/// Part `part` of the app quick start built by the chapter's steps
+/// ([`app_steps::build`]) and generated, ready to export.
+fn generated_part(text: &str, part: &str, lib: &Library) -> Harness {
+    let mut harness = Harness {
+        app: app_steps::build(text, part, lib),
+    };
+    harness.generate();
+    harness
+}
+
+/// The programs the app would write for `harness`'s project under file
+/// name `stem`, by name.
+fn app_programs(harness: &Harness, stem: &str) -> Vec<(String, String)> {
+    let options = dc_app::export::Options::new(DATE, dc_job::EstimateConfig::default());
+    let ready = match dc_app::export::plan(&harness.app, &options) {
+        dc_app::export::Plan::Ready(ready) => ready,
+        dc_app::export::Plan::Waiting => panic!("{stem}: the plan waits"),
+    };
+    assert_eq!(
+        ready.blocked(),
+        None,
+        "{stem}: export is refused: {:?}",
+        harness.warnings()
+    );
+    ready
+        .files(stem)
+        .into_iter()
+        .map(|(name, text)| (name, text.to_owned()))
+        .collect()
+}
+
+/// Acceptance 90 (#550; functional spec, exit criteria): the coaster, the
+/// plaque, the sign and the inlay pair, each built in the app from its
+/// drawing by the steps of the quick start "From SVG to G-code in the
+/// app", export the quick starts' committed programs byte for byte. The
+/// steps are read from the chapter's own tables (`app_steps`), so the
+/// chapter and this test cannot drift apart, and every value goes through
+/// the function the window calls for that field.
+///
+/// The committed programs of the plaque, the sign and the inlay pair are
+/// what `dreamcarve export` writes for the committed projects their
+/// quick starts build (`tests/fixtures/plaque.dcv`, `sign.dcv`,
+/// `dc.dcv`; `quick_start.rs` holds each chapter to its fixture). The
+/// coaster's is `tests/expected/coaster-grblhal.nc`.
+///
+/// One difference is the chapter's and stays: the CLI's coaster keeps
+/// `init`'s placeholder names, a tool called `Set me` and an operation
+/// called `Profile`, and the app has no placeholder, so its tool and
+/// operation carry the names the reader gave them. The coaster's program
+/// is therefore compared twice: as built, it is the committed program but
+/// for those two comment lines; with the two renamed to the placeholder's
+/// names, it is the committed program byte for byte.
+#[test]
+fn quick_start_parts_from_the_app() {
+    let root = work_dir("quick_start_parts_from_the_app");
+    let text = app_steps::chapter();
+    let lib = app_steps::library(&text);
+
+    // The coaster.
+    let mut coaster = generated_part(&text, "coaster", &lib);
+    let committed = include_str!("expected/coaster-grblhal.nc");
+    let built = app_programs(&coaster, "coaster");
+    let [(name, program)] = &built[..] else {
+        panic!("the coaster is one program: {built:?}");
+    };
+    assert_eq!(name, "coaster.nc");
+    let (op, tool) = {
+        let project = coaster.app.project();
+        (project.operations[0].clone(), project.tools[0].clone())
+    };
+    let named = committed
+        .replace(
+            "( Operation 1: Profile )",
+            &format!("( Operation 1: {} )", op.name()),
+        )
+        .replace("( Tool 1: Set me )", &format!("( Tool 1: {} )", tool.name));
+    assert_ne!(
+        named, committed,
+        "the committed coaster names its placeholder"
+    );
+    assert!(
+        *program == named,
+        "the coaster differs from the committed program in more than its two names:\n{program}"
+    );
+    let rename = dc_app::editor::rename(&op, "Profile")
+        .expect("a name")
+        .expect("a command");
+    coaster.run(rename).expect("renamed");
+    coaster
+        .run(dc_app::Command::UpdateTool(dc_project::Tool {
+            name: "Set me".to_owned(),
+            ..tool
+        }))
+        .expect("the tool is renamed");
+    coaster.generate();
+    let renamed = app_programs(&coaster, "coaster");
+    assert!(
+        renamed[0].1 == committed,
+        "the coaster with the placeholder's names differs from the committed program"
+    );
+
+    // The plaque, the sign and the inlay pair, against the CLI's export
+    // of the committed project each quick start builds.
+    for (part, fixture, stem) in [
+        ("plaque", "plaque.dcv", "plaque"),
+        ("sign", "sign.dcv", "sign"),
+        ("inlay", "dc.dcv", "dc"),
+    ] {
+        let dir = root.join(part);
+        std::fs::create_dir_all(&dir).expect("case dir");
+        std::fs::copy(
+            repo_root().join("tests/fixtures").join(fixture),
+            dir.join(fixture),
+        )
+        .expect("fixture copied");
+        run(&dir, &["export", fixture, "--date", DATE]);
+        let harness = generated_part(&text, part, &lib);
+        let built = app_programs(&harness, stem);
+        let mut expected: Vec<String> = built.iter().map(|(name, _)| name.clone()).collect();
+        expected.sort();
+        assert_eq!(written(&dir, fixture), expected, "{part}: the programs");
+        assert!(built.len() > 1, "{part}: more than one program");
+        for (name, program) in &built {
+            let cli = std::fs::read_to_string(dir.join(name)).expect("program written");
+            if *program != cli {
+                // Kept for a diff; the directory is cleared on the next run.
+                let kept = dir.join(format!("{name}.app"));
+                std::fs::write(&kept, program).expect("the app's program is kept");
+                panic!(
+                    "{part}: {name} differs from the committed project's program; the app's \
+                     is {}",
+                    kept.display()
+                );
+            }
+        }
+    }
 }

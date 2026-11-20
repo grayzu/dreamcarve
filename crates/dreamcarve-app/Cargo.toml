@@ -48,6 +48,8 @@ rfd.workspace = true
 egui_kittest.workspace = true
 # `kittest::warnings_copy_reaches_the_clipboard` (#581).
 arboard.workspace = true
+# `book` writes the book's screenshots, cropped (#550).
+png.workspace = true
 
 [lints]
 workspace = true

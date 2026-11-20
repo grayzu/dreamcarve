@@ -7,6 +7,7 @@
 # Quick start
 
 - [Installing](quick-start/installing.md)
+- [From SVG to G-code in the app](quick-start/app.md)
 - [Your first cut from an SVG](quick-start/first-cut.md)
 - [A pocketed plaque from DXF](quick-start/plaque.md)
 - [A V-carved sign from SVG outlines](quick-start/sign.md)

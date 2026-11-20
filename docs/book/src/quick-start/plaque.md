@@ -22,6 +22,13 @@ Every command here is run by DreamCarve's test suite exactly as written,
 and the excerpts are checked against the programs it writes, so if it does
 not work for you, that is a bug.
 
+Every step here has its equivalent in the app: the tools come from the
+**Tool Library** on the **Tools** step, each pasted operation is one
+added with **Add** on the **Operations** step and set in its editor, and
+the two programs are the **Export** step's.
+[The plaque: a second tool](app.md#the-plaque-a-second-tool) builds this
+plaque there and writes the same two programs.
+
 ## What you need
 
 - DreamCarve installed and on your `PATH`. See [Installing](installing.md).
