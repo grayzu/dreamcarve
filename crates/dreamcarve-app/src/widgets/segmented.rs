@@ -109,8 +109,13 @@ fn track(
             egui::pos2(left, rect.top() + INSET_PX),
             egui::vec2(segment_px, height - 2.0 * INSET_PX),
         );
+        // The pill is drawn inset, but a click anywhere in the track's
+        // height counts: a 28-px control's pill is 22 px high, under the
+        // 24-px floor for a target.
+        let target =
+            Rect::from_min_size(egui::pos2(left, rect.top()), egui::vec2(segment_px, height));
         left += segment_px;
-        let response = ui.interact(segment, id.with(n), Sense::click());
+        let response = ui.interact(target, id.with(n), Sense::click());
         let chosen = n == selected;
         response.widget_info(|| egui::WidgetInfo::selected(role, enabled, chosen, *option));
         if response.clicked() && !chosen {

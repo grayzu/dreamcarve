@@ -117,7 +117,8 @@ Notes from the fixes:
 | D2 | Theme tokens and widgets: dark default, teal accent, cards, pills | done |
 | D3 | The shell: `dc_app::steps`, the header, the rail, the step panel, the Inspector, the start screen; capabilities 50, 50a, 50b rewritten | done |
 | D4 | Export inlined into its step (a 440-px panel on that step); the Viewport's floating controls (tools and zoom, By operation / By depth and Layers, the cursor read-out); the drawer as a card; the status bar's cells; a blank project shows no problem count; Fit clears the legend | done |
-| D5 | The review. Defects the book's screenshots showed: "Added 1 tools" and "1 tools · 1 ticked"; labels cut to "Through-cut all…", "Tool-change m…", "Canned drill cy…"; the focus ring offset from its field after Tab; the import preview drawing circles as coarse polygons; the Z read-out over the origin's `0,0` with extents on; the library pane slicing its last visible row; a closed Cut-out group whose summary reads "Cut-out"; cone height shown as `5.4993 mm`; the first click after *Add to project* closes the Tool Library does nothing. Then `experience.md`'s checklist rewritten for the new design | doing |
+| D5 | The review. The nine defects the book's screenshots showed are fixed, each with a test (count forms in the string table, labels that wrap, one focus ring round the control, the import preview's arcs, the origin label clear of the read-out, lists that fade, the Cut-out group's summary, two-decimal lengths, the sheet that did not close). 170 pictures of every state in `docs/specs/phase-4/review/final/`, and what they showed fixed. `experience.md`'s checklist rewritten: 100 items, 94 met (`review/final/README.md`) | done |
+| D8 | Left by the review: checklist items 4, 15, 34 and 64 are contradictions between `redesign.md` and `experience.md` for the maintainer to settle (six surface shades in view where the brief says three; two accent buttons on the start screen; operation 2's red on chrome; 13-px tooltips); item 65, a dropdown's current row has no check; item 99, motion is 150 ms and reduced motion is not read; the View menu's uneven check column; long library names cut at 120 px; `drop_of_png_opens_the_picture_sheet` failed once with "exceeded max_steps" and passed on rerun; the d2, d3, d4 and d6 picture sets predate the polish | todo |
 
 | D6 | The three features wired into the new window: the Add picture sheet, pictures as textured quads under the shapes, Photo V-Carve's editor, the tapered ball nose's fields, the library's Tip column | done |
 | D7 | Preview marks follow the kind of cut: a Photo V-Carve draws one start per groove and no tab marks, and V-Carve and Inlay lose their false tab marks (98 on the sign). Still open: importing a 12 MP picture holds the UI thread about 214 ms in dc-app | done |
@@ -140,6 +141,9 @@ Decisions made while wiring, for the maintainer to confirm:
   match the CLI's programs only when their tools are added in the order
   the chapter gives, because a clearing run's comment names the tool's id
   in the file.
+- *Add to project* in the Tool Library now closes the sheet (capability
+  64 changed to say so). It used to stay open, and its scrim swallowed
+  the next click.
 - The zoom percentage is of 96 px per inch, and a click on it sets 100 %.
 - The colour mode (By operation, By depth) is the Viewport control only;
   it left the Layers popover.
