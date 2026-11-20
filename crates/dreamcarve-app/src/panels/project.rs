@@ -64,11 +64,53 @@ const fn section_name(group: Group) -> &'static str {
     }
 }
 
-/// The `gui.toml` name of the Export step's group that holds the field at
-/// `path`, as validation names it: a Warnings row about an output setting
-/// opens it, besides the step. `None` for another step's field.
+/// The `gui.toml` name of the section that holds the field at `path`, as
+/// validation names it: one of the Export step's groups, or the Stock
+/// step's Origin. A Warnings row about a setting opens it, besides the
+/// step. `None` for a field in no section that closes.
 pub(crate) fn group_section(path: &str) -> Option<&'static str> {
-    Group::of_field(path).map(section_name)
+    let origin = path
+        .strip_prefix("origin")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'));
+    Group::of_field(path)
+        .map(section_name)
+        .or(origin.then_some(ORIGIN))
+}
+
+/// Where the field a Warnings row asked for waits to be focused.
+fn focus_id() -> Id {
+    Id::unique("dc.project.focus")
+}
+
+/// Asks the Stock or the Export step to focus and scroll to the row of
+/// the field at `path` (a finding's `field`) when it next draws it
+/// (capability 76). A typed field takes the keyboard focus; a chosen row
+/// is scrolled to.
+pub(crate) fn request_focus(ctx: &egui::Context, path: &str) {
+    ctx.data_mut(|d| d.insert_temp(focus_id(), path.to_owned()));
+}
+
+/// Whether a Warnings row asked for the row `locates` matches; asked
+/// once, so dropped when it is.
+fn take_focus(ui: &Ui, locates: impl Fn(&str) -> bool) -> bool {
+    let asked = ui
+        .data(|d| d.get_temp::<String>(focus_id()))
+        .is_some_and(|path| locates(&path));
+    if asked {
+        ui.data_mut(|d| d.remove::<String>(focus_id()));
+    }
+    asked
+}
+
+/// Drops a focus asked of a row of step `step` that it did not draw (a
+/// custom origin's X on a preset origin), so it cannot land later.
+fn forget_focus(ui: &Ui, step: dc_app::steps::Step) {
+    let stale = ui
+        .data(|d| d.get_temp::<String>(focus_id()))
+        .is_some_and(|path| dc_app::steps::step_of_field(&path) == step);
+    if stale {
+        ui.data_mut(|d| d.remove::<String>(focus_id()));
+    }
 }
 
 /// Where the Viewport's park pick is armed.
@@ -142,6 +184,7 @@ pub(crate) fn stock_step(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Acti
                 });
         },
     );
+    forget_focus(ui, dc_app::steps::Step::Stock);
 }
 
 /// The Export step's output settings: the Post-processor, Heights and
@@ -152,6 +195,7 @@ pub(crate) fn output(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>)
     post(ui, state, &cx, out);
     heights(ui, &cx, out);
     tolerances(ui, &cx, out);
+    forget_focus(ui, dc_app::steps::Step::Export);
 }
 
 /// **Units**, the first row (capability 53): a `mm` / `in` segmented
@@ -271,6 +315,10 @@ fn switched_field_row(
             message: s.message,
         });
     let status = status.filter(|_| required.is_none());
+    let focused = enabled && take_focus(ui, |path| field.locates(path));
+    if focused {
+        ui.memory_mut(|m| m.request_focus(id));
+    }
     ui.horizontal(|ui| {
         row::label(ui, label, cx.strings.get(field.help()), Some(field.path()));
         switch(ui, out);
@@ -289,6 +337,9 @@ fn switched_field_row(
                 required,
             },
         );
+        if focused {
+            typed.response.scroll_to_me(Some(egui::Align::Center));
+        }
         if let Some(text) = typed.committed {
             match field.set(cx.project, &text) {
                 Ok(command) => {
@@ -310,7 +361,7 @@ fn switched_field_row(
 
 /// A chosen row: the label, `add`'s control, and the file's message.
 fn choice_row(ui: &mut Ui, cx: &Cx<'_>, choice: Choice, add: impl FnOnce(&mut Ui)) {
-    ui.horizontal(|ui| {
+    let row = ui.horizontal(|ui| {
         row::label(
             ui,
             cx.strings.get(choice.label()),
@@ -319,6 +370,11 @@ fn choice_row(ui: &mut Ui, cx: &Cx<'_>, choice: Choice, add: impl FnOnce(&mut Ui
         );
         add(ui);
     });
+    // A Warnings row about it brings it into view: it has no text to
+    // type into.
+    if take_focus(ui, |path| path == choice.path()) {
+        row.response.scroll_to_me(Some(egui::Align::Center));
+    }
     if let Some(status) = choice.status(cx.findings) {
         row::message(ui, status.tier, status.message);
     }

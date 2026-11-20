@@ -6070,6 +6070,106 @@ fn warnings_row_opens_the_step_that_owns_it() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Capability 76 ("clicking a row selects the operation and scrolls to
+/// the field"; slice D9): a row about a field that is not an operation's
+/// focuses it too, so typing goes straight into it, as
+/// `warnings_row_focuses_its_field` shows for an operation's. On the
+/// plaque with a used tool's feed and the stock's thickness cleared and
+/// the clearance height under the operations' safe Z: the feed's row
+/// opens the Tools step on that tool and what is typed becomes its feed;
+/// the thickness's row opens the Stock step and what is typed becomes the
+/// thickness; the clearance's row opens the Export step with its Heights
+/// group, which starts closed, and what is typed becomes the clearance.
+/// Each used to open the step and leave the focus where it was.
+#[test]
+fn warnings_row_focuses_a_tools_a_stocks_and_a_settings_field() {
+    use dc_app::steps::Step;
+    let dir = scratch("warnings-focus-fields");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let project = h.state().app().project().clone();
+    let mut stock = project.stock.clone();
+    stock.thickness_mm = None;
+    let used = project.operations[0].tool().clone();
+    let mut tool = project.tools.iter().find(|t| t.id == used).unwrap().clone();
+    tool.feed_mm_min = None;
+    let mut heights = project.heights;
+    heights.clearance_mm = Some(2.0);
+    for command in [
+        Command::SetStock(stock),
+        Command::UpdateTool(tool),
+        Command::SetHeights(heights),
+    ] {
+        h.state_mut().app_mut().run(command).unwrap();
+    }
+    h.run();
+    h.get_by_label_contains("Warnings:").click();
+    h.run();
+    assert!(h.state().warnings_open());
+
+    // Clicks the first row about `field`, from the Design step (the
+    // Export step lists the errors too, under the same names), and types
+    // `text` into whatever has the focus, leaving it with Tab.
+    let type_at_row = |h: &mut Harness<'_, dreamcarve_app::Shell>, field: &str, text: &str| {
+        go_to(h, "Design");
+        let line = dc_app::warnings::panel(h.state().app())
+            .into_iter()
+            .flat_map(|g| g.rows)
+            .find(|r| r.field.as_deref() == Some(field))
+            .unwrap_or_else(|| panic!("a row about {field}"))
+            .line;
+        // The drawer lists more rows than it shows at once.
+        h.get_by_label(&line).scroll_to_me();
+        h.run();
+        h.get_by_label(&line).click();
+        h.run();
+        h.event(egui::Event::Text(text.to_owned()));
+        h.run();
+        h.key_press(egui::Key::Tab);
+        h.run();
+    };
+
+    type_at_row(&mut h, &format!("tools[{used}].feed_mm_min"), "1234");
+    assert_eq!(h.state().step(), Step::Tools);
+    let feed = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        let project = h.state().app().project();
+        project
+            .tools
+            .iter()
+            .find(|t| t.id == used)
+            .unwrap()
+            .feed_mm_min
+    };
+    assert_eq!(
+        feed(&h),
+        Some(1234.0),
+        "the tool's feed field had the focus"
+    );
+
+    type_at_row(&mut h, "stock.thickness_mm", "12");
+    assert_eq!(h.state().step(), Step::Stock);
+    assert_eq!(
+        h.state().app().project().stock.thickness_mm,
+        Some(12.0),
+        "the thickness field had the focus"
+    );
+
+    // The field holds `2`, and the caret is put after it.
+    type_at_row(&mut h, "heights.clearance_mm", "5");
+    assert_eq!(h.state().step(), Step::Export);
+    assert_eq!(
+        h.state().app().project().heights.clearance_mm,
+        Some(25.0),
+        "the clearance field had the focus, in its opened group"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Capability 50 (`redesign.md`, "The window"): pinned to the rail's
 /// bottom are Warnings, which names the counts and opens the drawer;
 /// Appearance, a menu of the three choices with the current one checked,

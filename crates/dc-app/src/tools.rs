@@ -738,6 +738,26 @@ pub fn users(project: &Project, id: &ToolId) -> Vec<String> {
         .collect()
 }
 
+/// The project tool a finding's field path names, as validation writes
+/// it (`tools[t1].feed_mm_min`, `tools[t3].cutter.v_bit.included_angle_deg`,
+/// or `tools[t1]` alone for `unused_tool`), and which of the editor's
+/// fields the path is about, when it is one the tool's type shows: what
+/// a Warnings row about a tool opens and focuses (capability 76). `None`
+/// when the path is not a tool's or the project has no such tool.
+#[must_use]
+pub fn located(project: &Project, path: &str) -> Option<(ToolId, Option<ToolField>)> {
+    let (id, rest) = path.strip_prefix("tools[")?.split_once(']')?;
+    let tool = project.tools.iter().find(|t| t.id.as_str() == id)?;
+    let field = rest.strip_prefix('.').and_then(|name| {
+        fields(tool).into_iter().find(|field| {
+            // A cutter's value is named under its variant.
+            name.strip_suffix(field.file_name())
+                .is_some_and(|before| before.is_empty() || before.ends_with('.'))
+        })
+    });
+    Some((tool.id.clone(), field))
+}
+
 /// The `unused_tool` hint about tool `id` among `findings`, as `check`
 /// prints it, when there is one.
 #[must_use]

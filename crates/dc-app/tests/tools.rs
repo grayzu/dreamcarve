@@ -1139,3 +1139,56 @@ fn a_held_switch_draws_the_v_bits_rows() {
         .expect("a Diameter row");
     assert_eq!(diameter.text, "6.35", "the tool's own values still show");
 }
+
+/// Capability 76 (slice D9): a finding's field path names the tool and
+/// the editor's field a Warnings row opens and focuses. A rate is named
+/// by its own name, a cutter's value under its variant, and `unused_tool`
+/// names the tool alone; a path of another kind, or of a tool the project
+/// does not have, names none.
+#[test]
+fn a_findings_path_names_the_tool_and_its_field() {
+    let project = plaque();
+    let t2 = ToolId::new("t2");
+    let located = |path: &str| tools::located(&project, path);
+    assert_eq!(
+        located("tools[t2].feed_mm_min"),
+        Some((t2.clone(), Some(ToolField::Feed)))
+    );
+    assert_eq!(
+        located("tools[t2].rpm"),
+        Some((t2.clone(), Some(ToolField::Rpm)))
+    );
+    assert_eq!(located("tools[t2]"), Some((t2.clone(), None)));
+    assert_eq!(
+        located("tools[t2].cutter.v_bit.included_angle_deg"),
+        Some((t2, None)),
+        "an end mill has no angle field to focus"
+    );
+    assert_eq!(located("tools[t9].feed_mm_min"), None);
+    assert_eq!(located("stock.thickness_mm"), None);
+    assert_eq!(located("operations[op1].tool"), None);
+
+    let sign = common::load_dcv(&fixture("sign.dcv"));
+    assert_eq!(
+        tools::located(&sign, "tools[t4].cutter.v_bit.included_angle_deg"),
+        Some((ToolId::new("t4"), Some(ToolField::Angle)))
+    );
+    let tapered = dc_project::load(&tapered_bytes()).unwrap().project;
+    let nose = tapered
+        .tools
+        .iter()
+        .find(|t| matches!(t.cutter, ToolKind::TaperedBallNose { .. }))
+        .unwrap();
+    for (name, field) in [
+        ("tip_diameter_mm", ToolField::TipDiameter),
+        ("taper_angle_deg", ToolField::Taper),
+        ("flute_length_mm", ToolField::FluteLength),
+    ] {
+        let path = format!("tools[{}].cutter.tapered_ball_nose.{name}", nose.id);
+        assert_eq!(
+            tools::located(&tapered, &path),
+            Some((nose.id.clone(), Some(field))),
+            "{path}"
+        );
+    }
+}

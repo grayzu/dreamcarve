@@ -1121,6 +1121,7 @@ fn editing_pane(
                     tool,
                     held,
                     focus_name,
+                    focus: None,
                     marked,
                 },
             )

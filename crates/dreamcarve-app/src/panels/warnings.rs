@@ -14,7 +14,9 @@
 //! the code's entry in the Warnings chapter, the message, and the field
 //! it is about. Clicking a row selects the operation or the shape it
 //! names; a row on an operation's field opens the operation in the editor
-//! with that field focused (#539). *Copy* puts
+//! with that field focused (#539), and a row on a tool's, the stock's or
+//! an output setting's field opens its step with that field focused.
+//! *Copy* puts
 //! `check`'s text on the clipboard. Each group is named above its rows
 //! only when there are two or more (#616). An operation's carve note is
 //! the last row of its group, its facts laid out as labelled lines under

@@ -30,8 +30,9 @@
 //! under it (capability 79).
 //!
 //! The step holds no project data: it reads the snapshot and emits
-//! commands. Which row is selected, a held switch and a name to focus are
-//! view state, kept in egui's memory.
+//! commands. Which row is selected, a held switch, a name to focus and
+//! the field a Warnings row asked for ([`open_field`]) are view state,
+//! kept in egui's memory.
 
 use dc_app::tools::{self, KindChoice, KindSwitch, ToolField};
 use dc_app::{Command, CommandError, StrKey, Strings};
@@ -112,15 +113,27 @@ pub(crate) fn select(ctx: &egui::Context, tool: Option<&ToolId>) {
     });
 }
 
-/// The project tool a field path names, `tools[<id>]…`: what a Warnings
-/// row about a tool opens.
-pub(crate) fn tool_in_field(project: &Project, field: &str) -> Option<ToolId> {
-    let (id, _) = field.strip_prefix("tools[")?.split_once(']')?;
-    project
-        .tools
-        .iter()
-        .find(|t| t.id.as_str() == id)
-        .map(|t| t.id.clone())
+/// Where the field a Warnings row asked for waits to be focused.
+fn focus_field_id() -> Id {
+    Id::unique("tools_step_focus_field")
+}
+
+/// What a Warnings row about the field at `path` (`tools[t1].feed_mm_min`)
+/// opens (capability 76): the tool it names selected, so the Inspector
+/// shows it, and the field it is about focused and scrolled to when the
+/// editor next draws it. A path that names no field of the editor
+/// (`unused_tool`'s `tools[t1]`) selects the tool alone, and one that
+/// names no tool selects none.
+pub(crate) fn open_field(ctx: &egui::Context, project: &Project, path: &str) {
+    let located = tools::located(project, path);
+    select(ctx, located.as_ref().map(|(tool, _)| tool));
+    ctx.data_mut(|d| {
+        if let Some((tool, Some(field))) = located {
+            d.insert_temp(focus_field_id(), (tool, field));
+        } else {
+            d.remove::<(ToolId, ToolField)>(focus_field_id());
+        }
+    });
 }
 
 /// The tool whose switch to V-bit is held until its included angle is
@@ -483,6 +496,15 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
     let held = pending_v_bit(ui).as_ref() == Some(&tool.id)
         && !matches!(tool.cutter, ToolKind::VBit { .. });
     let focus_name = ui.data(|d| d.get_temp::<ToolId>(focus_name_id())).as_ref() == Some(&tool.id);
+    // The field a Warnings row asked for: asked once, so dropped whether
+    // or not this tool's rows hold it.
+    let asked = ui.data(|d| d.get_temp::<(ToolId, ToolField)>(focus_field_id()));
+    if asked.is_some() {
+        ui.data_mut(|d| d.remove::<(ToolId, ToolField)>(focus_field_id()));
+    }
+    let focus = asked
+        .filter(|(id, _)| *id == tool.id)
+        .map(|(_, field)| field);
     let output = tool_fields(
         ui,
         &ToolFields {
@@ -492,6 +514,7 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
             tool,
             held,
             focus_name,
+            focus,
             marked: None,
         },
     );
@@ -526,6 +549,9 @@ pub(crate) struct ToolFields<'a> {
     /// Whether to focus the name with its text selected this frame (*New
     /// tool*).
     pub focus_name: bool,
+    /// The field to focus and scroll to this frame: the one a Warnings
+    /// row is about (capability 76).
+    pub focus: Option<ToolField>,
     /// A field marked with why its last change did not take, shown under
     /// it in the error state (a library write that failed, 64a).
     pub marked: Option<(ToolField, &'a str)>,
@@ -574,6 +600,7 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
         tool,
         held,
         focus_name,
+        focus,
         marked,
     } = *spec;
     let mut result = FieldsOutput::default();
@@ -615,6 +642,9 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
                 message,
             });
         let error = line.or(row_spec.required.as_deref());
+        if focus == Some(field) {
+            ui.memory_mut(|m| m.request_focus(id));
+        }
         let (label, output) = row(ui, name, |ui| {
             let output = unit_field(
                 ui,
@@ -631,6 +661,9 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
             output
         });
         let response = output.response.labelled_by(label.id);
+        if focus == Some(field) {
+            response.scroll_to_me(Some(egui::Align::Center));
+        }
         let left = response.lost_focus();
         if field == ToolField::Name && focus_name {
             focus_with_text_selected(ui, id, value);

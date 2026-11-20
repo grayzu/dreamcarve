@@ -1569,15 +1569,21 @@ impl Shell {
                     }
                     (Some(step), _, _) => self.go_to(step),
                     // A field of no operation and no shape: the step that
-                    // edits it, and a tool's shown in the Inspector.
+                    // edits it, with the field focused; a tool's is shown
+                    // in the Inspector.
                     (None, _, Some(field)) => {
                         let step = steps::step_of_field(&field);
-                        if step == Step::Tools {
-                            let tool = panels::tools::tool_in_field(self.app.project(), &field);
-                            panels::tools::select(ctx, tool.as_ref());
+                        match step {
+                            Step::Tools => {
+                                panels::tools::open_field(ctx, self.app.project(), &field);
+                            }
+                            Step::Stock | Step::Export => {
+                                panels::project::request_focus(ctx, &field);
+                            }
+                            Step::Design | Step::Operations => {}
                         }
-                        // An output setting's group opens, so the field
-                        // is in view.
+                        // A setting's section opens, so the field is in
+                        // view.
                         if let Some(name) = panels::project::group_section(&field) {
                             self.app.prefs_mut().sections.insert(name.to_owned(), true);
                         }

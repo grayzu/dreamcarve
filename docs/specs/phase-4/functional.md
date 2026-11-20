@@ -955,7 +955,9 @@ folder are app preferences, kept outside the project.
     tells a hint by its code. Each row: the tier, the code (monospace, the chapter's
     anchor), the message with the operation and shape named, and, where the
     code concerns a field, that field. Clicking a row selects the operation
-    and scrolls to the field, or selects the shape; the row's code links to
+    and scrolls to the field, or selects the shape; a row about a field of
+    a tool, the stock or an output setting opens its step (50) with the
+    tool selected and the field focused, its group opened; the row's code links to
     its entry in the Warnings chapter. Rows group by operation, project-level
     rows (thickness unset, tool-change height on a post without `G53`,
     `tool_change_avoidable`) first, under a heading naming the group
