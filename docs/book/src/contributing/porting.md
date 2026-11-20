@@ -12,9 +12,18 @@ which points to a per-folder `INDEX.md`. The engine lives under
 
 Each DreamCarve design spec has a "PureCutCNC sources" table mapping our
 modules to theirs: `docs/specs/phase-1/design.md`,
-`docs/specs/phase-2/design.md` and `docs/specs/phase-3/design.md`. A row
-whose PureCutCNC column says "none" is DreamCarve's own design; see
+`docs/specs/phase-2/design.md`, `docs/specs/phase-3/design.md` and
+`docs/specs/phase-4/design.md`. A row whose PureCutCNC column says "none"
+is DreamCarve's own design; see
 [What is not a port](#what-is-not-a-port).
+
+PureCutCNC's UI is React and CSS. What phase 4 ports from it is
+behaviour, into `dc-app`, which has no egui: the editor's table of
+fields (`editor/fields.rs`), the Tool Library's filter (`library.rs`),
+hit testing and the camera (`viewport/`), the direction arrows. Its
+components, its layout and its styles are not ported. The app's window,
+its five steps (`dc_app::steps`) and its panels in `dreamcarve-app` are
+DreamCarve's own design (`docs/specs/phase-4/redesign.md`).
 
 ## What changes in the port
 
@@ -63,9 +72,11 @@ Go through this for every function you port that touches geometry.
    choice. `crates/dc-gcode/tests/golden.rs` shows how the golden cases
    match PureCutCNC's origin to DreamCarve's.
 6. **Port the tests too**, with the upstream header. Where Y-up changes an
-   expected value, the test comment says what changed and why.
+   expected value, the test comment says what changed and why. A ported
+   module's tests go where its others are: at its foot, or in its
+   `tests.rs` ([Crate map](crate-map.md#modules)).
 7. **Test the direction by name.** A test such as
-   `climb_outside_is_clockwise` in `dc-cam`'s `profile.rs` pins the
+   `climb_outside_is_clockwise` in `dc-cam`'s `profile/tests.rs` pins the
    re-derived rule, so a regression names itself.
 8. **Compare against the golden corpus.** PureCutCNC's G-code is already in
    the machine frame, so a correct port matches it. If no case covers the

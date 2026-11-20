@@ -57,6 +57,14 @@ only.
 
 ## Modules
 
+The tables list each module's code. A small module keeps its unit tests
+in a `#[cfg(test)] mod tests` at its foot. A module whose tests outgrew
+it (most of `dc-cam`, and the large modules of `dc-project`, `dc-gcode`
+and `dc-geometry`) declares `#[cfg(test)] mod tests;` and keeps them in
+`<module>/tests.rs`: `profile.rs` has `profile/tests.rs`, and `inlay.rs`
+the files under `inlay/tests/`. A few test modules have a name of their
+own (`entry/profile_tests.rs`, `profile/defect_tests.rs`).
+
 ### `dc-geometry` (`crates/dc-geometry/src/`)
 
 | Module | Contents |
@@ -128,6 +136,7 @@ only.
 | `lib.rs` | The crate's public surface: the `generate_*` functions, `sequence`, `footprint`, `ToolRun`, the toolpath and warning types. |
 | `run.rs` | `ToolRun` and `RunLabel`: an operation's toolpaths, one per tool (a carve's clearing passes, an Inlay's cut-out) and per board (an Inlay's female and male). |
 | `block.rs` | `CutBlock`: one contour, open path, drill point or relief notch at one pass depth, what a generator produces before ordering (D10). |
+| `context.rs`, `targets.rs` | What the generators share before they cut: the checks of the tool, its rates, the safe Z, the step-down, the thickness and the depth, each generator calling them in its own order; and `target_profiles`, the walk over an operation's targets. |
 | `sequence.rs` | `sequence`: orders blocks by machining order, containment precedence and nearest neighbour, writes the links (stay down or retract), and produces the `Toolpath`. |
 | `order.rs` | `order::check`: the `cut_inside_freed_part`, `cut_inside_tab_held_part` and `tool_change_avoidable` warnings between operations. Never reorders. |
 | `profile.rs` | `generate_profile` on blocks; the direction rule `traversal_is_ccw`. |
@@ -158,9 +167,6 @@ only.
 | `error.rs`, `warning.rs` | `CamError`; `Warning` with a stable `WarningCode`. |
 | `test_support.rs` | `assert_safe`, the shared emitted-motion safety assertions, and `assert_run_safe` for a tool run (`test-support` feature). |
 | `heightfield.rs` | A heightfield simulation of a carve's programs, exact for V-bit, tapered ball nose and end mill, for the tests that measure how a plug seats (`test-support` feature). |
-
-The test modules `entry/profile_tests.rs` and `lead/tests.rs` sit beside
-the code they test.
 
 ### `dc-gcode` (`crates/dc-gcode/src/`)
 
@@ -213,12 +219,12 @@ the code they test.
 | --- | --- |
 | `lib.rs` | The crate's surface: `App`, `Command`, `CommandError`, the history, selection, view, generation, strings, units and preferences types. |
 | `app.rs` | `App`: the project history with its labels, `run`, `undo` and `redo` returning the step's label, `open`, `serialize` and `mark_saved` with `is_dirty`, the selection and view, `pending`, `accept` and `warnings`; `new_project`, the empty project *New* makes; `editing`, the operation the editor shows, apart from the shapes selected, and `toggle_hidden`, an operation's eye; `replaced`, which counts the projects opened so the shell tells a new project from an edit. |
-| `command.rs` | `Command`, every change to the project: `apply` returns the next snapshot and never touches the caller's; `label` names the undo step from the string table. `command/instances.rs` holds the transforms about the selection's bounding-box centre, linked copies, deletion and stock fitting; `command/operations.rs` the operation list, tool removal and the field an edit changed. |
+| `command.rs` | `Command`, every change to the project: `apply` returns the next snapshot and never touches the caller's; `label` names the undo step from the string table. `command/instances.rs` holds the transforms about the selection's bounding-box centre, linked copies, deletion and stock fitting; `command/operations.rs` the operation list, tool removal and the field an edit changed; `command/bitmaps.rs` a picture's move, resize, flags and deletion. |
 | `error.rs` | `CommandError`: a locked shape, an unknown id, a tool in use, a value that cannot be stored, a value that is not a length, and the lower crates' errors. |
 | `history.rs` | `LabelledHistory`: `dc_project::History` with one label per past and future snapshot. |
-| `selection.rs` | `Selection`: instances, tabs or one operation; pruned when a snapshot drops what was selected. |
+| `selection.rs` | `Selection`: instances, tabs or pictures, each among its own kind; pruned when a snapshot drops what was selected. The operation the editor shows is `App::editing`, apart from it. |
 | `view.rs` | `View`, `Camera`, `Visibility`, `ColourMode`: view state, never project state; `readout`, the cursor's position and the Z range the Viewport's bottom-left pill shows, and `has_toolpaths`, whether its toolpath controls show. |
-| `generation.rs` | `Generation`, `SnapshotId`, `Job`, `JobResult`: which operations are pending or stale for the current snapshot, the results and `finish` bookkeeping; a result from an older snapshot is dropped. The digest is the snapshot id until slice 9 hashes each operation's inputs. |
+| `generation.rs` | `Generation`, `SnapshotId`, `Job`, `JobResult`: which operations are pending or stale for the current snapshot, the results and `finish` bookkeeping; a result from an older snapshot is dropped. Each operation's `digest` hashes everything its generator reads, so an edit makes pending only the operations it affects. |
 | `strings.rs` | `Strings` and the generated `StrKey` (`build.rs` from `strings/en.toml`): `get` and `fmt` with `{name}` placeholders. |
 | `units.rs` | `format` and `format_rate` in the project's display units with the unit after the value; `parse_length_mm` and `parse_rate_mm_min` through `dc_project::units_input`, a bare number in the project's units. |
 | `prefs.rs` | `Prefs`, `Theme`, `WindowGeometry`, `Panels`: the record behind `gui.toml`, whose file is `dreamcarve-shell`'s. |
@@ -226,7 +232,7 @@ the code they test.
 | `library.rs` | The Tool Library window's model, ported from PureCutCNC `src/components/cam/toolLibraryDialogModel.ts` with its tests: `Filter` and `KindFilter`, search over name, vendor and diameter, the "in project" marking, the ticked rows and `build_add`, and `import` with its report. The table's `Column`s and each row's `Cell`s (`row`: the cutting diameter, the tip, the angle labelled), and the import review's `review_status`, `review_unset` and `skipped`. |
 | `operations.rs` | The Operations list: `Kind` (the eight kinds), `add_menu` (the kinds the selection can take, then the rest with the reason), `new_operation` (the selection, the first fitting tool, `<Kind> <n>`, the CLI's defaults with every depth `null`), `add`, `reorder`, and `rows` with each row's detail line and status cell. |
 | `editor/` | The operation editor. `fields.rs`, ported from PureCutCNC `src/components/cam/operationFields.ts`: `Group` in capability 66's order, `FieldKind` (one shell renderer each), `Row` (group, key path, kind, label, help, tool default, rule) and each kind's `table`; `rows`, `groups`, and `row_for`, which matches a located finding to its row by key path. `set.rs`: `record`, `get` and `set` by key path through `serde_json::Value`, read back by the file's deserializer. `targets.rs`: the Targets group's add, replace and remove. `mod.rs`: each row's text, tool-derived placeholder, choice, switch, reset and located message, and the `UpdateOperation` each edit is; the tools a picker offers (`offered_tools`, which asks validation what a carve may cut with), the line under it (`tool_note`) and an Inlay's derived lines, its seat line among them (`seat_line`). |
-| `import.rs` | The Import drawing sheet's model: `DrawingImport` over the bytes the shell read, re-read through `dc-import` whenever an option changes (DXF units, required when the file declares none; join tolerance; ticked layers), with the summary, the layer list, the importer's refusal that disables *Import*, its warnings, the preview (the drawing alone, as drawn, with no stock outline) and the `ImportDrawing` command. `App::import_drawing` runs it and keeps the warnings as the import's notes; `App::new_from_drawing` is `project_from::drawing` without defaults. |
+| `import.rs` | The Import drawing sheet's model: `DrawingImport` over the bytes the shell read, re-read through `dc-import` whenever an option changes (DXF units, required when the file declares none; join tolerance; ticked layers), with the summary, the layer list, the importer's refusal that disables *Import*, its warnings, the preview (the drawing alone, as drawn, with no stock outline) and the `ImportDrawing` command. `App::import_drawing` runs it and keeps the warnings as the import's notes; `App::new_from_drawing` is `project_from::drawing` without defaults. `PictureImport` is the Add picture sheet's model the same way: the decoded picture, the one side typed and the other following, and the conversion's note. |
 | `export.rs` | The export plan (#547): `plan` waits while any operation is pending or stale, then builds the snapshot afresh with `dc_job::build_board` (S20); `Options` (program split override, board ticks, date), `Ready` with the rows, findings, preview, file names under a stem and the CLI's report; `total_time` and `operation_times`, the estimates outside the Export step; `several_tools`, whether the program split applies. |
 | `editor/clearing.rs`, `editor/summary.rs` | A carve's clearing-pass list as one block (add, delete, reorder, each one undo step), and each closed editor group's one-line summary, built from the same rows the fields draw. |
 | `project.rs` | The project's settings as the Stock and Export steps show them: stock, origin, heights and post-processor fields, the command each typed value becomes and the message located on it; `Group`, the Export step's three groups of output settings, each with a one-line summary of its values. |
@@ -243,11 +249,11 @@ the code they test.
 | Module | Contents |
 | --- | --- |
 | `main.rs` | The binary: `--open <path>` or a bare path, the config directory, and the `Shell` in an eframe window on wgpu. On Windows, a GUI program with no console. |
-| `lib.rs` | `Shell`, a library too so the window tests (`tests/kittest.rs`) build it in egui's harness. |
+| `lib.rs` | `Shell`, a library too so the window tests (`tests/kittest.rs` and the others in `tests/`) build it in egui's harness. |
 | `shell/` | The window's frame: the shell itself, the header with its menus, the rail and the status bar, focus, file dialogs and files, the toolpath view, the theme, and the worker thread that runs generation off the UI thread. |
 | `panels/` | The step panel and the Inspector (`side.rs`) and what they hold: the Design Tree, Properties and the Arrange group, the Stock step, the Export step (its readiness card, the findings that block export, the output settings, the plan and the result), the Tools and Operations lists, the tool editor, the operation editor and its clearing list; the start screen; the Tool Library, the Import drawing and Add picture sheets, the Warnings drawer and the unsaved-changes sheet. |
-| `viewport/` | The Viewport: the stage and stock sheet, the wgpu line layers (`renderer.rs`), level of detail, the floating controls (`controls.rs`: the tools, Fit and the zoom, the colour mode and Layers, the read-out, and the room Fit leaves for them), the legend, the tab tool, and the overlay egui's painter draws. |
-| `widgets/` | The app's own controls: icons, buttons, the field with a unit, rows, the segmented control, the switch, the disclosure section, the spinner. |
+| `viewport/` | The Viewport: the stage and stock sheet, the wgpu line layers (`renderer.rs`), level of detail, the floating controls (`controls.rs`: the tools, Fit and the zoom, the colour mode and Layers, the read-out, and the room Fit leaves for them), the legend, the pictures as textured quads (`pictures.rs`), the tab tool, and the overlay egui's painter draws. |
+| `widgets/` | The app's own controls: icons and the operation glyphs, buttons, the field with a unit, rows, the segmented control, the switch, the checkbox, chips, cards, the disclosure section, the fading scroll area, the spinner. |
 | `keyboard.rs` | The shortcut table, every shortcut once with its menu row; the Keyboard chapter's table is tested against it. |
 
 ### `dreamcarve-shell` (`crates/dreamcarve-shell/src/`)
@@ -287,8 +293,12 @@ programs, previews and projects the CLI wrote before the pipeline moved
 `crates/dc-gcode/tests/` holds the golden comparisons (`golden.rs`), the
 property tests (`properties/`) and the V-Carve and Inlay stress sweep
 (`stress/`, `--ignored`), which generates difficult designs and checks
-every program against S1–S19 and that each plug seats. The app's window
-tests are in `crates/dreamcarve-app/tests/`.
+every program against S1–S19 and that each plug seats. The app core's
+tests are in `crates/dc-app/tests/`, a file for each module, run
+headless. The app's window tests are in `crates/dreamcarve-app/tests/`:
+`kittest.rs` and `library.rs` drive the window in egui's harness,
+`book.rs` writes the book's screenshots and `review.rs` the review's
+(both `--ignored`: they write files and need a GPU adapter).
 
 ## Outside the workspace crates
 
