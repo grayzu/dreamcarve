@@ -1348,6 +1348,202 @@ pub enum Problem {
         /// What is wrong with the picture.
         reason: BitmapError,
     },
+    /// A stepover in effect puts a used tool's or an enabled operation's
+    /// passes closer together than [`MIN_PASS_SPACING_MM`]. A fraction
+    /// that small is nearly always a slip, a percentage typed as a
+    /// fraction (0.08 % where 8 % was meant), and its program cuts the
+    /// same wood for hours. A warning: the program is still what was
+    /// asked for.
+    #[error("{}", step_over_too_fine(.passes, *.fraction, *.width_mm))]
+    StepOverTooFine {
+        /// Where the fraction in effect is set: a tool's or an
+        /// operation's `step_over_fraction`, or a Photo V-Carve's
+        /// `line_spacing_fraction`.
+        field: String,
+        /// Whose passes they are, and what the fraction is of.
+        passes: FinePasses,
+        /// The fraction.
+        fraction: f64,
+        /// What the generator multiplies the fraction by to space the
+        /// passes, mm.
+        width_mm: f64,
+    },
+}
+
+/// Whose passes [`Problem::StepOverTooFine`] is about, and what their
+/// stepover is a fraction of: each generator multiplies it by a width of
+/// its own.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FinePasses {
+    /// A used tool's own `step_over_fraction`, of its diameter: the
+    /// spacing of a Pocket's or a clearing pass's passes that take it,
+    /// and the most any pass that does can be apart.
+    Tool {
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        name: String,
+    },
+    /// An enabled Pocket's own `step_over_fraction`, of its tool's
+    /// diameter.
+    Pocket {
+        /// The operation.
+        operation: OperationId,
+        /// The operation's display name.
+        name: String,
+        /// The tool's display name.
+        tool_name: String,
+    },
+    /// The floor passes of an enabled V-Carve or Inlay: the stepover in
+    /// effect, the operation's own or else its tool's, is a fraction of
+    /// the width the bit cuts at the flat depth, which is narrower than
+    /// its diameter.
+    Floor {
+        /// The operation.
+        operation: OperationId,
+        /// The operation's display name.
+        name: String,
+        /// The flat depth below the start plane, mm: a V-Carve's
+        /// `flat_depth_mm`, or the shallower of an Inlay's `depth_mm` and,
+        /// once the male is cut, `plug_depth_mm`.
+        depth_mm: f64,
+        /// The tool's display name when the fraction is the tool's;
+        /// `None` when it is the operation's own.
+        from_tool: Option<String>,
+    },
+    /// The grooves of an enabled Photo V-Carve: its
+    /// `line_spacing_fraction` is of a groove's width at `max_depth_mm`.
+    Grooves {
+        /// The operation.
+        operation: OperationId,
+        /// The operation's display name.
+        name: String,
+        /// The Photo V-Carve's `max_depth_mm`.
+        max_depth_mm: f64,
+    },
+}
+
+/// The least distance between neighbouring passes that validation takes
+/// as meant, mm: a stepover that puts them closer is `step_over_too_fine`.
+/// It bounds the distance, not the fraction, because each generator
+/// multiplies the fraction by a width of its own (a Pocket by the tool's
+/// diameter, a carve's floor by the bit's width at the flat depth).
+///
+/// 0.02 mm is no more than a hobby machine can place a cut to: a
+/// belt-driven axis steps 0.0125 mm, and a screw-driven one, which steps
+/// finer, still repeats to a few hundredths of a millimetre at best, as
+/// the wood does. It is a third of the finest stepover found in a tool
+/// vendor's published library (0.061 mm, the finishing stepover of a
+/// 0.8 mm tapered ball nose), so no value a vendor means is caught, and
+/// four times the slip it was written for (8 % of a 6.35 mm bit typed as
+/// 0.08 %: 0.005 mm between passes where 0.508 mm was meant).
+pub const MIN_PASS_SPACING_MM: f64 = 0.02;
+
+/// Whether `fraction` of `width_mm` puts passes closer than
+/// [`MIN_PASS_SPACING_MM`]. `false` for a fraction or a width out of
+/// range, which has an error of its own.
+fn passes_too_fine(fraction: f64, width_mm: f64) -> bool {
+    fraction.is_finite()
+        && fraction > 0.0
+        && fraction <= 1.0
+        && width_mm.is_finite()
+        && width_mm > 0.0
+        && fraction * width_mm < MIN_PASS_SPACING_MM
+}
+
+/// `value` to at most `places` decimals, without trailing zeros: `6.35`,
+/// `0.08`, `8`.
+fn trimmed(value: f64, places: usize) -> String {
+    let text = format!("{value:.places$}");
+    if text.contains('.') {
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    } else {
+        text
+    }
+}
+
+/// [`Problem::StepOverTooFine`]'s message: whose stepover, as a
+/// percentage of what, the distance it leaves between passes, and, when
+/// a hundred times the fraction is a stepover that cuts, what that would
+/// be: the percentage the user most likely meant. A floor that takes its
+/// tool's fraction gets no such guess, because that fraction is fine of
+/// the tool's diameter and so is no slip: the floor is narrower, and the
+/// operation needs a fraction of its own.
+fn step_over_too_fine(passes: &FinePasses, fraction: f64, width_mm: f64) -> String {
+    let percent = trimmed(fraction * 100.0, 4);
+    let width = trimmed(width_mm, 3);
+    let (what, between, own) = match passes {
+        FinePasses::Tool { tool, name } => (
+            format!(
+                "tool `{name}` (`{tool}`) has a stepover of {percent} % of its {width} mm diameter"
+            ),
+            "passes",
+            true,
+        ),
+        FinePasses::Pocket {
+            operation,
+            name,
+            tool_name,
+        } => (
+            format!(
+                "operation `{name}` (`{operation}`) has a stepover of {percent} % of the {width} mm diameter of tool `{tool_name}`"
+            ),
+            "passes",
+            true,
+        ),
+        FinePasses::Floor {
+            operation,
+            name,
+            depth_mm,
+            from_tool,
+        } => {
+            let depth = trimmed(*depth_mm, 3);
+            let whose = match from_tool {
+                Some(tool_name) => format!("takes tool `{tool_name}`'s stepover for its floor,"),
+                None => "has a floor stepover of".to_owned(),
+            };
+            (
+                format!(
+                    "operation `{name}` (`{operation}`) {whose} {percent} % of the {width} mm its bit cuts at the flat depth, {depth} mm"
+                ),
+                "passes",
+                from_tool.is_none(),
+            )
+        }
+        FinePasses::Grooves {
+            operation,
+            name,
+            max_depth_mm,
+        } => {
+            let depth = trimmed(*max_depth_mm, 3);
+            (
+                format!(
+                    "operation `{name}` (`{operation}`) has a line spacing of {percent} % of the {width} mm a groove is wide at its max_depth_mm, {depth} mm"
+                ),
+                "grooves",
+                true,
+            )
+        }
+    };
+    let spacing_mm = fraction * width_mm;
+    let spacing = if spacing_mm < 0.0005 {
+        "under 0.001".to_owned()
+    } else {
+        format!("{spacing_mm:.3}")
+    };
+    let meant = fraction * 100.0;
+    let advice = if !own {
+        "; give the operation a step_over_fraction of its own".to_owned()
+    } else if meant <= 1.0 && meant * width_mm >= MIN_PASS_SPACING_MM {
+        format!(
+            "; {} % is {:.3} mm",
+            trimmed(meant * 100.0, 4),
+            meant * width_mm
+        )
+    } else {
+        String::new()
+    };
+    format!("{what}: {spacing} mm between {between}, too fine to cut{advice}")
 }
 
 /// The fastest feed or plunge rate a used tool may have, mm/min.
@@ -1473,6 +1669,7 @@ problem_codes! {
     PhotoRetractPositive, PhotoUnknownBitmap, BitmapFootprintAspect,
     BitmapPixelsMismatch, BitmapNotGrayscale8, DuplicateBitmapId,
     BitmapEmpty, BitmapTooLarge, BitmapFootprintPositive, BitmapUnreadable,
+    StepOverTooFine,
 }
 
 impl Problem {
@@ -1501,6 +1698,7 @@ impl Problem {
                 | Self::InlayBoundaryEmpty { .. }
                 | Self::InlayBoundaryHoleIgnored { .. }
                 | Self::PhotoLinesOverlap { .. }
+                | Self::StepOverTooFine { .. }
         );
         if warning {
             Severity::Warning
@@ -1570,7 +1768,9 @@ impl Problem {
             Self::ToolChangeModeNeedsM6 { .. } => {
                 Some("post_processor.tool_change_mode".to_owned())
             }
-            Self::StepDownAboveDiameter { field, .. } => Some(field.clone()),
+            Self::StepDownAboveDiameter { field, .. } | Self::StepOverTooFine { field, .. } => {
+                Some(field.clone())
+            }
             Self::CutterNotFlat {
                 operation, field, ..
             } => Some(format!("operations[{operation}].{field}")),
@@ -2158,6 +2358,19 @@ impl Validator {
                 {
                     self.tool_out_of_range(tool, field, fraction, FRACTION);
                 }
+                // A sanity check, so of a used tool only. The diameter is
+                // the widest any generator multiplies the fraction by.
+                if in_use && passes_too_fine(fraction, tool.diameter_mm) {
+                    self.problems.push(Problem::StepOverTooFine {
+                        field: format!("{at}.{field}"),
+                        passes: FinePasses::Tool {
+                            tool: tool.id.clone(),
+                            name: tool.name.clone(),
+                        },
+                        fraction,
+                        width_mm: tool.diameter_mm,
+                    });
+                }
             }
         }
 
@@ -2230,6 +2443,9 @@ impl Validator {
                 Operation::VCarve(carve) => self.v_carve(p, op, carve, tool, &at),
                 Operation::Inlay(inlay) => self.inlay(p, inlay, tool, &at),
                 Operation::PhotoVCarve(photo) => self.photo_v_carve(p, op, photo, tool, &at),
+            }
+            if let (true, Some(tool)) = (op.enabled(), tool) {
+                self.fine_passes(op, tool, &at);
             }
         }
 
@@ -2673,6 +2889,122 @@ impl Validator {
                 operation: op.id.clone(),
                 name: op.name.clone(),
                 side: op.side,
+            });
+        }
+    }
+
+    /// `step_over_too_fine` for enabled operation `op` at `at`, cut with
+    /// `tool`: the stepover in effect, times the width its generator
+    /// multiplies it by, is under [`MIN_PASS_SPACING_MM`]. A Pocket
+    /// (`dc-cam`'s `pocket.rs`) steps over a fraction of the tool's
+    /// diameter, so only its own fraction is judged here: the tool's is
+    /// judged at the tool, by the same product, and so is a clearing
+    /// pass's, which has no fraction of its own. A V-Carve's and an
+    /// Inlay's floor (`vcarve/floor.rs`, `Floor::stepover`) step over a
+    /// fraction of the bit's width at the flat depth, a V-bit's and a
+    /// tapered ball nose's alike. A Photo V-Carve (`photo.rs`) spaces its
+    /// grooves by a fraction of a groove's width at `max_depth_mm`.
+    fn fine_passes(&mut self, op: &Operation, tool: &Tool, at: &str) {
+        let usable = |depth_mm: Option<f64>| depth_mm.filter(|d| d.is_finite() && *d > 0.0);
+        match op {
+            Operation::Pocket(pocket) => {
+                if let Some(fraction) = pocket.step_over_fraction
+                    && passes_too_fine(fraction, tool.diameter_mm)
+                {
+                    self.problems.push(Problem::StepOverTooFine {
+                        field: format!("{at}.step_over_fraction"),
+                        passes: FinePasses::Pocket {
+                            operation: pocket.id.clone(),
+                            name: pocket.name.clone(),
+                            tool_name: tool.name.clone(),
+                        },
+                        fraction,
+                        width_mm: tool.diameter_mm,
+                    });
+                }
+            }
+            Operation::VCarve(carve) => {
+                if let Some(depth_mm) = usable(carve.flat_depth_mm) {
+                    self.fine_floor(op, tool, carve.step_over_fraction, depth_mm, at);
+                }
+            }
+            Operation::Inlay(inlay) => {
+                // The female's floor is `depth_mm` down; the male's, once
+                // its board is measured, `plug_depth_mm` below its start
+                // plane. The shallower floor is the narrower, so the finer.
+                let male = usable(inlay.plug_depth_mm).filter(|_| inlay.cuts_male());
+                let depth_mm = match (usable(inlay.depth_mm), male) {
+                    (Some(female_mm), Some(male_mm)) => Some(female_mm.min(male_mm)),
+                    (female, male) => female.or(male),
+                };
+                if let Some(depth_mm) = depth_mm {
+                    self.fine_floor(op, tool, inlay.step_over_fraction, depth_mm, at);
+                }
+            }
+            Operation::PhotoVCarve(photo) => {
+                if let Some(max_depth_mm) = usable(photo.max_depth_mm)
+                    && let Some(profile) = tool.carve_profile()
+                {
+                    let width_mm = 2.0 * profile.half_width_mm(max_depth_mm);
+                    let fraction = photo.line_spacing_fraction;
+                    if passes_too_fine(fraction, width_mm) {
+                        self.problems.push(Problem::StepOverTooFine {
+                            field: format!("{at}.line_spacing_fraction"),
+                            passes: FinePasses::Grooves {
+                                operation: photo.id.clone(),
+                                name: photo.name.clone(),
+                                max_depth_mm,
+                            },
+                            fraction,
+                            width_mm,
+                        });
+                    }
+                }
+            }
+            Operation::Profile(_)
+            | Operation::Drill(_)
+            | Operation::Bore(_)
+            | Operation::Engrave(_) => {}
+        }
+    }
+
+    /// [`Self::fine_passes`] for the floor of carve `op`, `depth_mm` below
+    /// its start plane: the stepover in effect is the operation's `own`,
+    /// else its tool's, of the width `tool` cuts at that depth. A tool's
+    /// fraction that is too fine of its whole diameter is reported at the
+    /// tool and not again here.
+    fn fine_floor(
+        &mut self,
+        op: &Operation,
+        tool: &Tool,
+        own: Option<f64>,
+        depth_mm: f64,
+        at: &str,
+    ) {
+        let Some(profile) = tool.carve_profile() else {
+            return;
+        };
+        let width_mm = 2.0 * profile.half_width_mm(depth_mm);
+        let (fraction, field, from_tool) = match (own, tool.step_over_fraction) {
+            (Some(fraction), _) => (fraction, format!("{at}.step_over_fraction"), None),
+            (None, Some(fraction)) if !passes_too_fine(fraction, tool.diameter_mm) => (
+                fraction,
+                format!("tools[{}].step_over_fraction", tool.id),
+                Some(tool.name.clone()),
+            ),
+            (None, _) => return,
+        };
+        if passes_too_fine(fraction, width_mm) {
+            self.problems.push(Problem::StepOverTooFine {
+                field,
+                passes: FinePasses::Floor {
+                    operation: op.id().clone(),
+                    name: op.name().to_owned(),
+                    depth_mm,
+                    from_tool,
+                },
+                fraction,
+                width_mm,
             });
         }
     }

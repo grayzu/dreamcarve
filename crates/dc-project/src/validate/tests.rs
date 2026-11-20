@@ -5,6 +5,7 @@
 //! their codes, severities and field paths, and the projects it accepts.
 
 mod problem_snapshot;
+mod step_over;
 
 use super::*;
 use crate::model::{

@@ -673,6 +673,68 @@ fn samples() -> Vec<Problem> {
             reason,
         });
     }
+    // Whose passes, and of what width: a tool's, a Pocket's own, a
+    // carve's floor (its own fraction and its tool's) and a Photo's.
+    for (field, passes, fraction, width_mm) in [
+        (
+            "tools[t1].step_over_fraction",
+            FinePasses::Tool {
+                tool: tool(),
+                name: tool_name(),
+            },
+            0.0008,
+            6.35,
+        ),
+        (
+            "operations[o1].step_over_fraction",
+            FinePasses::Pocket {
+                operation: op(),
+                name: "Tray".into(),
+                tool_name: tool_name(),
+            },
+            0.0008,
+            6.35,
+        ),
+        (
+            "operations[o1].step_over_fraction",
+            FinePasses::Floor {
+                operation: op(),
+                name: "Lettering".into(),
+                depth_mm: 2.0,
+                from_tool: None,
+            },
+            0.000_004,
+            2.309_401,
+        ),
+        (
+            "tools[t1].step_over_fraction",
+            FinePasses::Floor {
+                operation: op(),
+                name: "Lettering".into(),
+                depth_mm: 0.5,
+                from_tool: Some("60° V-bit".into()),
+            },
+            0.0096,
+            0.577_35,
+        ),
+        (
+            "operations[o1].line_spacing_fraction",
+            FinePasses::Grooves {
+                operation: op(),
+                name: "Portrait".into(),
+                max_depth_mm: 1.5,
+            },
+            0.005,
+            3.0,
+        ),
+    ] {
+        all.push(Problem::StepOverTooFine {
+            field: field.into(),
+            passes,
+            fraction,
+            width_mm,
+        });
+    }
     all
 }
 
@@ -700,7 +762,7 @@ fn render(problems: &[Problem]) -> String {
 fn every_problem_reads_as_the_snapshot_says() {
     let samples = samples();
     let codes: BTreeSet<&str> = samples.iter().map(Problem::code).collect();
-    assert_eq!(codes.len(), 87, "a variant has no sample: {codes:?}");
+    assert_eq!(codes.len(), 88, "a variant has no sample: {codes:?}");
     let actual = render(&samples);
     if std::env::var_os(UPDATE).is_some() {
         std::fs::write(SNAPSHOT_PATH, &actual).unwrap();

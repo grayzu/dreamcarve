@@ -1582,6 +1582,54 @@ parameters so the user can fill them in"). Phase 2 skipped every
 - `clearing_*`, `start_depth_*`, the boundary and the cut-out rules are
   unchanged; where they compute a V-bit's width they read the bit's
   profile (below).
+- `step_over_too_fine` (a warning; added 2026-11-20 after the
+  maintainer's smoke test, where 0.08 typed into the app's percentage
+  field for 8 % gave a tapered ball nose `step_over_fraction` 0.0008 and
+  an Inlay spent 60 of its 84 minutes on a few small floors). A stepover
+  whose passes are less than `MIN_PASS_SPACING_MM`, 0.02 mm, apart. The
+  bound is on the distance, the fraction times the width its generator
+  multiplies it by, so each field is judged by its own generator:
+  - a used tool's `step_over_fraction`, of its `diameter_mm` (a
+    Pocket's and a clearing pass's passes, and the most any pass that
+    takes it can be apart); at `tools[t].step_over_fraction`;
+  - an enabled Pocket's own, of its tool's diameter; at
+    `operations[o].step_over_fraction`;
+  - an enabled V-Carve's or Inlay's floor, of the width its bit cuts at
+    the flat depth, `2·w(F)` (`Floor::stepover`; a V-bit's and a tapered
+    ball nose's alike, never the cutting diameter), `F` a V-Carve's
+    `flat_depth_mm` or the shallower of an Inlay's `depth_mm` and, once
+    its male is cut, `plug_depth_mm`. The fraction is the operation's
+    own, or else its tool's, and the warning is at whichever field holds
+    it. A tool's fraction already too fine of its diameter is reported
+    once, at the tool. A V-Carve with no flat depth has no floor and is
+    not judged;
+  - an enabled Photo V-Carve's `line_spacing_fraction`, of a groove's
+    width at `max_depth_mm`; at that field.
+
+  The message gives the fraction as a percentage, what it is a
+  percentage of, the distance in millimetres and, when a hundred times
+  the fraction is at most 1 and would cut, that percentage and its
+  distance, the value most likely meant ("tool `Fine` (`t2`) has a
+  stepover of 0.08 % of its 6.35 mm diameter: 0.005 mm between passes,
+  too fine to cut; 8 % is 0.508 mm"). A floor that takes its tool's
+  fraction gets no such guess: that fraction is fine of the tool's
+  diameter, so it is no slip, and the message says to give the operation
+  its own. 0.02 mm is no more than a hobby machine places a cut to and
+  a third of the finest stepover in a vendor's published Fusion library
+  (0.061 mm). A V-Carve offset strategy's `step_over_mm` is a length, not
+  a fraction, and is not judged. Tests:
+  `validate::step_over::tool_step_over_of_a_few_microns_warns`,
+  `vendor_step_overs_do_not_warn` (0.0288 and 0.0096 of 6.35 mm),
+  `bound_is_two_hundredths_of_a_millimetre`,
+  `message_makes_no_guess_it_cannot_stand_behind`,
+  `unused_tool_and_disabled_operation_are_not_judged`,
+  `pocket_own_step_over_warns_at_its_field`,
+  `carve_floor_step_over_is_judged_by_the_width_at_the_flat_depth`,
+  `carve_floor_inherits_its_tools_step_over`,
+  `inlay_floor_step_over_is_judged_on_its_shallower_floor`,
+  `photo_line_spacing_is_judged_by_the_groove_width`,
+  `projects_with_ordinary_step_overs_are_unchanged`; CLI
+  `check_warns_step_over_too_fine`.
 
 **The profile** (`dc-geometry::profile`, pure, no tool knowledge, so
 `dc-project`, `dc-cam` and `dc-gcode` share one implementation):

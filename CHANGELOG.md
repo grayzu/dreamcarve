@@ -51,6 +51,19 @@ phases bump the patch number.
   `tools/bundle-macos.sh` for an unsigned `DreamCarve.app` on a Mac); it
   is not in the release archives, there is no signed installer, and it
   has been run on macOS only.
+- **A warning for a stepover too fine to cut, `step_over_too_fine`.**
+  `check`, `export` and the app's Warnings drawer now warn when a
+  stepover leaves less than 0.02 mm between passes, which is nearly
+  always a percentage typed as a fraction: 0.08 typed for 8 % is a
+  `step_over_fraction` of 0.0008, 0.005 mm between the passes of a
+  6.35 mm bit, and a program that runs for hours over the same wood. The
+  warning is at the field that holds the value, a tool's or an
+  operation's `step_over_fraction` or a Photo V-Carve's
+  `line_spacing_fraction`, and gives the value as a percentage, the
+  distance, and what a hundred times the value would be. The distance is
+  worked out as the cut itself does it: of the bit's diameter for a
+  Pocket, of the width the bit cuts at the flat depth for a V-Carve's or
+  an Inlay's floor. Export still works.
 - **Vendors' tapered ball noses import from Fusion libraries.** A tool
   vendor's Fusion library writes a 1/4 in tapered ball nose with the
   cutting diameter in `DC` (and `SFDM`) and the ball as the corner

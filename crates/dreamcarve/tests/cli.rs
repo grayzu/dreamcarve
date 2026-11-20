@@ -2973,6 +2973,48 @@ fn check_reports_unsafe_file_extension() {
     );
 }
 
+/// Maintainer's smoke test, 2026-11-20: a tool whose `step_over_fraction`
+/// is 0.0008 (0.08 typed into a percentage field for 8 %) spaces passes
+/// 0.005 mm apart. `check` warns `step_over_too_fine` once, located at the
+/// tool's field, naming the percentage, the distance and the percentage
+/// most likely meant, and still exits 0; with 0.0288, a vendor's value,
+/// it is quiet.
+#[test]
+fn check_warns_step_over_too_fine() {
+    let dir = work_dir("check_warns_step_over_too_fine");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let with_step_over = |fraction: f64| {
+        let mut project = load_file(&dcv).project;
+        let tool = project.tools.first_mut().expect("init's tool");
+        tool.diameter_mm = 6.35;
+        tool.step_over_fraction = Some(fraction);
+        let (id, name) = (tool.id.to_string(), tool.name.clone());
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let out = run(&dir, &["check", "coaster.dcv"]);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(0), "a warning exits 0: {report}");
+        (id, name, report)
+    };
+
+    let (id, name, report) = with_step_over(0.0008);
+    let fine: Vec<&str> = warning_lines(&report)
+        .into_iter()
+        .filter(|l| warning_code(l) == Some("step_over_too_fine"))
+        .collect();
+    assert_eq!(fine.len(), 1, "{report}");
+    let at = position_of(&dcv, &format!("tools[{id}].step_over_fraction"));
+    assert_eq!(
+        fine[0],
+        format!(
+            "coaster.dcv:{at}: warning: step_over_too_fine: tool `{name}` (`{id}`) has a stepover of 0.08 % of its 6.35 mm diameter: 0.005 mm between passes, too fine to cut; 8 % is 0.508 mm"
+        )
+    );
+
+    let (_, _, report) = with_step_over(0.0288);
+    assert!(!report.contains("step_over_too_fine"), "{report}");
+}
+
 /// The longest run of digits after a decimal point in `text`.
 fn most_decimals(text: &str) -> usize {
     let mut most = 0;

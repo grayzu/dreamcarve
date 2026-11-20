@@ -233,6 +233,11 @@ on its way past, without lifting: it runs in from its corner, round the
 clean-up ring and back out. The operation's
 `step_over_fraction` wins over the tool's.
 
+The value is a fraction, not a percentage: 8 % is 0.08. A stepover that
+leaves less than 0.02 mm between passes, such as 0.0008 with a 6.35 mm
+bit (0.005 mm), warns `step_over_too_fine` and says what a hundred times
+it would be ([Warnings: project values](warnings.md#project-values)).
+
 ## Direction
 
 Seen from above with the spindle turning clockwise, **climb** keeps the

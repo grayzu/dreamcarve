@@ -733,3 +733,28 @@ severity: Error
 field: bitmaps[b1].png_base64
 message: the picture of bitmap `Portrait` (`b1`) cannot be read: its PNG is 8-bit RGB with alpha, not 8-bit grayscale
 
+code: step_over_too_fine
+severity: Warning
+field: tools[t1].step_over_fraction
+message: tool `6.35 mm upcut` (`t1`) has a stepover of 0.08 % of its 6.35 mm diameter: 0.005 mm between passes, too fine to cut; 8 % is 0.508 mm
+
+code: step_over_too_fine
+severity: Warning
+field: operations[o1].step_over_fraction
+message: operation `Tray` (`o1`) has a stepover of 0.08 % of the 6.35 mm diameter of tool `6.35 mm upcut`: 0.005 mm between passes, too fine to cut; 8 % is 0.508 mm
+
+code: step_over_too_fine
+severity: Warning
+field: operations[o1].step_over_fraction
+message: operation `Lettering` (`o1`) has a floor stepover of 0.0004 % of the 2.309 mm its bit cuts at the flat depth, 2 mm: under 0.001 mm between passes, too fine to cut
+
+code: step_over_too_fine
+severity: Warning
+field: tools[t1].step_over_fraction
+message: operation `Lettering` (`o1`) takes tool `60° V-bit`'s stepover for its floor, 0.96 % of the 0.577 mm its bit cuts at the flat depth, 0.5 mm: 0.006 mm between passes, too fine to cut; give the operation a step_over_fraction of its own
+
+code: step_over_too_fine
+severity: Warning
+field: operations[o1].line_spacing_fraction
+message: operation `Portrait` (`o1`) has a line spacing of 0.5 % of the 3 mm a groove is wide at its max_depth_mm, 1.5 mm: 0.015 mm between grooves, too fine to cut; 50 % is 1.500 mm
+

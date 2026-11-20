@@ -64,6 +64,6 @@ pub use tool::{
 };
 pub use units_input::{LENGTH_DECIMALS, RATE_DECIMALS, round_length_mm, round_rate_mm_min};
 pub use validate::{
-    INLAY_MIN_PLUG_BASE_MM, MAX_FLATTEN_TOLERANCE_MM, MAX_RATE_MM_MIN, MAX_RPM,
-    MAX_TOOL_DIAMETER_MM, Problem, Severity, StartFootprint, validate,
+    FinePasses, INLAY_MIN_PLUG_BASE_MM, MAX_FLATTEN_TOLERANCE_MM, MAX_RATE_MM_MIN, MAX_RPM,
+    MAX_TOOL_DIAMETER_MM, MIN_PASS_SPACING_MM, Problem, Severity, StartFootprint, validate,
 };

@@ -615,7 +615,7 @@ Errors stop export. Warnings do not.
 | A feed or plunge rate above 20 000 mm/min | A step-down deeper than the tool's diameter |
 | An Outside, Inside, Left or Right Profile, or a Pocket, whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
 | An enabled operation with no `targets` | A spindle speed above 60 000 RPM |
-| Two tools used by enabled operations with the same number, set or by position; a tool `number` of 0 | A tool diameter above 50 mm |
+| Two tools used by enabled operations with the same number, set or by position; a tool `number` of 0 | A tool diameter above 50 mm; a stepover that leaves less than 0.02 mm between passes (`step_over_too_fine`, under [Warnings: project values](warnings.md#project-values)) |
 | A Pocket's `rest_of` that is not an earlier enabled Pocket with the same `targets` | A Drill whose cutter is not `"drill"` or `"end_mill"` |
 | A `step_over_fraction`, lead, entry, raster angle, dwell, retract, peck or chip-break value outside its range (see [`operations`](#operations)) | `corner_relief` on a tool with no `step_down_mm` (the relief is skipped) |
 | A helix `entry` on an On line, Left or Right Profile | An Engrave with a V-bit deeper than the bit's cone |
