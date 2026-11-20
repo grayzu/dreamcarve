@@ -35,6 +35,12 @@ Every command here is run by DreamCarve's test suite exactly as written,
 and the excerpts are checked against the programs it writes, so if it does
 not work for you, that is a bug.
 
+Every step here has its equivalent in the app: the Inlay's numbers and
+the male board's thickness are in its editor on the **Operations** step,
+the male board is drawn beside the stock, and the **Export** step has a
+tick for each board. [The inlay pair](app.md#the-inlay-pair) builds this
+pair there and writes the same five programs.
+
 ## What you need
 
 - DreamCarve installed and on your `PATH`. See [Installing](installing.md).

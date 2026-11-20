@@ -1,7 +1,10 @@
 # User guide
 
 DreamCarve turns a 2D drawing into a G-code program for a CNC router. It
-is a command line tool. **Profile** cuts along closed outlines, to cut a
+is an app, a window you work in ([The app](the-app.md)), and a command
+line tool that drives the same engine from a terminal or a script. Both
+work on the same project file and write the same G-code, so what this
+guide says about a setting holds in either. **Profile** cuts along closed outlines, to cut a
 part out or a hole through ([Profile](profile.md)); **Pocket** clears the
 material inside a closed outline to a depth ([Pocket](pocket.md));
 **Engrave** follows lines, open or closed, with the bit's centre on the
@@ -18,8 +21,25 @@ the order listed.
 
 ## The workflow
 
-1. Draw your part in Inkscape or any SVG editor and save it as SVG, or in
-   a CAD program and save it as DXF.
+Draw your part in Inkscape or any SVG editor and save it as SVG, or in a
+CAD program and save it as DXF. Then, in the app, the job is the five
+steps in its rail:
+
+1. **Design**: **New from drawing…** makes a project round the drawing.
+2. **Stock**: type the material's thickness, and say where work zero is.
+3. **Tools**: add the bits from your [tool library](tool-library.md), or
+   make them.
+4. **Operations**: select shapes, **Add** an operation, and set its depth.
+   The Viewport shows the toolpath as you go.
+5. **Export**: read the warnings, then **Export G-code**.
+
+Then air cut, and cut.
+[From SVG to G-code in the app](../quick-start/app.md) walks through this
+once, end to end.
+
+From the command line the same job is:
+
+1. Draw your part, as above.
 2. `dreamcarve init part.svg` (or `part.dxf`) writes a **project file**,
    `part.dcv`, with one Profile of every closed shape.
 3. Edit `part.dcv` in a text editor: the stock, the tools and their feeds,

@@ -1930,6 +1930,7 @@ fn warnings_chapter_lists_the_photo_codes() {
 /// #700: every term phase 3 adds to the vocabulary has an entry in
 /// `CONTEXT.md` (functional spec, "Capabilities" and exit criteria), as a
 /// `**Term**:` line, so the glossary cannot fall behind the code again.
+/// #550 adds phase 4's: the app's terms.
 #[test]
 fn context_terms_are_defined() {
     let context = chapter_text("CONTEXT.md");
@@ -1949,6 +1950,16 @@ fn context_terms_are_defined() {
         "Speck",
         "Boundary",
         "Tapered Ball Nose",
+        // Phase 4 (#550): the three terms of its functional spec's
+        // "Documentation deliverables", and the redesign's five.
+        "Design Tree",
+        "Viewport",
+        "Toolpath Visibility",
+        "Step",
+        "Rail",
+        "Step Panel",
+        "Inspector",
+        "Start Screen",
     ];
     let missing: Vec<&str> = terms
         .into_iter()

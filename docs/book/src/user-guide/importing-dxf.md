@@ -1,7 +1,14 @@
 # Importing DXF
 
 DreamCarve reads DXF drawings from CAD programs such as LibreCAD, QCAD,
-FreeCAD and Fusion. `init` tells a DXF from an SVG by the file extension:
+FreeCAD and Fusion. This chapter says what is read from one, and how its
+units, layers and loose ends are handled. It holds for the app and the
+command line alike: the app's drawing sheet has the three options below
+as **Units**, **Join tolerance** and **Layers**
+([Importing drawings and pictures](importing.md#the-drawing-sheet)).
+
+From the command line, `init` tells a DXF from an SVG by the file
+extension:
 
 ```sh
 dreamcarve init plaque.dxf

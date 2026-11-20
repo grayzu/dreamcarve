@@ -505,3 +505,56 @@ sets `use_canned_cycles` and the controller's motion for it is the Drill's
 toolpath; otherwise the hole is written as plain moves (Expanded).
 _Avoid_: Drill cycle (that is the Drill's `cycle` setting), fixed cycle
 _PureCutCNC_: cannedCycles
+
+### The app
+
+**Step**:
+One of the five parts of a job in the app, in their fixed order: Design,
+Stock, Tools, Operations, Export. A step is empty, complete, or needs
+attention; the state is computed from the project and its findings, never
+stored.
+_Avoid_: Stage, phase, page, tab, wizard step (no step is locked); pass (a
+pass is a depth level of a cutting operation)
+
+**Rail**:
+The column of step buttons at the window's left edge, each with the mark of
+its step's state, with Warnings, Appearance and Help pinned under them.
+_Avoid_: Sidebar, navigation bar, toolbar
+
+**Step Panel**:
+The panel beside the rail that shows the current step's content: the Design
+Tree, the stock and origin, the tools, the operations list, or the export.
+_Avoid_: Side panel, Project Settings, CAM panel (the panels it replaced)
+
+**Inspector**:
+The panel at the window's right that edits what is selected in the current
+step: a selection's Properties, a tool, or an operation. Absent when nothing
+is selected.
+_Avoid_: Properties panel (Properties is what it shows for shapes), editor
+panel, sidebar
+
+**Start Screen**:
+What the Viewport's place shows while the project has no shape, picture or
+operation: New from drawing, New from picture, Open, the examples and the
+recent files.
+_Avoid_: Empty state, welcome screen, home, launcher
+
+**Design Tree**:
+The list of a project's feature instances, tabs and pictures, on the Design
+step.
+_Avoid_: Layer panel, object list
+_PureCutCNC_: FeatureTree
+
+**Viewport**:
+The 2D view of the stock from above, with the shapes, the pictures, the
+tabs and the toolpaths.
+_Avoid_: Canvas, sketch view
+_PureCutCNC_: SketchCanvas
+
+**Toolpath Visibility**:
+The per-operation and per-move-kind display toggles of the Viewport (cuts,
+rapids, plunges, direction arrows, start points, tab marks). View state, not
+project data: never saved in the project and never undone.
+_Avoid_: Layers (the button that opens the toggles is labelled Layers; the
+drawing has no layers of its own)
+_PureCutCNC_: ToolpathVisibility

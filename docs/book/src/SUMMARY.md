@@ -7,6 +7,7 @@
 # Quick start
 
 - [Installing](quick-start/installing.md)
+- [From SVG to G-code in the app](quick-start/app.md)
 - [Your first cut from an SVG](quick-start/first-cut.md)
 - [A pocketed plaque from DXF](quick-start/plaque.md)
 - [A V-carved sign from SVG outlines](quick-start/sign.md)
@@ -18,8 +19,11 @@
 # User guide
 
 - [Overview](user-guide/overview.md)
+- [The app](user-guide/the-app.md)
 - [The project file](user-guide/project-file.md)
+- [Importing drawings and pictures](user-guide/importing.md)
 - [Importing DXF](user-guide/importing-dxf.md)
+- [Stock, origin and heights](user-guide/stock-and-origin.md)
 - [Preparing artwork](user-guide/preparing-artwork.md)
 - [Shapes, holes, and islands](user-guide/shapes-and-holes.md)
 - [Profile operation](user-guide/profile.md)
@@ -34,6 +38,8 @@
 - [Images](user-guide/images.md)
 - [Photo V-Carve operation](user-guide/photo-v-carve.md)
 - [Machining order and cut order](user-guide/machining-order.md)
+- [Toolpath preview](user-guide/toolpath-preview.md)
+- [Checking and exporting](user-guide/exporting.md)
 - [Post-processors](user-guide/post-processors.md)
 - [Configuration](user-guide/configuration.md)
 - [Tool library](user-guide/tool-library.md)

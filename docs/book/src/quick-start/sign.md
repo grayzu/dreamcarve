@@ -24,6 +24,12 @@ Every command here is run by DreamCarve's test suite exactly as written,
 and the excerpts are checked against the programs it writes, so if it does
 not work for you, that is a bug.
 
+Every step here has its equivalent in the app: the V-bit is made in the
+**Tool Library**, and each V-Carve's flat depth and clearing passes are
+in its editor's **Setup** on the **Operations** step.
+[The sign: a V-Carve](app.md#the-sign-a-v-carve) builds this sign there
+and writes the same four programs.
+
 ## What you need
 
 - DreamCarve installed and on your `PATH`. See [Installing](installing.md).
