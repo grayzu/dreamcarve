@@ -2,11 +2,15 @@
 
 Status: draft, written 2026-11-02 for the phase 4 design spec; the design
 spec's "Visual design" section points here. Amended 2026-11-10 by the
-screenshot review of #549 (functional spec, "Review redesign"); section
-15 collects what the review added. Amended 2026-11-18 by the redesign
-(`redesign.md`): the principles of section 1, the window of section 2,
-the sizes of section 3, the tokens of section 5, the controls of section
-7 and their egui realisation in section 12 are the redesign's. It
+screenshot review of #549 (functional spec, "Review redesign").
+Amended 2026-11-18 by the redesign (`redesign.md`): the principles of
+section 1, the window of section 2, the sizes of section 3, the tokens
+of section 5, the controls of section 7 and their egui realisation in
+section 12 are the redesign's. Amended 2026-11-19 by the redesign's
+review (slice D5): section 13 is the checklist for the design as built,
+ticked against the pictures in `review/final/`, and what the first
+review added (it was section 15) is folded into the sections it
+belongs to. It
 designs how the app in `functional.md` looks and behaves, inside that
 spec's capabilities (50–80); it adds no feature and renames none. The
 wireframes in `mockups/` show the window before the redesign and are
@@ -35,7 +39,7 @@ Vocabulary is `CONTEXT.md`'s. Realised in egui + wgpu; the realisation notes
 3. **One severity ladder, everywhere.** Error (export refuses) is red with a
    filled glyph; warning is amber with an outlined glyph; hint is blue-grey
    with a dot. The ladder reads the same in a field, a row, the status bar
-   and the Warnings panel. *Rules out:* a second red (operation colour 2 is
+   and the Warnings drawer. *Rules out:* a second red (operation colour 2 is
    red and must never be mistaken for an error), coloured text without a
    glyph, warnings that look like hints.
 4. **The Viewport is the picture of what the machine will do.** It draws
@@ -138,7 +142,10 @@ what to press next.
     tool and time read on one line. First the readiness card (the error,
     warning and hint counts as status chips, or `circle-check` and *No
     problems*; *Estimated time* as the 22-px summary number; *Z range,
-    tool centre* once the programs are built). While an error blocks
+    tool centre* once the programs are built). The card counts what
+    `check` reports, so it agrees with the card under it: on a blank
+    project it reads *1 error*, the unset thickness, where the status
+    bar still says *No problems* (functional 50b). While an error blocks
     export, a card in the status.error tint under it: `circle-x` and *1
     error blocks export* in 13-px Medium with a quiet *Show* at its
     right, then each finding as a row, its message wrapped over its
@@ -149,12 +156,14 @@ what to press next.
     Then the plan: *Programs*, a full-width dropdown under its label
     since its choices are sentences, where the project cuts with several
     tools; the board ticks with an Inlay; *Program Details*, a
-    disclosure of striped rows, each a program's number in a gutter
+    disclosure that says how many programs it holds after its title
+    while closed, as the three sections above it say their values, and
+    open shows striped rows, each a program's number in a gutter
     beside three lines (its file name in the mono face with its time and
     Z range at the right; its tool and operations; the step before it in
     12-px text.secondary); and *Destination* (the folder in the mono
     face, cut at its start, with *Choose…*) over *File name*. Once the
-    programs are written the result takes the plan's place (section 15,
+    programs are written the result takes the plan's place (section 7,
     "Export result").
 
   While an operation's targets are edited (section 8) the panel shows
@@ -175,6 +184,14 @@ what to press next.
   Inspector's header sits at the section-header size, 13-px SemiBold;
   section headers are 13-px SemiBold with a chevron and no band; rows
   are 13-px Regular.
+- **Required first.** The rule behind functional 66 and 66a: a panel
+  that edits a record leads with the few values that make it right,
+  then folds the rest under headers that say what they hold. A user who
+  never opens a section has still seen every value, as a summary. The
+  same rule shapes the Stock step (Units, then the stock's size), the
+  tool editors (name, type, diameter, the three rates first) and the
+  Export step (its three settings sections closed, each with its
+  values after its title).
 - **Dividers.** No card has a border, a title band or a rule under its
   title. The 8-px gap at the inner edge of the step panel and of the
   Inspector is the divider: it drags, the cursor is the platform's
@@ -296,8 +313,11 @@ Heights (all at 1× scale; egui multiplies by `pixels_per_point`):
 
 Widths are the cards': the rail 64; the step panel default 312, min 280;
 the Inspector default 328, min 300; the Viewport min 520 (so 1280 × 768
-holds all four at minimum with the five 8-px gaps, spec 50). Labels in editors take a
-112-px column; the field fills the rest;
+holds all four at minimum with the five 8-px gaps, spec 50). Labels in
+editors take a 112-px column, in every editor, and a label is never
+cut: one that does not fit on a line wraps at its words to two, which
+is a control's height, so the rows stay aligned (*Through-cut
+allowance*, *Tool-change machine Z*). The field fills the rest;
 the unit occupies the last 28 px inside the field. Tool-Library sheet
 1100 × 640 default (its table's ten columns, a type's name whole among
 them, leave the name 120 px), min 800 × 520, its right (editing) pane
@@ -653,7 +673,8 @@ Controls:
   112 px. Below it the other sections start closed.
 - **Targets row.** A 32-px row in Setup: label *Targets*, then, in the
   field column, `target` + `2 shapes · pocket, island` (one shape is its
-  name alone, `outline`; truncated; the
+  name alone, `outline`; where the names do not fit the row shows the
+  count alone, `2 shapes`, never a name cut to a letter; the
   full list in the tooltip), a `triangle-alert` when a target carries a
   warning, and two 32 × 32 quiet icon buttons at the right end: `pencil`
   (Edit targets) and `ellipsis` (Use selection, Add selection). No list
@@ -718,7 +739,7 @@ Controls:
 - **Inline validation message.** 12 px, under the field, 4 px gap, glyph
   then text, in the status's text colour; the file's message verbatim
   (`inlay_male_board_unset`'s message, not its code). The code appears in
-  the Warnings panel, not here. One message per field; errors win over
+  the Warnings drawer, not here. One message per field; errors win over
   warnings.
 - **Help affordance.** The wireframes' "?" circle is replaced: hovering a
   field's *label* for 500 ms shows the chapter's one-sentence definition as
@@ -737,7 +758,32 @@ Controls:
   12 px with `border.default` under it, columns resizable, numbers
   right-aligned
   tabular, the tick column 32 px. "Already in project" rows show a `check`
-  in text.secondary and the row in text.secondary.
+  in text.secondary and the row in text.secondary. A Warnings row is
+  read, not scanned, so its message is never cut: it wraps after the
+  tier's chip and the code, the row growing by its lines, with its
+  field at the row's right end when both fit one line and under the
+  message when they do not.
+- **Tool Library header.** The library's `mm` / `in` segmented control
+  sits at the header's right, before *Import…* and *Export library…*.
+  Every length and rate in the sheet follows it, the table's columns
+  and the editing pane among them; the project behind the sheet keeps
+  its own units.
+- **Export result.** On the Export step, in the plan's place: a card
+  inside the step's card (`surface.raised`, 10-px radius, a hairline,
+  16-px padding). Status is one 15-px SemiBold line with `circle-check`
+  in status.success and a secondary *Done* at its right, the CLI's
+  lines under it in 12-px text.secondary; Files is a table of 30-px
+  striped rows under a 24-px header row (number, file name in JetBrains
+  Mono, tool, time right-aligned, the columns one width for every row),
+  then the totals; then *Folder* and the folder as a 12-px mono line
+  cut at its start with a `copy` icon button, over *Show in folder* and
+  *Save setup sheet…*, both secondary. Under the card, *Run
+  instructions* is a closed disclosure whose steps are numbered 13-px
+  lines, each numbered once (the report's own number is taken off the
+  line), and whose controller notes are callouts (`surface.stripe`
+  fill, 10-px radius, `info` glyph in text.secondary). A failure is one
+  line in status.error with `circle-x` under the readiness card, and
+  the plan stays.
 - **Scrolling lists.** A list that goes on past the edge of its area
   fades its last 20 px into the surface under it: at the bottom while
   there is more below, at the top once it is scrolled. A row the edge
@@ -757,7 +803,7 @@ Controls:
 ## 8. Interaction patterns
 
 - **Selection.** One selection, shared by the Design Tree, the Viewport
-  and the Properties panel. Click selects; Shift-click adds (tree: range);
+  and the Inspector's Properties. Click selects; Shift-click adds (tree: range);
   Ctrl/⌘-click toggles; a marquee on empty stock selects what it touches;
   Escape clears. The tree scrolls to show the first selected row when the
   Viewport selects. An operation row's selection is a second, independent
@@ -786,7 +832,7 @@ Controls:
 - **Tab dragging.** A placed tab is a 10-px-wide mark across the toolpath;
   hover widens it 2 px and shows a `grab` cursor; drag slides it along
   the outline (projected to the nearest outline point, never off it); the
-  Properties panel shows its width, height, shape. The Tab tool arms the
+  Inspector shows its width, height, shape. The Tab tool arms the
   cursor with a `+`; clicking an outline adds a tab; Escape disarms.
 - **Inline rename.** Double-click a tree or operation name, press F2 with
   its row selected, or choose *Rename* from its context menu: the text
@@ -873,7 +919,21 @@ Controls:
   *Delete*'s question, with *Cancel*. Export is not a sheet: it is the
   Export step, and its result takes its plan's place there. A sheet's
   notes are only those that change a decision: no footnote restating how
-  files are written, no list the status bar already shows.
+  files are written, no list the status bar already shows. A sheet's
+  primary action closes it: *Add to project* closes the Tool Library
+  once the tools are in the project, the status bar saying what was
+  added, so no scrim is left to take the next click; a refusal keeps
+  the sheet, with its reason.
+- **Setup sheet (HTML).** Not egui, so not themed: black text on white,
+  a system sans-serif stack (`-apple-system, "Segoe UI", Inter,
+  sans-serif`; Inter is not embedded, to keep the file small and
+  self-contained), 11 pt body, 16 pt title, tables with 0.5-pt rules,
+  numbers right-aligned with tabular figures where the font has them,
+  one program per block with `page-break-inside: avoid`, page margins
+  15 mm, `@page { size: auto }` so A4 and Letter both fit, a footer line
+  with the project name, date and DreamCarve version. No colour carries
+  meaning, so a black-and-white printer loses nothing; warnings carry
+  the word *Warning* and the code.
 - **Keyboard focus.** Tab walks top-left to bottom-right: the header,
   the rail (its five steps, then Warnings, Appearance and Help), the
   step panel, the Viewport, the Warnings drawer, the Inspector, the
@@ -908,7 +968,10 @@ Controls:
   `viewport.label.bg` pill at its top-left; male board outline 1.25
   dashed 6/4. Nothing scales with zoom except positions and the mm-sized
   marks; this is what keeps a 500-shape project from turning into a
-  smear at fit.
+  smear at fit. An arc is drawn as chords that leave it by under a
+  quarter of a point at every zoom, so a circle reads as a circle; the
+  Import drawing sheet's preview flattens at its own pixel, a tenth of a
+  device pixel, and draws its circles as smoothly.
 - **Selection and hover order.** Hover draws under selection; selection
   draws over toolpaths; toolpaths draw over the picture; the picture over
   the grid. **Targets of the selected operation** draw over toolpaths at
@@ -1030,7 +1093,8 @@ Controls:
 - Colour is never the only signal: errors have a filled glyph and a
   message; warnings a triangle; operations have their glyph and name
   beside their colour; selection has handles and a bar, not only a tint;
-  locked shapes carry the padlock; open paths carry the `open` badge.
+  locked shapes carry the padlock; open paths carry the `spline` glyph
+  and are drawn dashed.
   The eight operation colours were chosen so adjacent pairs differ in
   lightness as well as hue; a future per-operation colour override is out
   of scope but the token table makes it cheap.
@@ -1040,8 +1104,8 @@ Controls:
 
 ## 12. egui realisation notes
 
-Written against egui 0.31; names that changed at 0.31 are given as
-`corner_radius` (formerly `rounding`). Set everything once in a
+Written against egui 0.37 (`corner_radius` was `rounding` before
+0.31). Set everything once in a
 `theme::apply(ctx, Appearance)` call at startup and on an OS appearance
 change; no widget sets a colour literal (the one rule a reviewer greps
 for: `Color32::from_rgb` outside `theme.rs` and the painter-glyph module
@@ -1134,32 +1198,38 @@ is a bug).
   picks it.
 - **Focus ring.** `Style::interact` returns the `active` style for a
   focused widget, which would paint the pressed wash; keep `active`'s wash
-  light and draw the ring separately: after any `Response`, `if
-  response.has_focus() && ctx.memory(|m| m.focused_via_keyboard())`
-  (0.31 exposes whether focus came from Tab; if the running version does
-  not, keep a frame-level flag set on Tab and cleared on click) then
-  `painter.rect_stroke(rect.expand(3.0), radius + 3.0, (2.0,
-  focus.ring))`, the control's own radius, so a pill's ring is a pill.
-  One helper, `focus_ring(ui, &response)` (`focus_ring_at` for a pill),
-  called by every custom widget and
-  wrapped around egui's built-ins in `widgets::button` and
-  `widgets::field`.
-- **Custom widgets** (one module each under `gui/widgets/`):
+  light and draw the ring separately. egui 0.37 does not say whether
+  the focus came from the keyboard, so the shell keeps a flag set by Tab
+  and the arrows and cleared by any pointer press (`shell::focus`). The
+  ring is drawn in one place, after the frame (`focus::finish`): 2 px of
+  focus.ring whose inner edge is 2 px off the control, at the control's
+  own radius plus the offset, so a pill's ring is a pill. It goes round
+  the focused widget's rectangle unless the control has said what its
+  shape is (`focus::outline`, through `widgets::button::focus_ring`,
+  `focus_ring_at` for a radius and `focus_ring_round` for a rectangle):
+  a field says its frame, since the focus is the text inside it; a list
+  or tree row its surface inside its slot; a bare checkbox its box; the
+  Viewport its card. No widget draws a ring of its own. A surface that
+  only takes clicks (a floating pill, the editor's header band) senses
+  `CLICK` without `FOCUSABLE`, so Tab does not stop on it.
+- **Custom widgets** (one module each under `widgets/`):
   `card` (the card, the card inside a card, and the corner masks),
-  `button` (primary pill, secondary, quiet, destructive), `chip`,
+  `button` (primary pill, secondary, quiet, destructive, and the focus
+  ring's helpers), `checkbox`, `chip`, `icon` (the Lucide set),
   `unit_field` (TextEdit with a trailing unit label and the reset button
-  drawn inside the same frame, parse on `lost_focus`),
-  `segmented` (a pill track with `n` segments, also the pill tabs),
-  `row` (a list row's surface: hover wash, selected fill and accent bar),
-  `section_header` (`CollapsingState::show_header` with a custom header
-  closure for the chevron, the title style and the trailing status
-  glyphs), `tree_row`, `list_row` (grip, checkbox, glyph, two-line label,
-  eye, status cell, with `dnd_drag_source` / `dnd_drop_zone` for reorder),
-  `status_glyph`, `toggle` (egui has no switch; 36 × 20 painter widget),
-  `toast`, `spinner` (egui's `Spinner` with `size 14` and the accent
-  colour is enough), `op_glyph` (painter-drawn operation-kind icons).
-  Tables use `egui_extras::TableBuilder` (MIT/Apache-2.0) with
-  `striped(true)`, `resizable(true)`, row height 34.
+  drawn inside the same frame, commit on `lost_focus`),
+  `segmented` (a pill track with `n` segments, equal until a label would
+  be cut; also the pill tabs),
+  `row` (a list row's surface: hover wash, selected fill and accent
+  bar; an editor row's label, wrapped to two lines, and its message),
+  `section` (the disclosure header: the chevron, the title, the closed
+  summary and the trailing status glyph; `CollapsingState` animates the
+  body), `scroll` (a scrolling list's fades), `toggle` (egui has no
+  switch; 36 × 20 painter widget), `spinner`, `op_glyph` (painter-drawn
+  operation-kind icons). The list and tree rows are drawn by their
+  panels (`panels::operations`, `panels::tools`, `panels::tree`) on
+  `row`'s surface. Tables are painted rows at fixed column widths, 34 px
+  high, striped.
 - **Dropdowns.** `ComboBox` with `width` set and `icon` replaced by the
   Lucide chevron via `ComboBox::icon`; rows are `selectable_value` with a
   leading `check` glyph drawn by a custom row closure. The tool dropdown
@@ -1171,9 +1241,13 @@ is a bug).
   `egui::menu` with the `menu_margin` above; their shortcut hints are a
   right-aligned `Small` label in text.secondary.
 - **Text truncation.** `Label::new(..).truncate()` (`TextWrapMode::Truncate`)
-  gives an ellipsis; use it on every row name and never wrap in a row.
-  Middle truncation (`plaque…nc`) does not exist; file names truncate at
-  the end and the tooltip shows the whole.
+  gives an ellipsis; use it on a row's name (a shape's, a tool's, an
+  operation's), whose whole is its tooltip. What the user must read to
+  act is never cut: a field's label wraps to two lines, a Warnings row's
+  message and the target-editing bar's sentence wrap, and a popover
+  grows to its longest row. Middle truncation (`plaque…nc`) does not
+  exist; a file's path is cut at its start, since its name is at its
+  end, and the tooltip shows the whole.
 - **Tooltips.** `response.on_hover_text` with `interaction.tooltip_delay
   0.5` and `tooltip_grace_time 0.2`; the field help tooltip is a
   `on_hover_ui` with two labels (Body, then Monospace).
@@ -1203,83 +1277,246 @@ is a bug).
 
 ## 13. Review checklist
 
-A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
+One item per rule of `redesign.md` and of the sections above, each short
+enough to tick against a picture. A reviewer writes the pictures
+(`cargo test -p dreamcarve-app --test review redesign_review --
+--ignored`, into `review/final/`, dark and light at 1×) and ticks each
+item with the picture that shows it, or the test that holds it where a
+picture cannot. `review/final/README.md` is the list as last ticked.
+Where `redesign.md` and this document disagree the item says which it
+follows.
 
-1. Every surface colour is one of section 5's tokens; no `Color32` literal
-   outside `theme.rs` and the painter-glyph module.
-2. Both appearances were captured; nothing is white-on-white or
-   dark-on-dark in either.
-3. Control heights are 32 px (34 for the header's primary button); row
-   heights are 30, 52 or 34 as the table says.
-4. All horizontal and vertical gaps are on the 4-pt scale.
-5. Text is Inter at 12, 13, 15 or 18 px, or JetBrains Mono at 12; no other
-   size, no system font.
-6. Every number column aligns (tabular figures); units follow the value
-   inside the field in text.secondary.
-7. Every field in an error or warning state shows an outline *and* a
-   glyph *and* a message; an unset required field shows the outline, the
-   glyph inside the field and *Required*, with the message in its
-   tooltip; no colour-only state.
-8. Status red appears only with a glyph on chrome; operation 2's red
-   appears only as a line on the Viewport.
-9. No OK/Cancel/Apply row anywhere outside the unsaved-changes sheet,
-   the library's Delete question and the target-editing bar; panels
-   apply changes as they are made.
-10. No sheet opens above a sheet; the tool picker is a popover.
-11. Icons are Lucide at 16 or 20 px, or the operation glyphs; none at 24
-    or 12 in the chrome.
-12. Section headers are 32 px with no band, the chevron on the left and a
-    located warning's glyph on the right when closed.
-13. The focus ring is visible on the keyboard-focused control in the
-    screenshot taken after Tab, and absent after a click.
-14. Disabled controls show their reason on hover where the spec names one.
-15. The Viewport's lines are anti-aliased and screen-constant: a fit view
-    and a 4× zoom show the same stroke widths.
-16. The stock outline is dashed and the stock fill is one shade off the
-    background; the grid stops at the stock's edge.
-17. Selected shapes show the accent box, four corner handles and the
-    rotation handle; locked ones show grey handles and a padlock.
-18. Stale toolpaths are at 35 % alpha with the row's spinner showing.
-19. The toolpath view is a popover from the status bar, not a card on the
-    Viewport; the status-bar button is absent before the first toolpath;
-    the depth legend sits bottom-left in By depth mode with the positive
-    band above the stock top.
-20. The Warnings drawer opens from the status bar counts and groups
-    project-level rows first, each row with tier glyph, mono code,
-    message; a single group has no heading; carve notes are labelled
-    facts with a grey `info`; there is no Regenerate button.
-21. The start screen is on the Viewport's card: a heading and one
-    sentence, three buttons in a row with one primary, the examples as
-    three pictured cards, the recent files, no sentence about phases or
-    unsaved copies; empty lists show one sentence each.
-22. Nothing animates on the Viewport; a disclosure animates in 150 ms.
-23. Every string in the screenshot is in the string table (spot-check two).
-24. The window at 1280 × 768 shows the rail, the step panel and the
-    Inspector at no less than their minimum with the Viewport at least
-    520 px wide.
-25. The window title is the project name without extension (`*` when
-    unsaved); the header shows the same name, with a dot when unsaved,
-    and no file name with its extension appears anywhere.
-26. The rail's steps read Design, Stock, Tools, Operations, Export; the
-    step panel is titled for the current one, with its one-line summary.
-27. The Inspector is there only with a selection; Units is the Stock
-    step's first row.
-28. The status bar has no stock size, no dashes for an absent cursor and
-    no *Idle*.
-29. Properties shows X, Y, W, H and the chain link to their right;
-    rotate and flip are in the Arrange group in the Inspector's header.
-30. No row says "open": open paths carry the `spline` glyph.
-31. Every operation editor starts with its header name and the Setup
-    block; there is no Identity group, no enabled checkbox and no *check
-    says* box in the editor; closed groups show their summary.
-32. The same verb names the same action everywhere: *Delete*, never
-    *Remove*, for deleting; *Don't Save*, never *Discard*.
-33. The export sheet has no preview tick, no warnings list, no total and
-    no footnote, and its Program Details start closed; the result reads
-    Status, Files, Run instructions.
-34. Each screenshot in the review comment has a caption saying what it
-    shows and the state it was taken in (*minimum window, By depth,
-    extents on*).
+### The window
+
+1. The window is six regions: header, rail, step panel, Viewport,
+   Inspector, status bar.
+2. The backdrop shows as the 8-px gaps between the cards and the 8-px
+   margin round them.
+3. A card is `surface.panel` with a 14-px radius, no border, no shadow,
+   no title band and no rule under its title.
+4. No more than three surface shades are in view (`redesign.md`,
+   principle 2).
+5. The header is 48 px on the backdrop: the six menus at the left, the
+   project's name centred, Undo and Redo, then the primary button.
+6. The name has no extension, and a dot before it while there are
+   unsaved changes.
+7. The generation chip shows in the header while toolpaths regenerate.
+8. The rail is a 64-px card: five step buttons from the top; Warnings,
+   Appearance and Help pinned to its foot.
+9. The step panel is 312 px wide (440 on Export): the step's name in
+   18-px SemiBold, one 12-px summary line, then its content.
+10. The Inspector is there only while the step has something selected
+    that has an editor; without it the Viewport takes the room.
+11. The status bar is 28 px on the backdrop, each cell a quiet 24-px
+    pill.
+12. At 1280 × 768 the rail, the step panel and the Inspector are at no
+    less than their minimum and the Viewport is at least 520 px wide.
+13. In a narrower window the Inspector lies over the Viewport, with a
+    hairline and the one shadow.
+14. The primary button reads *Continue* with an arrow off the Export
+    step, and *Export G-code* with `download` on it, disabled while an
+    error blocks export.
+15. One accent button is in a view (`redesign.md`, principle 3).
+
+### The steps
+
+16. The rail's steps read Design, Stock, Tools, Operations, Export.
+17. A step's mark is nothing while it is empty, a check in
+    status.success when complete, a dot in status.warning or
+    status.error when it needs attention.
+18. The current step's button is filled with `accent.soft`, its icon and
+    label in `accent`.
+19. Design: *Add drawing* and *Add picture*, two equal secondary
+    buttons, over the Design Tree (Shapes, Tabs, Pictures).
+20. Stock: Units first, then the stock's fields with *Fit to shapes*,
+    then Origin; no Inspector.
+21. Tools: *New tool* and *Add from library…*, the list, *Duplicate* and
+    *Delete* under it, a quiet *Tool Library…* at the card's foot.
+22. Operations: *Add*, *Duplicate*, *Delete*, then the list in cut
+    order.
+23. Export: the readiness card; the three settings sections closed, each
+    with its values after its title; Programs; Program Details, closed,
+    saying how many; Destination; File name.
+24. While an error blocks export, a card in the error tint lists each
+    finding with its field, and the readiness card counts the same
+    errors.
+25. After an export the result is in the plan's place: Status, Files,
+    the folder, and *Run instructions* closed, each step numbered once.
+26. With nothing to cut, the Viewport's card shows the start screen: a
+    heading and one sentence, three buttons with one primary, three
+    example cards with thumbnails, the recent files; no control floats.
+27. An empty list shows one sentence, and at most two buttons under it.
+
+### Colour
+
+28. No colour literal is outside `theme.rs` and the glyph painters.
+29. Every scene is captured dark and light, and nothing is dark on dark
+    or light on light in either.
+30. Text is at least 4.5:1 on its surface, disabled text and
+    placeholders apart.
+31. The accent is on the current step, the selected row, focus, the
+    primary button, a link, and a box or switch that is on; nowhere for
+    decoration.
+32. No toolpath is near the accent's hue: operations 3 and 6 are a
+    yellower green and a bluer cyan.
+33. Status red, amber and blue never show without a glyph or a word.
+34. Operation 2's red is only a line on the Viewport, never on chrome
+    (section 5, "Operation colours").
+35. The Viewport's card is darker than the cards in dark mode and a
+    shade off white in light; the stock is a shade off it.
+
+### Shape, size and type
+
+36. Radii: card 14, sheet 16, menu and popover 12, a card inside a card
+    10, control and row 8, checkbox 4; a pill's is half its height.
+37. Fields, dropdowns, buttons and segmented controls are 32 px high;
+    the header's primary button is 34.
+38. A Design Tree row is 30 px, a Tools or Operations row 52 with two
+    lines, a table row 34.
+39. A section header is 32 px with no band: a chevron, then a 13-px
+    SemiBold title, and while closed a 12-px summary of its values.
+40. A closed section holding a located error or warning shows its glyph
+    and count at its header's right end.
+41. Text is Inter at 12, 13, 15, 18 or 22 px, or JetBrains Mono at 12;
+    the rail's 11-px label is the one text under 12.
+42. Labels take a 112-px column in every editor, 8 px from their
+    fields, in text.secondary; none is cut, and a long one wraps to two
+    lines in its row's height.
+43. Sections in a card are 20 px apart, and a card's content is 16 px
+    from its edges.
+44. A card has no shadow; a menu, popover, sheet and floating pill has
+    the one soft shadow.
+45. Figures are tabular, so columns of numbers align; a unit sits inside
+    its field at the right in text.secondary.
+46. A length the app shows and does not take from a field has two
+    decimals in mm and three in inches; a limit is rounded down.
+
+### Components
+
+47. A primary button is an `accent.fill` pill with text.on-accent.
+48. A secondary button is `surface.raised` with a `border.default`
+    outline and an 8-px radius; a quiet one is text and icon alone.
+49. A destructive button is a secondary one whose label and icon are
+    status.error.
+50. A segmented control is a `surface.sunken` pill track; the chosen
+    segment is a `surface.raised` pill in text.primary; no segment's
+    label is cut.
+51. A chip is a 24-px pill with 12-px text; a status chip has its glyph
+    and its tint.
+52. A field is `surface.sunken` with a `border.default` outline.
+53. A field that refused what was typed has the error outline and the
+    message under it with `circle-x`.
+54. An unset required field has the error outline, `circle-x` inside it
+    and *Required*, with no message line.
+55. A `null` that takes the tool's value shows `tool's: 4 mm` as a grey
+    placeholder; a field with its own value shows ⟲.
+56. A checkbox is a 16-px box; checked, it is `accent.fill` with a
+    check.
+57. A switch is a 36 × 20 pill; the fields it turns on are indented
+    16 px under it, and a row is indented only under a parent drawn
+    with it.
+58. A list row has no rule; the selected one is `accent.soft` with a
+    3-px `accent` bar at its left.
+59. A Design Tree row is the eye, the shape's glyph (`square`, `circle`
+    or `spline`), the name and the target count; no row says "open".
+60. A rail button is 56 × 52 with a 10-px radius (section 7;
+    `redesign.md` says 48 × 52).
+61. A sheet is `surface.raised` with a 16-px radius and 24-px padding
+    over a scrim of black at 50 %, its primary button a pill at the
+    footer's right.
+62. No sheet opens over a sheet: the tool picker is a popover, and the
+    library's import review and Delete question replace its panes.
+63. A sheet's primary action closes it: after *Add to project* the next
+    click lands where it is aimed.
+64. A tooltip is `surface.raised` with an 8-px radius and 12-px text
+    (`redesign.md`); a label's shows its help and its `.dcv` field in
+    the mono face.
+65. A dropdown has a field's fill and outline and a chevron; its menu
+    is `surface.raised` with 32-px rows, the current row ticked with
+    `check`.
+66. The tool picker lists each tool's glyph, name, number and size, no
+    name cut, with *Add from library…* last.
+67. The operation editor's header is the kind's glyph in the
+    operation's colour, the name, `· Kind`, and the worst status glyph
+    at the right; it has no enabled checkbox.
+68. Setup is first, has no chevron and never closes; every other group
+    starts closed and says what it holds, a Cut-out its tool and tabs,
+    or *None*.
+69. The Targets row is `target`, then the count and names (one shape:
+    its name), a pencil and `⋯`.
+70. Properties shows X, Y, W, H with the chain link at the right of W
+    and H; Rotate and the flips are in the Inspector's header.
+71. The Tool Library: a search field, a type filter, the tools grouped
+    by vendor in 34-px rows, the units control in the header, the
+    editing pane at the right.
+72. A list that goes on past its area fades there, and no row is
+    sliced; no scroll bar lies over a field at rest.
+73. An example card is 144 px with its thumbnail in a 72-px well.
+74. The Warnings drawer is a card over the Viewport's bottom with a
+    grab handle; a row is the tier's chip, the code in the mono face,
+    the message whole, and the field; it has no Regenerate button.
+75. A count reads right at one: *1 tool*, *1 operation*, *1 hint*.
+76. No OK / Cancel / Apply row is outside the unsaved-changes sheet,
+    the library's Delete question and the target-editing bar.
+77. *Delete*, never *Remove*, names a deletion; the save prompt reads
+    *Don't Save*, *Cancel*, *Save*.
+
+### The Viewport
+
+78. Top left, one pill: Select and the Tab tool, a rule, Fit, zoom out,
+    the percentage, zoom in.
+79. Top right, once there is a toolpath: *By operation / By depth* and
+    *Layers*.
+80. Bottom left: the cursor's read-out, with the Z range while program
+    extents are on.
+81. At Fit no floating control covers the stock, and the read-out does
+    not cover the origin's `0,0`.
+82. In By depth the legend hangs under the top-right pill, and Fit
+    stands clear of it.
+83. The Layers popover: its title, the key, eight checkbox rows, *Show
+    all* and *Hide all*.
+84. The stock is `viewport.stock.fill` with a dashed outline; the grid
+    is on the stock only; the origin has its crosshair and `0,0`.
+85. Lines are anti-aliased and keep their width at every zoom ("a fit
+    view and a 4× zoom show the same stroke widths"), and a circle
+    reads as a circle, on the Viewport, in the import preview and in an
+    example's thumbnail.
+86. A selected shape has the accent box, four corner handles and the
+    rotation handle; a locked one grey handles and a padlock.
+87. The selected operation's targets are drawn in its colour and the
+    other shapes dimmed.
+88. The male board is at the stock's right with its caption.
+89. Program extents are two boxes with a caption that no control
+    covers.
+90. Target editing: a 48-px bar in `accent.soft` with its sentence
+    whole, *Cancel* and *Done*; the rest of the window dimmed; the step
+    panel showing the Design Tree with checkboxes.
+91. Stale toolpaths are at 35 % alpha while their rows regenerate.
+92. Nothing on the Viewport animates.
+
+### Focus, menus and the status bar
+
+93. After Tab the focus ring is 2 px of focus.ring, 2 px outside the
+    control it names and following its shape: a field, a dropdown, a
+    pill, a rail button, a row, a checkbox, a switch, a section header.
+94. The ring shows for keyboard focus only, and one ring is drawn.
+95. Tab walks the header, the rail (its steps, then Warnings,
+    Appearance, Help), the step panel, the Viewport, the drawer, the
+    Inspector and the status bar; nothing without a name is a stop.
+96. No control's hit area is under 24 × 24 px.
+97. The menus are quiet text buttons; a menu is `surface.raised` with a
+    12-px radius and 32-px rows, each shortcut at its row's right; a row
+    that is on, or the current choice, has a check.
+98. The status bar reads, from the left, units, the counts or *No
+    problems*, the message; from the right, the job and the pointer. It
+    has no stock size, no dashes and no *Idle*.
+
+### Motion and words
+
+99. Hover washes, a disclosure and the drawer ease in 120 ms
+    (`redesign.md`; 100 to 150 ms in section 10), and all of it is off
+    when the OS asks for reduced motion.
+100. Every string on screen is from the string table.
 
 ## 14. Anti-patterns
 
@@ -1293,7 +1530,7 @@ A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
 | 16-px pixel icons on a grey toolbar strip | No toolbar: a rail of five steps, each command in the step or the Inspector it belongs to, one primary button |
 | Status bar text at 11 px in sunken cells | 12 px in quiet pills on the backdrop |
 | Raised 3-D frames around panels and the canvas | Borderless cards on the backdrop, 8 px apart, no rule under a title |
-| Grid over the whole canvas, black background, crosshair cursor | Grid on the stock only, paper-coloured stage, arrow cursor, coordinates in the status bar |
+| Grid over the whole canvas, black background, crosshair cursor | Grid on the stock only, paper-coloured stage, arrow cursor, coordinates in the read-out at the pane's bottom left |
 | Lines that scale with zoom until the picture is a blob | Screen-constant stroke widths |
 | Red text as the only sign of an error | Outline + filled glyph + message |
 | Radio-button groups for Climb / Conventional | A segmented control |
@@ -1310,46 +1547,6 @@ A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
 | Every setting of an operation in one long open form | Setup first; the rest in closed sections that summarise their values |
 | A paragraph of validation text under a required field | *Required* in the field, the message in its tooltip and the drawer |
 | A wall of CLI prose in a panel (*check says*, the export report) | Labelled facts, a status line, a file list, details on demand |
-| A floating options card covering the drawing | A popover from the status bar that closes when done |
+| A floating options card covering the drawing | A popover from the Viewport's *Layers* button that closes when done |
 | A dialog that repeats what the status bar shows (warnings, totals) | Show it once, where it lives |
 | Generic buttons "Discard" or "Yes/No" on a save prompt | *Save*, *Don't Save*, *Cancel*, named for what they do |
-
-## 15. Added by the review (2026-11-10)
-
-What the screenshot review of #549 added that has no home above.
-
-- **Required-first editors.** The rule behind functional 66 and 66a: a
-  panel that edits a record leads with the few values that make it
-  right, then folds the rest under headers that say what they hold. A
-  user who never opens a section has still seen every value, as a
-  summary. The same rule shapes the Stock step (Units, then the stock's
-  size) and the tool editors (name, type, diameter, the three rates first).
-- **Library units.** The Tool Library header's `mm` / `in` segmented
-  control sits at the header's right, before *Import…* and *Export
-  library…*. Every length and rate in the sheet follows it, including
-  the table columns and the editing pane; the project behind the sheet
-  keeps its own units.
-- **Export result.** On the Export step, in the plan's place: a card
-  inside the step's card (`surface.raised`, 10-px radius, a hairline,
-  16-px padding). Status is one 15-px SemiBold line with `circle-check`
-  in status.success and a secondary *Done* at its right, the CLI's lines
-  under it in 12-px text.secondary; Files is a table of 30-px striped
-  rows under a 24-px header row (number, file name in JetBrains Mono,
-  tool, time right-aligned, the columns one width for every row), then
-  the totals; then *Folder* and the folder as a 12-px mono line cut at
-  its start with a `copy` icon button, over *Show in folder* and *Save
-  setup sheet…*, both secondary. Under the card, *Run instructions* is a
-  closed disclosure whose steps are numbered 13-px lines and whose
-  controller notes are callouts (`surface.stripe` fill, 10-px radius,
-  `info` glyph in text.secondary). A failure is one line in status.error
-  with `circle-x` under the readiness card, and the plan stays.
-- **Setup sheet (HTML).** Not egui, so not themed: black text on white,
-  a system sans-serif stack (`-apple-system, "Segoe UI", Inter,
-  sans-serif`; Inter is not embedded, to keep the file small and
-  self-contained), 11 pt body, 16 pt title, tables with 0.5-pt rules,
-  numbers right-aligned with tabular figures where the font has them, one
-  program per block with `page-break-inside: avoid`, page margins 15 mm,
-  `@page { size: auto }` so A4 and Letter both fit, a footer line with
-  the project name, date and DreamCarve version. No colour carries
-  meaning, so a black-and-white printer loses nothing; warnings carry
-  the word *Warning* and the code.

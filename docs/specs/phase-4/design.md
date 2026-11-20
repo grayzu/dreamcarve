@@ -803,7 +803,8 @@ on a second set, is now slice 36, and slices 21 and 22 wait for it.
 
 The screenshot review of slice 20 (#549, 2026-11-10) changed the
 functional spec in place ("Review redesign" there) and `experience.md`
-(its section 15 and the amended sections). These slices carry it. They
+(the amended sections, and a section 15 since folded into its sections
+2, 7 and 8). These slices carry it. They
 are written for the window as it was then: a toolbar, a left column
 with Project Settings, and a CAM panel with two tabs. "Redesign slices"
 below says where each of those went and which tests moved. Each
