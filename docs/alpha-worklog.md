@@ -130,6 +130,22 @@ Notes from the fixes:
 - A7: no golden or expected program changed, and no test met the new
   error, so no dropped pass was found in the 2.5D generators.
 
+### G. The maintainer's smoke test (2026-11-20)
+
+| Slice | What | Status |
+| --- | --- | --- |
+| G1 | A vendor's tapered ball noses import: when `RE` is under `DC/2` and the shaft is no wider than `DC`, the tip is `2·RE` and the cutting diameter is `DC`, with the taper as the file gives it (the maintainer's decision) and a note saying so. A bull tip is still skipped, now with its numbers | done |
+| G2 | `step_over_too_fine`: a warning for a stepover under 0.02 mm between passes, on a tool, a Pocket, a V-Carve's or Inlay's floor and a Photo V-Carve's lines | done |
+| G3 | The window's issues: a field commits when it is left; the Tool Library's columns and size; Band margin off under a boundary; Board thickness in the Male board group; help for every field; the stepover's distance; one Programs control without G-code words; Export at the foot of its panel; the result as a sheet | doing |
+| G4 | gSender reports an error reading an exported program: waiting for the error's text and the controller's firmware | owner |
+
+What the smoke test showed: an Inlay estimated at 1 h 23 min, 60 minutes
+of it a tapered ball nose flattening a few small floor areas at 0.005 mm
+between passes, because the tool's Stepover was 0.08 % where 8 % was
+meant. At the vendor's 2.88 % the same job is 22 minutes. The tools had
+been made by hand because the Fusion import skipped the vendor's tapered
+ball noses.
+
 ### B. Phase 3
 
 | Slice | What | Status |

@@ -380,7 +380,7 @@ const FUSION_SKIPPED: [(&str, &str); 10] = [
     // No `RE`: a flat tip (#682).
     (
         "3 mm Tapered Ball Mill, 2-Degree Taper",
-        "a tapered mill with a flat or bull tip is not a tapered ball nose; DreamCarve does not model it yet",
+        "a tapered mill with a flat tip (`DC` 3 mm, no corner radius `RE`) is not a tapered ball nose; DreamCarve does not model it yet",
     ),
     (
         "General Turning Tool",
@@ -1007,7 +1007,7 @@ fn import_review_names_unset_tapered_values_and_skipped_tapered_mills() {
 
     // The two skipped, each with its reason.
     let no_shaft = "a tapered ball nose needs its shaft diameter (`SFDM`), the cutting diameter";
-    let flat = "a tapered mill with a flat or bull tip is not a tapered ball nose; DreamCarve does not model it yet";
+    let flat = "a tapered mill with a flat tip (`DC` 0.03 in, no corner radius `RE`) is not a tapered ball nose; DreamCarve does not model it yet";
     assert_eq!(
         skipped(&found),
         [("No shaft", no_shaft), ("Flat tip", flat)]
