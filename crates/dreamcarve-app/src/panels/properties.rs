@@ -45,6 +45,16 @@ use crate::widgets::segmented::segmented;
 use crate::widgets::toggle::toggle;
 use crate::widgets::unit_field::{UnitField, field as unit_field, row};
 
+/// The Inspector's content margin under its header: the card padding at
+/// each side and none above, so the first row starts where a tool's and
+/// an operation's do.
+const INSPECTOR_MARGIN: egui::Margin = egui::Margin {
+    left: 16,
+    right: 16,
+    top: 0,
+    bottom: 8,
+};
+
 /// The proportion link's column right of the fields, px
 /// (`experience.md`, section 7, "Proportion link").
 const LINK_COLUMN_PX: f32 = 28.0;
@@ -136,7 +146,6 @@ fn field_row(
             Err(e) => out.push(Action::Refused(e.to_string())),
         }
     }
-    ui.add_space(4.0);
     middle
 }
 
@@ -346,7 +355,6 @@ fn picture_field_row(
             Err(e) => out.push(Action::Refused(e.to_string())),
         }
     }
-    ui.add_space(4.0);
     middle
 }
 
@@ -369,7 +377,6 @@ fn picture_text_row(
         )
     });
     let _ = output.response.labelled_by(label_response.id);
-    ui.add_space(4.0);
     output.committed
 }
 
@@ -389,7 +396,7 @@ pub(crate) fn pictures(
         return;
     };
     egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(16, 8))
+        .inner_margin(INSPECTOR_MARGIN)
         .show(ui, |ui| {
             if let (Some(name), [id]) = (&shown.name, ids) {
                 let label = strings.get(StrKey::PlacementPictureName);
@@ -425,7 +432,6 @@ pub(crate) fn pictures(
             {
                 out.push(Action::run(command));
             }
-            ui.add_space(4.0);
             if shown.placement.any_locked {
                 locked_lines(ui, state, |ui| {
                     let unlock =
@@ -459,7 +465,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out:
         return;
     };
     egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(16, 8))
+        .inner_margin(INSPECTOR_MARGIN)
         .show(ui, |ui| {
             let mut middles = [0.0; 4];
             for (field, middle) in properties::fields(&placement).iter().zip(&mut middles) {
@@ -546,7 +552,6 @@ fn tab_length_row(
             Err(e) => out.push(Action::Refused(e.to_string())),
         }
     }
-    ui.add_space(4.0);
 }
 
 /// Draws the properties of placed tabs `ids` (functional spec, capability
@@ -562,7 +567,7 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
         return;
     };
     egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(16, 8))
+        .inner_margin(INSPECTOR_MARGIN)
         .show(ui, |ui| {
             tab_length_row(
                 ui,
@@ -603,7 +608,6 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
             if let Some((shape, _)) = picked.and_then(|i| shapes.get(i)) {
                 push_tab_edit(state, ids, TabEdit::Shape(*shape), out);
             }
-            ui.add_space(4.0);
 
             let units = project.display_units;
             let one = match ids {
@@ -634,7 +638,6 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
                     )
                 });
                 let _ = output.response.labelled_by(label_response.id);
-                ui.add_space(4.0);
                 let crossing: Vec<&str> = state
                     .app
                     .scene()
@@ -670,7 +673,7 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
                 );
                 ui.add_space(8.0);
             }
-            let spec = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::PlacementTabDelete))
+            let spec = ButtonSpec::new(Kind::Destructive, strings.get(StrKey::PlacementTabDelete))
                 .icon(Icon::Trash2, theme::ICON_SMALL_PX)
                 .tooltip(strings.get(StrKey::PlacementTabDeleteHelp));
             if button(ui, spec).clicked() {

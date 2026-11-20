@@ -33,7 +33,7 @@ use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::checkbox::checkbox;
 use crate::widgets::icon::Icon;
-use crate::widgets::row::{self, GAP_PX, LABEL_PX};
+use crate::widgets::row::{self, GAP_PX};
 use crate::widgets::section::{Header, section_with};
 use crate::widgets::segmented::segmented;
 use crate::widgets::toggle::toggle;
@@ -237,6 +237,20 @@ fn field_row(
     disabled_reason: Option<&str>,
     out: &mut Vec<Action>,
 ) {
+    switched_field_row(ui, cx, field, (enabled, disabled_reason), |_, _| {}, out);
+}
+
+/// [`field_row`] with `switch` drawn in the field column before the
+/// field: the switch of a value that can be off (arc fitting), on the row
+/// its label names, as an operation's switched length has it.
+fn switched_field_row(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    field: Field,
+    (enabled, disabled_reason): (bool, Option<&str>),
+    switch: impl FnOnce(&mut Ui, &mut Vec<Action>),
+    out: &mut Vec<Action>,
+) {
     let id = Id::unique(("project.field", field));
     let refused_id = id.with("refused");
     let refused: Option<String> = ui.data(|d| d.get_temp(refused_id));
@@ -259,6 +273,7 @@ fn field_row(
     let status = status.filter(|_| required.is_none());
     ui.horizontal(|ui| {
         row::label(ui, label, cx.strings.get(field.help()), Some(field.path()));
+        switch(ui, out);
         let typed = unit_field(
             ui,
             UnitField {
@@ -526,16 +541,23 @@ fn tolerances(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
         (&fields, &[]),
         |ui| {
             field_row(ui, cx, Field::FlattenTolerance, true, None, out);
+            // The switch and its tolerance on the row the label names (it
+            // stood on a row of its own with no label); the field dims
+            // when arc fitting is off (section 7, "Toggle").
             let on = cx.project.arc_fit_tolerance_mm.is_some();
             let name = cx.strings.get(Field::ArcFitTolerance.label());
-            ui.horizontal(|ui| {
-                ui.add_space(LABEL_PX + GAP_PX);
-                if toggle(ui, on, name).clicked() {
-                    out.extend(project::set_arc_fit(cx.project, !on).map(Action::run));
-                }
-            });
-            // The sub-field dims when arc fitting is off (section 7, "Toggle").
-            field_row(ui, cx, Field::ArcFitTolerance, on, None, out);
+            switched_field_row(
+                ui,
+                cx,
+                Field::ArcFitTolerance,
+                (on, None),
+                |ui, out| {
+                    if toggle(ui, on, name).clicked() {
+                        out.extend(project::set_arc_fit(cx.project, !on).map(Action::run));
+                    }
+                },
+                out,
+            );
         },
     );
     out.extend(toggled);

@@ -449,12 +449,51 @@ fn draw_note(
 }
 
 /// One row: the tier as a status chip (glyph and word), the code as a
-/// link, the message, the field; clicking it selects what it names.
+/// link, the message, the field; clicking it selects what it names. The
+/// message is read here, so it is never cut: it wraps in the room
+/// between the code and the field, and the row grows by its lines.
 fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
+    let (icon, _, word) = tier(row.level, palette);
+    let tone = match row.level {
+        Level::Error => Tone::Status(palette.status_error, icon),
+        Level::Warning => Tone::Status(palette.status_warning, icon),
+        Level::Hint => Tone::Status(palette.status_info, icon),
+        Level::Note => Tone::Neutral,
+    };
+    // What stands before the message and after it, to know its room.
+    let gap = 8.0;
+    let mono = TextStyle::Monospace.resolve(ui.style());
+    let width_of = |text: &str, colour: egui::Color32| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), mono.clone(), colour)
+            .size()
+            .x
+    };
+    let chip_px = crate::widgets::chip::Chip::new(ui, strings.get(word), tone)
+        .size()
+        .x;
+    let link = row.code.as_ref().zip(row.chapter_url());
+    let code_px = link
+        .as_ref()
+        .map_or(0.0, |(code, _)| width_of(code, palette.accent) + gap);
+    let field_px = row
+        .field
+        .as_ref()
+        .map_or(0.0, |field| width_of(field, palette.text_secondary) + gap);
+    let inner = ui.available_width() - 2.0 * MARGIN_PX;
+    let message_px = (inner - chip_px - gap - code_px - field_px).max(120.0);
+    let message = ui.painter().layout(
+        row.message.clone(),
+        TextStyle::Body.resolve(ui.style()),
+        palette.text_primary,
+        message_px,
+    );
+    let line_px = ui.text_style_height(&TextStyle::Body);
+    let height = ROW_PX.max(message.size().y + (ROW_PX - line_px));
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
     row_surface(ui, rect, response.hovered(), stripe);
     // What the row names is selected, and the step that edits it opens:
@@ -467,24 +506,19 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
             field: row.field.clone(),
         });
     }
-    response.on_hover_text(&row.message);
 
+    // The chip, the code and the field stand on the message's first
+    // line: a strip one row tall at the row's top.
+    let first = Rect::from_min_size(rect.min, egui::vec2(rect.width(), ROW_PX));
     let mut cells = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(MARGIN_PX, 0.0)))
+            .max_rect(first.shrink2(egui::vec2(MARGIN_PX, 0.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    cells.spacing_mut().item_spacing.x = 8.0;
+    cells.spacing_mut().item_spacing.x = gap;
     // The tier: a status chip, its glyph and word on its tint.
-    let (icon, _, word) = tier(row.level, palette);
-    let tone = match row.level {
-        Level::Error => Tone::Status(palette.status_error, icon),
-        Level::Warning => Tone::Status(palette.status_warning, icon),
-        Level::Hint => Tone::Status(palette.status_info, icon),
-        Level::Note => Tone::Neutral,
-    };
     chip(&mut cells, strings.get(word), tone);
-    if let (Some(code), Some(url)) = (&row.code, row.chapter_url()) {
+    if let Some((code, url)) = link {
         let link = cells
             .add(
                 egui::Label::new(
@@ -500,33 +534,22 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
             out.push(Action::OpenUrl(url));
         }
     }
-    let field_width = row.field.as_ref().map_or(0.0, |field| {
-        cells
-            .painter()
-            .layout_no_wrap(
-                field.clone(),
-                TextStyle::Monospace.resolve(cells.style()),
-                palette.text_secondary,
-            )
-            .size()
-            .x
-            + 8.0
-    });
-    let message_width = (cells.available_width() - field_width).max(0.0);
-    cells.allocate_ui_with_layout(
-        egui::vec2(message_width, ROW_PX),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_width(message_width);
-            text(ui, &row.message, TextStyle::Body, palette.text_primary);
-        },
-    );
+    // The message, whole, from the first line down.
+    let at = egui::pos2(cells.cursor().left(), rect.top() + (ROW_PX - line_px) / 2.0);
+    let place = Rect::from_min_size(at, message.size());
+    ui.interact(place, response.id.with("message"), Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &row.message));
+    ui.painter().galley(at, message, palette.text_primary);
     if let Some(field) = &row.field {
-        text(
-            &mut cells,
+        // At the row's right end, on the first line.
+        let place = ui.painter().text(
+            egui::pos2(rect.right() - MARGIN_PX, first.center().y),
+            egui::Align2::RIGHT_CENTER,
             field,
-            TextStyle::Monospace,
+            mono,
             palette.text_secondary,
         );
+        ui.interact(place, response.id.with("field"), Sense::hover())
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, field));
     }
 }

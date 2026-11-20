@@ -1105,6 +1105,74 @@ fn tool_text(strings: &Strings, project: &Project, tool: &dc_project::Tool) -> S
     )
 }
 
+/// One row of the tool picker's popover (section 7, "Dropdown": "the tool
+/// dropdown shows the tool-type glyph, name, size and `(T2)`"): `tool`'s
+/// type glyph, `label` (its name and number), and its diameter at the
+/// right in text.secondary; the current one on `accent.soft`, as a
+/// dropdown's current row is. Heard as a button named `label`.
+fn picker_row(ui: &mut Ui, cx: &Cx<'_>, tool: &Tool, chosen: bool, label: &str) -> egui::Response {
+    let palette = Palette::current(ui);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), HEIGHT_PX), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, chosen, label));
+    let fill = if chosen {
+        palette.accent_soft
+    } else if response.hovered() {
+        palette.surface_hover
+    } else {
+        theme::NONE
+    };
+    ui.painter()
+        .rect_filled(rect, theme::CONTROL_RADIUS_PX, fill);
+    let colour = if chosen {
+        palette.accent
+    } else {
+        palette.text_primary
+    };
+    let pad = 8.0;
+    paint_tool_icon(
+        ui,
+        egui::pos2(
+            rect.left() + pad + theme::ICON_SMALL_PX / 2.0,
+            rect.center().y,
+        ),
+        &tool.cutter,
+        palette.text_secondary,
+    );
+    let units = cx.project.display_units;
+    let size = format!(
+        "{} {}",
+        dc_app::units::summary_text(tool.diameter_mm, units),
+        dc_app::units::suffix(units)
+    );
+    let size = ui.painter().layout_no_wrap(
+        size,
+        TextStyle::Small.resolve(ui.style()),
+        palette.text_secondary,
+    );
+    let left = rect.left() + pad + theme::ICON_SMALL_PX + 6.0;
+    let right = rect.right() - pad - size.size().x;
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        label.to_owned(),
+        TextStyle::Body.resolve(ui.style()),
+        colour,
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width((right - 8.0 - left).max(0.0));
+    let name = ui.painter().layout_job(job);
+    ui.painter().galley(
+        egui::pos2(left, rect.center().y - name.size().y / 2.0),
+        name,
+        colour,
+    );
+    ui.painter().galley(
+        egui::pos2(right, rect.center().y - size.size().y / 2.0),
+        size,
+        palette.text_secondary,
+    );
+    crate::widgets::button::focus_ring(ui, &response);
+    response.on_hover_text(label)
+}
+
 /// The tool picker: the current tool, opening a popover of `offered` (the
 /// project's tools that fit: V-bits for a carve, end mills for a clearing
 /// pass), its last row *Add from library…* (section 8: a popover, never
@@ -1181,11 +1249,15 @@ fn tool_picker(
     );
     let refused_id = id.with("refused");
     egui::Popup::menu(&response).show(|ui| {
-        ui.set_min_width(rect.width());
+        // As wide as its field: the popover's margin and outline are its
+        // own.
+        let inner = rect.width() - 2.0 * (ui.spacing().menu_margin.leftf() + 1.0);
+        ui.set_min_width(inner);
+        ui.set_max_width(inner);
         for tool in offered {
             let chosen = current.is_some_and(|c| c.id == tool.id);
             let label = tool_text(cx.strings, cx.project, tool);
-            let item = ui.selectable_label(chosen, label);
+            let item = picker_row(ui, cx, tool, chosen, &label);
             if item.clicked() {
                 commit(ui, refused_id, slot.set_tool(cx.op, &tool.id), out);
                 ui.close();

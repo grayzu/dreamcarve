@@ -395,11 +395,10 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 
 fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
-    let mut panel = state.prefs.panels.left_open;
-    if ui
-        .checkbox(&mut panel, strings.get(StrKey::AppMenuStepPanel))
-        .clicked()
-    {
+    // A row that is on or off is ticked or not, as a choice's rows are
+    // ([`checked_item`]): one look for a check in every menu.
+    let panel = state.prefs.panels.left_open;
+    if checked_item(ui, strings.get(StrKey::AppMenuStepPanel), panel).clicked() {
         out.push(Action::ToggleStepPanel);
         ui.close();
     }
@@ -438,11 +437,8 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     );
     // Capability 76: the drawer. Regenerate all is the status bar's alone
     // (capability 71).
-    let mut drawer = state.warnings_open;
-    if ui
-        .checkbox(&mut drawer, strings.get(StrKey::AppWarningsTitle))
-        .clicked()
-    {
+    let drawer = state.warnings_open;
+    if checked_item(ui, strings.get(StrKey::AppWarningsTitle), drawer).clicked() {
         out.push(Action::ToggleWarnings);
         ui.close();
     }

@@ -660,7 +660,6 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
                 Err(e) => FieldEdit::Refused(field, e.to_string()),
             });
         }
-        ui.add_space(4.0);
         if field == ToolField::Name {
             // The type, then the values the type has of its own.
             kind_row(ui, salt, strings, tool, held, &mut result);
@@ -730,7 +729,6 @@ fn kind_row(
             }
         }
     }
-    ui.add_space(4.0);
 }
 
 #[cfg(test)]

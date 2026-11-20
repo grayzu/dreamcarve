@@ -1499,7 +1499,8 @@ fn review_table(ui: &mut Ui, strings: &Strings, units: Units, pending: &ImportRe
                 paint_group_band(
                     ui,
                     band,
-                    palette.surface_panel,
+                    // No band, as the library's own table has none.
+                    theme::NONE,
                     vendor,
                     group.items.len(),
                     8.0,
