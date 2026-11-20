@@ -2593,3 +2593,118 @@ fn configuration_screenshots() {
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }
+
+/// The Controller dropdown's rows while it is open, top to bottom: each
+/// bundled post-processor with its latest version.
+fn controller_rows(h: &H) -> Vec<String> {
+    let mut rows: Vec<(f32, String)> = h
+        .query_all_by_role(Role::Button)
+        .map(|n| {
+            (
+                n.rect().min.y,
+                n.accesskit_node().label().unwrap_or_default(),
+            )
+        })
+        .filter(|(_, label)| label.ends_with("(latest)"))
+        .collect();
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    rows.into_iter().map(|(_, label)| label).collect()
+}
+
+/// The chapter "Post-processors"
+/// (`docs/book/src/user-guide/post-processors.md`, "In the app"): the
+/// Export step's Post-processor group on the plaque. The six controllers,
+/// a setting grblHAL has and LinuxCNC has not, and the switch that
+/// resets it and says so.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn post_processor_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-post", &dialogs) else {
+        return;
+    };
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    click_button(&mut h, "Post-processor");
+    let controller = |h: &H| {
+        h.get_by_role_and_label(Role::ComboBox, "Controller")
+            .value()
+            .unwrap_or_default()
+    };
+    assert_eq!(controller(&h), "grblHAL v4 (latest)");
+    assert_eq!(field(&h, "File extension"), "nc");
+    assert_eq!(field(&h, "Spin-up dwell"), "3");
+    assert!(
+        h.query_by_label("Not offered: grblHAL has no canned cycles.")
+            .is_some()
+    );
+    h.get_by_role_and_label(Role::ComboBox, "Controller")
+        .click();
+    h.run();
+    assert_eq!(
+        controller_rows(&h),
+        [
+            "grblHAL v4 (latest)",
+            "GRBL 1.1 v3 (latest)",
+            "LinuxCNC v2 (latest)",
+            "Mach3 v3 (latest)",
+            "UCCNC v3 (latest)",
+            "Generic RS274/NGC v1 (latest)"
+        ]
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // One program with M6, which grblHAL has.
+    h.get_by_role_and_label(Role::ComboBox, "Tool change")
+        .click();
+    h.run();
+    click(&mut h, "One program with M6");
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Set post-processor settings");
+    assert!(problems(&h).is_empty());
+
+    // LinuxCNC has no M6: the switch resets that setting and says so, and
+    // takes LinuxCNC's own extension, since the old one was a default.
+    h.get_by_role_and_label(Role::ComboBox, "Controller")
+        .click();
+    h.run();
+    click(&mut h, "LinuxCNC v2 (latest)");
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Switch post-processor to linuxcnc");
+    assert_eq!(controller(&h), "LinuxCNC v2 (latest)");
+    assert_eq!(field(&h, "File extension"), "ngc");
+    assert!(
+        h.query_by_label_contains(
+            "Reset tool_change_mode \"m6\" → \"separate_programs\": post-processor linuxcnc has \
+             no M6 tool change."
+        )
+        .is_some()
+    );
+    assert!(
+        h.query_by_role_and_label(Role::CheckBox, "Canned drill cycles")
+            .is_some(),
+        "LinuxCNC has canned cycles, so the tick is offered"
+    );
+    shoot(&mut h, &out, "post-processor-switched", Crop::StepPanel);
+    h.get_by_role_and_label(Role::ComboBox, "Tool change")
+        .click();
+    h.run();
+    assert!(
+        h.query_all_by_label("One program with M6").next().is_none(),
+        "a mode the controller lacks is not offered"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // Undo puts the old controller back, with the setting it had.
+    undo(&mut h);
+    assert_eq!(controller(&h), "grblHAL v4 (latest)");
+    assert_eq!(
+        h.state().app().project().post_processor.tool_change_mode,
+        dc_project::ToolChangeMode::M6
+    );
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
