@@ -14,13 +14,14 @@
 
 use super::*;
 use dc_cam::inlay::male_mirror;
-use dc_cam::{RunLabel, ToolRun, Warning, generate_inlay_board};
+use dc_cam::{CamError, RunLabel, ToolRun, Warning, generate_inlay_board};
 use dc_geometry::{Polyline, Transform, Vertex, nearest_point};
 use dc_project::test_support::{sample_project, tool_6_35_upcut};
 use dc_project::{
     Board, ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
     FeatureInstance, InlayCutOut, InlayOp, InstanceId, MachiningOrder, MaleBoard, Operation,
-    OperationId, Project, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind,
+    OperationId, Problem, Project, Severity, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId,
+    ToolKind,
 };
 use std::collections::BTreeMap;
 
@@ -469,6 +470,59 @@ fn band_is_cut_through_an_ignored_boundary_hole() {
             .iter()
             .any(|p| p.xy().distance_to(centre) < CIRCLE_MM && p.z < START_PLANE_Z_MM),
         "the star's circle is carved inside the ignored hole"
+    );
+}
+
+/// Acceptance 61n: a boundary smaller than the star, a 40 mm square
+/// centred on it, is `inlay_boundary_crosses_design`, an error at the
+/// boundary list. Its message names where the design lies farthest past
+/// the boundary, a tip of the star, 10 mm beyond the square's side, and
+/// the generator refuses the male for the same reason.
+#[test]
+fn boundary_smaller_than_the_star_crosses_the_design() {
+    let mut project = star_project(100.0, &[CENTRE]);
+    add(&mut project, "b1", "Boundary", vec![square(30.0, 70.0)]);
+    let op = male(&project, &["b1"], false, false);
+    project.operations = vec![Operation::Inlay(op.clone())];
+
+    let crossing: Vec<Problem> = dc_project::validate(&project)
+        .into_iter()
+        .filter(|p| p.code().starts_with("inlay_boundary"))
+        .collect();
+    let [
+        problem @ Problem::InlayBoundaryCrossesDesign {
+            x_mm,
+            y_mm,
+            distance_mm,
+            ..
+        },
+    ] = crossing.as_slice()
+    else {
+        panic!("one boundary problem, the crossing: {crossing:?}");
+    };
+    assert_eq!(problem.code(), "inlay_boundary_crosses_design");
+    assert_eq!(problem.severity(), Severity::Error);
+    assert_eq!(problem.field().as_deref(), Some("operations[o1].boundary"));
+    assert!((distance_mm - 10.0).abs() < 0.01, "{distance_mm}");
+    let tip = Point::new(*x_mm, *y_mm);
+    assert!(
+        [(30.0, 0.0), (0.0, 30.0), (-30.0, 0.0), (0.0, -30.0)]
+            .iter()
+            .any(|&(dx, dy)| tip.distance_to(Point::new(CENTRE.0 + dx, CENTRE.1 + dy)) < 0.01),
+        "{tip:?} is no tip of the star"
+    );
+    assert!(problem.to_string().contains("10.000"), "{problem}");
+
+    let refused = generate_inlay_board(&project, &op, Board::Male);
+    assert!(
+        matches!(
+            refused,
+            Err(CamError::InlayBoundary {
+                problem: dc_project::BoundaryProblem::CrossesDesign { .. },
+                ..
+            })
+        ),
+        "{refused:?}"
     );
 }
 

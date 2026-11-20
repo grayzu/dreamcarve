@@ -218,6 +218,41 @@ fn moved_boundary_fails_the_old_program() {
     }
 }
 
+/// 61r, "fails S17 and S9": one male meets both rules after its boundary
+/// moves 5 mm. With a V wall and a cut-out it is two programs, the V-bit's
+/// and the end mill's: the V-bit's, which cut the wall on the old edge,
+/// fails S17, and the cut-out's, whose ring ran along it, fails S9. Each
+/// program is one tool's run and is held by that tool's rule, so the two
+/// failures are the two programs of the one export. Exported after the
+/// move, both pass.
+#[test]
+fn moved_boundary_fails_one_males_programs_by_s17_and_s9() {
+    let (project, op) = two_shapes_drawn(8.0, 42.0, false, true);
+    let programs = run_programs(&project, &op);
+    let labels: Vec<&RunLabel> = programs.iter().map(|(label, ..)| label).collect();
+    assert_eq!(
+        labels,
+        [&RunLabel::Main, &RunLabel::CutOut(ToolId::new("t3"))]
+    );
+    let after = moved(&project, "b1", 0.0, 5.0);
+    for (label, tool, text) in &programs {
+        check_run(text, &project, &op, label, tool)
+            .unwrap_or_else(|e| panic!("{label:?} fails its own project: {e}"));
+        let result = check_run(text, &after, &op, label, tool);
+        match label {
+            RunLabel::Main => assert!(
+                matches!(result, Err(ExportError::ConeOffMaterial { .. })),
+                "the V-bit's program after the move: {result:?}"
+            ),
+            _ => assert!(
+                matches!(result, Err(ExportError::OffMaterial { .. })),
+                "the cut-out's program after the move: {result:?}"
+            ),
+        }
+    }
+    export_inlay(&after, &op).unwrap_or_else(|e| panic!("the moved boundary exports: {e}"));
+}
+
 /// #604: the cut-out is held to its path, the drawn band's edge `B`
 /// inset by the end mill's radius (open edge) or by `P·s + r` (V wall),
 /// and to the floor ring out to `B`. With the boundary's lower edge at Y
