@@ -948,3 +948,69 @@ fn library_table_fades_where_it_goes_on() {
     assert!(table.is_empty(), "a list that fits has no fade: {table:?}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Row D5 of the worklog, defect 9: "the first click after *Add to
+/// project* closes the Tool Library does nothing". *Add to project* did
+/// not close the sheet at all: it stayed open over the window with its
+/// ticks cleared, and the next click, wherever it was aimed, landed on
+/// the sheet's scrim and closed it. *Add to project* now closes the sheet
+/// once the tools are in the project (it stays open when the project
+/// refuses them, with the reason), and the first click after it lands on
+/// what it is aimed at: here, the new tool's row on the Tools step, which
+/// opens its editor.
+#[test]
+fn add_to_project_closes_the_sheet_and_the_next_click_lands() {
+    let dir = scratch("library-add-closes");
+    let (config, _) = config_with(&dir, &sample_library());
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&config, Some(fixture("plaque.dcv")), &dialogs),
+        1280.0,
+        800.0,
+    );
+    common::go_to(&mut h, "Tools");
+    assert!(
+        h.state().layout().inspector.is_none(),
+        "no tool is selected"
+    );
+    let before = h.state().app().project().tools.len();
+    h.get_by_role_and_label(Role::Button, "Tool Library…")
+        .click();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::CheckBox, "5 mm Drill")
+        .scroll_to_me();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::CheckBox, "5 mm Drill")
+        .click();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::Button, "Add 1 tool to project")
+        .click();
+    h.run();
+
+    assert_eq!(h.state().app().project().tools.len(), before + 1);
+    assert_eq!(
+        h.state().message(),
+        Some("Added 1 tool from the library"),
+        "the status bar says what was added"
+    );
+    assert!(
+        h.query_by_role(Role::Dialog).is_none(),
+        "Add to project closes the Tool Library"
+    );
+
+    // The first click after it: the new tool's row.
+    let row = h.get_by_role_and_label(Role::ListItem, "5 mm Drill").rect();
+    common::click_at(&mut h, row.center(), egui::Modifiers::NONE);
+    assert!(
+        h.state().layout().inspector.is_some(),
+        "the click selects the tool, and its editor opens"
+    );
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Name").is_some(),
+        "the tool's editor"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

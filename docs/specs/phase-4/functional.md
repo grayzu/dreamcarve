@@ -527,7 +527,9 @@ folder are app preferences, kept outside the project.
     project history, and never touches a project's copy); **Import…** and
     **Export library…** at the right of the header; **Add to project**,
     the primary button, copies the ticked rows into
-    the project under new ids, as `tools add` does; projects keep their
+    the project under new ids, as `tools add` does, and closes the sheet,
+    the status bar saying what was added (a refusal keeps the sheet open
+    with its reason); projects keep their
     copies and a library change never alters an open project (ADR-0002).
     *Export library…* writes the whole library as one DreamCarve JSON
     file, to keep a backup or to carry the library to another computer;

@@ -162,6 +162,12 @@ pub(crate) enum Request {
 }
 
 impl Sheet {
+    /// Whether the last action did what it was asked: it left a message
+    /// that is not an error.
+    pub(crate) fn succeeded(&self) -> bool {
+        self.message.as_ref().is_some_and(|(_, alert)| !alert)
+    }
+
     /// The sheet over the library at `config`, read now. A missing file is
     /// an empty library; an unreadable one is its message.
     pub(crate) fn open(config: Option<&Paths>, strings: &Strings) -> Self {

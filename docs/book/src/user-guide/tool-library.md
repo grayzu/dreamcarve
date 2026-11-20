@@ -55,6 +55,7 @@ The app and the `dreamcarve tools` commands read and write the same file.
   when none is ticked. It names them and asks first, because a deletion
   cannot be undone. Projects keep their copies.
 - **Add to project.** Tick rows and press *Add N tools to project*. The
+  sheet closes, and the status bar says what was added. The
   project gets copies under new ids, as `tools add` makes them, and you
   can undo that in one step.
 - **Import… and Export library….** *Import…* reads a Fusion `.tools` or

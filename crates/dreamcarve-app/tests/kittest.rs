@@ -488,7 +488,8 @@ fn theme_follows_system_and_both_palettes_apply() {
 /// shows its review in place of the table (slice 31, #623), whose
 /// *Import* writes the library the CLI writes; ticking two
 /// rows and *Add 2 tools to project* copies them into the project under
-/// new ids as one undo step, as `tools add` does, and marks them "in
+/// new ids as one undo step, as `tools add` does, closes the sheet, and
+/// marks them "in
 /// project"; the search narrows the table without losing the ticks.
 #[test]
 fn library_window_adds_ticked_rows() {
@@ -652,10 +653,12 @@ fn library_window_adds_ticked_rows() {
     assert_eq!(app.undo_label(), Some("Add 2 tools"), "one undo step");
     assert!(app.is_dirty());
 
-    // With the search cleared, both rows are marked and no longer ticked.
-    h.get_by_role(Role::Dialog)
-        .get_by_label("Clear the search")
-        .click();
+    // Adding closes the sheet (`library::add_to_project_closes_the_sheet…`).
+    // Opened again, both rows are marked and nothing is ticked.
+    assert!(h.query_by_role(Role::Dialog).is_none());
+    h.get_by_label("Project").click();
+    h.run();
+    h.get_by_label("Tool Library…").click();
     h.run();
     let sheet = h.get_by_role(Role::Dialog);
     assert_eq!(sheet.query_all_by_label("in project").count(), 2);

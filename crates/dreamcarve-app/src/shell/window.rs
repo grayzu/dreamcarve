@@ -1458,16 +1458,26 @@ impl Shell {
             }
             Action::Library(panels::library::Request::Close) => self.library = None,
             Action::Library(request) => {
-                if let Some(sheet) = self.library.as_mut()
-                    && let Some(message) = panels::library::perform(
+                let adding = matches!(request, panels::library::Request::Add);
+                if let Some(sheet) = self.library.as_mut() {
+                    if let Some(message) = panels::library::perform(
                         sheet,
                         request,
                         &mut self.app,
                         self.config.as_ref(),
                         self.dialogs.as_mut(),
-                    )
-                {
-                    self.message = Some(message);
+                    ) {
+                        self.message = Some(message);
+                    }
+                    // *Add to project* is the sheet's primary action and
+                    // its last: with the tools in the project the sheet
+                    // closes, and the status bar says what was added.
+                    // Left open, its scrim took the next click, wherever
+                    // it was aimed. A refusal keeps the sheet, which
+                    // shows the reason.
+                    if adding && sheet.succeeded() {
+                        self.library = None;
+                    }
                 }
             }
             Action::SaveToLibrary(id) => {

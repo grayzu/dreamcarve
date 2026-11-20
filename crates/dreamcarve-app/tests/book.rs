@@ -295,20 +295,6 @@ fn tick(h: &mut H, name: &str) {
     h.run();
 }
 
-/// A click on the Viewport's backdrop, off the stock. The first click
-/// after *Add to project* closes the Tool Library does nothing, wherever
-/// it lands (seen with a pointer click and with an accessibility click,
-/// 2026-11-19; reported with #550); this spends it where a click does
-/// nothing anyway.
-fn spend_the_click_after_the_library(h: &mut H) {
-    let viewport = h.state().layout().viewport;
-    common::click_at(
-        h,
-        viewport.right_bottom() - egui::vec2(12.0, 12.0),
-        egui::Modifiers::NONE,
-    );
-}
-
 /// The drawing part `part` starts from, copied into `dir` as a reader
 /// puts it in a folder, so the sheet shows a plain path.
 fn drawing_in(dir: &Path, text: &str, part: &str) -> PathBuf {
@@ -363,7 +349,6 @@ fn coaster(h: &mut H, dialogs: &QueuedDialogs, dir: &Path, out: &Path, text: &st
     shoot(h, out, "06-tool-library", Crop::Sheet);
     click_in_sheet(h, "Add 1 tool to project");
     settle(h);
-    spend_the_click_after_the_library(h);
     h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
         .click();
     h.run();
@@ -486,7 +471,6 @@ fn second_tool(h: &mut H, dialogs: &QueuedDialogs, dir: &Path, out: &Path, text:
     shoot(h, out, "15-plaque-tool-library", Crop::Sheet);
     click_in_sheet(h, "Add 2 tools to project");
     settle(h);
-    spend_the_click_after_the_library(h);
     let names: Vec<String> = h
         .state()
         .app()
