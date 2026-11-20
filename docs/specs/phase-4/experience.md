@@ -1094,9 +1094,13 @@ is a bug).
   from it), `icon_width 16`,
   `icon_width_inner 10`, `icon_spacing 8`, `combo_width 160`,
   `text_edit_width 160`, `tooltip_width 320`, `scroll: ScrollStyle::thin()`
-  with `bar_width 6`, `floating true`, `dormant_background_opacity 0`,
+  with `bar_width 6`, `floating true`, `floating_allocated_width 0`,
+  `dormant_background_opacity 0`, `dormant_handle_opacity 0`,
   `active_background_opacity 0.4`, `interact_background_opacity 0.6` (the
-  overlay scrollbar; egui's is good enough, no custom one).
+  overlay scrollbar: it takes no room, so a field is one width whether
+  or not its panel scrolls, and it shows only while the pointer is over
+  its list, so at rest it does not lie over the fields' right edges;
+  egui's is good enough, no custom one).
 - **Visuals.** `dark_mode`, `window_fill` = surface.raised, `panel_fill` =
   surface.panel, `extreme_bg_color` = surface.sunken, `faint_bg_color` =
   surface.stripe, `window_stroke` = `(1, border.default)`,

@@ -1014,3 +1014,43 @@ fn add_to_project_closes_the_sheet_and_the_next_click_lands() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The final review: each field of the editing pane lost its right edge
+/// and its rounded corners there. The fields fill the pane to the sheet's
+/// content edge, where the pane's scroll bar is, and the bar's handle,
+/// drawn at rest, lay over them; it now shows only under the pointer
+/// (`theme`'s scroll style). This holds the geometry the bar shares: a
+/// field's frame (its text and the 10-px padding each side of it) ends
+/// where the sheet's footer button does, the content's right edge, and
+/// the table's rows end before the rule between the panes.
+#[test]
+fn editing_pane_fields_end_inside_the_sheet() {
+    let dir = scratch("library-pane-width");
+    let (config, _) = config_with(&dir, &sample_library());
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+    select_row(&mut h, "5 mm Drill");
+    let sheet = h.get_by_role(Role::Dialog);
+    let content_right = sheet
+        .get_by_role_and_label(Role::Button, "Add to project")
+        .rect()
+        .right();
+    let name = sheet.get_by_role_and_label(Role::TextInput, "Name").rect();
+    let frame_right = name.right() + 10.0;
+    assert!(
+        frame_right <= content_right + 0.5,
+        "the Name field's frame ends at {frame_right}, past the sheet's content at {content_right}"
+    );
+    assert!(
+        frame_right >= content_right - 8.0,
+        "and it fills the pane: {frame_right} of {content_right}"
+    );
+    let row = sheet
+        .get_by_role_and_label(Role::ListItem, "5 mm Drill")
+        .rect();
+    assert!(
+        row.right() < name.left() - 112.0,
+        "the table's rows end before the pane's labels: {row:?}, {name:?}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

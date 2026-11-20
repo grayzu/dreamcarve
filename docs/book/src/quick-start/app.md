@@ -137,7 +137,8 @@ first.
 
 ![The Tool Library with the 1/4 end mill made and ticked: its row in the table at the left, its fields in the pane at the right, and Add 1 tool to project at the bottom right](figures/app/06-tool-library.png)
 
-5. Click **Add 1 tool to project**.
+5. Click **Add 1 tool to project**. The library closes, and the tool is
+   in the **Tools** list.
 
 What the fields mean:
 

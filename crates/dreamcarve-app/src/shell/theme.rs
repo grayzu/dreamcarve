@@ -844,6 +844,11 @@ pub fn style(palette: &Palette) -> Style {
         // field is one width whether or not its panel scrolls.
         floating_allocated_width: 0.0,
         dormant_background_opacity: 0.0,
+        // And so it shows only while the pointer is over its list: at
+        // rest its handle lay over the right edge of every field in a
+        // scrolling panel, cutting their outlines. The list's fade says
+        // there is more.
+        dormant_handle_opacity: 0.0,
         active_background_opacity: 0.4,
         interact_background_opacity: 0.6,
         ..ScrollStyle::thin()
