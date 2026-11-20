@@ -275,3 +275,54 @@ fn no_deletion_is_labelled_remove() {
         "Delete tool “t”"
     );
 }
+
+/// Slice D9 (`redesign.md`, "The window"): no string names a part of the
+/// window the redesign took away. The findings open in the Warnings
+/// **drawer**, not a panel (the import sheets' line about their notes
+/// said *Warnings panel*); the steps are steps, not tabs; there is no
+/// toolbar and no CAM panel; and the project's settings are the Stock and
+/// Export steps'. The words that stay are the ones that still name
+/// something: the *Step Panel* (View ▸ Step Panel shows and hides it),
+/// *Project Settings…* as the Project menu's command, which opens the
+/// Stock step (capability 79a), and a *tab* that holds a part.
+#[test]
+fn no_string_names_a_part_of_the_window_that_is_gone() {
+    let strings = Strings::english();
+    let gone = [
+        "warnings panel",
+        "toolbar",
+        "tool bar",
+        "cam panel",
+        "project settings",
+        "design tab",
+        "stock tab",
+        "tools tab",
+        "operations tab",
+        "export tab",
+        "export dialog",
+        "export sheet",
+    ];
+    let stale: Vec<(&str, &str)> = StrKey::ALL
+        .iter()
+        .map(|&key| (key.key(), strings.get(key)))
+        .filter(|(_, text)| {
+            let text = text.to_lowercase();
+            gone.iter().any(|name| text.contains(name))
+        })
+        .collect();
+    assert_eq!(
+        stale,
+        [("app.menu.project_settings", "Project Settings…")],
+        "only the Project menu's command keeps an old name"
+    );
+    let panels: Vec<&str> = StrKey::ALL
+        .iter()
+        .map(|&key| strings.get(key))
+        .filter(|text| text.to_lowercase().contains("panel"))
+        .collect();
+    assert_eq!(panels, ["Step Panel"], "the one panel the window has");
+    assert_eq!(
+        strings.get(StrKey::AppImportNotesHeading),
+        "Listed in the Warnings drawer after the import:"
+    );
+}

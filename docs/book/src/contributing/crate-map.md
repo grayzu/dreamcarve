@@ -239,7 +239,7 @@ own (`entry/profile_tests.rs`, `profile/defect_tests.rs`).
 | `tree.rs`, `properties.rs`, `arrange.rs`, `mixed.rs` | The Design Tree's rows; the Properties panel's placement fields; the Arrange actions (rotate, flip, centre); the value a multi-selection shows, or *Mixed*. |
 | `pictures.rs` | A picture selected and placed: the Properties of the selected pictures (their footprint as a shape's X, Y, W and H, the pixel size, the Photo V-Carves that carve them), the move a typed value, a drag or a nudge is, and the resize one picture's typed W or H is, its proportions kept. |
 | `scene.rs`, `viewport/` | The Scene, the read model the Viewport draws, rebuilt per snapshot or result, never per frame; the camera, picking, grid, transform handles, direction arrows and tab marks as pure functions on it. |
-| `warnings.rs`, `status.rs` | The Warnings panel's rows, each the line `dreamcarve check` prints; the status bar's cells as data. |
+| `warnings.rs`, `status.rs` | The Warnings drawer's rows, each the line `dreamcarve check` prints; the status bar's cells as data. |
 | `onboarding.rs` | The start screen's example thumbnails, drawn from the examples' own shapes. |
 | `steps.rs` | The five steps (Design, Stock, Tools, Operations, Export): each step's `State` from the project and its findings (`states`), the step a finding belongs to (`step_of`), what *Continue* opens (`next`), the step a project opens on (`opening`), each step's summary line, and `counts`, the problems the status bar and the rail's Warnings button count (none on a blank project). |
 | `test_support.rs` | `Harness`: an `App` from fixture bytes, commands run, pending jobs executed inline with the real `dc_job` functions (`test-support` feature). |
