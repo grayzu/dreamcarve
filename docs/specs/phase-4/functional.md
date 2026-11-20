@@ -743,7 +743,10 @@ folder are app preferences, kept outside the project.
     offered, as a tool with no feed is, and its fields say what it needs
     (66b). Under the picker a V-bit shows its cone height and a tapered
     ball nose its cutting height, the lower of its flutes and where its
-    cone reaches the cutting diameter (`cutting height 19.05 mm`).
+    cone reaches the cutting diameter (`cutting height 19.05 mm`). Both
+    read to a hundredth of a millimetre or a thou, as every length the
+    app shows and does not take from a field does, and are rounded
+    down, so a depth typed from the line is within the limit.
 68a. **Inlay: both boards from one project** (`06-operation-vcarve.svg`;
     maintainer decision 2026-11-02, engine and format change #498, which
     lands before this editor's slice). An inlay is one design cut into two

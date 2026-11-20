@@ -88,22 +88,53 @@ pub fn field_text(value_mm: f64, units: Units) -> String {
     trimmed(&number(to_display(value_mm, units), decimals))
 }
 
-/// Decimal places a closed group's summary shows of a length in
-/// millimetres (functional spec, capability 66): a glance, not the field.
+/// Decimal places the app shows of a length in millimetres that is read
+/// and not typed (functional spec, capability 66): a glance, not the
+/// field.
 const SUMMARY_DECIMALS_MM: usize = 2;
-/// Decimal places a summary shows of a length in inches: a thou.
+/// Decimal places it shows of such a length in inches: a thou.
 const SUMMARY_DECIMALS_INCH: usize = 3;
 
-/// A length as a closed group's summary words it: `value_mm` in `units`
-/// to a hundredth of a millimetre or a thou, trailing zeros dropped (`5`,
-/// `0.197`), with no unit.
-#[must_use]
-pub fn summary_text(value_mm: f64, units: Units) -> String {
-    let decimals = match units {
+/// The decimal places a shown length has in `units`.
+const fn summary_decimals(units: Units) -> usize {
+    match units {
         Units::Mm => SUMMARY_DECIMALS_MM,
         Units::Inch => SUMMARY_DECIMALS_INCH,
-    };
-    trimmed(&number(to_display(value_mm, units), decimals))
+    }
+}
+
+/// A length the app shows and the user does not type (a closed group's
+/// summary, a note under a field, a tab's position, the stock's size in a
+/// step's summary line): `value_mm` in `units` to a hundredth of a
+/// millimetre or a thou, trailing zeros dropped (`5`, `0.197`), with no
+/// unit. This is the one formatter for such a length; [`field_text`] is
+/// for a field, which must give back what was typed, and a value computed
+/// rather than typed reads through it as `5.4993`.
+#[must_use]
+pub fn summary_text(value_mm: f64, units: Units) -> String {
+    trimmed(&number(
+        to_display(value_mm, units),
+        summary_decimals(units),
+    ))
+}
+
+/// A shown length that is a limit the user must stay within (a V-bit's
+/// cone height, a tapered ball nose's cutting height): as
+/// [`summary_text`], rounded down, so a depth typed from what is shown
+/// still fits. A cone of 5.4993 mm reads `5.49`: `5.5` would be refused.
+#[must_use]
+pub fn limit_text(value_mm: f64, units: Units) -> String {
+    let decimals = summary_decimals(units);
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        reason = "two or three decimal places"
+    )]
+    let scale = 10f64.powi(decimals as i32);
+    // A value that is a whole number of steps but for its binary form
+    // (19.05 is 1904.9999999999998 hundredths) keeps its last digit.
+    let steps = (to_display(value_mm, units) * scale + 1e-6).floor();
+    trimmed(&number(steps / scale, decimals))
 }
 
 /// `text`, a formatted decimal, without trailing zeros or a bare point.
@@ -190,6 +221,36 @@ mod tests {
         assert_eq!(number(-0.0001, 2), "0.00");
         assert_eq!(number(-0.01, 2), "-0.01");
         assert_eq!(number(1.5, 0), "2");
+    }
+
+    /// A shown length has the display units' precision, a hundredth of a
+    /// millimetre or a thou, where a field's text would show a computed
+    /// value to a tenth of a micron; a limit rounds down, so a depth
+    /// typed from it fits.
+    #[test]
+    fn shown_lengths_have_two_places_and_limits_round_down() {
+        // A 60° V-bit's cone, 6.35 / (2 tan 30°).
+        let cone_mm = 6.35 / (2.0 * 30.0_f64.to_radians().tan());
+        assert_eq!(field_text(cone_mm, Units::Mm), "5.4993");
+        assert_eq!(summary_text(cone_mm, Units::Mm), "5.5");
+        assert_eq!(limit_text(cone_mm, Units::Mm), "5.49");
+        assert_eq!(limit_text(cone_mm, Units::Inch), "0.216");
+        // Exact values keep their digits, whatever their binary form.
+        assert_eq!(limit_text(19.05, Units::Mm), "19.05");
+        assert_eq!(limit_text(19.05, Units::Inch), "0.75");
+        assert_eq!(limit_text(3.175, Units::Mm), "3.17");
+        assert_eq!(limit_text(3.175, Units::Inch), "0.125");
+        assert_eq!(limit_text(5.0, Units::Mm), "5");
+        assert_eq!(limit_text(0.0, Units::Mm), "0");
+        for value_mm in [cone_mm, 18.373_7, 3.175, 0.999_9, 12.345_678] {
+            for units in [Units::Mm, Units::Inch] {
+                let shown: f64 = limit_text(value_mm, units).parse().unwrap_or(f64::NAN);
+                assert!(
+                    shown <= to_display(value_mm, units) + 1e-9,
+                    "{value_mm} mm shown as {shown} {units:?}"
+                );
+            }
+        }
     }
 
     #[test]

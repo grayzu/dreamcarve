@@ -615,8 +615,8 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
             {
                 let text = format!(
                     "{}, {}",
-                    units::field_text(at.x, units),
-                    units::field_text(at.y, units)
+                    units::summary_text(at.x, units),
+                    units::summary_text(at.y, units)
                 );
                 let name = strings.get(StrKey::PlacementTabPosition);
                 let (label_response, output) = row(ui, name, |ui| {

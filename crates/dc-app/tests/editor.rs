@@ -2292,7 +2292,7 @@ fn cli_mirrored(project: &Project) -> Vec<String> {
 /// `inlay_male_mirrored` names the X the CLI prints (55 mm, the board's
 /// middle). The derived line under Depth shows the male's start plane
 /// (4 − 1 = 3 mm), its band floor (3 + 2 = 5 mm) and the flank's
-/// engagement against the 60° bit's 5.4993 mm cone, red once a 3 mm plug
+/// engagement against the 60° bit's cone (5.4993 mm, shown as 5.49), red once a 3 mm plug
 /// depth takes it to 6 mm; the base under the band is 18 − 5 = 13 mm,
 /// red below 6 mm (`inlay_plug_base_thin`'s threshold). Width and height
 /// show *same as stock* while `null` and write `null` back with ⟲.
@@ -2394,10 +2394,7 @@ fn inlay_both_boards() {
         &inlay,
         &editor::Slot::of(row_of(&inlay, "tool")),
     ));
-    assert_eq!(
-        tool_note,
-        ["one bit for both boards · cone height 5.4993 mm"]
-    );
+    assert_eq!(tool_note, ["one bit for both boards · cone height 5.49 mm"]);
 
     // Width and height: the stock's while `null`, typed, and back.
     let width = row_of(&inlay, "male_board.width_mm");
@@ -2524,7 +2521,7 @@ fn inlay_both_boards() {
         (
             vec![
                 "male start plane 3 mm · band floor 5 mm below the board top".to_owned(),
-                "flank engagement 5 mm of the 60° bit's 5.4993 mm cone".to_owned(),
+                "flank engagement 5 mm of the 60° bit's 5.49 mm cone".to_owned(),
             ],
             false
         )
@@ -2558,7 +2555,7 @@ fn inlay_both_boards() {
     assert!(alert, "red when the engagement exceeds the cone: {lines:?}");
     assert_eq!(
         lines[1],
-        "flank engagement 6 mm of the 60° bit's 5.4993 mm cone"
+        "flank engagement 6 mm of the 60° bit's 5.49 mm cone"
     );
     // Validation agrees: its cone error, on the plug depth.
     h.generate();
@@ -2752,8 +2749,8 @@ fn v_carve_and_inlay_pickers_offer_tapered_ball_noses() {
     assert_eq!(note("t3").as_deref(), Some("cutting height 19.05 mm"));
     let fine = project.tools[1].cutting_height_mm().expect("every value");
     assert!((fine - 18.374).abs() < 1e-3, "{fine}");
-    assert_eq!(note("t2").as_deref(), Some("cutting height 18.3737 mm"));
-    assert_eq!(note("t5").as_deref(), Some("cone height 3.175 mm"));
+    assert_eq!(note("t2").as_deref(), Some("cutting height 18.37 mm"));
+    assert_eq!(note("t5").as_deref(), Some("cone height 3.17 mm"));
     assert_eq!(note("t6"), None, "nothing to derive it from yet");
     assert_eq!(note("t4"), None);
     let (under_inlay, alert) = texts(&editor::notes(
@@ -2774,7 +2771,7 @@ fn v_carve_and_inlay_pickers_offer_tapered_ball_noses() {
         &carve,
         &editor::Slot::of(row_of(&carve, "tool")),
     ));
-    assert_eq!(under_carve, ["cutting height 18.3737 mm"]);
+    assert_eq!(under_carve, ["cutting height 18.37 mm"]);
 }
 
 /// The ids of `tools`.
@@ -3027,7 +3024,7 @@ fn photo_v_carve_fields() {
         &op,
         &editor::Slot::of(row_of(&op, "tool")),
     ));
-    assert_eq!(cone, ["cone height 5.4993 mm"]);
+    assert_eq!(cone, ["cone height 5.49 mm"]);
 
     // The closed groups' summaries (mock-up 07, right).
     let group = |h: &dc_app::test_support::Harness, group: Group| {
@@ -3541,7 +3538,7 @@ fn inlay_with_a_tapered_ball_nose_shows_the_seat_line() {
     ));
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert!(
-        lines[1].contains("of the 90° bit's 3.175 mm cone"),
+        lines[1].contains("of the 90° bit's 3.17 mm cone"),
         "{}",
         lines[1]
     );

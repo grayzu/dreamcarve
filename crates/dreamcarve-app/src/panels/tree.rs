@@ -1171,8 +1171,8 @@ fn tab_item(ui: &mut Ui, state: &FrameState<'_>, id: &dc_project::TabId, out: &m
         .and_then(|t| dc_job::tabs::tab_point(project, t))
         .map_or_else(Default::default, |p| {
             (
-                dc_app::units::field_text(p.x, units),
-                dc_app::units::field_text(p.y, units),
+                dc_app::units::summary_text(p.x, units),
+                dc_app::units::summary_text(p.y, units),
             )
         });
     let label = strings.fmt(

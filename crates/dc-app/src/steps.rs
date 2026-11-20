@@ -394,7 +394,7 @@ pub fn summary(app: &App, session: &Session, step: Step) -> String {
         Step::Stock if off_stock(app) => text(StrKey::StepsSummaryStockOff),
         Step::Stock => {
             let units = project.display_units;
-            let length = |mm: f64| units::field_text(mm, units);
+            let length = |mm: f64| units::summary_text(mm, units);
             let width = length(project.stock.width_mm);
             let height = length(project.stock.height_mm);
             let size = [

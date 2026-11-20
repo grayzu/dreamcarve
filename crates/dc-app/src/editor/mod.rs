@@ -720,7 +720,7 @@ pub fn notes(project: &Project, strings: &Strings, op: &Operation, slot: &Slot<'
                         &[
                             ("engagement", &engagement),
                             ("angle", &plain(*included_angle_deg)),
-                            ("cone", &length_text(cone_mm, units)),
+                            ("cone", &limit_text(cone_mm, units)),
                         ],
                     ),
                     alert: planes.exceeds_cone(),
@@ -732,7 +732,7 @@ pub fn notes(project: &Project, strings: &Strings, op: &Operation, slot: &Slot<'
                         StrKey::EditorInlayEngagementTapered,
                         &[
                             ("engagement", &engagement),
-                            ("height", &length_text(height_mm, units)),
+                            ("height", &limit_text(height_mm, units)),
                         ],
                     ),
                     alert: planes.exceeds_cone(),
@@ -859,8 +859,10 @@ pub const fn reset_label(row: &Row) -> StrKey {
 }
 
 /// The line under a tool picker showing `tool`, in the display units,
-/// from [`Tool::cutting_height_mm`]: a V-bit's cone height, `cone height
-/// 3.175 mm` (the V-Carve chapter's `diameter / (2 tan(α/2))`, the depth
+/// from [`Tool::cutting_height_mm`], to a shown length's precision and
+/// rounded down, since it is a limit ([`units::limit_text`]): a V-bit's
+/// cone height, `cone height
+/// 3.17 mm` (the V-Carve chapter's `diameter / (2 tan(α/2))`, the depth
 /// past which the shank cuts); a tapered ball nose's cutting height,
 /// `cutting height 19.05 mm` (#685: the lower of its flutes and where its
 /// cone reaches the cutting diameter). `None` for any other cutter, a
@@ -876,7 +878,7 @@ pub fn tool_note(project: &Project, strings: &Strings, tool: &Tool) -> Option<St
         }
     };
     let height_mm = tool.cutting_height_mm()?;
-    let text = length_text(height_mm, project.display_units);
+    let text = limit_text(height_mm, project.display_units);
     Some(strings.fmt(key, &[("value", &text)]))
 }
 
@@ -907,11 +909,25 @@ pub fn seat_line(project: &Project, strings: &Strings, op: &Operation) -> Option
     ))
 }
 
-/// `value_mm` in `units` with its suffix: `5.5 mm`.
+/// `value_mm` in `units` with its suffix, as a shown length
+/// ([`units::summary_text`]): `5.5 mm`.
 fn length_text(value_mm: f64, units: Units) -> String {
     format!(
         "{} {}",
-        units::field_text(value_mm, units),
+        units::summary_text(value_mm, units),
+        units::suffix(units)
+    )
+}
+
+/// A limit, `value_mm`, in `units` with its suffix: a shown length
+/// rounded down ([`units::limit_text`]), so a depth typed from the note
+/// is within it. These notes were drawn at a field's precision, `cone
+/// height 5.4993 mm`, so that they could be typed back; rounded down they
+/// can be, at the precision every other shown length has.
+fn limit_text(value_mm: f64, units: Units) -> String {
+    format!(
+        "{} {}",
+        units::limit_text(value_mm, units),
         units::suffix(units)
     )
 }
