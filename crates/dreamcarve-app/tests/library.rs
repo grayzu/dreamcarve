@@ -843,3 +843,108 @@ fn import_review_names_what_a_tapered_ball_nose_still_needs() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The fades the last frame drew: each a mesh whose top edge is one
+/// colour and whose bottom edge another, wider than a control, as its
+/// rectangle and whether its foot is the solid end.
+fn fades(h: &Harness<'_, Shell>) -> Vec<(egui::Rect, bool)> {
+    let mut found: Vec<(egui::Rect, bool)> = h
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Mesh(mesh) if mesh.vertices.len() == 4 => {
+                let rect = mesh.calc_bounds();
+                let alpha = |y: f32| {
+                    mesh.vertices
+                        .iter()
+                        .filter(|v| (v.pos.y - y).abs() < 0.1)
+                        .map(|v| v.color.a())
+                        .max()
+                        .unwrap_or(0)
+                };
+                let (top, bottom) = (alpha(rect.top()), alpha(rect.bottom()));
+                (top != bottom && rect.width() > 200.0).then_some((rect, bottom > top))
+            }
+            _ => None,
+        })
+        .collect();
+    // egui keeps a shape once per pass of a frame it lays out twice.
+    found.dedup();
+    found
+}
+
+/// Row D5 of the worklog, defect 6: the Tool Library's table stops above
+/// the sheet's footer wherever its rows happen to be, and its edge cut
+/// the last visible row in two. A list longer than its pane now fades
+/// its last 20 px into the sheet while there is more below, and its first
+/// 20 px once it is scrolled, so a cut row reads as *more*; a list that
+/// fits has no fade.
+#[test]
+fn library_table_fades_where_it_goes_on() {
+    let dir = scratch("library-fade");
+    // The two fixture libraries together: more rows than the pane holds.
+    let mut library = vendors_library();
+    let bytes = std::fs::read(fixture("fusion/sample.tools")).unwrap();
+    library = dc_app::library::import(&library, &bytes, false)
+        .unwrap()
+        .library;
+    let (config, _) = config_with(&dir, &library);
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+    let names = listed(&h);
+    assert!(names.len() > 12, "a long library: {} tools", names.len());
+
+    let head = h
+        .get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ColumnHeader, "Name")
+        .rect();
+    let table: Vec<(egui::Rect, bool)> = fades(&h)
+        .into_iter()
+        .filter(|(rect, _)| rect.left() <= head.left())
+        .collect();
+    assert_eq!(table.len(), 1, "one fade, at the table's foot: {table:?}");
+    let (foot, solid_below) = table[0];
+    assert!(solid_below, "it fades down into the sheet");
+    assert!(
+        (foot.height() - 20.0).abs() < 0.5 && foot.top() > head.bottom() + 100.0,
+        "20 px at the table's foot: {foot:?} under {head:?}"
+    );
+
+    // Scrolled to its last row: more above, nothing below.
+    let last = names.last().unwrap().clone();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, &last)
+        .scroll_to_me();
+    h.run();
+    let table: Vec<(egui::Rect, bool)> = fades(&h)
+        .into_iter()
+        .filter(|(rect, _)| rect.left() <= head.left())
+        .collect();
+    assert_eq!(table.len(), 1, "one fade, at the table's head: {table:?}");
+    let (top, solid_below) = table[0];
+    assert!(!solid_below, "it fades up into the sheet");
+    assert!(
+        (top.top() - head.bottom()).abs() < 6.0,
+        "under the column headings: {top:?} under {head:?}"
+    );
+
+    // A search that leaves a few rows: the list fits, and nothing fades.
+    // The field is named for what it searches.
+    let search = "Search name, vendor, product, diameter";
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::TextInput, search)
+        .focus();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::TextInput, search)
+        .type_text("Drill");
+    h.run();
+    assert!(listed(&h).len() < 6, "{:?}", listed(&h));
+    let table: Vec<(egui::Rect, bool)> = fades(&h)
+        .into_iter()
+        .filter(|(rect, _)| rect.left() <= head.left())
+        .collect();
+    assert!(table.is_empty(), "a list that fits has no fade: {table:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -737,6 +737,11 @@ Controls:
   right-aligned
   tabular, the tick column 32 px. "Already in project" rows show a `check`
   in text.secondary and the row in text.secondary.
+- **Scrolling lists.** A list that goes on past the edge of its area
+  fades its last 20 px into the surface under it: at the bottom while
+  there is more below, at the top once it is scrolled. A row the edge
+  cuts reads as *more*, never as a row sliced in two. A list that fits
+  has no fade. The scroll bar is the thin overlay one (section 12).
 - **Vendor group header** (Tool Library). A 32-px header inside the
   table, with no band, chevron left, the vendor in 13-px SemiBold and the
   count after it in text.secondary (`Amana · 4`); *No vendor* last.

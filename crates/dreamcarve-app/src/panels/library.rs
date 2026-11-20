@@ -63,6 +63,7 @@ use crate::shell::window::{Action, Dialogs};
 use crate::widgets::button::{ButtonSpec, Kind, button, focus_ring_round, text};
 use crate::widgets::checkbox::paint_box;
 use crate::widgets::icon::Icon;
+use crate::widgets::scroll;
 use crate::widgets::segmented::segmented;
 
 /// The sheet's default size, px (`experience.md`, section 3): wide enough
@@ -599,6 +600,8 @@ fn search_field(ui: &mut Ui, strings: &Strings, search: &mut String, width: f32)
             )
             .desired_width(edit_rect.width()),
     );
+    // Named for assistive tools by what it searches, as its hint says.
+    let response = response.accessible_name(strings.get(StrKey::AppLibrarySearch));
     // The focus ring goes round the field's frame, not its text.
     focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
     let stroke = if response.has_focus() {
@@ -771,7 +774,7 @@ fn table(
         );
         return;
     }
-    let rows = egui::ScrollArea::vertical()
+    let scrolled = egui::ScrollArea::vertical()
         .id_salt("library_table")
         .auto_shrink(false)
         .show(ui, |ui| {
@@ -794,9 +797,11 @@ fn table(
                 }
             }
             ui.available_width()
-        })
-        .inner;
-    remember_rows_width(ui, "library", rows);
+        });
+    // The table stops above the sheet's footer, wherever its rows are:
+    // the row its edge cuts fades out (row D5 of the worklog).
+    scroll::fade(ui, &scrolled, palette.surface_raised);
+    remember_rows_width(ui, "library", scrolled.inner);
 }
 
 /// A vendor group's 32-px header (section 7, "Vendor group header"): the
@@ -1096,7 +1101,7 @@ fn editing_pane(
         .as_ref()
         .filter(|(m, _, _)| *m == id)
         .map(|(_, field, reason)| (*field, reason.as_str()));
-    let output = egui::ScrollArea::vertical()
+    let scrolled = egui::ScrollArea::vertical()
         .id_salt(("library_pane", id.as_str()))
         .auto_shrink(false)
         .max_height((ui.available_height() - footer_h).max(0.0))
@@ -1113,8 +1118,9 @@ fn editing_pane(
                     marked,
                 },
             )
-        })
-        .inner;
+        });
+    scroll::fade(ui, &scrolled, palette.surface_raised);
+    let output = scrolled.inner;
     if focus_name {
         sheet.focus_name = None;
     }
@@ -1470,7 +1476,7 @@ fn review_table(ui: &mut Ui, strings: &Strings, units: Units, pending: &ImportRe
         head.bottom() - 0.5,
         Stroke::new(1.0, palette.border_default),
     );
-    let rows = egui::ScrollArea::vertical()
+    let scrolled = egui::ScrollArea::vertical()
         .id_salt("library_review_table")
         .auto_shrink(false)
         .show(ui, |ui| {
@@ -1497,9 +1503,9 @@ fn review_table(ui: &mut Ui, strings: &Strings, units: Units, pending: &ImportRe
                 }
             }
             width
-        })
-        .inner;
-    remember_rows_width(ui, "review", rows);
+        });
+    scroll::fade(ui, &scrolled, palette.surface_raised);
+    remember_rows_width(ui, "review", scrolled.inner);
 }
 
 /// One item of the review, `index` in the file, row `n` of its group:
