@@ -18,7 +18,7 @@ mod viewport;
 mod widgets;
 
 pub use shell::files;
-pub use shell::focus::Region as FocusRegion;
+pub use shell::focus::{RING_OFFSET_PX, RING_PX, Region as FocusRegion, Ring as FocusRing};
 pub use shell::theme;
 pub use shell::window::{Dialogs, Example, Layout, MIN_WINDOW, NativeDialogs, Options, Shell};
 pub use viewport::FIT_INSETS;

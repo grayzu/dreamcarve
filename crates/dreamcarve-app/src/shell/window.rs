@@ -760,7 +760,7 @@ impl Shell {
     /// nothing has the focus, or it came from a click (`experience.md`,
     /// section 8, "Keyboard focus").
     #[must_use]
-    pub fn focus_ring(&self) -> Option<egui::Rect> {
+    pub fn focus_ring(&self) -> Option<crate::FocusRing> {
         self.focus.ring
     }
 

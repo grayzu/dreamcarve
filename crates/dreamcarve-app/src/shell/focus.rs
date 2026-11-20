@@ -174,11 +174,49 @@ fn region_of(ctx: &Context, id: Id, regions: &[(Region, Rect)]) -> Option<Region
     None
 }
 
+/// The focused control's outline: its visible rectangle and its corner
+/// radius, px.
+#[derive(Debug, Clone, Copy)]
+struct Outline {
+    id: Id,
+    rect: Rect,
+    radius_px: f32,
+}
+
+/// Where the focused control's outline lives in egui's memory.
+fn outline_id() -> Id {
+    Id::unique("dc_focus_outline")
+}
+
+/// A control says what the ring goes round: `rect`, the shape the user
+/// sees as the control `id`, and its corner radius. A widget whose
+/// response is not that shape calls this: a field, whose focus is the
+/// text inside its frame; a rail button or a list row, drawn inside the
+/// slot that takes its clicks; a pill, whose radius is half its height.
+/// One that does not is ringed at its response's rectangle with the
+/// control radius, which is right for egui's own buttons and dropdowns.
+/// Kept for the focused control only, and for this frame.
+pub(crate) fn outline(ctx: &Context, id: Id, rect: Rect, radius_px: f32) {
+    if ctx.memory(|m| m.has_focus(id)) {
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                outline_id(),
+                Outline {
+                    id,
+                    rect,
+                    radius_px,
+                },
+            );
+        });
+    }
+}
+
 /// At the start of a frame, before anything reads keys: notes a Tab press
 /// and whether the focus now comes from the keyboard. Inside an open
 /// sheet egui's own walk is the right one: it cycles within the sheet,
 /// whose layer is the only one taking the focus.
 pub(crate) fn begin(ctx: &Context, sheet_open: bool) {
+    ctx.data_mut(|d| d.remove::<Outline>(outline_id()));
     let mut router = load(ctx);
     router.drawing = None;
     let (tab, shift_tab, escape, arrows, pressed) = ctx.input(|i| {
@@ -295,19 +333,36 @@ pub(crate) fn keys_free(ctx: &Context) -> bool {
     }
 }
 
+/// The ring's width, px (section 7, "focus").
+pub const RING_PX: f32 = 2.0;
+/// The gap between a control and its ring, px.
+pub const RING_OFFSET_PX: f32 = 2.0;
+
+/// The focus ring as drawn: [`RING_PX`] of `focus.ring`,
+/// [`RING_OFFSET_PX`] outside `control`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ring {
+    /// The control it goes round: the shape the user sees.
+    pub control: Rect,
+    /// That control's corner radius, px; the ring's is concentric.
+    pub radius_px: f32,
+}
+
 /// What the focus was after a frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct Shown {
     /// The region holding it.
     pub region: Option<Region>,
-    /// Where the ring was drawn.
-    pub ring: Option<Rect>,
+    /// The ring, when one was drawn.
+    pub ring: Option<Ring>,
 }
 
 /// After the frame: `regions` were drawn there. Corrects a Tab that landed
-/// out of order, and draws the ring around the focused widget when the
-/// focus came from the keyboard: 2 px of `focus.ring`, 3 px outside the
-/// control so no control shrinks (section 7, "focus"; section 11).
+/// out of order, and draws the ring around the focused control when the
+/// focus came from the keyboard: 2 px of `focus.ring`, 2 px outside the
+/// control and following its shape, so no control shrinks (section 7,
+/// "focus"; section 11). This is the one place a ring is drawn; a control
+/// whose shape is not its response's rectangle says so with [`outline`].
 pub(crate) fn finish(ui: &Ui, regions: Vec<(Region, Rect)>) -> Shown {
     let ctx = ui.ctx();
     let mut router = load(ctx);
@@ -368,7 +423,17 @@ pub(crate) fn finish(ui: &Ui, regions: Vec<(Region, Rect)>) -> Shown {
         && let Some(focused) = focused
         && let Some(response) = ctx.read_response(focused)
     {
-        let at = response.rect.expand(3.0);
+        // The control's own outline where it gave one, else its response.
+        let (shape, radius_px) = ctx
+            .data(|d| d.get_temp::<Outline>(outline_id()))
+            .filter(|outline| outline.id == focused)
+            .map_or(
+                (response.rect, crate::shell::theme::CONTROL_RADIUS_PX),
+                |outline| (outline.rect, outline.radius_px),
+            );
+        // The ring's centre line is 3 px out, so its inner edge is 2 px
+        // off the control and its outer edge 4.
+        let at = shape.expand(RING_OFFSET_PX + RING_PX / 2.0);
         let clip = region
             .and_then(|r| router.regions.iter().find(|(d, _)| *d == r))
             .map_or(ctx.content_rect(), |(_, rect)| rect.expand(EDGE_PX));
@@ -377,11 +442,14 @@ pub(crate) fn finish(ui: &Ui, regions: Vec<(Region, Rect)>) -> Shown {
             .with_clip_rect(clip)
             .rect_stroke(
                 at,
-                crate::shell::theme::CONTROL_RADIUS_PX + 3.0,
-                Stroke::new(2.0, palette.focus_ring),
+                radius_px + RING_OFFSET_PX + RING_PX / 2.0,
+                Stroke::new(RING_PX, palette.focus_ring),
                 StrokeKind::Middle,
             );
-        ring = Some(at);
+        ring = Some(Ring {
+            control: shape,
+            radius_px,
+        });
     }
     router.last = focused.map(|f| (f, region));
     store(ctx, router);

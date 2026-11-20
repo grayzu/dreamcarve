@@ -17,7 +17,7 @@ use std::hash::Hash;
 use eframe::egui::{self, Rect, Response, Sense, Stroke, StrokeKind, TextStyle, Ui};
 
 use crate::shell::theme::{self, Palette};
-use crate::widgets::button::focus_ring;
+use crate::widgets::button::{focus_ring, focus_ring_round};
 use crate::widgets::icon::Icon;
 
 /// The box's side, px.
@@ -84,9 +84,13 @@ pub(crate) fn checkbox(
         if let Some(galley) = galley {
             let at = egui::pos2(square.right() + GAP_PX, rect.center().y - text.y / 2.0);
             ui.painter().galley(at, galley, colour);
+            // The box and its label are one control.
+            focus_ring(ui, &response);
+        } else {
+            // A box alone: the ring goes round the box, not its hit area.
+            focus_ring_round(ui, &response, square, theme::MARK_RADIUS_PX);
         }
     }
-    focus_ring(ui, &response);
     response
 }
 

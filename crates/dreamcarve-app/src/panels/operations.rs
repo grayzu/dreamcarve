@@ -23,7 +23,7 @@ use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
 use crate::panels;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
-use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
+use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button, focus_ring_round};
 use crate::widgets::checkbox::paint_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::op_glyph::op_glyph;
@@ -444,6 +444,7 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
         egui::WidgetInfo::selected(egui::Role::CheckBox, true, row.enabled, &check_name)
     });
     paint_box(ui, check_rect, row.enabled, check.hovered(), true);
+    focus_ring_round(ui, &check, check_rect, theme::MARK_RADIUS_PX);
     if check.clicked() {
         out.push(Action::run(Command::SetOperationEnabled {
             id: row.id.clone(),

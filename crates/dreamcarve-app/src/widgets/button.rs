@@ -312,10 +312,10 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
     }
 }
 
-/// The keyboard focus ring (section 7, "focus"; section 12, "Focus ring"):
-/// 2 px of `focus.ring` outside the control, 2 px off it. egui gives a
-/// clickable widget focus only from the keyboard, so `has_focus` is the
-/// keyboard case.
+/// The keyboard focus ring (section 7, "focus"; section 12, "Focus ring")
+/// goes round `response`'s rectangle with the control radius: 2 px of
+/// `focus.ring`, 2 px off it. The shell draws it, once, after the frame
+/// ([`crate::shell::focus::finish`]); this says where.
 pub fn focus_ring(ui: &Ui, response: &Response) {
     focus_ring_at(ui, response, theme::CONTROL_RADIUS_PX);
 }
@@ -323,15 +323,14 @@ pub fn focus_ring(ui: &Ui, response: &Response) {
 /// [`focus_ring`] round a control whose corner radius is `radius_px`: a
 /// pill's ring is a pill.
 pub fn focus_ring_at(ui: &Ui, response: &Response, radius_px: f32) {
-    if response.has_focus() {
-        let palette = Palette::current(ui);
-        ui.painter().rect_stroke(
-            response.rect.expand(3.0),
-            radius_px + 3.0,
-            Stroke::new(2.0, palette.focus_ring),
-            StrokeKind::Middle,
-        );
-    }
+    focus_ring_round(ui, response, response.rect, radius_px);
+}
+
+/// [`focus_ring`] round `rect`, the shape the user sees as the control,
+/// where that is not `response`'s own rectangle: a field's frame round
+/// its text, a row's surface inside its slot.
+pub fn focus_ring_round(ui: &Ui, response: &Response, rect: egui::Rect, radius_px: f32) {
+    crate::shell::focus::outline(ui.ctx(), response.id, rect, radius_px);
 }
 
 /// A label in `colour` at text style `style`, never wrapping: an

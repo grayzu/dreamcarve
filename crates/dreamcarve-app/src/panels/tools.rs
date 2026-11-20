@@ -389,6 +389,7 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
     }
     let rect = surface_rect(slot);
     surface(ui, rect, chosen, response.hovered());
+    crate::widgets::button::focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
     let glyph = Rect::from_center_size(
         egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
         egui::vec2(16.0, 16.0),

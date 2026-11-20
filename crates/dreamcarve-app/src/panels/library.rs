@@ -60,7 +60,7 @@ use crate::panels::tools::{FieldEdit, ToolFields, tool_fields};
 use crate::shell::files;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, Dialogs};
-use crate::widgets::button::{ButtonSpec, Kind, button, text};
+use crate::widgets::button::{ButtonSpec, Kind, button, focus_ring_round, text};
 use crate::widgets::checkbox::paint_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::segmented::segmented;
@@ -599,6 +599,8 @@ fn search_field(ui: &mut Ui, strings: &Strings, search: &mut String, width: f32)
             )
             .desired_width(edit_rect.width()),
     );
+    // The focus ring goes round the field's frame, not its text.
+    focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
     let stroke = if response.has_focus() {
         palette.focus_ring
     } else if hover.hovered() || response.hovered() {
@@ -967,6 +969,8 @@ fn table_row(
     // The 16-px tick box.
     let tick_box = Rect::from_center_size(tick_rect.center(), egui::vec2(16.0, 16.0));
     paint_box(ui, tick_box, on, tick.hovered(), true);
+    focus_ring_round(ui, &tick, tick_box, theme::MARK_RADIUS_PX);
+    focus_ring_round(ui, &row, rect, theme::CONTROL_RADIUS_PX);
 
     let colour = if state.in_project {
         palette.text_secondary

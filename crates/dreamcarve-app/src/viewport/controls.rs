@@ -127,10 +127,12 @@ pub(super) fn opacity(ui: &Ui, dragging: bool) -> f32 {
 /// `body` lays its controls out left to right, centred.
 fn pill(ui: &mut Ui, rect: Rect, salt: &str, opacity: f32, body: impl FnOnce(&mut Ui)) {
     let palette = Palette::current(ui);
+    // It takes the pointer and not the focus: a pill is no Tab stop, its
+    // controls are.
     ui.interact(
         rect,
         Id::unique(("dc.viewport.float", salt)),
-        Sense::click_and_drag(),
+        Sense::CLICK | Sense::DRAG,
     );
     let padding = (rect.height() - CONTROL_PX) / 2.0;
     let mut child = ui.new_child(

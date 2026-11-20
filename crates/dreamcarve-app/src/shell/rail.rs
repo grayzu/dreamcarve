@@ -90,12 +90,26 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) -
                 for step in Step::ALL {
                     step_button(ui, state, step, out);
                 }
-                ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
-                    ui.add_space(PADDING_PX);
-                    help(ui, state, out);
-                    appearance(ui, state, out);
-                    warnings(ui, state, out);
-                });
+                // Pinned to the foot, and drawn from its top: Tab walks
+                // the widgets in the order the frame makes them, and the
+                // walk is Warnings, Appearance, Help (section 8,
+                // "Keyboard focus").
+                let room = ui.available_rect_before_wrap();
+                let height = 3.0 * TOOL_PX + 2.0 * GAP_PX + PADDING_PX;
+                let foot = Rect::from_min_max(
+                    egui::pos2(room.left(), (room.bottom() - height).max(room.top())),
+                    room.max,
+                );
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(foot)
+                        .layout(Layout::top_down(Align::Center)),
+                    |ui| {
+                        warnings(ui, state, out);
+                        appearance(ui, state, out);
+                        help(ui, state, out);
+                    },
+                );
             });
             rect
         })

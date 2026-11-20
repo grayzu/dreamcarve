@@ -274,8 +274,10 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<
         StrKey::EditorTitle,
         &[("name", name), ("kind", cx.strings.get(kind.label()))],
     );
+    // The band takes a double click and not the focus: the name is the
+    // Tab stop.
     let (rect, band) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER_PX), Sense::click());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER_PX), Sense::CLICK);
     band.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &title));
     // Centred a little low, in the room the card's top padding leaves.
     let rect = rect.translate(egui::vec2(0.0, 2.0));
@@ -1204,7 +1206,9 @@ fn targets_row(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>, out: &mut Vec<Action>)
     let buttons = 2.0 * (HEIGHT_PX + BUTTON_GAP_PX);
     let width = (ui.available_width() - buttons).max(0.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, HEIGHT_PX), Sense::hover());
-    let response = ui.interact(rect, control_id(op, slot.key()), Sense::click());
+    // A double click on the summary edits the targets, as the pencil
+    // beside it does; the pencil is the Tab stop.
+    let response = ui.interact(rect, control_id(op, slot.key()), Sense::CLICK);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &summary.text));
     let colour = if ui.is_enabled() {
         palette.text_primary

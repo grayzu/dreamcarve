@@ -1694,6 +1694,8 @@ pub(crate) fn show(
             let viewport_name = state.app.strings().get(StrKey::AppViewportName);
             response
                 .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, viewport_name));
+            // Its focus ring is a card's.
+            focus::outline(ui.ctx(), response.id, pane, theme::CARD_RADIUS_PX);
             let app = state.app;
             let before = app.view().camera;
             let mut camera = before;

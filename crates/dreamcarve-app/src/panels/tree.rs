@@ -35,6 +35,7 @@ use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
 use crate::panels;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
+use crate::widgets::button::focus_ring_round;
 use crate::widgets::checkbox::{BOX_PX, paint_box};
 use crate::widgets::icon::Icon;
 use crate::widgets::row::{surface, surface_rect};
@@ -488,6 +489,7 @@ fn shape_row(
     // The row's own surface, inset from the card's edges.
     let rect = surface_rect(slot);
     surface(ui, rect, selected, response.hovered());
+    focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
     // A target of the marked operation: a 3-px bar in its colour on the
     // surface's left edge, where a selected row's accent bar is.
     if let Some(colour) = row.target {
@@ -538,6 +540,7 @@ fn shape_row(
         });
         let square = Rect::from_center_size(eye_rect.center(), egui::Vec2::splat(BOX_PX));
         paint_box(ui, square, on, check.hovered(), true);
+        focus_ring_round(ui, &check, square, theme::MARK_RADIUS_PX);
         if check.clicked() {
             out.push(Action::ToggleTarget(row.id.clone()));
         }
@@ -866,6 +869,7 @@ fn bitmap_row(
     let painter = ui.painter().clone();
     let rect = surface_rect(slot);
     surface(ui, rect, selected, response.hovered() && !editing);
+    focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
     // The picture the marked Photo V-Carve carves: its bar, as a target's.
     if let Some(colour) = row.target {
         let inset = rect.height() / 4.0;
@@ -1127,6 +1131,7 @@ fn tab_row(ui: &mut Ui, state: &FrameState<'_>, row: &TabRow, out: &mut Vec<Acti
     response
         .widget_info(|| egui::WidgetInfo::selected(egui::Role::TreeItem, true, selected, &label));
     surface(ui, rect, selected, response.hovered());
+    focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
     let icon_rect = Rect::from_center_size(
         egui::pos2(rect.left() + 8.0 + ICON_BOX_PX / 2.0, rect.center().y),
         egui::vec2(ICON_BOX_PX, ICON_BOX_PX),
@@ -1185,6 +1190,7 @@ fn tab_item(ui: &mut Ui, state: &FrameState<'_>, id: &dc_project::TabId, out: &m
         .widget_info(|| egui::WidgetInfo::selected(egui::Role::TreeItem, true, selected, &label));
     let rect = surface_rect(slot);
     surface(ui, rect, selected, response.hovered());
+    focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
     let left = rect.left() + 8.0 + ICON_BOX_PX + 8.0;
     let width = rect.right() - ROW_PADDING_PX - left;
     let galley = truncated(ui, &label, &TextStyle::Body, palette.text_secondary, width);

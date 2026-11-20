@@ -7885,3 +7885,189 @@ fn a_new_carve_takes_the_tapered_ball_nose() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// One stop of a Tab walk: the focused control as assistive tools see it,
+/// and the ring drawn for it.
+#[derive(Debug)]
+struct Stop {
+    role: Role,
+    label: String,
+    node: egui::Rect,
+    ring: dreamcarve_app::FocusRing,
+}
+
+/// Tabs once round the window, from nothing focused until the walk is
+/// back in the header, and returns every stop.
+fn tab_round(h: &mut Harness<'_, dreamcarve_app::Shell>) -> Vec<Stop> {
+    use dreamcarve_app::FocusRegion as R;
+
+    let mut stops = Vec::new();
+    let mut left_header = false;
+    for _ in 0..400 {
+        h.key_press(egui::Key::Tab);
+        h.run();
+        let Some(region) = h.state().focus() else {
+            continue;
+        };
+        if region != R::Header {
+            left_header = true;
+        } else if left_header {
+            break;
+        }
+        let Some(node) = h
+            .query_all(egui_kittest::kittest::by().predicate(|node| node.is_focused()))
+            .next()
+        else {
+            continue;
+        };
+        let ring = h.state().focus_ring().expect("Tab's focus shows the ring");
+        stops.push(Stop {
+            role: node.accesskit_node().role(),
+            label: node.accesskit_node().label().unwrap_or_default(),
+            node: node.rect(),
+            ring,
+        });
+    }
+    stops
+}
+
+/// Row D5 of the worklog, defect 3 (`experience.md`, section 7, "focus"):
+/// the ring sits round the control it names, on every kind of control.
+/// It was drawn round the focused widget's own rectangle, which for a
+/// field is the line of text inside its frame, and for a rail button or a
+/// list row the slot that takes its clicks; and a custom control drew a
+/// second ring of its own.
+///
+/// Tab walks each step of the plaque with something in the Inspector. At
+/// every stop the ring's control is the shape the user sees: a field's
+/// 32-px frame round its text; a rail step's 56 × 52 button; a list or
+/// tree row's surface inside its slot; a pill's own radius; and for every
+/// other control the rectangle assistive tools are given for it.
+#[test]
+fn focus_ring_goes_round_the_control_it_names() {
+    let dir = scratch("focus-ring-shape");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let mut seen: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut wrong: Vec<String> = Vec::new();
+    for step in ["Design", "Stock", "Tools", "Operations", "Export"] {
+        go_to(&mut h, step);
+        match step {
+            "Design" => h.get_by_role_and_label(Role::TreeItem, "square").click(),
+            "Tools" => h
+                .get_by_role_and_label(Role::ListItem, "1/4 end mill")
+                .click(),
+            "Operations" => {
+                open_operation(&mut h, "Cut out");
+                // Every group open, so every kind of row is walked.
+                for group in ["Depth", "Strategy", "Entry and leads", "Corners and tabs"] {
+                    let header = h
+                        .query_all_by_role_and_label(Role::Button, group)
+                        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+                        .expect("the group's header");
+                    header.click();
+                    h.run();
+                }
+            }
+            _ => {}
+        }
+        h.run();
+        h.event(egui::Event::PointerGone);
+        h.run();
+        // Nothing focused, so the walk starts at the header.
+        h.key_press(egui::Key::Escape);
+        h.run();
+        for stop in tab_round(&mut h) {
+            let Stop {
+                role,
+                label,
+                node,
+                ring,
+            } = &stop;
+            let control = ring.control;
+            // Every stop is a control with a name: no pill, band or
+            // read-out takes the focus.
+            if label.is_empty() || matches!(role, Role::Label | Role::Unknown) {
+                wrong.push(format!(
+                    "{step}: {role:?} {label:?} at {node:?} is a Tab stop"
+                ));
+            }
+            let kind = format!("{role:?}");
+            *seen.entry(kind).or_default() += 1;
+            let close = |a: f32, b: f32| (a - b).abs() <= 0.6;
+            let same = |a: egui::Rect, b: egui::Rect| {
+                close(a.left(), b.left())
+                    && close(a.right(), b.right())
+                    && close(a.top(), b.top())
+                    && close(a.bottom(), b.bottom())
+            };
+            let ok = match role {
+                // The frame round the text: a control tall, and wider
+                // than the text by the field's padding at least.
+                Role::TextInput => {
+                    close(control.height(), 32.0)
+                        && control.expand(0.6).contains_rect(*node)
+                        && control.left() <= node.left() - 8.0
+                }
+                // A rail step: the 56 × 52 button in its slot.
+                Role::Tab => {
+                    close(control.width(), 56.0)
+                        && close(control.height(), 52.0)
+                        && close(ring.radius_px, 10.0)
+                }
+                // A row: its surface, 8 px in from its card's edges (the
+                // step panel's card starts 80 px from the window's left
+                // and is 312 px wide).
+                Role::ListItem | Role::TreeItem => {
+                    node.expand(0.6).contains_rect(control)
+                        && close(control.left(), 88.0)
+                        && close(control.right(), 384.0)
+                        && close(ring.radius_px, 8.0)
+                }
+                // A box with no label: the 16-px box, not its hit area.
+                Role::CheckBox if node.width() <= 24.6 => {
+                    close(control.width(), 16.0)
+                        && close(control.height(), 16.0)
+                        && close(control.center().x, node.center().x)
+                        && close(control.center().y, node.center().y)
+                        && close(ring.radius_px, 4.0)
+                }
+                // The Viewport is a card.
+                Role::Canvas => same(control, *node) && close(ring.radius_px, 14.0),
+                _ => same(control, *node),
+            };
+            // A ring's corner is never rounder than a pill's.
+            let radius_fits = ring.radius_px <= control.height() / 2.0 + 0.6;
+            if !ok || !radius_fits {
+                wrong.push(format!(
+                    "{step}: {role:?} {label:?} is {node:?}, ringed round {control:?} r {}",
+                    ring.radius_px
+                ));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these rings are not round their controls:\n{}",
+        wrong.join("\n")
+    );
+    for kind in [
+        "TextInput",
+        "Tab",
+        "ListItem",
+        "TreeItem",
+        "Button",
+        "ComboBox",
+        "CheckBox",
+    ] {
+        assert!(seen.contains_key(kind), "a {kind} was walked: {seen:?}");
+    }
+    assert_eq!(dreamcarve_app::RING_PX, 2.0);
+    assert_eq!(dreamcarve_app::RING_OFFSET_PX, 2.0);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
