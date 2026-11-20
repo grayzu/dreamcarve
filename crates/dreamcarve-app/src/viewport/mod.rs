@@ -1662,16 +1662,21 @@ fn target_bar(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Vec<Act
             glyph,
             palette.accent,
         );
+        // The bar says what to do, so its sentence is not cut where the
+        // Viewport is narrow (an Inspector beside it): it wraps to the
+        // two lines the bar is tall enough for, and only a third is cut.
         let text = strings.fmt(StrKey::EditorTargetsEditing, &[("name", &name)]);
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(text)
-                    .text_style(TextStyle::Body)
-                    .color(palette.text_primary),
-            )
-            .truncate()
-            .selectable(false),
+        let mut job = egui::text::LayoutJob::simple(
+            text.clone(),
+            TextStyle::Body.resolve(ui.style()),
+            palette.text_primary,
+            ui.available_width(),
         );
+        job.wrap.max_rows = 2;
+        let galley = ui.painter().layout_job(job);
+        let (rect, response) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &text));
+        ui.painter().galley(rect.min, galley, palette.text_primary);
     });
 }
 

@@ -258,9 +258,8 @@ fn open_group(h: &mut H, title: &str) {
 /// window leaves it as the user left it, and closed it says how many
 /// programs there are.
 fn open_program_details(h: &mut H) {
-    let closed = h.query_by_label("1 program").is_some()
-        || h.query_by_label_contains("programs, run in this order")
-            .is_some();
+    // Closed, its header's value is its summary; open, it has none.
+    let closed = h.get_by_label("Program Details").value().is_some();
     if closed {
         click(h, "Program Details");
     }

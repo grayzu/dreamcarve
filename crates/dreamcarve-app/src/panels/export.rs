@@ -50,7 +50,7 @@ use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
 use crate::widgets::checkbox::checkbox;
 use crate::widgets::row::{self, GAP_PX};
-use crate::widgets::section::section;
+use crate::widgets::section::{Header, section_with};
 use crate::widgets::spinner::spinner;
 use crate::widgets::unit_field::{UnitField, field as unit_field};
 
@@ -534,18 +534,29 @@ pub(crate) fn plan(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 }
 
 /// *Program Details*: the disclosure and, while it is closed, how many
-/// programs it holds.
+/// programs it holds, after its title as every closed section of the
+/// step says what it holds.
 fn details(ui: &mut Ui, state: &FrameState<'_>, ready: &Ready, out: &mut Vec<Action>) {
     let app = state.app;
     let strings = app.strings();
     let open = state.prefs.sections.get(DETAILS).copied().unwrap_or(false);
     let stem = state.export.stem.trim();
-    let toggled = section(
+    let summary = counted(
+        strings,
+        ready.programs.len(),
+        StrKey::ExportDetailsOne,
+        StrKey::ExportDetailsMany,
+    );
+    let toggled = section_with(
         ui,
         Id::unique(DETAILS),
         strings.get(StrKey::ExportDetails),
-        open,
-        None,
+        Header {
+            open,
+            located: None,
+            summary: &summary,
+            collapses: true,
+        },
         |ui| programs(ui, app, ready, stem),
     );
     if toggled {
@@ -555,22 +566,6 @@ fn details(ui: &mut Ui, state: &FrameState<'_>, ready: &Ready, out: &mut Vec<Act
         });
     }
     if !open {
-        let summary = counted(
-            strings,
-            ready.programs.len(),
-            StrKey::ExportDetailsOne,
-            StrKey::ExportDetailsMany,
-        );
-        ui.horizontal(|ui| {
-            // Under the header's title, past its chevron.
-            ui.add_space(theme::ICON_SMALL_PX + 8.0 - GAP_PX);
-            wrapped(
-                ui,
-                &summary,
-                TextStyle::Small,
-                Palette::current(ui).text_secondary,
-            );
-        });
         ui.add_space(theme::SECTION_GAP_PX - 8.0);
     }
 }

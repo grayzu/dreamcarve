@@ -236,8 +236,22 @@ fn generation(app: &App) -> Option<GenerationCell> {
 /// project's unset thickness is not counted ([`crate::steps::counts`]),
 /// so the cell, the rail's badge and the rail's marks agree.
 fn counts(app: &App) -> CountsCell {
-    let strings = app.strings();
-    let counts = crate::steps::counts(app);
+    counts_cell(app.strings(), crate::steps::counts(app))
+}
+
+/// The counts the Export step's readiness card shows: everything `check`
+/// counts ([`crate::warnings::counts`]), a blank project's unset
+/// thickness among it. The step is where export is refused, and the card
+/// under this one lists what refuses it ([`crate::warnings::blocking`]),
+/// so the two must agree: *No problems* over "1 error blocks export"
+/// would be a card contradicting its neighbour.
+#[must_use]
+pub fn export_counts(app: &App) -> CountsCell {
+    counts_cell(app.strings(), crate::warnings::counts(app))
+}
+
+/// `counts` as a cell: each tier with problems, or *No problems*.
+fn counts_cell(strings: &Strings, counts: Counts) -> CountsCell {
     let tiers: Vec<(Level, String)> = [
         (
             Level::Error,

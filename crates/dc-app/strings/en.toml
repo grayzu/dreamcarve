@@ -708,7 +708,7 @@ reset = "Use the tool's value"
 # Slice 27 (#619; capability 67): Setup's Targets row is one line, its
 # pencil enters target editing and its menu takes the selection; the
 # target-editing bar across the Viewport.
-targets_one = "1 shape · {names}"
+targets_one = "{names}"
 targets_many = "{count} {count|shape|shapes} · {names}"
 targets_none = "No shapes"
 targets_edit = "Edit targets"

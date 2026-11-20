@@ -97,7 +97,8 @@ fn readiness(ui: &mut Ui, state: &FrameState<'_>) {
     let palette = Palette::current(ui);
     let app = state.app;
     let strings = app.strings();
-    let counts = &state.cells.counts;
+    // What refuses export, which a blank project's status bar leaves out.
+    let counts = &dc_app::status::export_counts(app);
     let said = counts.none.clone().unwrap_or_else(|| {
         counts
             .tiers

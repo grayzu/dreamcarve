@@ -93,7 +93,14 @@ pub(crate) fn section_with(
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER_PX), sense);
     if collapses {
-        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, open, title));
+        response.widget_info(|| {
+            let mut info = egui::WidgetInfo::selected(egui::Role::Button, true, open, title);
+            // A closed header's summary is its value: heard, as it is seen.
+            if !open && !summary.is_empty() {
+                info.current_text_value = Some(summary.to_owned());
+            }
+            info
+        });
     } else {
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, title));
     }

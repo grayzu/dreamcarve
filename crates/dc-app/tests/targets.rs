@@ -291,7 +291,7 @@ fn row_summary() {
     assert!(!row.warning, "the plaque's Panel is clean");
 
     let recess = targets::row_summary(&harness.app, &operation(&harness, "op2"));
-    assert_eq!(recess.text, "1 shape · square");
+    assert_eq!(recess.text, "square", "one target reads as its name");
 
     // The draft, live.
     assert!(harness.app.edit_targets(&panel()));
@@ -319,7 +319,7 @@ fn row_summary() {
         harness.run(used).expect("replaces"),
         "Set targets of “Panel”"
     );
-    assert_eq!(summary(&harness).text, "1 shape · square");
+    assert_eq!(summary(&harness).text, "square");
     let added = targets::add(&operation(&harness, "op1"), &[id("i2"), id("i4")])
         .expect("the file takes it")
         .expect("a change");

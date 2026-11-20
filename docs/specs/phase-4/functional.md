@@ -691,7 +691,9 @@ folder are app preferences, kept outside the project.
       operation's colour on its left edge. Hovering an operation's row in
       the list shows the same marks as a preview.
     - **Setup's Targets row** is one line: a target glyph, the count and
-      the first names (`2 shapes · pocket, island`, truncated, all names
+      the first names (`2 shapes · pocket, island`, truncated, all names;
+      one shape reads as its name alone, `outline`, which the row has
+      room for whole,
       in its tooltip), a warning glyph when a target carries one, and an
       **Edit** button.
     - **Editing targets.** *Edit* (or double-click on the Targets row)

@@ -2936,11 +2936,13 @@ fn program_details_start_closed() {
             "{name} is hidden while the disclosure is closed"
         );
     }
+    // After its title, as every closed section of the step says what it
+    // holds: the summary is the header's value.
     let summary = format!("{} programs, run in this order", names.len());
     assert_eq!(
-        in_export_step(&h, &summary),
-        1,
-        "the closed disclosure says how many: {summary}"
+        h.get_by_label("Program Details").value().as_deref(),
+        Some(summary.as_str()),
+        "the closed disclosure says how many"
     );
 
     open_program_details(&mut h);

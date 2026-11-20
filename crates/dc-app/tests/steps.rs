@@ -118,6 +118,19 @@ fn a_new_project_counts_no_problem() {
     assert!(bar.counts.tiers.is_empty(), "{:?}", bar.counts.tiers);
     assert_eq!(bar.counts.none.as_deref(), Some("No problems"));
     assert_eq!(bar.counts.counts, steps::counts(&harness.app));
+
+    // The Export step is where export is refused, so its readiness card
+    // counts what refuses it: it said *No problems* over a card reading
+    // "1 error blocks export".
+    let export = dc_app::status::export_counts(&harness.app);
+    let blocking = dc_app::warnings::blocking(&harness.app);
+    assert_eq!(blocking.len(), 1, "the unset thickness blocks export");
+    assert_eq!(export.counts.errors, blocking.len());
+    assert_eq!(export.none, None);
+    assert_eq!(
+        export.tiers,
+        [(dc_app::warnings::Level::Error, "1 error".to_owned())]
+    );
 }
 
 /// Once there is something to cut, the unset thickness is counted: the

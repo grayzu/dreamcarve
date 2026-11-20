@@ -652,7 +652,8 @@ Controls:
   32-px header. Its rows are ordinary rows; the label column is the same
   112 px. Below it the other sections start closed.
 - **Targets row.** A 32-px row in Setup: label *Targets*, then, in the
-  field column, `target` + `2 shapes · pocket, island` (truncated; the
+  field column, `target` + `2 shapes · pocket, island` (one shape is its
+  name alone, `outline`; truncated; the
   full list in the tooltip), a `triangle-alert` when a target carries a
   warning, and two 32 × 32 quiet icon buttons at the right end: `pencil`
   (Edit targets) and `ellipsis` (Use selection, Add selection). No list
