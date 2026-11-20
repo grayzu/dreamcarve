@@ -19,6 +19,7 @@
 # User guide
 
 - [Overview](user-guide/overview.md)
+- [The app](user-guide/the-app.md)
 - [The project file](user-guide/project-file.md)
 - [Importing DXF](user-guide/importing-dxf.md)
 - [Preparing artwork](user-guide/preparing-artwork.md)

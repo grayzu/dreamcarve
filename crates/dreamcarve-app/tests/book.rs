@@ -609,3 +609,136 @@ fn quick_start_screenshots() {
         std::fs::remove_dir_all(dir.with_file_name(folder)).ok();
     }
 }
+
+/// The plaque as the quick start's tables build it, in a folder named
+/// `plaque` under a fresh scratch directory `name`, and a window on it;
+/// `None` with no wgpu adapter.
+fn plaque_window(name: &str, dialogs: &QueuedDialogs) -> Option<(H, PathBuf)> {
+    let dir = std::env::temp_dir().join(name).join("scratch");
+    let _ = std::fs::remove_dir_all(dir.parent().expect("a parent"));
+    std::fs::create_dir_all(&dir).expect("the scratch directory");
+    let plaque = built(&app_steps::chapter(), "plaque", "plaque", &dir);
+    let h = window(&dir, Some(plaque), dialogs)?;
+    Some((h, dir))
+}
+
+/// The plaque's first tool that an operation cuts with, without its feed:
+/// an error that blocks export.
+fn delete_a_feed(h: &mut H) {
+    let project = h.state().app().project();
+    let used = project.operations[0].tool().clone();
+    let mut tool = project.tools.iter().find(|t| t.id == used).unwrap().clone();
+    tool.feed_mm_min = None;
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateTool(tool))
+        .unwrap();
+    settle(h);
+}
+
+/// The chapter "The app" (`docs/book/src/user-guide/the-app.md`): the
+/// window with a shape selected, the rail's marks and the Warnings drawer
+/// with an error in the project, and the light appearance.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn the_app_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-app", &dialogs) else {
+        return;
+    };
+
+    // The six regions: a shape selected on the Design step.
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "square").click();
+    h.run();
+    shoot(&mut h, &out, "app-window", Crop::Window);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // The same window in the light appearance, an operation selected.
+    open_operation(&mut h, "Panel");
+    settle(&mut h);
+    h.state_mut().app_mut().prefs_mut().theme = dc_app::Theme::Light;
+    h.run();
+    shoot(&mut h, &out, "app-light", Crop::Window);
+    h.state_mut().app_mut().prefs_mut().theme = dc_app::Theme::Dark;
+    h.run();
+
+    // A tool without its feed: Tools and Export need attention, and the
+    // Warnings drawer says why.
+    delete_a_feed(&mut h);
+    go_to(&mut h, "Tools");
+    shoot(&mut h, &out, "app-rail-marks", Crop::StepPanel);
+    h.get_by_label_contains("Warnings:").click();
+    h.run();
+    shoot(&mut h, &out, "app-warnings-drawer", Crop::Window);
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
+
+/// The chapter "Importing drawings and pictures"
+/// (`docs/book/src/user-guide/importing.md`): a project made round a
+/// picture (a landscape drawn here, so no photograph needs committing),
+/// the picture selected on the Design step, and a DXF drawing added to
+/// it.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn importing_screenshots() {
+    let out = out_dir("user-guide");
+    let dir = std::env::temp_dir().join("dreamcarve-book-import");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let picture = common::write_colour_png(&dir, "landscape.png", &common::landscape(480, 320));
+    let drawing = dir.join("plaque.dxf");
+    std::fs::copy(app_steps::drawing_path("plaque.dxf"), &drawing).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = window(&dir, None, &dialogs) else {
+        return;
+    };
+
+    // New from picture…: the sheet asks for one side of the picture.
+    dialogs.answer(&picture);
+    click_button(&mut h, "New from picture…");
+    common::settle_picture(&mut h);
+    type_in_sheet(&mut h, "Width", "120");
+    shoot(&mut h, &out, "import-picture-sheet", Crop::Sheet);
+    click_in_sheet(&mut h, "Create project");
+    settle(&mut h);
+
+    // The picture on the Design step, selected: its row, its handles on
+    // the Viewport, its Properties in the Inspector.
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "landscape").click();
+    h.run();
+    settle(&mut h);
+    shoot(&mut h, &out, "import-picture-selected", Crop::Window);
+
+    // Add drawing: a DXF's sheet has the importer's options.
+    dialogs.answer(&drawing);
+    click_button(&mut h, "Add drawing");
+    shoot(&mut h, &out, "import-dxf-sheet", Crop::Sheet);
+    drop(h);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The chapter "Stock, origin and heights"
+/// (`docs/book/src/user-guide/stock-and-origin.md`): the plaque's Stock
+/// step, and the Heights group of its Export step.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn stock_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-stock", &dialogs) else {
+        return;
+    };
+    go_to(&mut h, "Stock");
+    shoot(&mut h, &out, "stock-step", Crop::Window);
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    click_button(&mut h, "Heights");
+    shoot(&mut h, &out, "stock-heights", Crop::StepPanel);
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
