@@ -69,9 +69,9 @@ commands.
 - **Drag** the shape on the Viewport. The status bar shows how far it has
   travelled, and the shape moves when you let go.
 - Press an **arrow key** to nudge it 1 mm. With Shift held a nudge is
-  10 mm; with Alt (⌥ on macOS), 0.1 mm. The arrows nudge only while
-  no other control has the keyboard: click the shape on the Viewport
-  first.
+  10 mm; with Alt (⌥ on macOS), 0.1 mm. The arrows nudge while nothing
+  else has the keyboard: not while you are typing in a field, and not
+  after Tab has taken the focus to a list, where they move between rows.
 - Type **X** or **Y**. Typing 80 into X moves the square 10 mm to the
   right.
 - **Arrange ▸ Centre on Stock** puts the middle of the selection's box
@@ -110,7 +110,7 @@ Drill or a Bore skips it, with a warning.
 
 The selection turns about the centre of its box. After a turn that is
 not a multiple of 90°, W and H are the size of the box round the turned
-shape: the square turned by 30° reads 40.98 × 40.98 mm.
+shape: the square turned by 30° reads 40.9808 × 40.9808 mm.
 
 ## Flipping
 

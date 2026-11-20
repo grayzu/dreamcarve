@@ -114,8 +114,8 @@ Pictures are selected on their own, never together with shapes.
   keys: 1 mm, 10 mm with Shift, 0.1 mm with Alt (⌥ on macOS).
 - **Resize** it by typing **W** or **H**, or by dragging a corner handle.
   It keeps its proportions and its centre stays where it is: typing 90
-  into W makes the 60 × 40 mm picture 90 × 60 mm, 15 mm bigger on each
-  side.
+  into W makes the 60 × 40 mm picture 90 × 60 mm, 15 mm wider to the
+  left and to the right and 10 mm taller at the top and at the bottom.
 
 A picture has no rotate handle and no Arrange buttons: it cannot be
 turned or flipped. Turn it in an image editor before you add it.
