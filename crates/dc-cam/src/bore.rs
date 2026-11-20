@@ -16,7 +16,7 @@
 //! cycle. The helix falls a pitch per turn (Fusion's "Pitch", the tool's
 //! step-down by default), not at a ramp angle. It starts
 //! [`crate::entry::ENTRY_CLEARANCE_MM`] above the stock top over its own
-//! start (#214), not at a retract height reached over the hole's centre.
+//! start, not at a retract height reached over the hole's centre.
 //! It has at least [`HELIX_SEGMENTS_PER_REV`] chords a turn, more when a
 //! chord would bow in by more than the flatten tolerance. The bottom
 //! revolution is four exact arcs, not 48 chords, and the tool then moves to
@@ -28,6 +28,7 @@
 //! twice the tool's diameter, is kept: past it the helix leaves a core.
 
 use crate::block::CutBlock;
+use crate::context::{self, OpContext, check_diameter, check_safe_z, rates_of, tool_of};
 use crate::drill::circles_of;
 use crate::entry::{
     CutSide, HELIX_SEGMENTS_PER_REV, MAX_DESCENT_MOVES, descent_start_z_mm, helix_is_ccw,
@@ -35,20 +36,18 @@ use crate::entry::{
 };
 use crate::error::{CamError, ShapeRef};
 use crate::passes::pass_z_mm;
-use crate::profile::rates_of;
-use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
-use crate::stock::{stock_overhang, swept_bounds};
+use crate::sequence::{SequenceInput, sequence};
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::Warning;
 use dc_geometry::{EPS_MM, Point, Point3, Vec2};
-use dc_project::{BoreOp, MachiningOrder, Project};
+use dc_project::{BoreOp, Project};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 /// The least helix radius a Bore cuts, mm. At [`HELIX_SEGMENTS_PER_REV`]
 /// chords a turn a helix this small has chords `2 · 0.05 · sin(3.75°)` =
 /// 0.0065 mm long, more than √2 units of the coarsest place a
 /// post-processor writes in inches (0.0001 in), so every chord's ends
-/// round apart, as `entry` keeps its helix (#265). A hole that leaves less
+/// round apart, as `entry` keeps its helix. A hole that leaves less
 /// is within 0.1 mm of the bit, which is a Drill's job.
 pub const BORE_MIN_HELIX_RADIUS_MM: f64 = 0.05;
 
@@ -105,16 +104,9 @@ pub fn generate_bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Wa
 /// [`generate_bore`], before a defect it finds ([`CamError::Internal`])
 /// names `op`.
 fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: op.tool.clone(),
-        })?;
+    let tool = tool_of(project, &op.id, &op.tool)?;
     // The helix radius is the hole less half the diameter, right only for
-    // a flat end mill, as a Pocket's offset (#67).
+    // a flat end mill, as a Pocket's offset.
     if !tool.cutter.is_flat() {
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
@@ -124,19 +116,8 @@ fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamE
         });
     }
     let rates = rates_of(tool)?;
-    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
-        return Err(CamError::InvalidToolDiameter {
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            diameter_mm: tool.diameter_mm,
-        });
-    }
-    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
-        return Err(CamError::InvalidSafeZ {
-            op: op.id.clone(),
-            safe_z_mm: op.safe_z_mm,
-        });
-    }
+    check_diameter(tool)?;
+    check_safe_z(&op.id, op.safe_z_mm)?;
     if !(op.stock_to_leave_mm.is_finite() && op.stock_to_leave_mm >= 0.0) {
         return Err(CamError::InvalidBoreSetting {
             op: op.id.clone(),
@@ -145,14 +126,7 @@ fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamE
             expected: "it must be 0 or more",
         });
     }
-    let pitch_mm = op
-        .pitch_mm
-        .or(tool.step_down_mm)
-        .ok_or_else(|| CamError::MissingStepDown {
-            op: op.id.clone(),
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-        })?;
+    let pitch_mm = context::step_down_mm(&op.id, op.pitch_mm, tool)?;
     let bad_pitch = |expected| CamError::InvalidBoreSetting {
         op: op.id.clone(),
         field: "pitch_mm",
@@ -167,13 +141,8 @@ fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamE
     {
         return Err(bad_pitch("it must be at most the tool's step-down"));
     }
-    let thickness_mm = project
-        .stock
-        .thickness_mm
-        .ok_or(CamError::MissingThickness)?;
-    let depth_mm = op
-        .depth_mm
-        .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
+    let thickness_mm = context::thickness_mm(project)?;
+    let depth_mm = context::depth_mm(&op.id, op.depth_mm)?;
     // The hole bottom, with the depth checked against the stock bottom
     // plus the allowance (S1) as for every generator.
     let bottom_z_mm = pass_z_mm(
@@ -186,8 +155,8 @@ fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamE
     .last()
     .copied()
     .ok_or_else(|| CamError::internal("a hole's checked depth has no pass"))?;
-    let safe_z_mm = thickness_mm + op.safe_z_mm;
-    let start_z_mm = descent_start_z_mm(thickness_mm, safe_z_mm);
+    let ctx = OpContext::new(project, &op.id, tool, rates, thickness_mm, op.safe_z_mm);
+    let start_z_mm = descent_start_z_mm(thickness_mm, ctx.safe_z_mm);
     let tolerance_mm = project.flatten_tolerance_mm;
     let quantum_mm = project
         .post_processor
@@ -218,30 +187,9 @@ fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamE
         }
         blocks.push(helix.block(hole.shape, chords, rates.feed_mm_min, rates.plunge_mm_min));
     }
-    let input = SequenceInput {
-        blocks,
-        order: MachiningOrder::FullDepthFirst,
-        containment: &[],
-        safe_z_mm,
-        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
-        stock_top_mm: thickness_mm,
-        tool_diameter_mm: tool.diameter_mm,
-        stepover_mm: 0.0,
-        feed_mm_min: rates.feed_mm_min,
-        plunge_mm_min: rates.plunge_mm_min,
-        cut_before: &[],
-        groove_link_z_mm: None,
-    };
-    let toolpath = sequence(&input)?;
-    // #62: the cutter must stay on the stock.
-    if let Some(overhang) = swept_bounds(&toolpath, tool.cut_radius_mm())
-        .and_then(|swept| stock_overhang(&project.stock, swept))
-    {
-        return Err(CamError::OffStock {
-            op: op.id.clone(),
-            overhang,
-        });
-    }
+    let toolpath = sequence(&SequenceInput::new(&ctx, blocks))?;
+    // The cutter must stay on the stock.
+    ctx.check_on_stock(&toolpath, tool.cut_radius_mm())?;
     Ok((toolpath, warnings))
 }
 

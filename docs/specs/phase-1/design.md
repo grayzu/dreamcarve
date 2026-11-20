@@ -459,7 +459,10 @@ Inputs: project, op. Output: toolpath in project space.
    an arc is split into chords within `flatten_tolerance_mm` in XY. Tab
    spans that overlap merge; a merged smooth span ramps over `width / 2`
    at each end and holds the top between. Warnings: `TabsOverlap`, `TabsOutsideCutRange`
-   (ported from `applyTabWarnings`), and `TabsCoverMostOfContour` when the
+   (ported from `applyTabWarnings`; the tab top is outside the range the
+   cut passes through: no pass goes below it, so the tabs change nothing,
+   or it is above the stock top, where the tabs still apply), and
+   `TabsCoverMostOfContour` when the
    merged spans cover more than half of a contour's length, so the part or
    hole may not cut free. That warning names the shape, path length, tab
    width, tool diameter, path each tab raises, tab total and share, and suggests a count or width that fits; the tabs are

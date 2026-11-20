@@ -39,7 +39,7 @@
 //! left of travel is counter-clockwise about its centre, on the right
 //! clockwise; nothing is copied from upstream's Y-down signs.
 
-use crate::entry::{EntryDomain, boundary_safety_mm};
+use crate::entry::{EntryDomain, ON_BOUNDARY_MM, boundary_safety_mm};
 use crate::error::{CamError, ShapeRef};
 use crate::toolpath::MoveKind;
 use crate::warning::{LeadDroppedReason, Warning};
@@ -104,8 +104,6 @@ impl<'a> DomainSpace<'a> {
     }
 }
 
-/// How far outside the domain a point still counts as on its edge, mm.
-const ON_BOUNDARY_MM: f64 = 1e-7;
 /// Lengths and angles below this are zero.
 const LEAD_EPS: f64 = 1e-9;
 
@@ -497,8 +495,8 @@ pub(crate) fn plan_lead_in(
     None
 }
 
-/// [`plan_lead_in`] at one arrival, the start of the closed `path` (#285:
-/// the Profile's start is set, so the lead arrives there or not at all).
+/// [`plan_lead_in`] at one arrival, the start of the closed `path`
+/// (the Profile's start is set, so the lead arrives there or not at all).
 /// The radius and sweep ladders and the free sides are tried as there; the
 /// seam is the path itself. `None` when nothing fits there.
 pub(crate) fn plan_lead_in_at_start(
@@ -578,8 +576,7 @@ fn part_bulge(bulge: f64, fraction: f64) -> f64 {
 /// `path`, closed, re-seamed to start `distance_mm` along it (modulo its
 /// length): the same segments from a different start, the segment holding
 /// the new start split in two there (arcs as two arcs). At a vertex,
-/// nothing is split. Profile also re-seams a path off its tabs with it
-/// (#176).
+/// nothing is split. Profile also re-seams a path off its tabs with it.
 pub(crate) fn reseam(path: &Polyline, distance_mm: f64) -> Polyline {
     let (edges, perimeter_mm) = edges_of(path);
     if perimeter_mm.is_nan() || perimeter_mm <= EPS_MM {
@@ -840,7 +837,7 @@ pub(crate) fn on_line_warning(op: &OperationId) -> Warning {
 }
 
 /// `lead_dropped` for a Left or Right operation `op`, which cuts open
-/// paths: VCarve gives an open profile no lead (#207).
+/// paths: VCarve gives an open profile no lead.
 pub(crate) fn open_path_warning(op: &OperationId) -> Warning {
     Warning::LeadDropped {
         op: op.clone(),

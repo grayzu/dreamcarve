@@ -3,7 +3,7 @@
 
 //! The walls of a carve and the exact cone test on them
 //! (`docs/specs/phase-3/design.md`, "Safety pass", the S17 bullet, and
-//! "V-Carve generator", steps 5 and 10; security review H2 and M1).
+//! "V-Carve generator", steps 5 and 10).
 //!
 //! A V-bit whose tip is at depth `d` below the start plane cuts a disc of
 //! radius `d · slope` there, and it cuts nothing below the carve's final V
@@ -12,13 +12,13 @@
 //! cone at `p` reaches `q` at `d − |q − p| / slope`, which the triangle
 //! inequality keeps above it everywhere when `d · slope ≤ dist(p, wall)`.
 //!
-//! A tapered ball nose (slice 27c, #679) cuts nested discs too, `w(d)`
+//! A tapered ball nose cuts nested discs too, `w(d)`
 //! across at depth `d` ([`BitProfile`]), so the same holds with `w(d)` in
 //! place of `d · slope`.
 //!
 //! Along a straight move the least room to each straight wall segment is
 //! found exactly, with no sampling step, by the shared
-//! [`dc_geometry::profile::least_room`] (#678): the V-bit's closed forms,
+//! [`dc_geometry::profile::least_room`]: the V-bit's closed forms,
 //! the virtual apex on a TBN's cone, the ball's polynomial stationary
 //! points. Arcs are flattened to chords within the caller's tolerance
 //! first, as `dc_geometry::medial` flattens them, so the walls here are
@@ -37,6 +37,46 @@ const MAX_CELLS: f64 = 128.0;
 /// in.
 const WIDENING_PIECES: u32 = 16;
 
+/// The least side of a wall grid cell, mm: walls that span nothing, or
+/// none at all, still get a grid of cells with a size.
+const MIN_CELL_MM: f64 = 1e-3;
+
+/// A segment whose squared length, mm², is no more than this is a point:
+/// the nearest point on it is its start.
+const POINT_LENGTH_SQ_MM2: f64 = 1e-18;
+
+/// Two segments whose directions' cross product, mm², is no more than
+/// this are parallel for [`segment_distance`]: they cross nowhere, and
+/// the distance is between their ends.
+const PARALLEL_CROSS_MM2: f64 = 1e-18;
+
+/// A path and a wall whose directions' cross product, mm², is no more
+/// than this are parallel for [`Walls::excursion`]: the wall is not a
+/// crossing of the path, only its ends within the slack are.
+const EXCURSION_PARALLEL_CROSS_MM2: f64 = 1e-12;
+
+/// How far past a wall's ends, as a fraction of its length, a path's
+/// crossing still counts as on it: a path through a vertex crosses both
+/// walls that meet there.
+const WALL_END_SLACK: f64 = 1e-9;
+
+/// Two cuts of a path closer than this fraction of its length have no
+/// stretch between them for [`Walls::excursion`] to test.
+const MIN_STRETCH: f64 = 1e-12;
+
+/// A wall point bounds a disc tangent at `w` only when it is ahead of the
+/// tangent by more than this, relative to its distance from `w` plus
+/// 1 mm ([`Walls::ball_radius_mm`]).
+const AHEAD_OF_TANGENT: f64 = 1e-9;
+
+/// A divisor no larger than this is zero: the root it would give is left
+/// out ([`Walls::ball_radius_mm`]).
+const MIN_DIVISOR: f64 = 1e-300;
+
+/// Points of a loop closer than this, mm, are one, as the medial axis
+/// cleans its loops ([`clean_loop`]).
+const SAME_POINT_MM: f64 = 1e-9;
+
 /// The straight wall segments of a set of regions, bucketed in a uniform
 /// grid, with the flattened loops for the even-odd inside test.
 #[derive(Debug, Clone)]
@@ -53,7 +93,7 @@ pub(crate) struct Walls {
     /// The grid's cells, row after row, `columns` to a row: each holds the
     /// walls whose box crosses it, themselves and not their places among
     /// `walls`, so a search of the grid looks nothing up and can miss
-    /// nothing (code review finding 1.2).
+    /// nothing.
     buckets: Vec<Vec<Wall>>,
 }
 
@@ -74,7 +114,7 @@ struct Wall {
     /// The place of the wall as drawn that it is a chord of, among the
     /// regions' drawn walls.
     source: usize,
-    /// That wall as drawn, an arc as an arc (#481).
+    /// That wall as drawn, an arc as an arc.
     drawn: Segment,
 }
 
@@ -182,7 +222,7 @@ impl Walls {
             max = min;
         }
         let extent_mm = (max.x - min.x).max(max.y - min.y);
-        let cell_mm = (extent_mm / MAX_CELLS).max(1e-3);
+        let cell_mm = (extent_mm / MAX_CELLS).max(MIN_CELL_MM);
         let columns = count_of(((max.x - min.x) / cell_mm).floor()) + 1;
         let rows = count_of(((max.y - min.y) / cell_mm).floor()) + 1;
         let mut grid = Self {
@@ -222,7 +262,7 @@ impl Walls {
     /// tolerance they were built at (a chord near a concave arc lies up
     /// to that far beyond the true wall) plus [`EPS_MM`]. The generator's
     /// own cone test ([`crate::vcarve::cone_in_material`]) allows this
-    /// much, so fitting holds a chain's stretches to it too (#463).
+    /// much, so fitting holds a chain's stretches to it too.
     pub(crate) fn slack_mm(&self) -> f64 {
         self.tolerance_mm.max(0.0) + EPS_MM
     }
@@ -281,7 +321,7 @@ impl Walls {
         self.nearest_segment(p).map(|(d, q, _)| (d, q))
     }
 
-    /// The unit normal, into the regions, of the wall nearest `p` (#554):
+    /// The unit normal, into the regions, of the wall nearest `p`:
     /// the regions lie left of every wall, outers counter-clockwise and
     /// holes clockwise (ADR-0001). Where `p` is on a wall, its nearest
     /// point is `p` itself, which gives no direction. At a vertex either
@@ -293,8 +333,8 @@ impl Walls {
     }
 
     /// The middle of every wall segment that may come within `margin_mm`
-    /// of the box of `a` and `b`, with its unit normal into the regions
-    /// (#705), as [`Walls::inward_normal`] reads it; a segment with no
+    /// of the box of `a` and `b`, with its unit normal into the regions,
+    /// as [`Walls::inward_normal`] reads it; a segment with no
     /// length has no normal and is left out.
     pub(crate) fn middles_near(&self, a: Point, b: Point, margin_mm: f64) -> Vec<(Point, Vec2)> {
         let lo = Point::new(a.x.min(b.x), a.y.min(b.y));
@@ -314,7 +354,7 @@ impl Walls {
         let foot = |a: Point, b: Point| {
             let ab: Vec2 = b - a;
             let length_sq = ab.dot(ab);
-            let t = if length_sq > 1e-18 {
+            let t = if length_sq > POINT_LENGTH_SQ_MM2 {
                 ((p - a).dot(ab) / length_sq).clamp(0.0, 1.0)
             } else {
                 0.0
@@ -361,7 +401,7 @@ impl Walls {
                 let d = Vec2::new(d0.x + e.x * t, d0.y + e.y * t);
                 let ahead = 2.0 * d.dot(u);
                 // A point at or behind `w`'s tangent bounds no disc.
-                (ahead > 1e-9 * (1.0 + d.length())).then(|| d.dot(d) / ahead)
+                (ahead > AHEAD_OF_TANGENT * (1.0 + d.length())).then(|| d.dot(d) / ahead)
             };
             // The stationary points of the ratio along the segment.
             let (eu, du) = (e.dot(u), d0.dot(u));
@@ -375,10 +415,10 @@ impl Walls {
             let disc = qb * qb - 4.0 * qa * qc;
             if disc >= 0.0 {
                 let q = -0.5 * (qb + qb.signum() * disc.sqrt());
-                if q.abs() > 1e-300 {
+                if q.abs() > MIN_DIVISOR {
                     ts.push(qc / q);
                 }
-                if qa.abs() > 1e-300 {
+                if qa.abs() > MIN_DIVISOR {
                     ts.push(q / qa);
                 }
             }
@@ -394,9 +434,9 @@ impl Walls {
     }
 
     /// How near the straight tip path `a`–`b` comes to a wall, mm, among
-    /// the walls within `reach_mm` of it (#469): 0 where it meets one;
+    /// the walls within `reach_mm` of it: 0 where it meets one;
     /// `reach_mm` or more when none is nearer. The walls are the chords
-    /// and also the arcs as drawn (#481): S17 holds the written path to
+    /// and also the arcs as drawn: S17 holds the written path to
     /// the drawn outline, and beside an arc that bows into the region its
     /// chords lie up to the flatten tolerance beyond it, so a path clear of
     /// them can come within a hair of the arc and, once written, cross it.
@@ -423,7 +463,7 @@ impl Walls {
 
     /// Whether the straight tip path from `g` to `q` keeps, a fraction `t`
     /// of the way along, at least `t · margin_mm` from every wall, chords
-    /// and arcs as drawn (#499). With `q` inside the regions, that holds
+    /// and arcs as drawn. With `q` inside the regions, that holds
     /// exactly when the path from `g` as written to anywhere within
     /// `margin_mm` of `q` stays inside: `g` written exactly (a point of
     /// the program's grid), `q` moved by rounding. A `g` outside fails,
@@ -467,7 +507,7 @@ impl Walls {
         })
     }
 
-    /// Whether a chord of a drawn arc lies within `reach_mm` of `p` (#506):
+    /// Whether a chord of a drawn arc lies within `reach_mm` of `p`:
     /// only there do chords drawn at another tolerance put the walls
     /// elsewhere.
     pub(crate) fn arc_within(&self, p: Point, reach_mm: f64) -> bool {
@@ -498,7 +538,7 @@ impl Walls {
 
     /// Where the straight tip path `a`–`b` first leaves the regions by
     /// more than `slack_mm` ([`Walls::holds_path`]'s test), or `None` when
-    /// it stays in (#463). An end outside is the excursion itself. A
+    /// it stays in. An end outside is the excursion itself. A
     /// stretch outside between two crossings is read every 1/32 of its
     /// length for the point farthest from the walls, so the distance is
     /// what the path leaves by, not the 0 of the walls it crosses; and
@@ -529,10 +569,11 @@ impl Walls {
             let (c, d) = (wall.a, wall.b);
             let cd = d - c;
             let denom = ab.cross(cd);
-            if denom.abs() > 1e-12 {
+            if denom.abs() > EXCURSION_PARALLEL_CROSS_MM2 {
                 let t = (c - a).cross(cd) / denom;
                 let u = (c - a).cross(ab) / denom;
-                if (-1e-9..=1.0 + 1e-9).contains(&u) && (0.0..=1.0).contains(&t) {
+                if (-WALL_END_SLACK..=1.0 + WALL_END_SLACK).contains(&u) && (0.0..=1.0).contains(&t)
+                {
                     cuts.push((t, Some(wall)));
                 }
             }
@@ -545,7 +586,7 @@ impl Walls {
         cuts.sort_by(|x, y| x.0.total_cmp(&y.0));
         let at = |t: f64| a + ab * t;
         let mid = cuts.windows(2).find_map(|w| match w {
-            [(s, _), (t, _)] if t - s > 1e-12 && !self.holds(at((s + t) / 2.0), slack_mm) => {
+            [(s, _), (t, _)] if t - s > MIN_STRETCH && !self.holds(at((s + t) / 2.0), slack_mm) => {
                 Some((s + t) / 2.0)
             }
             _ => None,
@@ -578,8 +619,8 @@ impl Walls {
 
     /// The wall vertex the path from `a` to `b` cuts across where it
     /// leaves the regions at `exit` (the point and the segment crossed)
-    /// and comes back at `entry` through another segment of the same loop
-    /// (#463): of the loop's two ways between them, the one that closes
+    /// and comes back at `entry` through another segment of the same loop:
+    /// of the loop's two ways between them, the one that closes
     /// the smaller polygon with the path (outside an outer, the bay the
     /// path crosses, not the region round it; in a hole, either side), and
     /// on it the vertex farthest from the path's line, with the unit
@@ -714,7 +755,7 @@ impl Walls {
     }
 }
 
-/// A male Inlay's open band edge (#448; `docs/specs/phase-3/design.md`,
+/// A male Inlay's open band edge (`docs/specs/phase-3/design.md`,
 /// "Algorithms → Inlay", step 4): beyond these walls the board stands to
 /// the stock top, so the bit may not cross them below it. The widest disc
 /// a bit cuts below the stock top is the one at the stock top, `w(top −
@@ -738,13 +779,12 @@ impl OpenEdgeWalls {
     }
 }
 
-/// Distance, mm, from `p` to the segment `a`–`b`.
 /// The distance between segments `a`–`b` and `c`–`d`, mm: 0 where they
 /// cross or touch.
 fn segment_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
     let (ab, cd) = (b - a, d - c);
     let denom = ab.cross(cd);
-    if denom.abs() > 1e-18 {
+    if denom.abs() > PARALLEL_CROSS_MM2 {
         let t = (c - a).cross(cd) / denom;
         let u = (c - a).cross(ab) / denom;
         if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
@@ -757,10 +797,11 @@ fn segment_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
         .min(point_segment(d, a, b))
 }
 
+/// Distance, mm, from `p` to the segment `a`–`b`.
 pub(crate) fn point_segment(p: Point, a: Point, b: Point) -> f64 {
     let ab: Vec2 = b - a;
     let length_sq = ab.dot(ab);
-    let t = if length_sq > 1e-18 {
+    let t = if length_sq > POINT_LENGTH_SQ_MM2 {
         ((p - a).dot(ab) / length_sq).clamp(0.0, 1.0)
     } else {
         0.0
@@ -776,7 +817,7 @@ fn clean_loop<T: Copy>(points: Vec<(Point, T)>) -> Vec<(Point, T)> {
     let mut out: Vec<(Point, T)> = Vec::new();
     for (p, source) in points {
         if let Some(last) = out.last_mut()
-            && last.0.distance_to(p) < 1e-9
+            && last.0.distance_to(p) < SAME_POINT_MM
         {
             last.1 = source;
             continue;
@@ -784,7 +825,7 @@ fn clean_loop<T: Copy>(points: Vec<(Point, T)>) -> Vec<(Point, T)> {
         out.push((p, source));
     }
     while let (Some(&(first, _)), Some(&(last, _))) = (out.first(), out.last()) {
-        if out.len() >= 2 && first.distance_to(last) < 1e-9 {
+        if out.len() >= 2 && first.distance_to(last) < SAME_POINT_MM {
             out.pop();
         } else {
             break;
