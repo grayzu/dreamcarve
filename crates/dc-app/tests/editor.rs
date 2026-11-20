@@ -2497,10 +2497,23 @@ fn inlay_both_boards() {
     assert!(!board.shapes.is_empty(), "the design, mirrored");
     let mirrored = coded(&h, "inlay_male_mirrored");
     assert_eq!(mirrored.len(), 1, "{:?}", h.warnings());
-    assert_eq!(
-        vec![mirrored[0].message.clone()],
-        cli_mirrored(&project),
-        "the X the CLI prints"
+    // `check`'s text names the operation by its id; the app shows its
+    // name before it (`warnings::present`).
+    let printed: Vec<String> = h
+        .app
+        .findings()
+        .warnings
+        .iter()
+        .filter(|f| f.code.as_deref() == Some("inlay_male_mirrored"))
+        .map(|f| f.message.clone())
+        .collect();
+    assert_eq!(printed, cli_mirrored(&project), "the X the CLI prints");
+    assert!(
+        mirrored[0]
+            .message
+            .starts_with("operation `DC` (`op1`) (male board)"),
+        "{}",
+        mirrored[0].message
     );
     assert!(
         mirrored[0].message.contains("mirrored about X = 55 mm"),

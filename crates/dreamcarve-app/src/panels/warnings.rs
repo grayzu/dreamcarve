@@ -11,8 +11,9 @@
 //! ([`reserve`]). Its rows are `dc_app::warnings::panel`'s, `check` on the
 //! project as it stands: grouped by operation with the project's rows
 //! first, each with its tier glyph and word, its code in mono linking to
-//! the code's entry in the Warnings chapter, the message, and the field
-//! it is about. Clicking a row selects the operation or the shape it
+//! the code's entry in the Warnings chapter, the message with the
+//! operation, tool or shape named where the engine's text gives its id
+//! (`warnings::Row::shown`), and the field it is about. Clicking a row selects the operation or the shape it
 //! names, and is named for assistive tools as the drawer words it
 //! (`warnings::Row::name`: a hint is a hint, where `check`'s line for it
 //! says `warning`); a row on an operation's field opens the operation in the editor
@@ -483,13 +484,13 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
     let room = (inner - chip_px - gap - code_px).max(120.0);
     let natural = ui
         .painter()
-        .layout_no_wrap(row.message.clone(), body.clone(), palette.text_primary)
+        .layout_no_wrap(row.shown.clone(), body.clone(), palette.text_primary)
         .size()
         .x;
     let field_beside = natural + field_px <= room;
     let message = ui
         .painter()
-        .layout(row.message.clone(), body, palette.text_primary, room);
+        .layout(row.shown.clone(), body, palette.text_primary, room);
     let line_px = ui.text_style_height(&TextStyle::Body);
     let field_line_px = ui.text_style_height(&TextStyle::Monospace) + 2.0;
     let under_px = if row.field.is_some() && !field_beside {
@@ -544,7 +545,7 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
     let at = egui::pos2(cells.cursor().left(), rect.top() + (ROW_PX - line_px) / 2.0);
     let place = Rect::from_min_size(at, message.size());
     ui.interact(place, response.id.with("message"), Sense::hover())
-        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &row.message));
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &row.shown));
     ui.painter().galley(at, message, palette.text_primary);
     if let Some(field) = &row.field {
         let (anchor, align) = if field_beside {

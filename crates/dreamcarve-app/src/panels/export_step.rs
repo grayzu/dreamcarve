@@ -303,7 +303,7 @@ fn finding(ui: &mut Ui, row: &Row, out: &mut Vec<Action>) {
     let room = (ui.available_width() - 2.0 * pad.x).max(0.0);
     // Painted, so the row is one node for assistive tools: the button.
     let message = ui.painter().layout(
-        row.message.clone(),
+        row.shown.clone(),
         TextStyle::Body.resolve(ui.style()),
         palette.text_primary,
         room,

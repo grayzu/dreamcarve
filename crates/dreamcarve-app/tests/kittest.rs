@@ -2948,6 +2948,84 @@ fn a_hint_reads_as_a_hint_in_the_drawer_and_as_a_warning_in_copy() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Slice D9 (capability 76: "the message with the operation and shape
+/// named"), in the window. The plaque's outline moved half off the stock
+/// makes its Cut out leave the stock, which the engine reports as
+/// `operation `op4` cuts off the stock`. The drawer's row and the Export
+/// step's list say `operation `Cut out` (`op4`)`; *Copy* keeps the
+/// engine's line, which is `check`'s. A new Inlay with no V-bit to take
+/// says under its Tool row that it uses tool *(none chosen)*, where it
+/// said `tool ```.
+#[test]
+fn findings_are_shown_with_names_not_ids() {
+    let dir = scratch("warnings-names");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_generation(&mut h, "the plaque");
+    h.state_mut()
+        .app_mut()
+        .run(Command::TransformInstances {
+            ids: vec![dc_project::InstanceId::new("i1")],
+            delta: dc_geometry::Transform::translate(60.0, 0.0),
+        })
+        .unwrap();
+    h.run();
+    settle_generation(&mut h, "the plaque with its outline off the stock");
+    go_to(&mut h, "Design");
+    h.get_by_label_contains("Warnings:").click();
+    h.run();
+    let named = "operation `Cut out` (`op4`) cuts off the stock";
+    assert!(
+        h.query_all_by_label_contains(named).count() >= 1,
+        "the drawer names the operation"
+    );
+    assert_eq!(
+        h.query_all_by_label_contains("operation `op4` cuts off")
+            .count(),
+        0,
+        "and nowhere gives its id alone"
+    );
+    let copied = dc_app::warnings::copy_text(h.state().app());
+    assert!(
+        copied.contains("error: operation `op4` cuts off the stock") && !copied.contains(named),
+        "Copy is check's text: {copied}"
+    );
+    go_to(&mut h, "Export");
+    assert!(
+        in_export_step_containing(&h, named) >= 1,
+        "the Export step lists it by name too"
+    );
+
+    h.state_mut().app_mut().undo();
+    let project = h.state().app().project().clone();
+    let inlay = dc_app::operations::new_operation(
+        &project,
+        h.state().app().strings(),
+        dc_app::operations::Kind::Inlay,
+        &[dc_project::InstanceId::new("i4")],
+    )
+    .expect("an Inlay of the square");
+    h.state_mut()
+        .app_mut()
+        .run(Command::AddOperation(inlay))
+        .unwrap();
+    h.run();
+    open_operation(&mut h, "Inlay 1");
+    let inspector = h.state().layout().inspector.expect("the editor shows");
+    let under_the_field = h
+        .query_all_by_label_contains("uses tool (none chosen), which does not exist")
+        .filter(|node| inspector.contains_rect(node.rect()))
+        .count();
+    assert!(under_the_field >= 1, "the line under the Tool row says so");
+    assert_eq!(h.query_all_by_label_contains("uses tool ``").count(), 0);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// The Export step's panel: the card the plan, the blocking findings and
 /// the result are drawn in.
 fn export_panel(h: &Harness<'_, dreamcarve_app::Shell>) -> egui::Rect {

@@ -452,6 +452,9 @@ hints = "{count} {count|hint|hints}"
 note = "1 note"
 notes = "{count} {count|note|notes}"
 separator = " · "
+# What a shown message says where an engine message has an empty id: an
+# operation with no tool picked reads `uses tool ``` in `check`'s text.
+none_chosen = "(none chosen)"
 copy = "Copy"
 copy_help = "Copy the list as dreamcarve check prints it. check has no hints: it prints a hint as a warning."
 close = "Close the Warnings drawer"

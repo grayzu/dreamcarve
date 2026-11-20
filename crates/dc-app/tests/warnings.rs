@@ -604,3 +604,145 @@ fn the_apps_own_hint_is_listed_and_counted_but_not_copied() {
     harness.app.set_hints(Vec::new());
     assert_eq!(warnings::counts(&harness.app), before);
 }
+
+/// Slice D9: where the app shows a finding it names the operation, the
+/// tool, the shape or the picture, since it shows ids nowhere else. An
+/// engine message that gives an id alone after its noun (`operation
+/// `op4``) gains the name before it, in the form the messages that have
+/// both already use (`operation `Cut out` (`op4`)`). One that names both
+/// is left as written, in either order; an id the project does not have
+/// stays, since the id is what is wrong; an empty id reads *(none
+/// chosen)*; and a backticked word that follows no such noun is not an
+/// id to look up.
+#[test]
+fn a_shown_message_names_what_an_id_stands_for() {
+    let project = common::plaque();
+    let strings = dc_app::Strings::english();
+    let shown = |message: &str| warnings::present(&project, &strings, message);
+    assert_eq!(
+        shown("operation `op4` cuts off the stock: 2.5 mm past its right edge"),
+        "operation `Cut out` (`op4`) cuts off the stock: 2.5 mm past its right edge"
+    );
+    assert_eq!(
+        shown("tool `t2` of operation `op1` has no feed"),
+        "tool `1/4 end mill` (`t2`) of operation `Panel` (`op1`) has no feed"
+    );
+    assert_eq!(
+        shown("operation `op1` targets instance `i4`, which is open"),
+        "operation `Panel` (`op1`) targets instance `square` (`i4`), which is open"
+    );
+    assert_eq!(
+        shown("Operations `op1` and `op2` share a tool"),
+        "Operations `Panel` (`op1`) and `op2` share a tool",
+        "the noun says what kind of id follows it"
+    );
+    for kept in [
+        "operation `Panel` (`op1`) is enabled but has no targets",
+        "tool `t2` (`1/4 end mill`) plunges faster than it cuts",
+        "operation `op9` uses tool `t7`, which does not exist",
+        "the value `op4` is not a number",
+        "an unpaired ` in a message about operation `op4",
+        "nothing to name",
+    ] {
+        assert_eq!(shown(kept), kept);
+    }
+    assert_eq!(
+        shown("operation `op4` uses tool ``, which does not exist"),
+        "operation `Cut out` (`op4`) uses tool (none chosen), which does not exist"
+    );
+    assert_eq!(
+        shown("clearing pass 1 of operation `op1` uses tool `t3`"),
+        "clearing pass 1 of operation `Panel` (`op1`) uses tool `1/8 end mill` (`t3`)"
+    );
+}
+
+/// Slice D9 (capability 76: "the message with the operation and shape
+/// named"): the plaque's outline moved half off the stock makes its
+/// Profile cut off the stock, which the generator reports by the
+/// operation's id. The drawer's row shows the name ([`Row::shown`], and
+/// its [`Row::name`]), and so does every other place the app shows the
+/// finding ([`App::warnings`]: the operation's row, the line under a
+/// field, the status bar). `check` prints the id, so the row's line and
+/// *Copy* keep it. A new Inlay, which the plaque has no V-bit for, names
+/// no tool: its error says so in words.
+///
+/// [`Row::shown`]: warnings::Row::shown
+/// [`Row::name`]: warnings::Row::name
+/// [`App::warnings`]: dc_app::App::warnings
+#[test]
+fn findings_are_shown_with_names_and_copied_with_ids() {
+    let mut harness = quick_start("plaque");
+    harness
+        .run(Command::TransformInstances {
+            ids: vec![dc_project::InstanceId::new("i1")],
+            delta: dc_geometry::Transform::translate(60.0, 0.0),
+        })
+        .unwrap();
+    harness.generate();
+    let raw = "operation `op4` cuts off the stock";
+    let named = "operation `Cut out` (`op4`) cuts off the stock";
+    let row = warnings::panel(&harness.app)
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .find(|row| row.message.starts_with(raw))
+        .expect("the Profile leaves the stock");
+    assert_eq!(row.level, Level::Error);
+    assert!(row.shown.starts_with(named), "{}", row.shown);
+    assert!(
+        row.name.starts_with(&format!("error: {named}")),
+        "{}",
+        row.name
+    );
+    assert!(row.line.ends_with(&row.message) && row.line.contains(raw));
+    let copied = warnings::copy_text(&harness.app);
+    assert!(copied.contains(raw) && !copied.contains(named), "{copied}");
+    assert!(
+        harness
+            .warnings()
+            .iter()
+            .any(|f| f.message.starts_with(named)),
+        "what the app lists is what it shows"
+    );
+    assert!(
+        harness
+            .app
+            .findings()
+            .errors
+            .iter()
+            .any(|f| f.message.starts_with(raw)),
+        "and check's text is kept beside it"
+    );
+    let hover = dc_app::operations::rows(&harness.app)
+        .into_iter()
+        .find(|r| r.name == "Cut out")
+        .unwrap()
+        .messages;
+    assert!(hover.iter().any(|m| m.starts_with(named)), "{hover:?}");
+
+    harness.app.undo();
+    let ids = [dc_project::InstanceId::new("i4")];
+    let inlay = dc_app::operations::new_operation(
+        harness.app.project(),
+        harness.app.strings(),
+        dc_app::operations::Kind::Inlay,
+        &ids,
+    )
+    .unwrap();
+    assert_eq!(inlay.tool().as_str(), "", "the plaque has no V-bit");
+    harness.run(Command::AddOperation(inlay)).unwrap();
+    let said: Vec<&str> = harness
+        .warnings()
+        .iter()
+        .map(|f| f.message.as_str())
+        .filter(|m| m.contains("does not exist"))
+        .collect();
+    assert_eq!(
+        said,
+        ["operation `Inlay 1` (`op6`) uses tool (none chosen), which does not exist"]
+    );
+    assert!(
+        warnings::copy_text(&harness.app)
+            .contains("error: operation `op6` uses tool ``, which does not exist"),
+        "Copy is check's line"
+    );
+}

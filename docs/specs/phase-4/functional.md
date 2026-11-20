@@ -967,7 +967,13 @@ folder are app preferences, kept outside the project.
     warning and a hint as a `warning:` line with its code; the drawer
     tells a hint by its code. Each row: the tier, the code (monospace, the chapter's
     anchor), the message with the operation and shape named, and, where the
-    code concerns a field, that field. Clicking a row selects the operation
+    code concerns a field, that field. An engine message that gives an
+    operation, a tool, a shape or a picture by its id alone (`operation
+    `op4` cuts off the stock`) is shown with the name before the id
+    (`operation `Cut out` (`op4`)`), and an empty id as *(none chosen)*,
+    wherever the app shows a finding: the drawer, the line under a field,
+    a row's hover, the Export step's list. The text itself is the
+    engine's and the CLI's, and *Copy* writes it unchanged. Clicking a row selects the operation
     and scrolls to the field, or selects the shape; a row about a field of
     a tool, the stock or an output setting opens its step (50) with the
     tool selected and the field focused, its group opened; the row's code links to

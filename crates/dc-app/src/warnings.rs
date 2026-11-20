@@ -30,6 +30,16 @@
 //! operation's and then `finish`'s are `build`'s list, and nothing here
 //! drops or reorders a finding but the grouping.
 //!
+//! What the app shows of a finding is its message with names in it
+//! ([`present`]): the engine's texts, which the CLI prints too, name an
+//! operation or a tool by its id where they have no name to hand
+//! (`operation `op4` cuts off the stock`), and the app shows ids nowhere
+//! else. A row keeps both: [`Row::message`] and [`Row::line`] are
+//! `check`'s, which [`copy_text`] writes, and [`Row::shown`] is what the
+//! drawer draws. [`App::warnings`](crate::App::warnings) carries the shown
+//! form, so a field's line, a row's hover and the status bar read the
+//! same words as the drawer.
+//!
 //! Carve notes (slice 28, #620; capability 76a): the summary `check`
 //! prints for each operation that carves ([`dc_job::carve_facts`]) is a
 //! [`Level::Note`] row last in its operation's group, laid out as
@@ -86,6 +96,10 @@ pub struct Row {
     pub code: Option<String>,
     /// The message, as `check` prints it after the code.
     pub message: String,
+    /// The message as the drawer shows it ([`present`]): `message` with
+    /// the name of each operation, tool, shape or picture it gives by id
+    /// alone.
+    pub shown: String,
     /// The field it is about, as validation names it
     /// (`operations[o1].depth_mm`).
     pub field: Option<String>,
@@ -101,8 +115,8 @@ pub struct Row {
     /// The row's name for assistive tools: what the drawer shows of it,
     /// in `check`'s order but in the drawer's words, `hint: unused_tool:
     /// tool …`. Its tier is the drawer's ([`Row::level`]), so a hint reads
-    /// as a hint, and it carries no file position; a carve note's is its
-    /// [`Row::line`].
+    /// as a hint, its message is the shown one ([`Row::shown`]), and it
+    /// carries no file position; a carve note's is its [`Row::line`].
     pub name: String,
     /// The carve note's facts, for a carve note; `None` for every other
     /// row.
@@ -225,6 +239,130 @@ impl Location<'_> {
     }
 }
 
+/// The name `project` gives the thing `id` is, when `noun`, the word an
+/// engine message puts before the id, says what kind of thing that is.
+/// `None` for another word, for an id the project does not have (a
+/// dangling reference: the id is what is wrong), and for a thing whose
+/// name is empty or is its id.
+fn named<'a>(project: &'a Project, noun: &str, id: &str) -> Option<&'a str> {
+    let noun = noun.to_lowercase();
+    let name = match noun.strip_suffix('s').unwrap_or(&noun) {
+        "operation" => project
+            .operations
+            .iter()
+            .find(|o| o.id().as_str() == id)
+            .map(dc_project::Operation::name),
+        "tool" => project
+            .tools
+            .iter()
+            .find(|t| t.id.as_str() == id)
+            .map(|t| t.name.as_str()),
+        "instance" | "shape" => project
+            .instances
+            .iter()
+            .find(|i| i.id.as_str() == id)
+            .map(|i| i.name.as_str()),
+        "bitmap" | "picture" => project
+            .bitmaps
+            .iter()
+            .find(|b| b.id.as_str() == id)
+            .map(|b| b.name.as_str()),
+        _ => None,
+    };
+    name.filter(|name| !name.is_empty() && *name != id)
+}
+
+/// Whether `noun` is a word an engine message puts before an id.
+fn names_an_id(noun: &str) -> bool {
+    let noun = noun.to_lowercase();
+    matches!(
+        noun.strip_suffix('s').unwrap_or(&noun),
+        "operation" | "tool" | "instance" | "shape" | "bitmap" | "picture"
+    )
+}
+
+/// The word `text` ends with before a single space: the noun an engine
+/// message puts before a backticked id (`operation `, `tool `). Empty
+/// when `text` ends any other way (`(`, the start of a message).
+fn noun_before(text: &str) -> &str {
+    text.strip_suffix(' ').map_or("", |before| {
+        before
+            .rsplit(|c: char| !c.is_alphabetic())
+            .next()
+            .unwrap_or("")
+    })
+}
+
+/// `message`, a finding's text, as the app shows it (capability 76: "the
+/// message with the operation and shape named"). The engine's messages
+/// are the CLI's too, and name an operation, a tool, a shape or a
+/// picture by its id where they have no name to hand: `operation `op4`
+/// cuts off the stock`. The app shows ids nowhere else, so each id that
+/// stands alone after its noun gains the name it has in `project`, in
+/// the form the messages that carry both already use: `operation `Cut
+/// out` (`op4`) cuts off the stock`.
+///
+/// Left as written: an id already beside its name, in either order; an
+/// id the project does not have, since the id is then what is wrong; and
+/// any backticked word that does not follow `operation`, `tool`,
+/// `instance`, `shape`, `bitmap` or `picture`. An empty id after one of
+/// those (an operation with no tool picked: `uses tool ```) reads *(none
+/// chosen)*. Presentation only: [`Row::line`] and [`copy_text`] keep the
+/// engine's text, which must equal `check`'s.
+#[must_use]
+pub fn present(project: &Project, strings: &Strings, message: &str) -> String {
+    let mut out = String::with_capacity(message.len() + 16);
+    let mut rest = message;
+    while let Some((before, tail)) = rest.split_once('`') {
+        out.push_str(before);
+        let Some((id, after)) = tail.split_once('`') else {
+            // An unpaired tick: the rest as written.
+            out.push('`');
+            rest = tail;
+            break;
+        };
+        let noun = noun_before(&out);
+        // `tool `t2` (`1/4 end mill`)`: the name already follows.
+        let named_after = after.starts_with(" (`");
+        match named(project, noun, id).filter(|_| !named_after) {
+            Some(name) => {
+                out.push('`');
+                out.push_str(name);
+                out.push_str("` (`");
+                out.push_str(id);
+                out.push_str("`)");
+            }
+            None if id.is_empty() && names_an_id(noun) => {
+                out.push_str(strings.get(StrKey::AppWarningsNoneChosen));
+            }
+            None => {
+                out.push('`');
+                out.push_str(id);
+                out.push('`');
+            }
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `findings`' errors then warnings, as `check` lists them, each with
+/// its message as the app shows it ([`present`]): what
+/// [`App::warnings`](crate::App::warnings) holds.
+#[must_use]
+pub(crate) fn listed(project: &Project, strings: &Strings, findings: &Findings) -> Vec<Finding> {
+    findings
+        .errors
+        .iter()
+        .chain(&findings.warnings)
+        .map(|finding| Finding {
+            message: present(project, strings, &finding.message),
+            ..finding.clone()
+        })
+        .collect()
+}
+
 /// The drawer's word for `level`: a row's chip, and the tier its name
 /// starts with.
 #[must_use]
@@ -253,10 +391,12 @@ fn row_name(strings: &Strings, level: Level, code: Option<&str>, message: &str) 
 fn rows(app: &App) -> Vec<Row> {
     let location = Location::of(app);
     let strings = app.strings();
+    let project = app.project();
     let own = app.hints().iter().map(|hint| Row {
         level: Level::Hint,
         code: None,
         message: hint.clone(),
+        shown: hint.clone(),
         field: None,
         op: None,
         shape: None,
@@ -264,16 +404,20 @@ fn rows(app: &App) -> Vec<Row> {
         name: row_name(strings, Level::Hint, None, hint),
         note: None,
     });
-    let notes = app.notes().iter().map(|note| Row {
-        level: Level::Note,
-        code: None,
-        message: note.clone(),
-        field: None,
-        op: None,
-        shape: None,
-        line: format!("{}: note: {note}", location.name),
-        name: row_name(strings, Level::Note, None, note),
-        note: None,
+    let notes = app.notes().iter().map(|note| {
+        let shown = present(project, strings, note);
+        Row {
+            level: Level::Note,
+            code: None,
+            message: note.clone(),
+            field: None,
+            op: None,
+            shape: None,
+            line: format!("{}: note: {note}", location.name),
+            name: row_name(strings, Level::Note, None, &shown),
+            shown,
+            note: None,
+        }
     });
     let findings = app.findings();
     let labelled = findings
@@ -281,21 +425,25 @@ fn rows(app: &App) -> Vec<Row> {
         .iter()
         .map(|f| ("error", f))
         .chain(findings.warnings.iter().map(|f| ("warning", f)));
-    let found = labelled.map(|(label, finding)| Row {
-        level: Level::from(finding.tier),
-        code: finding.code.clone(),
-        message: finding.message.clone(),
-        field: finding.field.clone(),
-        op: finding.op.clone(),
-        shape: finding.shape.clone(),
-        line: location.describe(label, finding),
-        name: row_name(
-            strings,
-            Level::from(finding.tier),
-            finding.code.as_deref(),
-            &finding.message,
-        ),
-        note: None,
+    let found = labelled.map(|(label, finding)| {
+        let shown = present(project, strings, &finding.message);
+        Row {
+            level: Level::from(finding.tier),
+            code: finding.code.clone(),
+            message: finding.message.clone(),
+            field: finding.field.clone(),
+            op: finding.op.clone(),
+            shape: finding.shape.clone(),
+            line: location.describe(label, finding),
+            name: row_name(
+                strings,
+                Level::from(finding.tier),
+                finding.code.as_deref(),
+                &shown,
+            ),
+            shown,
+            note: None,
+        }
     });
     // `check` prints the carves only when the build was not stopped.
     let carves = if findings.has_errors() {
@@ -333,6 +481,7 @@ fn carve_row(strings: &Strings, facts: &CarveFacts) -> Row {
         level: Level::Note,
         code: None,
         message: text.clone(),
+        shown: text.clone(),
         field: None,
         op: Some(facts.op.clone()),
         shape: None,

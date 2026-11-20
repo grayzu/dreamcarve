@@ -813,9 +813,12 @@ pub fn row_status(tool: &Tool, findings: &[Finding]) -> RowStatus {
             .filter(move |f| f.tier == tier && names(f, &tool.id))
     };
     // An unset value's error is the dot's, said once, by `unset`.
-    let errors: Vec<&Finding> = mine(dc_job::Tier::Error)
-        .filter(|f| !unset.iter().any(|(_, message)| *message == f.message))
-        .collect();
+    let is_unset = |f: &Finding| {
+        unset.iter().any(|(name, _)| {
+            f.field.as_deref() == Some(format!("tools[{}].{name}", tool.id).as_str())
+        })
+    };
+    let errors: Vec<&Finding> = mine(dc_job::Tier::Error).filter(|f| !is_unset(f)).collect();
     let warnings: Vec<&Finding> = mine(dc_job::Tier::Warning).collect();
     let hints: Vec<&Finding> = mine(dc_job::Tier::Hint).collect();
     let mark = if !errors.is_empty() {

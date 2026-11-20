@@ -69,7 +69,8 @@ pub struct App {
     /// Validation's, generation's and `finish`'s findings, merged
     /// (`warnings::merge`).
     findings: Findings,
-    /// `findings`, errors then warnings, as `check` prints them.
+    /// `findings`, errors then warnings, in `check`'s order, each
+    /// message as the app shows it (`warnings::present`).
     listed: Vec<Finding>,
     /// What opening the file (its migration) or importing into it noted,
     /// for the Warnings panel; cleared when the file is saved.
@@ -768,13 +769,8 @@ impl App {
 
     fn refresh_findings(&mut self) {
         self.findings = crate::warnings::merge(&self.validation, self.generation.findings());
-        self.listed = self
-            .findings
-            .errors
-            .iter()
-            .chain(&self.findings.warnings)
-            .cloned()
-            .collect();
+        self.listed =
+            crate::warnings::listed(self.history.current(), &self.strings, &self.findings);
     }
 
     /// What is selected.
@@ -1086,13 +1082,19 @@ impl App {
     /// snapshot, in the order `check` prints them: the errors, then the
     /// warnings, each in the order `build` finds them (validation, each
     /// operation in project order, the project-level checks, the export
-    /// warnings). Each carries its tier.
+    /// warnings). Each carries its tier, and its message is the one the
+    /// app shows ([`crate::warnings::present`]: an operation, tool, shape
+    /// or picture named, where the engine's text gives its id alone), so
+    /// every place that shows a finding (a field's line, a row's hover,
+    /// the status bar) reads as the Warnings drawer does.
     #[must_use]
     pub fn warnings(&self) -> &[Finding] {
         &self.listed
     }
 
-    /// [`App::warnings`] as errors and warnings.
+    /// [`App::warnings`] as errors and warnings, each message the
+    /// engine's own, as `check` prints it: what the drawer's *Copy*
+    /// writes.
     #[must_use]
     pub fn findings(&self) -> &Findings {
         &self.findings
