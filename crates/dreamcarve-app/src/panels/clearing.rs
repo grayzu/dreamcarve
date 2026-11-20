@@ -174,7 +174,7 @@ fn card(
                     control(ui, cx, slot, &tools, tier, None, false, out)
                 });
                 if matches!(slot.row.kind, dc_app::editor::FieldKind::ToolPicker) {
-                    tool_note(ui, cx, &slot);
+                    tool_note(ui, cx, slot);
                 }
                 if let Some(reason) = refused {
                     row::message(ui, Tier::Error, &reason);
