@@ -1284,3 +1284,358 @@ fn pictures_screenshots() {
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }
+
+/// Whether the field named `label` is empty and says *Required*.
+fn required(h: &H, label: &str) -> bool {
+    h.query_all_by_role_and_label(Role::TextInput, label)
+        .any(|n| n.accesskit_node().placeholder() == Some("Required"))
+}
+
+/// The right-hand of the open sheet's dropdowns named `label`: the
+/// editing pane's, where the list's filter shares the name.
+fn click_pane_dropdown(h: &mut H, label: &str) {
+    h.get_by_role(Role::Dialog)
+        .query_all_by_role_and_label(Role::ComboBox, label)
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .unwrap_or_else(|| panic!("no {label} dropdown"))
+        .click();
+    h.run();
+}
+
+/// The library's type filter: the left-hand of the sheet's two Type
+/// dropdowns. Sets it to `kind`.
+fn filter_library(h: &mut H, kind: &str) {
+    h.get_by_role(Role::Dialog)
+        .query_all_by_role_and_label(Role::ComboBox, "Type")
+        .min_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .expect("the type filter")
+        .click();
+    h.run();
+    h.query_all_by_label(kind)
+        .max_by(|a, b| a.rect().min.y.total_cmp(&b.rect().min.y))
+        .unwrap_or_else(|| panic!("the filter offers {kind}"))
+        .click();
+    h.run();
+}
+
+/// The names of the library rows the open sheet lists, top to bottom.
+fn library_rows(h: &H) -> Vec<String> {
+    let mut rows: Vec<(f32, String)> = h
+        .get_by_role(Role::Dialog)
+        .query_all_by_role(Role::ListItem)
+        .map(|n| {
+            (
+                n.rect().min.y,
+                n.accesskit_node().label().unwrap_or_default(),
+            )
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    rows.into_iter().map(|(_, name)| name).collect()
+}
+
+/// The chapters "Tool library" (`docs/book/src/user-guide/tool-library.md`,
+/// "In the app") and "Tapered ball nose" (`tapered-ball-nose.md`, "In the
+/// app"), on the plaque with an empty library: a tool made on the Tools
+/// step, turned into a V-bit and saved to the library; the Fusion sample
+/// imported through the review; a tapered ball nose made in the library,
+/// found with the type filter, and added to the project; and a tapered
+/// ball nose made on the Tools step, with nothing measured yet.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn tools_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-tools", &dialogs) else {
+        return;
+    };
+    let tapered = "0.762 mm tip tapered ball nose";
+
+    // New tool: an end mill named for its place, its name ready to type
+    // over, its rates required.
+    go_to(&mut h, "Tools");
+    click_button(&mut h, "New tool");
+    assert_eq!(undo_label(&h), "New tool “tool3”");
+    assert_eq!(field(&h, "Diameter"), "6.35");
+    assert_eq!(field(&h, "Flutes"), "2");
+    for rate in ["Feed", "Plunge", "RPM"] {
+        assert!(required(&h, rate), "{rate} is required");
+    }
+    h.event(egui::Event::Text("60 degree V-bit".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(undo_label(&h), "Edit tool “60 degree V-bit”");
+
+    // Type ▸ V-bit waits for its angle.
+    h.get_by_role_and_label(Role::ComboBox, "Type").click();
+    h.run();
+    for kind in [
+        "End mill",
+        "Ball nose",
+        "V-bit",
+        "Engraver",
+        "Drill",
+        "Tapered ball nose",
+    ] {
+        assert!(
+            h.query_all_by_label(kind).next().is_some(),
+            "Type offers {kind}"
+        );
+    }
+    h.get_by_label("V-bit").click();
+    h.run();
+    settle(&mut h);
+    assert!(
+        h.query_by_label("Type the included angle to make this tool a V-bit")
+            .is_some()
+    );
+    assert_eq!(
+        h.state().app().project().tools[2].cutter,
+        dc_project::ToolKind::EndMill,
+        "still an end mill until the angle is typed"
+    );
+    shoot(&mut h, &out, "tools-editor", Crop::Window);
+    type_in(&mut h, "Angle", "60");
+    for (label, value) in [("Feed", "1000"), ("Plunge", "300"), ("RPM", "18000")] {
+        type_in(&mut h, label, value);
+    }
+    let made = h.state().app().project().tools[2].clone();
+    assert_eq!(
+        made.cutter,
+        dc_project::ToolKind::VBit {
+            included_angle_deg: 60.0
+        }
+    );
+    assert!(made.unset_values().is_empty(), "nothing left to set");
+
+    // Save to library, twice.
+    click_button(&mut h, "Save to library");
+    assert_eq!(
+        h.state().message(),
+        Some("Saved “60 degree V-bit” to the library as lt1")
+    );
+    click_button(&mut h, "Save to library");
+    assert_eq!(
+        h.state().message(),
+        Some("“60 degree V-bit” is already in the library as lt1")
+    );
+
+    // A tool an operation uses cannot be deleted; Duplicate copies it.
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
+    h.run();
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Delete")
+            .accesskit_node()
+            .is_disabled()
+    );
+    click_button(&mut h, "Duplicate");
+    assert_eq!(undo_label(&h), "Add tool “1/4 end mill (2)”");
+    undo(&mut h);
+
+    // The library: Import… shows the review before anything is written.
+    click_button(&mut h, "Tool Library…");
+    assert_eq!(library_rows(&h), ["60 degree V-bit"]);
+    dialogs.answer(&common::fixture("fusion/sample.tools"));
+    h.get_by_role(Role::Dialog)
+        .query_all_by_label("Import…")
+        .next()
+        .expect("Import…")
+        .click();
+    h.run();
+    for count in [
+        "13 New",
+        "0 Already in your library",
+        "0 Changed",
+        "10 Skipped",
+    ] {
+        assert!(
+            h.get_by_role(Role::Dialog).query_by_label(count).is_some(),
+            "the review counts {count}"
+        );
+    }
+    shoot(&mut h, &out, "library-import-review", Crop::Sheet);
+    click(&mut h, "Import 13 tools");
+    assert!(
+        h.query_by_label("Imported 13 tools from sample.tools. 10 skipped.")
+            .is_some()
+    );
+    assert_eq!(library_rows(&h).len(), 14);
+
+    // A tapered ball nose made in the library: the type is taken at
+    // once, and its three values are required until typed.
+    h.get_by_role(Role::Dialog)
+        .query_all_by_role_and_label(Role::Button, "New tool")
+        .next()
+        .expect("New tool")
+        .click();
+    h.run();
+    click_pane_dropdown(&mut h, "Type");
+    h.get_by_label("Tapered ball nose").click();
+    h.run();
+    for value in ["Tip diameter", "Taper per side", "Flute length"] {
+        assert!(required(&h, value), "{value} is required");
+    }
+    for (label, value) in [
+        ("Name", tapered),
+        ("Tip diameter", "0.762"),
+        ("Taper per side", "6.7"),
+        ("Flute length", "19.05"),
+        ("Feed", "1524"),
+        ("Plunge", "635"),
+        ("RPM", "19000"),
+        ("Stepover", "10"),
+    ] {
+        type_in_sheet(&mut h, label, value);
+    }
+
+    // The type filter, and the search, which reads a tip as a diameter.
+    filter_library(&mut h, "V-bit");
+    assert_eq!(
+        library_rows(&h),
+        ["60 degree V-bit", "12 mm 90-Degree Chamfer Mill"]
+    );
+    filter_library(&mut h, "Tapered ball nose");
+    assert_eq!(library_rows(&h), [tapered]);
+    filter_library(&mut h, "All types");
+    let search = h
+        .get_by_role(Role::Dialog)
+        .query_all_by_role(Role::TextInput)
+        .find(|n| {
+            n.accesskit_node().placeholder() == Some("Search name, vendor, product, diameter")
+        })
+        .expect("the search field")
+        .rect()
+        .center();
+    common::click_at(&mut h, search, egui::Modifiers::NONE);
+    h.event(egui::Event::Text("0.762".to_owned()));
+    h.run();
+    assert_eq!(library_rows(&h), [tapered], "the search reads the tip");
+    click(&mut h, "Clear the search");
+    assert_eq!(library_rows(&h).len(), 15);
+
+    // The sheet's own units: inches show the 6.35 mm cutter as 0.25.
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::RadioButton, "in")
+        .click();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::TextInput, "Diameter")
+        .scroll_to_me();
+    h.run();
+    let diameter = h
+        .get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::TextInput, "Diameter")
+        .value();
+    assert_eq!(diameter.as_deref(), Some("0.25"));
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::RadioButton, "mm")
+        .click();
+    h.run();
+
+    // The picture: the tapered ball nose's row and the top of its pane.
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, tapered)
+        .scroll_to_me();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::TextInput, "Name")
+        .scroll_to_me();
+    h.run();
+    settle(&mut h);
+    shoot(&mut h, &out, "library-sheet", Crop::Sheet);
+
+    // Tick it and add it: the sheet closes and the project has a copy.
+    tick(&mut h, tapered);
+    click_in_sheet(&mut h, "Add 1 tool to project");
+    settle(&mut h);
+    assert!(h.query_by_role(Role::Dialog).is_none(), "the sheet closed");
+    assert_eq!(h.state().message(), Some("Added 1 tool from the library"));
+    assert_eq!(undo_label(&h), format!("Add tool “{tapered}”"));
+    assert!(
+        painted(&h, "6.35 mm · tip 0.762 mm · 6.7°/side"),
+        "its row names the tip and the angle per side"
+    );
+
+    // A tapered ball nose made on the Tools step, nothing measured yet.
+    click_button(&mut h, "New tool");
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.get_by_role_and_label(Role::ComboBox, "Type").click();
+    h.run();
+    h.get_by_label("Tapered ball nose").click();
+    h.run();
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Edit tool “tool5”");
+    for value in [
+        "Tip diameter",
+        "Taper per side",
+        "Flute length",
+        "Feed",
+        "Plunge",
+        "RPM",
+    ] {
+        assert!(required(&h, value), "{value} is required");
+    }
+    shoot(&mut h, &out, "tools-tapered-unset", Crop::Window);
+    type_in(&mut h, "Tip diameter", "0.762");
+    assert!(!required(&h, "Tip diameter"));
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
+
+/// The chapter "Tapered ball nose", "In the app": the tapered ball nose
+/// test part (`tests/fixtures/dc-tbn.dcv`, the part of the quick start
+/// "Carving and inlaying with a tapered ball nose") with its Inlay in the
+/// editor. Under the Tool row is the bit's cutting height, and under
+/// Depth the engagement against it and the seat line.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn tapered_ball_nose_screenshots() {
+    let out = out_dir("user-guide");
+    let dir = std::env::temp_dir().join("dreamcarve-book-tbn");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let part = common::copy_fixture("dc-tbn.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = window(&dir, Some(part), &dialogs) else {
+        return;
+    };
+    open_operation(&mut h, "DC inlay");
+    open_group(&mut h, "Depth");
+    settle(&mut h);
+    assert!(
+        h.query_by_label("one bit for both boards · cutting height 19.05 mm")
+            .is_some()
+    );
+    assert!(
+        h.query_by_label_contains("of the tapered ball nose's 19.05 mm cutting height")
+            .is_some()
+    );
+    assert!(
+        h.query_by_label_contains(
+            "seat: moves 0.55 mm per 0.5° of taper, 0.76 mm per 0.05 mm of tip radius"
+        )
+        .is_some()
+    );
+    shoot(&mut h, &out, "tapered-inlay", Crop::Window);
+
+    // A V-Carve's Tool row offers the project's tapered ball noses.
+    open_operation(&mut h, "DC carve");
+    h.get_by_role_and_label(Role::ComboBox, "Tool").click();
+    h.run();
+    for tool in [
+        "2.286 mm tip tapered ball nose (T1)",
+        "0.762 mm tip tapered ball nose (T2)",
+    ] {
+        assert!(
+            h.query_all_by_role_and_label(Role::Button, tool)
+                .next()
+                .is_some(),
+            "the picker offers {tool}"
+        );
+    }
+    drop(h);
+    std::fs::remove_dir_all(&dir).ok();
+}

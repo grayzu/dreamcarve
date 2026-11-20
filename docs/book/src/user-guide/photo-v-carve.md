@@ -41,7 +41,7 @@ your machine and wood.
 To carve a picture you added to another project:
 
 1. The project needs a V-bit. Add it on the **Tools** step first
-   ([Tool library](tool-library.md)).
+   ([The Tools step](tool-library.md#the-tools-step)).
 2. Select the picture, from its row on the **Design** step.
 3. On the **Operations** step, click **Add** and choose **Photo
    V-Carve**.
