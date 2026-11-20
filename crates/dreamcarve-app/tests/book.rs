@@ -163,8 +163,12 @@ fn region(h: &H, crop: Crop) -> egui::Rect {
     .intersect(full)
 }
 
-/// Writes the window as `dir/name.png`, cropped to `crop`.
+/// Writes the window as `dir/name.png`, cropped to `crop`, once
+/// generation has settled: a picture taken while the worker is busy
+/// shows *Checking…* or a stale toolpath, and which it shows depends on
+/// how loaded the machine is.
 fn shoot(h: &mut H, dir: &Path, name: &str, crop: Crop) {
+    settle(h);
     park_pointer(h);
     let crop = region(h, crop);
     let image = h.render().expect("the window renders");
