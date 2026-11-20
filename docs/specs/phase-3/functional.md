@@ -989,15 +989,28 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
  DC/2`, a ball tip): `DC` is `tip_diameter_mm`, `TA` is `taper_angle_deg`
  as written (per side, as Fusion's chamfer mill's `TA` is the half
  angle, phase 2), `LCF` the flute length and `SFDM`, the shaft
- diameter, `diameter_mm`, in the file's unit. A value the file lacks is
+ diameter, `diameter_mm`, in the file's unit. Tool vendors' libraries
+ write the same bit another way, with the cutting diameter in `DC` (and
+ in `SFDM`) and the ball as the corner radius, `RE` below `DC/2`; that
+ imports too, the tip `2·RE` and `DC` the cutting diameter, with the
+ taper as the file gives it, and the import says on the tool's line
+ that the tip came from the corner radius and the taper is the file's,
+ so the user checks both against the bit. When the file's tip, taper and
+ flute length would make the bit more than 5 % wider at the flute top
+ than its cutting diameter, the line names those numbers, because one
+ of them, usually the taper, is off; the tool is imported all the same
+ (decided 2026-11-20, maintainer: "import them, and take the taper angle
+ from the file as written; assume the vendor's data is accurate; the
+ user can override it"). A value the file lacks is
  imported unset, never guessed, and the import names the tool and the
  fields to fill (maintainer, PR #670). The shaft diameter is the
  exception: it is the cutting diameter, which every tool must have, so a
  ball-tipped tapered mill without `SFDM` is not imported, and the
  import's skip list names it and says its shaft diameter is missing
- (decided 2026-11-16, maintainer, PR #670, question 33). A tapered mill with a flat or bull tip
+ (decided 2026-11-16, maintainer, PR #670, question 33). A tapered mill with a flat tip (no corner radius) or a bull tip
+ (a corner radius below half of `DC` under a shaft wider than `DC`, so `DC` is a tip)
  is a different cutter (a V-bit with a flat) and is still skipped, the
- message saying so and that it may come later; phase 2 skipped every tapered mill. New codes, listed in the Warnings
+ message giving the numbers found and saying it may come later; phase 2 skipped every tapered mill. New codes, listed in the Warnings
  chapter: `tapered_ball_nose_range`, `inlay_too_narrow_for_bit`
  (errors); `tapered_corners_softened`, `inlay_glue_gap_below_ball`,
  `inlay_plug_depth_below_ball`, `inlay_rounded_for_bit` (warnings).
@@ -1496,7 +1509,12 @@ analytically). The bits are the bench's: **Fine Detail**,
  no `LCF` imports with both unset and the report naming them, and a
  project using it lists them as `tool_value_unset` until they are set;
  the same with no `SFDM` is not imported, the skip list naming it and
- its missing shaft diameter; one with `RE` 0 is skipped as not a ball tip. A Photo V-Carve with a TBN is `v_carve_needs_v_bit`, a
+ its missing shaft diameter; one with `RE` 0 is skipped as not a ball tip. A vendor's entry, `DC` 0.25 in, `SFDM` 0.25 in,
+ `RE` 0.045 in, `TA` 10 and `LCF` 0.75 in with a preset stepover of 0.0072 in, imports with `tip_diameter_mm` 2.286,
+ `taper_angle_deg` 10, `flute_length_mm` 19.05, `diameter_mm` 6.35 and `step_over_fraction` 0.0288, its line saying
+ the tip is from the corner radius, the taper the file's, and that they would make the bit 8.636 mm wide at the
+ flute top against a 6.35 mm cutting diameter; the same with `SFDM` 0.5 in is skipped as a bull tip, naming the
+ three numbers. A Photo V-Carve with a TBN is `v_carve_needs_v_bit`, a
  countersink with one `countersink_needs_v_bit`. A hand-written program
  whose descent in the ball zone overlaps a wall between the old 1 mm
  sample points fails S17 with the worst point.

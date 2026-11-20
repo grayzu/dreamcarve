@@ -1459,22 +1459,64 @@ bits should be imported even if they are missing some of our required
 parameters so the user can fill them in"). Phase 2 skipped every
 `tapered mill` by name; 3.6 maps the ball-tipped ones:
 
-- **Which.** A `tapered mill` whose corner radius `RE` is half its `DC`
-  (within 1e-6 in the file's unit) has a ball tip and imports as a TBN.
-  With `DC` absent and `RE` present the tip is `2·RE`. `RE` absent or 0
-  (a flat tip) or between 0 and `DC/2` (a bull tip) is a different
-  cutter, a V-bit with a flat or a round-cornered flat, which phase 3
-  does not model: skipped with `SkipReason::TaperedTipNotBall`, whose
-  text says so and that it may be supported later ("a tapered mill with
-  a flat or bull tip is not a tapered ball nose; DreamCarve does not
-  model it yet"). `RE` above `DC/2` is `SkipReason::Invalid`.
-- **The mapping.** `DC` (or `2·RE`) → `tip_diameter_mm`; `TA` →
+- **Which.** A ball-tipped `tapered mill` imports as a TBN, and
+  libraries write one in two ways (lengths compared within 1e-6 in the
+  file's unit):
+  - **`DC` is the tip**, Fusion's own meaning of a tapered mill's
+    diameter: the corner radius `RE` is half of `DC`. With `DC` absent
+    and `RE` present the tip is `2·RE`. The cutting diameter is the
+    shaft's, `SFDM`.
+  - **`DC` is the cutting diameter**, as tool vendors' libraries write
+    it (decided 2026-11-20, maintainer, after a vendor's library lost
+    all six of its tapered ball noses to the first rule: "import them,
+    and take the taper angle from the file as written; assume the
+    vendor's data is accurate; the user can override it"). `RE` is below
+    `DC/2` and the shaft `SFDM` is no wider than `DC`, or absent: a
+    taper cannot widen from a tip to a shaft of the same size, so `DC`
+    is not a tip, the ball is the corner radius's, `2·RE`, and `DC` is
+    the cutting diameter. A `tip-diameter` above 0 on the item must
+    agree: equal to `2·RE` it confirms the ball, above it the tip is a
+    flat with rounded corners (skipped, below), below it the item
+    contradicts itself (`SkipReason::Invalid`).
+  - **Neither.** `RE` absent or 0 is a flat tip, and `RE` below `DC/2`
+    under a shaft wider than `DC` a bull tip: a different cutter, a
+    V-bit with a flat or a round-cornered flat, which phase 3 does not
+    model. Skipped with `SkipReason::TaperedTipNotBall { tip, unit }`,
+    whose text states the numbers found and that it may be supported
+    later ("a tapered mill with a bull tip (corner radius `RE` 0.5 mm,
+    less than half the tip `DC` 6 mm, under a wider shaft `SFDM` 8 mm)
+    is not a tapered ball nose; DreamCarve does not model it yet").
+    `RE` above `DC/2` is `SkipReason::Invalid`.
+- **The mapping.** The tip (`DC`, or `2·RE`) → `tip_diameter_mm`; `TA` →
   `taper_angle_deg` as written (per side, as the chamfer mill's `TA` is
   the half angle; phase 2 open question 10); `LCF` → `flute_length_mm`;
-  `SFDM`, the shaft diameter, → `diameter_mm`, the cutting diameter (on
-  a 1/4 in TBN the shank and the flutes' top are both 6.35 mm). Lengths
-  in the file's unit, converted and rounded as phase 2's. The feeds and
-  step-down as every Fusion tool's.
+  the cutting diameter (`SFDM`, or `DC` by the vendors' convention) →
+  `diameter_mm` (on a 1/4 in TBN the shank and the flutes' top are both
+  6.35 mm), and the stepover fraction is the preset's stepover over it.
+  Lengths in the file's unit, converted and rounded as phase 2's. The
+  feeds and step-down as every Fusion tool's.
+- **What a tool read by the vendors' convention says.** It carries
+  `ImportNote::TipFromCornerRadius { tip_diameter_mm, taper_angle_deg,
+  cone }`: "tip 2.286 mm from the corner radius `RE` and taper 10° per
+  side as the file gives them: check both against the bit", so the
+  report and the app's import review tell the user which two values were
+  taken on trust. The importer also checks the numbers against the
+  model: the tip, the taper and the flute length give the cutter a width
+  at the flute top, `2·(L + δ)·tan β` (a little under `2·RE +
+  2·LCF·tan TA`). Where that is more than 5 % over the cutting diameter
+  (a taper rounded to half a degree is within it), the file's numbers do
+  not describe one cone, and the note adds "(that tip and taper over the
+  19.05 mm flutes would be 8.636 mm wide and the cutting diameter is
+  6.35 mm)", so the user sees why the taper may need correcting. The
+  bench's own bits are the case: their vendor's library gives 10° where
+  the plunge holes measure 6.7°. The tool is imported all the same and
+  is valid: `tapered_ball_nose_range` asks only for a tip above 0, a
+  taper in (0, 45], flutes above the tangent height and a cutting
+  diameter above the tip. Its taper reaches the cutting diameter below
+  the flute top, so it is a cylinder above that height and its cutting
+  height is `h_R` (`CuttingLimit::CuttingDiameter`): an operation that
+  would engage it deeper is `v_bit_cone_exceeded`, as for the bench's
+  Fine bit.
 - **Missing values import unset.** A missing `TA`, `LCF` or tip leaves
   that field `null`; the tool is imported, not skipped, with
   `ImportNote::TaperedValueUnset { fields }` naming the tool and every
@@ -4693,7 +4735,8 @@ tip 0.762 mm, `ρ` 0.381; both 6.7°, `L` 19.05, cutting diameter 6.35); the num
 *Fusion import (slice 27f)*
 - `fusion::tapered_ball_mill_imports_as_tapered_ball_nose` (`DC` 0.03 in, `RE` 0.015 in, `TA` 6.7, `LCF` 0.75 in, `SFDM` 0.25 in → `tip_diameter_mm` 0.762, `taper_angle_deg` 6.7, `flute_length_mm` 19.05, `diameter_mm` 6.35), `fusion::tapered_ball_mill_in_millimetres`, `fusion::tip_from_corner_radius_when_dc_is_missing`.
 - `fusion::tapered_mill_with_missing_fields_imports_them_unset` (no `TA`, no `LCF`, `SFDM` present: imported, both `null`, `TaperedValueUnset` naming both; `check` on a project using it lists `tool_value_unset` at each field), `fusion::tapered_mill_without_a_shaft_diameter_is_skipped` (the Ultra bit's entry with `SFDM` absent, and with it 0: not imported, `SkipReason::NoShaftDiameter` on the skip list naming the tool and the missing shaft diameter; with `TA` and `LCF` also missing, still skipped, not imported unset).
-- `fusion::tapered_mill_with_a_flat_or_bull_tip_is_skipped` (`RE` absent, 0, or `RE < DC/2` beyond 1e-6: `SkipReason::TaperedTipNotBall`, whose text says it may be supported later), `fusion::tapered_mill_out_of_range_is_invalid` (`TA` 50: `SkipReason::Invalid`).
+- `fusion::tapered_mill_with_a_flat_or_bull_tip_is_skipped` (`RE` absent, 0, or `RE < DC/2` beyond 1e-6 under a shaft wider than `DC`: `SkipReason::TaperedTipNotBall`, whose text states the file's numbers and says it may be supported later), `fusion::tapered_mill_out_of_range_is_invalid` (`TA` 50: `SkipReason::Invalid`).
+- The vendors' convention (2026-11-20): `fusion::vendor_tapered_mills_import_by_their_corner_radius` (six synthetic entries with a vendor library's geometries, `DC` = `SFDM` = 0.25 in and `RE` 0.015 to 0.0625 in: each imports with the tip `2·RE`, the file's taper and flute length, `diameter_mm` 6.35 and the stepover fraction of it, and one `TipFromCornerRadius` note, with a `cone` for the four whose width at the flute top is over 6.35 mm by more than 5 %), `fusion::tip_from_corner_radius_note_reads_plainly` (the note's text with and without the three numbers, without a `TA`, and on the report line), `fusion::tapered_mill_conventions` (`RE = DC/2`: `DC` the tip, no note; `RE` below it with the shaft equal, absent or narrower: `DC` the cutting diameter; a wider shaft: a bull tip, skipped), `fusion::tip_diameter_confirms_or_refuses_the_ball` (`tip-diameter` equal to `2·RE` or 0 imports, larger is skipped as a flat with rounded corners, smaller is invalid), `fusion::vendor_tapered_mills_are_valid_and_carve` (each of the six passes the library's and a project's validation, has a carve profile, and its cutting height is where its taper reaches the cutting diameter).
 - `fusion::unsupported_types_skipped_by_name` updated: `tapered mill` is no longer in the list.
 
 *dreamcarve (integration, slice 27g)*

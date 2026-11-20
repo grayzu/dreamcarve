@@ -458,7 +458,7 @@ new ones beside them.
 | bull nose end mill | end mill | DreamCarve has no corner radius; the name gains ` (bull nose r<RE>)` so you can tell it apart. |
 | ball end mill | ball nose | |
 | chamfer mill | V-bit | Included angle is twice Fusion's taper angle `TA`: a 90° chamfer mill has `TA` 45 in Fusion and imports as a 90° V-bit. |
-| tapered mill with a ball tip | tapered ball nose | Only when the corner radius `RE` is half of `DC`; see [Tapered mills](#tapered-mills). A flat or bull tip is skipped. |
+| tapered mill with a ball tip | tapered ball nose | The ball is `DC` when the corner radius `RE` is half of it, or `RE` itself when `DC` is the cutting diameter; see [Tapered mills](#tapered-mills). A flat or bull tip is skipped. |
 | drill, spot drill, center drill, counter sink, counter bore, reamer | drill | |
 
 | Fusion value | DreamCarve value |
@@ -486,9 +486,13 @@ tapered mill.
 
 ### Tapered mills
 
-A Fusion `tapered mill` whose corner radius `RE` is half its diameter
-`DC` (within 0.000001 in the file's unit) has a ball tip, and imports as
-a tapered ball nose:
+A Fusion `tapered mill` with a ball tip imports as a tapered ball nose.
+Libraries write one in two ways, and DreamCarve tells them apart by the
+corner radius `RE` and the shaft diameter `SFDM` (lengths are equal
+within 0.000001 in the file's unit).
+
+**`DC` is the tip.** This is what Fusion means by a tapered mill's
+diameter. The corner radius `RE` is half of `DC`:
 
 | Fusion value | DreamCarve value |
 | --- | --- |
@@ -497,8 +501,46 @@ a tapered ball nose:
 | `geometry.LCF` (flute length) | `flute_length_mm` |
 | `geometry.SFDM` (shaft diameter) | `diameter_mm`, the cutting diameter, where the taper reaches the shank's width |
 
+**`DC` is the cutting diameter.** Tool vendors' libraries give a 1/4 in
+tapered ball nose a `DC` of 0.25 in, the same `SFDM`, and the ball as
+the corner radius. `RE` is below half of `DC`, and the shaft is no wider
+than `DC` (or the file has none), so `DC` cannot be a tip: a taper does
+not widen from its tip to a shaft of the same size.
+
+| Fusion value | DreamCarve value |
+| --- | --- |
+| `geometry.RE` (corner radius) | half of `tip_diameter_mm`: the tip is a ball of diameter twice `RE` |
+| `geometry.TA` (taper angle) | `taper_angle_deg`, as written, per side |
+| `geometry.LCF` (flute length) | `flute_length_mm` |
+| `geometry.DC` | `diameter_mm`, the cutting diameter |
+| `geometry.tip-diameter`, when the tool has one above 0 | checked against the ball: equal to twice `RE` it agrees; larger, the tip is a flat with rounded corners and the tool is skipped; smaller, the tool is skipped as invalid |
+
+A tool read this way says so on its import line, because its tip and
+taper were taken on trust and are worth a look at the bit:
+
+```text
+`Acme 1/4" Tapered Ball Nose`: imported (lt4); tip 3.175 mm from the corner radius `RE` and taper 3.4° per side as the file gives them: check both against the bit
+```
+
+DreamCarve also checks the three numbers against each other. A ball of
+that diameter, widening by the taper over the flute length, is so wide
+at the top of the flutes; when that is more than 5 % over the cutting
+diameter, the numbers do not describe one cone and the line says so:
+
+```text
+`Acme 1/4" Fine Tapered Ball Nose`: imported (lt5); tip 2.286 mm from the corner radius `RE` and taper 10° per side as the file gives them: check both against the bit (that tip and taper over the 19.05 mm flutes would be 8.636 mm wide and the cutting diameter is 6.35 mm)
+```
+
+The tool is imported all the same, with the file's taper: DreamCarve
+takes the vendor's numbers as they are and leaves the correction to
+you. Usually it is the taper that is off; [measure
+it](tapered-ball-nose.md#measuring-the-taper) and set
+`taper_angle_deg` in the library. Until you do, DreamCarve takes the bit
+to reach its cutting diameter partway up the flutes and to be straight
+above that, which limits how deep a carve may engage it.
+
 The other values (name, flutes, number, presets and feeds) map as for
-every Fusion tool; the stepover fraction is of the shaft diameter.
+every Fusion tool; the stepover fraction is of the cutting diameter.
 
 A value the file lacks, `TA`, `LCF` or the tip (neither `DC` nor `RE`),
 is imported unset, never guessed, and the import line names each field
@@ -512,16 +554,23 @@ Set them in the library or in the project before carving: `dreamcarve
 check` lists each unset value of a tool an operation uses, and `export`
 refuses until it is set.
 
-The shaft diameter is the exception. It is the cutting diameter, which
-every tool must have, so a ball-tipped tapered mill without `SFDM` is
-skipped, saying `a tapered ball nose needs its shaft diameter (SFDM), the
-cutting diameter`. Add the shaft diameter in Fusion and import again.
+The shaft diameter is the exception. When `DC` is the tip, it is the
+cutting diameter, which every tool must have, so such a tapered mill
+without `SFDM` is skipped, saying `a tapered ball nose needs its shaft
+diameter (SFDM), the cutting diameter`. Add the shaft diameter in Fusion
+and import again.
 
 A tapered mill with a flat tip (`RE` 0 or missing) or a bull tip (`RE`
-below half of `DC`) is a V-bit with a flat, which DreamCarve does not
-model yet; it is skipped, saying so. A value that is there but out of
-range, such as a `TA` of 50 or an `RE` above half of `DC`, skips the tool
-as invalid, naming the field.
+below half of `DC`, under a shaft wider than `DC`, so `DC` is a tip with
+rounded corners) is a V-bit with a flat, which DreamCarve does not model
+yet. It is skipped, and the reason gives the numbers it was judged by:
+
+```text
+`8 mm Tapered Bull Mill`: skipped: a tapered mill with a bull tip (corner radius `RE` 0.5 mm, less than half the tip `DC` 6 mm, under a wider shaft `SFDM` 8 mm) is not a tapered ball nose; DreamCarve does not model it yet
+```
+
+A value that is there but out of range, such as a `TA` of 50 or an `RE`
+above half of `DC`, skips the tool as invalid, naming the field.
 
 **Presets.** Each Fusion cutting preset becomes one library tool, with the
 preset's feeds, so a tool with presets for plywood and acrylic becomes two

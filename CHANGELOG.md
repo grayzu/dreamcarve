@@ -51,6 +51,20 @@ phases bump the patch number.
   `tools/bundle-macos.sh` for an unsigned `DreamCarve.app` on a Mac); it
   is not in the release archives, there is no signed installer, and it
   has been run on macOS only.
+- **Vendors' tapered ball noses import from Fusion libraries.** A tool
+  vendor's Fusion library writes a 1/4 in tapered ball nose with the
+  cutting diameter in `DC` (and `SFDM`) and the ball as the corner
+  radius `RE`, where Fusion's own tools carry the tip in `DC`. Every
+  such tool used to be skipped as "a flat or bull tip". It now imports:
+  the tip is twice `RE`, `DC` is the cutting diameter, and the taper
+  `TA` and flute length `LCF` are the file's as written. Its import line
+  says the tip came from the corner radius and the taper is the file's,
+  so both get checked against the bit, and when the file's tip, taper
+  and flute length would make the bit more than 5 % wider at the flute
+  top than its cutting diameter, it names the numbers: the taper is
+  probably wrong. A tapered mill with a real bull tip (a corner radius
+  below half of `DC` under a wider shaft) or a flat one is still
+  skipped, and the reason now gives the numbers it was judged by.
 - **Tapered ball nose chapter, quick start and test part (#683).** The
   user guide has a Tapered ball nose chapter: the bit's four numbers (tip
   diameter, taper per side, flute length, cutting diameter), its cutting

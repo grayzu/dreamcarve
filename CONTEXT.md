@@ -424,7 +424,8 @@ corners are soft below the surface, and an Inlay rounds its design for
 the bit.
 _Avoid_: TBN in user-facing text, tapered mill (Fusion's name, which
 includes flat and bull tips), included angle (a V-bit's convention)
-_Fusion_: tapered mill with a ball tip (`RE = DC/2`); _Vectric_: Tapered
+_Fusion_: tapered mill with a ball tip (`RE = DC/2`, or in vendors'
+libraries `DC` the cutting diameter and the ball `2·RE`); _Vectric_: Tapered
 Ball Nose
 
 **Tool Library**:

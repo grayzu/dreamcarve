@@ -9627,7 +9627,7 @@ const FUSION_SKIPPED: [(&str, &str); 10] = [
     // No `RE`: a flat tip (#682).
     (
         "3 mm Tapered Ball Mill, 2-Degree Taper",
-        "a tapered mill with a flat or bull tip is not a tapered ball nose; DreamCarve does not model it yet",
+        "a tapered mill with a flat tip (`DC` 3 mm, no corner radius `RE`) is not a tapered ball nose; DreamCarve does not model it yet",
     ),
     (
         "General Turning Tool",

@@ -199,9 +199,31 @@ matters.
 ### From Fusion 360
 
 `tools import` reads a Fusion library's `tapered mill` with a ball tip
-(its corner radius `RE` half its diameter `DC`) as a tapered ball nose:
-`DC` is the tip diameter, `TA` the taper per side as written, `LCF` the
-flute length and the shaft diameter `SFDM` the cutting diameter.
+as a tapered ball nose. Libraries write one in two ways, and both
+import, with `TA` the taper per side as written and `LCF` the flute
+length:
+
+- **Fusion's way**: `DC` is the tip, and its corner radius `RE` is half
+  of it. `DC` is the tip diameter and the shaft diameter `SFDM` the
+  cutting diameter.
+- **Tool vendors' way**: `DC` (and `SFDM`) is the cutting diameter, a
+  1/4 in bit's 0.25 in, and the ball is the corner radius `RE`. The tip
+  diameter is twice `RE` and `DC` the cutting diameter.
+
+A tool read the vendors' way says so on its import line, because two of
+its numbers were taken on trust:
+
+```text
+`Acme 1/4" Tapered Ball Nose`: imported (lt4); tip 2.286 mm from the corner radius `RE` and taper 10° per side as the file gives them: check both against the bit (that tip and taper over the 19.05 mm flutes would be 8.636 mm wide and the cutting diameter is 6.35 mm)
+```
+
+The words in brackets appear when the file's own numbers disagree: a
+2.286 mm ball widening 10° per side over 19.05 mm of flute would be
+8.6 mm across where the bit is 6.35 mm, so one of them is off, and it is
+usually the taper. [Measure the taper](#measuring-the-taper) and correct
+it in the library before you carve. The bit is imported either way;
+with the file's taper DreamCarve takes it to reach its cutting diameter
+partway up the flutes and to be straight above that.
 
 - A missing `TA`, `LCF` or tip is imported unset, and the import line
   names each field to set: `imported (lt3); set
@@ -209,8 +231,9 @@ flute length and the shaft diameter `SFDM` the cutting diameter.
 - A tapered mill without `SFDM` is **skipped**, saying its shaft diameter
   is missing: the cutting diameter is required, and DreamCarve does not
   guess it. Add it in Fusion and import again.
-- A tapered mill with a flat or bull tip (`RE` 0, missing, or below half
-  of `DC`) is skipped too: it is a V-bit with a flat tip, which
+- A tapered mill with a flat tip (`RE` 0 or missing) or a bull tip (`RE`
+  below half of `DC`, under a shaft wider than `DC`) is skipped too,
+  with the numbers that say so: it is a V-bit with a flat tip, which
   DreamCarve does not model yet.
 
 [Tool library: tapered mills](tool-library.md#tapered-mills) has the

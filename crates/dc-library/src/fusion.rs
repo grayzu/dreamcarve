@@ -40,23 +40,54 @@
 //!   angle and `included_angle_deg = 2·TA`. Do not re-derive this from the
 //!   schema's wording.
 //! - **Tapered mill** (`docs/specs/phase-3/design.md`, "Data model →
-//!   Tapered ball nose → Fusion import"; #682). A `tapered mill` whose
-//!   corner radius `RE` is `DC/2` within 1e-6 (`BALL_TIP_TOLERANCE`, in the
-//!   file's unit) has a ball tip and is a tapered ball nose: `DC` →
-//!   `tip_diameter_mm` (`2·RE` without a `DC`), `TA` → `taper_angle_deg`
-//!   as written, `LCF` → `flute_length_mm`, and the shaft diameter
-//!   `SFDM` → `diameter_mm`, the cutting diameter, from which the
-//!   stepover fraction is taken. `TA` is per side: Autodesk's tool
-//!   reference defines the taper angle as half the included angle, as
-//!   the chamfer mill's is. A missing `TA` or `LCF`, or a tip with
-//!   neither `DC` nor `RE`, is imported unset with
-//!   [`ImportNote::TaperedValueUnset`] naming each field. `SFDM` absent
-//!   or not positive is [`SkipReason::NoShaftDiameter`], checked after
-//!   the tip, so no tool carries a placeholder cutting diameter. `RE`
-//!   absent with a `DC`, 0, or below `DC/2` (a flat or bull tip) is
-//!   [`SkipReason::TaperedTipNotBall`]; `RE` negative or above `DC/2` is
-//!   [`SkipReason::Invalid`], as is a present value out of range (`TA`
-//!   50, flutes ending in the ball, a shaft no wider than the tip).
+//!   Tapered ball nose → Fusion import"; #682, and the maintainer's
+//!   decision of 2026-11-20 on vendors' libraries). A ball-tipped
+//!   `tapered mill` is a tapered ball nose, and libraries write one in
+//!   two ways. Lengths are compared within 1e-6 (`BALL_TIP_TOLERANCE`, in
+//!   the file's unit).
+//!   - **`DC` is the tip** (Fusion's own meaning of a tapered mill's
+//!     diameter): the corner radius `RE` is `DC/2`. `DC` →
+//!     `tip_diameter_mm` (`2·RE` without a `DC`) and the shaft diameter
+//!     `SFDM` → `diameter_mm`, the cutting diameter. `SFDM` absent or not
+//!     positive is [`SkipReason::NoShaftDiameter`], checked after the
+//!     tip, so no tool carries a placeholder cutting diameter.
+//!   - **`DC` is the cutting diameter** (tool vendors' libraries, which
+//!     give a 1/4 in tapered ball nose `DC` 0.25, `SFDM` 0.25 and the
+//!     ball as `RE`): `RE` is below `DC/2` and the shaft is no wider
+//!     than `DC`, or absent. `DC` cannot be the tip there, because a
+//!     taper does not widen from its tip to a shaft of the same size, so
+//!     `2·RE` → `tip_diameter_mm` and `DC` → `diameter_mm`. A
+//!     `tip-diameter`, when the item has one above 0, must agree: equal
+//!     to `2·RE` it confirms the ball, above it the tip is a flat with
+//!     rounded corners ([`SkipReason::TaperedTipNotBall`]), below it the
+//!     item is [`SkipReason::Invalid`]. The tool carries
+//!     [`ImportNote::TipFromCornerRadius`], which says the tip was taken
+//!     from the corner radius and the taper is the file's, so the user
+//!     checks both against the bit. When that tip and taper over the
+//!     flute length give a cone more than 5 % wider than the cutting
+//!     diameter at the flute top (`CONE_WIDTH_TOLERANCE`; the width is
+//!     the model's `2·(LCF + δ)·tan TA` with `δ = RE·(1/sin TA − 1)`,
+//!     a little under `2·RE + 2·LCF·tan TA`), the file's numbers do not
+//!     describe one cone: the tool is imported all the same (maintainer:
+//!     assume the vendor's data is accurate, the user can override it)
+//!     and the note names the three numbers and both widths. Such a tool
+//!     is valid: its taper reaches the cutting diameter below the flute
+//!     top and it is a cylinder above, as
+//!     [`dc_project::CuttingLimit::CuttingDiameter`] says.
+//!   - **Neither**: `RE` below `DC/2` under a shaft wider than `DC` is a
+//!     bull tip, and `RE` absent with a `DC`, or 0, a flat one. Both are
+//!     [`SkipReason::TaperedTipNotBall`], which states the numbers found.
+//!     `RE` negative or above `DC/2` is [`SkipReason::Invalid`].
+//!
+//!   In every case `TA` → `taper_angle_deg` as written and `LCF` →
+//!   `flute_length_mm`, and the stepover fraction is taken from the
+//!   cutting diameter. `TA` is per side: Autodesk's tool reference
+//!   defines the taper angle as half the included angle, as the chamfer
+//!   mill's is. A missing `TA` or `LCF`, or a tip with neither `DC` nor
+//!   `RE`, is imported unset with [`ImportNote::TaperedValueUnset`]
+//!   naming each field. A present value out of range (`TA` 50, flutes
+//!   ending in the ball, a shaft no wider than the tip `DC`) is
+//!   [`SkipReason::Invalid`].
 //! - `unit` `"millimeters"` or `"inches"`; every length (`DC`, `stepdown`,
 //!   `stepover`) and feed (`v_f`, `v_f_plunge`) is in that unit and is
 //!   converted to mm or mm/min. `n` is RPM in either unit. A value
@@ -67,7 +98,8 @@
 //!   `1524.0000000000002`; a millimetre value is kept as written. The
 //!   computed `step_over_fraction` is rounded to 6 places in either unit
 //!   (maintainer decision 2026-10-24).
-//! - `geometry.DC` → `diameter_mm` (a tapered mill's is `SFDM`); absent or not positive is
+//! - `geometry.DC` → `diameter_mm` (a tapered mill's is `SFDM`, or `DC`
+//!   by the vendors' convention, "Tapered mill" above); absent or not positive is
 //!   [`SkipReason::NoDiameter`]. `geometry.NOF` → `flutes`; 0 or absent is
 //!   1 with [`ImportNote::FlutesUnset`].
 //! - `post-process.number` above 0 → [`Tool::number`]; 0 or absent → `None`.
@@ -103,7 +135,9 @@ use std::borrow::Cow;
 use std::fmt;
 use std::io::Read;
 
-use dc_project::{TBN_TIP, Tool, ToolId, ToolKind, round_length_mm, round_rate_mm_min};
+use dc_project::{
+    MAX_TAPER_ANGLE_DEG, TBN_TIP, Tool, ToolId, ToolKind, round_length_mm, round_rate_mm_min,
+};
 use serde_json::{Map, Value};
 
 use crate::{LibraryError, LibraryToolId};
@@ -177,6 +211,35 @@ pub enum ImportNote {
         /// The unset fields, in the file's order: tip, taper, flutes.
         fields: Vec<String>,
     },
+    /// A `tapered mill` read by the vendors' convention (module docs,
+    /// "Tapered mill"): its `DC` is the cutting diameter, so the ball's
+    /// diameter was taken from the corner radius, `2·RE`, and the taper is
+    /// the file's as written. The user checks both against the bit.
+    TipFromCornerRadius {
+        /// The tip diameter taken, `2·RE`, millimetres.
+        tip_diameter_mm: f64,
+        /// The file's taper per side, degrees; `None` when it has none
+        /// ([`Self::TaperedValueUnset`] names the field).
+        taper_angle_deg: Option<f64>,
+        /// Set when that tip and taper over the flute length do not
+        /// describe one cone ending at the cutting diameter.
+        cone: Option<ConeMismatch>,
+    },
+}
+
+/// A tapered mill's tip, taper and flute length that give a cone wider at
+/// the flute top than its cutting diameter by more than a rounding
+/// ([`ImportNote::TipFromCornerRadius`]): one of the file's numbers is
+/// off, most likely the taper.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConeMismatch {
+    /// The file's flute length `LCF`, millimetres.
+    pub flute_length_mm: f64,
+    /// How wide the tip and taper make the cutter at the flute top,
+    /// millimetres.
+    pub flute_top_width_mm: f64,
+    /// The file's cutting diameter `DC`, millimetres.
+    pub diameter_mm: f64,
 }
 
 impl ImportNote {
@@ -212,6 +275,28 @@ impl fmt::Display for ImportNote {
                 "stepover {step_over_mm} mm is wider than the {diameter_mm} mm tool, using 1"
             ),
             Self::TaperedValueUnset { fields } => write!(f, "set {}", fields.join(", ")),
+            Self::TipFromCornerRadius {
+                tip_diameter_mm,
+                taper_angle_deg,
+                cone,
+            } => {
+                write!(f, "tip {tip_diameter_mm} mm from the corner radius `RE`")?;
+                match taper_angle_deg {
+                    Some(taper_deg) => write!(
+                        f,
+                        " and taper {taper_deg}° per side as the file gives them: check both against the bit"
+                    )?,
+                    None => f.write_str(": check it against the bit")?,
+                }
+                if let Some(cone) = cone {
+                    write!(
+                        f,
+                        " (that tip and taper over the {} mm flutes would be {:.3} mm wide and the cutting diameter is {} mm)",
+                        cone.flute_length_mm, cone.flute_top_width_mm, cone.diameter_mm
+                    )?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -243,10 +328,14 @@ pub enum SkipReason {
     NoDiameter,
     /// A chamfer mill without `geometry.TA`.
     NoTaperAngle,
-    /// A `tapered mill` whose tip is flat or a bull nose (`RE` absent, 0,
-    /// or below `DC/2`): a V-bit with a flat, which DreamCarve does not
-    /// model yet.
-    TaperedTipNotBall,
+    /// A `tapered mill` whose tip is not a ball (module docs, "Tapered
+    /// mill"): a V-bit with a flat, which DreamCarve does not model yet.
+    TaperedTipNotBall {
+        /// What the tip is, with the file's numbers.
+        tip: NotBallTip,
+        /// The unit of those numbers: `mm` or `in`.
+        unit: &'static str,
+    },
     /// A ball-tipped `tapered mill` without a positive shaft diameter
     /// (`geometry.SFDM`), which is a tapered ball nose's cutting
     /// diameter. Never imported with a placeholder (phase 3, question 33).
@@ -260,6 +349,62 @@ pub enum SkipReason {
     },
 }
 
+/// What a `tapered mill`'s tip is when it is not a ball
+/// ([`SkipReason::TaperedTipNotBall`]), with the numbers the file gives,
+/// each in the file's unit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NotBallTip {
+    /// No corner radius: `RE` is absent or 0.
+    Flat {
+        /// The tip diameter `DC`, when the file has one.
+        dc: Option<f64>,
+        /// The corner radius `RE` as written: 0, or `None` when absent.
+        re: Option<f64>,
+    },
+    /// A corner radius below half the tip `DC`, under a shaft wider than
+    /// `DC`, so `DC` is a tip and its corners are only rounded.
+    Bull {
+        /// The corner radius `RE`.
+        re: f64,
+        /// The tip diameter `DC`.
+        dc: f64,
+        /// The shaft diameter `SFDM`.
+        shaft: f64,
+    },
+    /// A `tip-diameter` above `2·RE`: a flat between rounded corners.
+    RoundedFlat {
+        /// The item's `tip-diameter`.
+        tip_diameter: f64,
+        /// The corner radius `RE`.
+        re: f64,
+    },
+}
+
+impl NotBallTip {
+    /// The tip in words with its numbers, in `unit`: ``a flat tip (`DC`
+    /// 3 mm, no corner radius `RE`)``.
+    fn describe(&self, unit: &str) -> String {
+        match *self {
+            Self::Flat { dc, re } => {
+                let radius = match re {
+                    Some(re) => format!("corner radius `RE` {re}"),
+                    None => "no corner radius `RE`".to_owned(),
+                };
+                match dc {
+                    Some(dc) => format!("a flat tip (`DC` {dc} {unit}, {radius})"),
+                    None => format!("a flat tip ({radius})"),
+                }
+            }
+            Self::Bull { re, dc, shaft } => format!(
+                "a bull tip (corner radius `RE` {re} {unit}, less than half the tip `DC` {dc} {unit}, under a wider shaft `SFDM` {shaft} {unit})"
+            ),
+            Self::RoundedFlat { tip_diameter, re } => format!(
+                "a flat tip with rounded corners (`tip-diameter` {tip_diameter} {unit}, more than twice the corner radius `RE` {re} {unit})"
+            ),
+        }
+    }
+}
+
 impl fmt::Display for SkipReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -270,8 +415,10 @@ impl fmt::Display for SkipReason {
             Self::UnknownUnit(None) => f.write_str("no unit"),
             Self::NoDiameter => f.write_str("no cutting diameter (`DC`)"),
             Self::NoTaperAngle => f.write_str("chamfer mill has no taper angle (`TA`)"),
-            Self::TaperedTipNotBall => f.write_str(
-                "a tapered mill with a flat or bull tip is not a tapered ball nose; DreamCarve does not model it yet",
+            Self::TaperedTipNotBall { tip, unit } => write!(
+                f,
+                "a tapered mill with {} is not a tapered ball nose; DreamCarve does not model it yet",
+                tip.describe(unit)
             ),
             Self::NoShaftDiameter => f.write_str(
                 "a tapered ball nose needs its shaft diameter (`SFDM`), the cutting diameter",
@@ -418,34 +565,67 @@ enum Family {
     Drill,
 }
 
-/// How far `RE` may be from `DC/2`, in the file's unit, for a tapered
-/// mill's tip to be a ball.
+/// How far two of a tapered mill's lengths may differ, in the file's unit,
+/// and still be equal: `RE` and `DC/2` for the tip to be a ball of
+/// diameter `DC`, `SFDM` and `DC` for the shaft to be no wider, and
+/// `tip-diameter` and `2·RE`.
 const BALL_TIP_TOLERANCE: f64 = 1e-6;
 
-/// A ball-tipped `tapered mill`'s cutter and its cutting diameter in the
-/// file's unit (`SFDM`), or why it is skipped (module docs, "Tapered
-/// mill"). `length_mm` converts a length in the file's unit.
+/// How far past its cutting diameter a tapered mill's cone may be at the
+/// flute top, as a fraction of that diameter, before
+/// [`ImportNote::TipFromCornerRadius`] says the file's numbers disagree:
+/// 5 %. A taper a vendor rounds to the nearest half degree moves the
+/// width at the top of 28 mm of flute by a quarter of a millimetre, 4 %
+/// of a 6.35 mm bit, and that is a rounding, not a wrong number.
+const CONE_WIDTH_TOLERANCE: f64 = 0.05;
+
+/// A ball-tipped `tapered mill` as [`tapered_ball_nose`] reads it.
+struct Tapered {
+    /// The cutter, in millimetres.
+    cutter: ToolKind,
+    /// The cutting diameter in the file's unit: `SFDM`, or `DC` by the
+    /// vendors' convention.
+    diameter: f64,
+    /// What the user should check, when the tip came from `RE`.
+    note: Option<ImportNote>,
+}
+
+/// A ball-tipped `tapered mill`'s cutter, its cutting diameter in the
+/// file's unit and the note it carries, or why it is skipped (module
+/// docs, "Tapered mill"). `length_mm` converts a length in the file's
+/// unit, which `unit` names (`mm` or `in`).
 fn tapered_ball_nose(
     geometry: Option<&Map<String, Value>>,
     length_mm: impl Fn(f64) -> f64,
-) -> Result<(ToolKind, f64), SkipReason> {
+    unit: &'static str,
+) -> Result<Tapered, SkipReason> {
     let number = |key: &str| geometry?.get(key)?.as_f64();
     let invalid_tip = |message: String| SkipReason::Invalid {
         field: TBN_TIP.into(),
         message,
     };
-    // The tip: `DC` when `RE` is half of it, `2·RE` without a `DC`, unset
-    // with neither; a flat or bull tip is another cutter.
-    let tip = match (positive(geometry, "DC"), number("RE")) {
+    let not_ball = |tip: NotBallTip| SkipReason::TaperedTipNotBall { tip, unit };
+    let dc = positive(geometry, "DC");
+    let shaft = positive(geometry, "SFDM");
+    // The tip in the file's unit, unset with neither `DC` nor `RE`, and
+    // whether it was taken from `RE` because `DC` is the cutting diameter.
+    let (tip, dc_is_cutting_diameter) = match (dc, number("RE")) {
         (_, Some(re)) if re < 0.0 => {
             return Err(invalid_tip(format!(
                 "has a negative corner radius `RE` {re}"
             )));
         }
-        (_, Some(re)) if re <= 0.0 => return Err(SkipReason::TaperedTipNotBall),
-        (Some(_), None) => return Err(SkipReason::TaperedTipNotBall),
-        (None, None) => None,
-        (None, Some(re)) => Some(2.0 * re),
+        (dc, Some(re)) if re <= 0.0 => {
+            return Err(not_ball(NotBallTip::Flat { dc, re: Some(re) }));
+        }
+        (Some(dc), None) => {
+            return Err(not_ball(NotBallTip::Flat {
+                dc: Some(dc),
+                re: None,
+            }));
+        }
+        (None, None) => (None, false),
+        (None, Some(re)) => (Some(2.0 * re), false),
         (Some(dc), Some(re)) => {
             let half = dc / 2.0;
             if re > half + BALL_TIP_TOLERANCE {
@@ -453,20 +633,85 @@ fn tapered_ball_nose(
                     "has a corner radius `RE` {re} above half its diameter `DC` {dc}"
                 )));
             }
-            if re < half - BALL_TIP_TOLERANCE {
-                return Err(SkipReason::TaperedTipNotBall);
+            if re >= half - BALL_TIP_TOLERANCE {
+                (Some(dc), false)
+            } else {
+                // `RE` is below `DC/2`. Under a wider shaft `DC` is a tip
+                // with rounded corners; under one no wider it cannot be a
+                // tip at all, so it is the cutting diameter and the ball
+                // is `RE`'s.
+                if let Some(shaft) = shaft.filter(|s| *s > dc + BALL_TIP_TOLERANCE) {
+                    return Err(not_ball(NotBallTip::Bull { re, dc, shaft }));
+                }
+                let ball = 2.0 * re;
+                if let Some(tip_diameter) = positive(geometry, "tip-diameter") {
+                    if tip_diameter > ball + BALL_TIP_TOLERANCE {
+                        return Err(not_ball(NotBallTip::RoundedFlat { tip_diameter, re }));
+                    }
+                    if tip_diameter < ball - BALL_TIP_TOLERANCE {
+                        return Err(invalid_tip(format!(
+                            "has a `tip-diameter` {tip_diameter} below twice its corner radius `RE` {re}"
+                        )));
+                    }
+                }
+                (Some(ball), true)
             }
-            Some(dc)
         }
     };
-    let shaft = positive(geometry, "SFDM").ok_or(SkipReason::NoShaftDiameter)?;
-    let cutter = ToolKind::TaperedBallNose {
-        tip_diameter_mm: tip.map(&length_mm),
-        // Per side, as written (module docs, "Tapered mill").
-        taper_angle_deg: number("TA"),
-        flute_length_mm: number("LCF").map(&length_mm),
-    };
-    Ok((cutter, shaft))
+    let diameter = if dc_is_cutting_diameter { dc } else { shaft };
+    let diameter = diameter.ok_or(SkipReason::NoShaftDiameter)?;
+    let tip_diameter_mm = tip.map(&length_mm);
+    // Per side, as written (module docs, "Tapered mill").
+    let taper_angle_deg = number("TA");
+    let flute_length_mm = number("LCF").map(&length_mm);
+    let note = tip_diameter_mm
+        .filter(|_| dc_is_cutting_diameter)
+        .map(|tip_diameter_mm| ImportNote::TipFromCornerRadius {
+            tip_diameter_mm,
+            taper_angle_deg,
+            cone: cone_mismatch(
+                tip_diameter_mm,
+                taper_angle_deg,
+                flute_length_mm,
+                length_mm(diameter),
+            ),
+        });
+    Ok(Tapered {
+        cutter: ToolKind::TaperedBallNose {
+            tip_diameter_mm,
+            taper_angle_deg,
+            flute_length_mm,
+        },
+        diameter,
+        note,
+    })
+}
+
+/// The [`ConeMismatch`] of a tapered ball nose whose tip and taper make
+/// it more than [`CONE_WIDTH_TOLERANCE`] wider at the flute top than its
+/// cutting diameter `diameter_mm`; `None` when they agree, the cone ends
+/// narrower (the flutes stop below the shank's width, which is a bit as
+/// it is made), or a value is unset or out of range, which validation
+/// names. The width is the tapered ball nose model's (`dc-project`'s
+/// `tool.rs`): the cone tangent to the ball, `2·(L + δ)·tan β` with `δ =
+/// ρ·(1/sin β − 1)`.
+fn cone_mismatch(
+    tip_diameter_mm: f64,
+    taper_angle_deg: Option<f64>,
+    flute_length_mm: Option<f64>,
+    diameter_mm: f64,
+) -> Option<ConeMismatch> {
+    let taper_deg = taper_angle_deg.filter(|a| *a > 0.0 && *a <= MAX_TAPER_ANGLE_DEG)?;
+    let flute_length_mm = flute_length_mm.filter(|l| l.is_finite() && *l > 0.0)?;
+    let beta = taper_deg.to_radians();
+    let tip_radius_mm = tip_diameter_mm / 2.0;
+    let apex_offset_mm = tip_radius_mm * (1.0 / beta.sin() - 1.0);
+    let flute_top_width_mm = 2.0 * (flute_length_mm + apex_offset_mm) * beta.tan();
+    (flute_top_width_mm > diameter_mm * (1.0 + CONE_WIDTH_TOLERANCE)).then_some(ConeMismatch {
+        flute_length_mm,
+        flute_top_width_mm,
+        diameter_mm,
+    })
 }
 
 /// What a Fusion `type` is to the importer.
@@ -630,10 +875,15 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
         .and_then(|o| o.get("geometry"))
         .and_then(Value::as_object);
     // The cutter, and the cutting diameter in the file's unit: `DC`, or a
-    // tapered ball nose's shaft diameter `SFDM` (its `DC` is the tip).
+    // tapered ball nose's shaft diameter `SFDM` when its `DC` is the tip.
     let dc = || positive(geometry, "DC").ok_or_else(|| skip(SkipReason::NoDiameter));
+    let mut tool_notes = Vec::new();
     let (cutter, diameter) = match family {
-        Family::Tapered => tapered_ball_nose(geometry, length_mm).map_err(skip)?,
+        Family::Tapered => {
+            let tapered = tapered_ball_nose(geometry, length_mm, unit_label).map_err(skip)?;
+            tool_notes.extend(tapered.note);
+            (tapered.cutter, tapered.diameter)
+        }
         Family::EndMill | Family::BullNose => (ToolKind::EndMill, dc()?),
         Family::BallNose => (ToolKind::BallNose, dc()?),
         Family::Drill => (ToolKind::Drill, dc()?),
@@ -650,7 +900,6 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
             (cutter, diameter)
         }
     };
-    let mut tool_notes = Vec::new();
     let flutes = match positive(geometry, "NOF").and_then(whole_positive) {
         Some(flutes) => u8::try_from(flutes).map_err(|_| {
             skip(SkipReason::Invalid {
@@ -1472,7 +1721,7 @@ mod tests {
                 // No `RE`: a flat tip, not a tapered ball nose (#682).
                 (
                     "3 mm Tapered Ball Mill, 2-Degree Taper",
-                    SkipReason::TaperedTipNotBall.to_string()
+                    "a tapered mill with a flat tip (`DC` 3 mm, no corner radius `RE`) is not a tapered ball nose; DreamCarve does not model it yet".to_owned()
                 ),
                 ("General Turning Tool", unsupported("turning general")),
                 ("Probe, 2 mm Stylus", unsupported("probe")),
@@ -1938,22 +2187,407 @@ mod tests {
         );
     }
 
+    /// A flat tip (`RE` absent or 0) and a bull tip (`RE` below `DC/2`
+    /// under a shaft wider than `DC`) are skipped, and the reason states
+    /// the numbers the file gives, in its unit.
     #[test]
     fn tapered_mill_with_a_flat_or_bull_tip_is_skipped() {
+        let not_ball = |tip: NotBallTip| SkipReason::TaperedTipNotBall { tip, unit: "in" };
         let mut zero = ultra_tapered_mill();
         set(&mut zero, &["geometry", "RE"], json!(0));
+        // The Ultra bit's 0.03 in tip with its corners only rounded: the
+        // 0.25 in shaft is wider, so `DC` is a tip.
         let mut bull = ultra_tapered_mill();
-        set(&mut bull, &["geometry", "RE"], json!(0.015 - 2e-6));
-        for item in [ultra_without(&["RE"]), zero, bull] {
-            assert_eq!(skip_reason(item), SkipReason::TaperedTipNotBall);
+        set(&mut bull, &["geometry", "RE"], json!(0.01));
+        for (item, reason, text) in [
+            (
+                ultra_without(&["RE"]),
+                not_ball(NotBallTip::Flat {
+                    dc: Some(0.03),
+                    re: None,
+                }),
+                "a tapered mill with a flat tip (`DC` 0.03 in, no corner radius `RE`) is not a tapered ball nose; DreamCarve does not model it yet",
+            ),
+            (
+                zero,
+                not_ball(NotBallTip::Flat {
+                    dc: Some(0.03),
+                    re: Some(0.0),
+                }),
+                "a tapered mill with a flat tip (`DC` 0.03 in, corner radius `RE` 0) is not a tapered ball nose; DreamCarve does not model it yet",
+            ),
+            (
+                bull,
+                not_ball(NotBallTip::Bull {
+                    re: 0.01,
+                    dc: 0.03,
+                    shaft: 0.25,
+                }),
+                "a tapered mill with a bull tip (corner radius `RE` 0.01 in, less than half the tip `DC` 0.03 in, under a wider shaft `SFDM` 0.25 in) is not a tapered ball nose; DreamCarve does not model it yet",
+            ),
+        ] {
+            let found = skip_reason(item);
+            assert_eq!(found, reason);
+            assert_eq!(found.to_string(), text);
         }
-        let text = SkipReason::TaperedTipNotBall.to_string();
-        assert!(text.contains("flat or bull tip"), "{text}");
-        assert!(text.contains("does not model it yet"), "{text}");
-        // Within 1e-6 of `DC/2`, in the file's unit, is a ball.
+        // `RE` 0 with no `DC` either: still a flat tip.
+        let mut no_dc = ultra_without(&["DC"]);
+        set(&mut no_dc, &["geometry", "RE"], json!(0));
+        assert_eq!(
+            skip_reason(no_dc).to_string(),
+            "a tapered mill with a flat tip (corner radius `RE` 0) is not a tapered ball nose; DreamCarve does not model it yet"
+        );
+        // Just outside 1e-6 of `DC/2` under the wider shaft is a bull tip;
+        // within it, in the file's unit, a ball.
+        let mut outside = ultra_tapered_mill();
+        set(&mut outside, &["geometry", "RE"], json!(0.015 - 2e-6));
+        assert!(matches!(
+            skip_reason(outside),
+            SkipReason::TaperedTipNotBall {
+                tip: NotBallTip::Bull { .. },
+                unit: "in"
+            }
+        ));
         let mut near = ultra_tapered_mill();
         set(&mut near, &["geometry", "RE"], json!(0.015 - 5e-7));
-        assert_some_approx(tapered(&only_tool(near).tool).0, 0.762);
+        let near = only_tool(near);
+        assert_eq!(near.notes, [], "`DC` is the tip: nothing to check");
+        assert_some_approx(tapered(&near.tool).0, 0.762);
+    }
+
+    // Maintainer decision 2026-11-20: a vendor's tapered ball nose, whose
+    // `DC` is the cutting diameter and whose ball is the corner radius.
+
+    /// A tapered ball nose as tool vendors' Fusion libraries write one,
+    /// in inches: `DC` and `SFDM` both the 1/4 in cutting diameter, the
+    /// ball as the corner radius `re`, the taper `ta` per side, `lcf` of
+    /// flute, no `tip-diameter`, and one preset stepping over `stepover`.
+    /// The numbers are those of six entries of a vendor's published
+    /// library; the names are made up.
+    fn vendor_tapered_mill(name: &str, re: f64, ta: f64, lcf: f64, stepover: f64) -> Value {
+        json!({
+            "type": "tapered mill",
+            "unit": "inches",
+            "description": name,
+            "guid": format!("guid-{name}"),
+            "geometry": {
+                "DC": 0.25, "RE": re, "TA": ta, "LCF": lcf, "SFDM": 0.25,
+                "NOF": 2, "OAL": 2.2, "LB": 1, "shoulder-length": lcf
+            },
+            "start-values": { "presets": [ {
+                "name": "Hardwood",
+                "guid": format!("preset-{name}"),
+                "n": 19000,
+                "v_f": 60,
+                "v_f_plunge": 25,
+                "stepdown": 0.25,
+                "stepover": stepover,
+                "use-stepdown": true,
+                "use-stepover": true
+            } ] }
+        })
+    }
+
+    /// The six vendor geometries: name, `RE`, `TA`, `LCF` and the
+    /// preset's stepover, all in inches.
+    const VENDOR_TAPERED: [(&str, f64, f64, f64, f64); 6] = [
+        ("Taper A", 0.015, 10.0, 0.75, 0.0024),
+        ("Taper B", 0.045, 10.0, 0.75, 0.0072),
+        ("Taper C", 0.0312, 5.0, 1.125, 0.01),
+        ("Taper D", 0.0625, 3.4, 1.125, 0.0225),
+        ("Taper E", 0.015_748, 6.0, 1.25, 0.0072),
+        ("Taper F", 0.031_496_1, 6.0, 1.09, 0.0072),
+    ];
+
+    /// "Taper B", the worked example: a 0.045 in ball, 10° per side,
+    /// 0.75 in of flute.
+    fn taper_b() -> Value {
+        vendor_tapered_mill("Taper B", 0.045, 10.0, 0.75, 0.0072)
+    }
+
+    /// Each of a vendor's six tapered ball noses imports: the tip is twice
+    /// the corner radius, the taper and flute length are the file's, the
+    /// cutting diameter is `DC`, and the stepover fraction is of it.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "converted lengths are rounded to the exact decimal"
+    )]
+    fn vendor_tapered_mills_import_by_their_corner_radius() {
+        // Tip, taper, flute length, stepover fraction, and the width the
+        // tip and taper give at the flute top when it is over the cutting
+        // diameter by more than a rounding.
+        let expected: [(f64, f64, f64, f64, Option<f64>); 6] = [
+            (0.762, 10.0, 19.05, 0.0096, Some(7.357)),
+            (2.286, 10.0, 19.05, 0.0288, Some(8.636)),
+            // Within 5 % of 6.35 mm (6.452 and 6.387): one cone.
+            (1.584_96, 5.0, 28.575, 0.04, None),
+            (3.175, 3.4, 28.575, 0.09, None),
+            (0.799_998, 6.0, 31.75, 0.0288, Some(7.394)),
+            (1.600_002, 6.0, 27.686, 0.0288, Some(7.260)),
+        ];
+        let items: Vec<Value> = VENDOR_TAPERED
+            .iter()
+            .map(|&(name, re, ta, lcf, stepover)| vendor_tapered_mill(name, re, ta, lcf, stepover))
+            .collect();
+        let imported = import_items(&items);
+        assert_eq!(imported.skipped, [], "none is skipped");
+        assert_eq!(imported.tools.len(), 6);
+        for (imported, (&(name, ..), (tip_mm, taper_deg, flutes_mm, fraction, width_mm))) in
+            imported
+                .tools
+                .iter()
+                .zip(VENDOR_TAPERED.iter().zip(expected))
+        {
+            let tool = &imported.tool;
+            assert_eq!(tool.name, name);
+            assert_eq!(
+                tapered(tool),
+                (Some(tip_mm), Some(taper_deg), Some(flutes_mm)),
+                "{name}"
+            );
+            assert!(
+                tool.diameter_mm == 6.35,
+                "{name}: `DC` is the cutting diameter"
+            );
+            assert_eq!(tool.step_over_fraction, Some(fraction), "{name}");
+            assert_eq!(tool.step_down_mm, Some(6.35), "{name}");
+            assert_eq!(tool.feed_mm_min, Some(1524.0), "{name}");
+            assert_eq!(tool.plunge_mm_min, Some(635.0), "{name}");
+            assert_eq!((tool.rpm, tool.flutes), (Some(19000), 2), "{name}");
+            let [
+                ImportNote::TipFromCornerRadius {
+                    tip_diameter_mm,
+                    taper_angle_deg,
+                    cone,
+                },
+            ] = imported.notes.as_slice()
+            else {
+                panic!("{name}: one note, the tip's: {:?}", imported.notes);
+            };
+            assert_eq!(
+                (*tip_diameter_mm, *taper_angle_deg),
+                (tip_mm, Some(taper_deg)),
+                "{name}"
+            );
+            match (cone, width_mm) {
+                (None, None) => {}
+                (Some(cone), Some(width_mm)) => {
+                    assert_eq!((cone.flute_length_mm, cone.diameter_mm), (flutes_mm, 6.35));
+                    assert!(
+                        (cone.flute_top_width_mm - width_mm).abs() < 1e-3,
+                        "{name}: {} mm at the flute top, not {width_mm}",
+                        cone.flute_top_width_mm
+                    );
+                }
+                other => panic!("{name}: {other:?}"),
+            }
+        }
+    }
+
+    /// The note on a tool read by the vendors' convention says in plain
+    /// words where the tip came from and whose the taper is, and, when
+    /// the numbers do not describe one cone, names them.
+    #[test]
+    fn tip_from_corner_radius_note_reads_plainly() {
+        // The example: 0.09 in tip, 10°, 0.75 in of flute, far past 0.25 in.
+        let imported = only_tool(taper_b());
+        assert_eq!(imported.notes.len(), 1);
+        assert_eq!(
+            imported.notes[0].to_string(),
+            "tip 2.286 mm from the corner radius `RE` and taper 10° per side as the file gives them: check both against the bit (that tip and taper over the 19.05 mm flutes would be 8.636 mm wide and the cutting diameter is 6.35 mm)"
+        );
+        // One cone, within a rounding: only what to check.
+        let imported = only_tool(vendor_tapered_mill("Taper D", 0.0625, 3.4, 1.125, 0.0225));
+        assert_eq!(
+            imported.notes[0].to_string(),
+            "tip 3.175 mm from the corner radius `RE` and taper 3.4° per side as the file gives them: check both against the bit"
+        );
+        // No `TA`: the tip's note, then the unset taper's.
+        let mut item = taper_b();
+        remove_geometry(&mut item, "TA");
+        let imported = only_tool(item);
+        assert_eq!(
+            imported
+                .notes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            [
+                "tip 2.286 mm from the corner radius `RE`: check it against the bit",
+                "set cutter.tapered_ball_nose.taper_angle_deg"
+            ]
+        );
+        // The report line `tools import` prints and the app's review lists.
+        let lines = crate::import::merge(
+            &crate::Library::default(),
+            crate::import::read(&library(&[taper_b()])).expect("reads"),
+            false,
+        )
+        .expect("merges")
+        .report
+        .lines();
+        assert_eq!(
+            lines,
+            [
+                "`Taper B`: imported (lt1); tip 2.286 mm from the corner radius `RE` and taper 10° per side as the file gives them: check both against the bit (that tip and taper over the 19.05 mm flutes would be 8.636 mm wide and the cutting diameter is 6.35 mm)"
+            ]
+        );
+    }
+
+    /// Which convention an item is read by: `RE` at `DC/2` makes `DC` the
+    /// tip; `RE` below it makes `DC` the cutting diameter unless the shaft
+    /// is wider than `DC`, when the tip is a bull nose.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a millimetre file's values are kept as written"
+    )]
+    fn tapered_mill_conventions() {
+        let geometry = |geometry: Value| {
+            let mut item = taper_b();
+            set(&mut item, &["unit"], json!("millimeters"));
+            set(&mut item, &["geometry"], geometry);
+            preset(&mut item).remove("stepover");
+            item
+        };
+        let tip_from_re =
+            |notes: &[ImportNote]| matches!(notes, [ImportNote::TipFromCornerRadius { .. }]);
+        // `DC` the tip, `SFDM` the cutting diameter: no note.
+        let fusion = only_tool(geometry(json!({
+            "DC": 1, "RE": 0.5, "TA": 5, "LCF": 20, "SFDM": 6, "NOF": 2
+        })));
+        assert_eq!(tapered(&fusion.tool).0, Some(1.0));
+        assert!(fusion.tool.diameter_mm == 6.0);
+        assert_eq!(fusion.notes, []);
+        // `DC` the cutting diameter: the shaft equal (within 1e-6),
+        // absent, or narrower.
+        for shaft in [Some(6.0), Some(6.000_000_5), None, Some(4.0)] {
+            let mut item = geometry(json!({
+                "DC": 6, "RE": 0.5, "TA": 5, "LCF": 20, "SFDM": shaft, "NOF": 2
+            }));
+            if shaft.is_none() {
+                remove_geometry(&mut item, "SFDM");
+            }
+            let vendor = only_tool(item);
+            assert_eq!(tapered(&vendor.tool).0, Some(1.0), "{shaft:?}");
+            assert!(vendor.tool.diameter_mm == 6.0, "{shaft:?}");
+            assert!(tip_from_re(&vendor.notes), "{shaft:?}: {:?}", vendor.notes);
+        }
+        // A shaft wider than `DC`: a 6 mm tip with 0.5 mm corners.
+        let bull = skip_reason(geometry(json!({
+            "DC": 6, "RE": 0.5, "TA": 5, "LCF": 20, "SFDM": 8, "NOF": 2
+        })));
+        assert_eq!(
+            bull,
+            SkipReason::TaperedTipNotBall {
+                tip: NotBallTip::Bull {
+                    re: 0.5,
+                    dc: 6.0,
+                    shaft: 8.0
+                },
+                unit: "mm"
+            }
+        );
+        assert_eq!(
+            bull.to_string(),
+            "a tapered mill with a bull tip (corner radius `RE` 0.5 mm, less than half the tip `DC` 6 mm, under a wider shaft `SFDM` 8 mm) is not a tapered ball nose; DreamCarve does not model it yet"
+        );
+    }
+
+    /// A `tip-diameter` on an item read by the vendors' convention must
+    /// agree with the ball: equal to `2·RE` it confirms it, larger it is a
+    /// flat with rounded corners, which stays skipped, and smaller the
+    /// item contradicts itself. 0, a pointed tip elsewhere in the schema,
+    /// says nothing.
+    #[test]
+    fn tip_diameter_confirms_or_refuses_the_ball() {
+        let with_tip = |tip_diameter: f64| {
+            let mut item = taper_b();
+            item["geometry"]
+                .as_object_mut()
+                .expect("geometry object")
+                .insert("tip-diameter".into(), json!(tip_diameter));
+            item
+        };
+        for confirming in [0.09, 0.09 + 5e-7, 0.0] {
+            let imported = only_tool(with_tip(confirming));
+            assert_some_approx(tapered(&imported.tool).0, 2.286);
+            assert_eq!(imported.notes.len(), 1, "{confirming}");
+        }
+        let flat = skip_reason(with_tip(0.2));
+        assert_eq!(
+            flat,
+            SkipReason::TaperedTipNotBall {
+                tip: NotBallTip::RoundedFlat {
+                    tip_diameter: 0.2,
+                    re: 0.045
+                },
+                unit: "in"
+            }
+        );
+        assert_eq!(
+            flat.to_string(),
+            "a tapered mill with a flat tip with rounded corners (`tip-diameter` 0.2 in, more than twice the corner radius `RE` 0.045 in) is not a tapered ball nose; DreamCarve does not model it yet"
+        );
+        assert_eq!(
+            skip_reason(with_tip(0.05)),
+            SkipReason::Invalid {
+                field: TBN_TIP.into(),
+                message: "has a `tip-diameter` 0.05 below twice its corner radius `RE` 0.045"
+                    .into()
+            }
+        );
+    }
+
+    /// Nothing downstream refuses a vendor's tapered ball nose, the ones
+    /// whose numbers are not one cone included: each passes the library's
+    /// rules and a project's, has a carve profile, and cuts as deep as its
+    /// flutes or, where the taper reaches the cutting diameter first, to
+    /// that height.
+    #[test]
+    fn vendor_tapered_mills_are_valid_and_carve() {
+        use dc_project::CuttingLimit;
+        // The cutting height, mm, and whether the cutting diameter bounds
+        // it (`h_R = R/tan β − δ` below the flute top).
+        let expected = [
+            (16.193, true),
+            (12.567, true),
+            (27.990, true),
+            (28.261, true),
+            (26.781, true),
+            (23.355, true),
+        ];
+        for (&(name, re, ta, lcf, stepover), (height_mm, capped)) in
+            VENDOR_TAPERED.iter().zip(expected)
+        {
+            let tool = only_tool(vendor_tapered_mill(name, re, ta, lcf, stepover)).tool;
+            crate::validate_tool(&LibraryToolId::new("lt1"), &tool).expect("valid");
+            let mut project = dc_project::test_support::tapered_project();
+            let at = project
+                .tools
+                .iter()
+                .position(|t| t.id.as_str() == "t2")
+                .expect("the project's tapered ball nose");
+            project.tools[at] = Tool {
+                id: ToolId::new("t2"),
+                ..tool
+            };
+            assert_eq!(dc_project::validate(&project), [], "{name}");
+            let tool = &project.tools[at];
+            assert!(tool.carve_profile().is_some(), "{name}");
+            let cutting_height_mm = tool.cutting_height_mm().expect("a cutting height");
+            assert!(
+                (cutting_height_mm - height_mm).abs() < 1e-3,
+                "{name}: {cutting_height_mm}"
+            );
+            let limit = tool.cutting_limit().expect("a limit");
+            assert_eq!(
+                matches!(limit, CuttingLimit::CuttingDiameter { .. }),
+                capped,
+                "{name}: {limit:?}"
+            );
+        }
     }
 
     #[test]
