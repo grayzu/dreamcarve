@@ -552,8 +552,8 @@ product_id = "Product id"
 number_unset = "Its place in the list"
 # Beside a stepover percentage (the smoke test's item 7): the distance
 # between passes it comes to with the bit's diameter, in the units shown.
-step_over_note = "{distance} {unit} from one pass to the next"
-step_over_note_tiny = "less than {distance} {unit} from one pass to the next"
+step_over_note = "{distance} {unit} between passes"
+step_over_note_tiny = "less than {distance} {unit} between passes"
 # What each of a tool's fields is (the smoke test's item 6): what it
 # does, its unit, the values it takes (validation's own limits) and what
 # leaving it empty means. Shown on the label and the field as a tooltip,
@@ -567,7 +567,7 @@ feed_help = "How fast the bit moves sideways through the material, per minute: a
 plunge_help = "How fast the bit moves down into the material, per minute: above 0 and at most 20000 mm/min (787 in/min); above the Feed gets a warning. Empty is not set: an operation using the tool cannot be exported until you type one."
 rpm_help = "The spindle speed in revolutions per minute: a whole number above 0; over 60000 gets a warning. Empty is not set: needed while Spindle control is Automatic, and only named in the pause message while it is Manual."
 step_down_help = "How much deeper each pass cuts than the one before: above 0. Empty is not set: an operation whose own Step-down is empty takes this one, and cannot be exported without it."
-step_over_help = "How far each pass moves sideways from the one before, as a percentage of the Diameter: above 0 and at most 100 %. 40 % of a 6.35 mm bit is 2.54 mm from one pass to the next; the distance is shown under the field. Empty is not set: an operation whose own Stepover is empty takes this one."
+step_over_help = "How far each pass moves sideways from the one before, as a percentage of the Diameter: above 0 and at most 100 %. The distance it comes to is shown under the field. Empty is not set: an operation whose own Stepover is empty takes this one."
 tool_number_help = "The T number the program calls the tool by: a whole number, 1 or more, different for each tool that cuts. Empty takes the tool's place in the list."
 vendor_help = "Who makes the bit. Any text, or empty; the Tool Library groups its tools by it."
 product_id_help = "The maker's part number. Any text, or empty; the Tool Library's search finds it."
@@ -1348,7 +1348,7 @@ result_done = "Done"
 result_done_help = "Close this. The Export step keeps the result until the project changes."
 # The Export step once the programs are written (capability 77a): one
 # line, and the way back to the result's sheet.
-exported = "{count} {count|program|programs} written to {dir}."
+exported = "{count} {count|program|programs} written."
 show_result = "Show result"
 show_result_help = "Open the result again: the programs written, their folder and the run instructions."
 ready = "Ready to write {count} {count|program|programs}."

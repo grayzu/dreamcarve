@@ -1284,33 +1284,33 @@ fn a_stepover_says_the_distance_between_passes() {
     let note = |typed: &str, units| tools::step_over_note(&strings, tool, typed, units);
     assert_eq!(
         note("8", Units::Mm).as_deref(),
-        Some("0.508 mm from one pass to the next")
+        Some("0.508 mm between passes")
     );
     assert_eq!(
         note("8 %", Units::Mm).as_deref(),
-        Some("0.508 mm from one pass to the next")
+        Some("0.508 mm between passes")
     );
     assert_eq!(
         note("0.08", Units::Mm).as_deref(),
-        Some("0.005 mm from one pass to the next"),
+        Some("0.005 mm between passes"),
         "the maintainer's 0.08 %"
     );
     assert_eq!(
         note("40", Units::Mm).as_deref(),
-        Some("2.54 mm from one pass to the next")
+        Some("2.54 mm between passes")
     );
     assert_eq!(
         note("8", Units::Inch).as_deref(),
-        Some("0.02 in from one pass to the next")
+        Some("0.02 in between passes")
     );
     assert_eq!(
         note("0.08", Units::Inch).as_deref(),
-        Some("0.0002 in from one pass to the next")
+        Some("0.0002 in between passes")
     );
     // Too small for the figures shown: said so, never as 0.
     assert_eq!(
         note("0.001", Units::Mm).as_deref(),
-        Some("less than 0.001 mm from one pass to the next")
+        Some("less than 0.001 mm between passes")
     );
     for nothing in ["", "  ", "wide", "-5", "0"] {
         assert_eq!(note(nothing, Units::Mm), None, "`{nothing}`");
@@ -1327,13 +1327,10 @@ fn a_stepover_says_the_distance_between_passes() {
         .find(|r| r.key == "step_over_fraction")
         .expect("a Pocket has a stepover");
     let of = |typed: &str| dc_app::editor::step_over_note(&project, &strings, pocket, row, typed);
-    assert_eq!(
-        of("50").as_deref(),
-        Some("3.175 mm from one pass to the next")
-    );
+    assert_eq!(of("50").as_deref(), Some("3.175 mm between passes"));
     assert_eq!(
         of("").as_deref(),
-        Some("2.54 mm from one pass to the next"),
+        Some("2.54 mm between passes"),
         "empty takes the tool's 40 %"
     );
     assert_eq!(of("wide"), None);

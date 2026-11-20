@@ -63,11 +63,11 @@ version. Your settings are kept by the rule `export --post` follows
 - unless the new controller cannot use it. Then it is reset, and a line
   under **Controller** says so, in the words `export --post` prints.
 
-![The Post-processor group after switching a project that used one program with M6 from grblHAL to LinuxCNC: Controller LinuxCNC v2 (latest), under it in amber "Reset tool_change_mode "m6" → "separate_programs": post-processor linuxcnc has no M6 tool change.", File extension ngc, Spindle control Automatic, Spin-up dwell 3 s, Tool change One program per tool, Decimals 3 and 4, and a Canned drill cycles tick box](figures/app/post-processor-switched.png)
+![The Export step after switching a project set to One program for all tools from grblHAL to LinuxCNC: in the Post-processor group, Controller LinuxCNC v2 (latest), under it in amber "Reset tool_change_mode "m6" → "separate_programs": post-processor linuxcnc has no M6 tool change.", File extension ngc, Spindle control Automatic, Spin-up dwell 3 s, Decimals 3 and 4, and a Canned drill cycles tick box; under the groups, Programs is back at One program per tool](figures/app/post-processor-switched.png)
 
 Here the file extension went from `nc` to LinuxCNC's `ngc`, because `nc`
-was grblHAL's default, and the tool change mode was reset, because
-LinuxCNC's definition has no `M6`. **Canned drill cycles** is now a tick
+was grblHAL's default, and **Programs** was reset to **One program per
+tool**, because LinuxCNC's definition has no `M6`. **Canned drill cycles** is now a tick
 box, since LinuxCNC has them.
 
 The switch is one step for Undo, which puts back the old controller with
@@ -426,8 +426,9 @@ not saved: to change the project, edit `tool_change_mode`.
 ## One program with M6
 
 On grblHAL you can export a multi-tool project as one program with `M6`
-tool changes, if your sender stops there (see [Senders](#senders)). Set,
-in `post_processor`:
+tool changes, if your sender stops there (see [Senders](#senders)). In
+the app, set **Programs** on the Export step to **One program for all
+tools**. In the project file it is, in `post_processor`:
 
 ```json
 "tool_change_mode": "m6",

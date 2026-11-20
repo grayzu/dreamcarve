@@ -2033,3 +2033,159 @@ fn redesign_review() {
     final_windows(&shots);
     final_focus(&shots);
 }
+
+/// Where the smoke-test pictures are committed.
+fn smoke_dir() -> PathBuf {
+    common::repo_root().join("docs/specs/phase-4/review/smoke")
+}
+
+/// A press at `from`, the pointer moved to `to` a frame at a time, and
+/// the release there.
+fn drag(h: &mut H, from: egui::Pos2, to: egui::Pos2) {
+    h.event(egui::Event::PointerMoved(from));
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run();
+    for k in 1..=4_u8 {
+        let t = f32::from(k) / 4.0;
+        h.event(egui::Event::PointerMoved(from + (to - from) * t));
+        h.run();
+    }
+    h.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run();
+}
+
+/// What the fixes to the maintainer's smoke test of the alpha look like
+/// (2026-11-20), written into `docs/specs/phase-4/review/smoke/`, dark at
+/// 1×: the Stock step with a field showing its help; the Tool Library
+/// dragged larger with a column made narrower for the names; the tool
+/// editor with the stepover's distance; the Inlay's editor with a
+/// boundary chosen and the Male board group open; the Export step ready
+/// and blocked, its button at its foot; and the export's result sheet.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review redesign_smoke -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed smoke-test pictures; run by hand"]
+fn redesign_smoke() {
+    let out = smoke_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark];
+    SCALE.set(1.0);
+    let dir = scratch("review-smoke");
+
+    // 01: the Stock step, the thickness being typed, its help at the foot.
+    let Some(mut h) = window(&dir, Some(fixture("plaque.dcv")), 1280.0, 800.0) else {
+        return;
+    };
+    go_to(&mut h, "Stock");
+    h.get_by_role_and_label(Role::TextInput, "Thickness")
+        .focus();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "01-stock-field-help", &looks);
+
+    // 02: the tool editor, the stepover's distance under its field, and
+    // a warning under the plunge it is about.
+    let mut fast = h.state().app().project().tools[1].clone();
+    fast.plunge_mm_min = Some(5000.0);
+    fast.feed_mm_min = Some(1000.0);
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateTool(fast))
+        .unwrap();
+    settle(&mut h);
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "Stepover").focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text("8".to_owned()));
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "02-tool-stepover-distance", &looks);
+    drop(h);
+
+    // 03: the Tool Library, dragged larger, Type made narrower.
+    write_library(&dir);
+    let mut h = window(&dir, Some(fixture("plaque.dcv")), 1440.0, 900.0).unwrap();
+    click(&mut h, "Project");
+    click(&mut h, "Tool Library…");
+    let grip = h
+        .get_by_role_and_label(Role::Splitter, "Resize the Tool Library")
+        .rect()
+        .center();
+    drag(&mut h, grip, grip + egui::vec2(120.0, 90.0));
+    let divider = h
+        .get_by_role_and_label(Role::Splitter, "Resize Type")
+        .rect()
+        .center();
+    drag(&mut h, divider, divider + egui::vec2(-60.0, 0.0));
+    let divider = h
+        .get_by_role_and_label(Role::Splitter, "Resize Product")
+        .rect()
+        .center();
+    drag(&mut h, divider, divider + egui::vec2(-40.0, 0.0));
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "Ultra-High Detail")
+        .click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "03-library-resized-columns", &looks);
+    drop(h);
+
+    // 04: the Inlay, a boundary chosen: Band margin and Outline rounding
+    // off, Male board open with Board thickness first.
+    let mut h = window(&dir, Some(fixture("dc.dcv")), 1280.0, 1000.0).unwrap();
+    open_operation(&mut h, "DC");
+    for group in ["Depth", "Male board"] {
+        h.query_all_by_role_and_label(Role::Button, group)
+            .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+            .unwrap()
+            .click();
+        h.run();
+    }
+    h.get_by_role_and_label(Role::ComboBox, "Boundary").click();
+    h.run();
+    click(&mut h, "frame");
+    settle(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "04-inlay-boundary-and-male-board", &looks);
+    drop(h);
+
+    // 05 to 07: the Export step ready, its result's sheet, and blocked.
+    let work = scratch("review-smoke-export");
+    let plaque = copy_fixture("plaque.dcv", &work);
+    let mut h = window(&work, Some(plaque), 1280.0, 800.0).unwrap();
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "05-export-ready", &looks);
+    h.get_by_role_and_label(Role::Button, "Export G-code")
+        .click();
+    h.run();
+    click(&mut h, "Run instructions");
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "06-export-result-sheet", &looks);
+    click(&mut h, "Done");
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "07-export-after", &looks);
+    delete_a_feed(&mut h);
+    settle(&mut h);
+    go_to(&mut h, "Export");
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "08-export-blocked", &looks);
+}

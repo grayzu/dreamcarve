@@ -172,7 +172,7 @@ A sheet then shows what was written:
   what the program does and does not do with tool length offsets.
 - **Done** closes the sheet. So do Escape and a click outside it.
 
-The Export step then says what was written, *2 programs written to …*,
+The Export step then says what was written, *2 programs written.*,
 and **Show result** opens the sheet again. Both stay until you change
 the project. Once the project changes, the files on disk are no longer
 what it would write, and the rail's check on **Export** goes: export

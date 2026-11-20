@@ -597,7 +597,7 @@ One Inlay cuts both boards from one set of numbers, with one bit, so the
 two halves cannot disagree. The Viewport draws the male board beside the
 stock, mirrored, as it will lie on the machine:
 
-![The DC Inlay in the Inspector: Inlay depth 4, Glue gap 1, Plug depth 2, Board thickness 12 with "base under the band 7 mm (at least 6 mm)"; the Viewport shows the stock with the letters DC and, at its right, the Male board with the mirrored plug and its cut-out](figures/app/20-inlay.png)
+![The DC Inlay in the Inspector: Inlay depth 4, Glue gap 1, Plug depth 2, and the closed groups, Male board among them with "Board thickness 12 mm" on its header; the Viewport shows the stock with the letters DC and, at its right, the Male board with the mirrored plug and its cut-out](figures/app/20-inlay.png)
 
 The two warnings and the hint are among the ones the inlay quick start's
 [Check the project](inlay.md#7-check-the-project) lists and explains.

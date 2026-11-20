@@ -929,7 +929,7 @@ fn checkbox(
     let response = check_box(ui, slot.key(), &mut on, cx.strings.get(row.label));
     let help = cx.strings.get(row.help);
     if response.has_focus() {
-        crate::widgets::help::focused(ui, cx.strings.get(row.label), help);
+        let _ = crate::widgets::help::focused(ui, cx.strings.get(row.label), help);
     }
     let response = response.on_hover_ui(|ui| {
         ui.label(egui::RichText::new(help).text_style(TextStyle::Body));

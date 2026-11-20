@@ -598,53 +598,36 @@ fn a_stepover_field_says_its_distance_as_it_is_typed() {
         .click();
     h.run();
     let field = h.get_by_role_and_label(Role::TextInput, "Stepover").rect();
-    let note = h.get_by_label("2.54 mm from one pass to the next").rect();
+    let note = h.get_by_label("2.54 mm between passes").rect();
     assert!(
         note.top() >= field.bottom() - 1.0 && note.left() >= field.left() - 12.0,
         "the note is under its field: {note:?}, {field:?}"
     );
     let steps = undo_steps(&h);
     type_into(&mut h, "Stepover", "8");
-    assert!(
-        h.query_by_label("0.508 mm from one pass to the next")
-            .is_some()
-    );
-    assert!(
-        h.query_by_label("2.54 mm from one pass to the next")
-            .is_none()
-    );
+    assert!(h.query_by_label("0.508 mm between passes").is_some());
+    assert!(h.query_by_label("2.54 mm between passes").is_none());
     type_into(&mut h, "Stepover", "0.08");
     assert!(
-        h.query_by_label("0.005 mm from one pass to the next")
-            .is_some(),
+        h.query_by_label("0.005 mm between passes").is_some(),
         "0.08 % of 6.35 mm, as it is typed"
     );
     assert_eq!(undo_steps(&h), steps, "nothing is written while typing");
     h.key_press(egui::Key::Escape);
     h.run();
-    assert!(
-        h.query_by_label("2.54 mm from one pass to the next")
-            .is_some()
-    );
+    assert!(h.query_by_label("2.54 mm between passes").is_some());
 
     // A Pocket's own stepover: empty takes the tool's, and says so.
     open_operation(&mut h, "Panel");
     open_group(&mut h, "Strategy");
     let field = h.get_by_role_and_label(Role::TextInput, "Stepover");
     let empty = field.value().unwrap_or_default().is_empty();
-    let shown = if empty {
-        "2.54 mm from one pass to the next"
-    } else {
-        ""
-    };
+    let shown = if empty { "2.54 mm between passes" } else { "" };
     if empty {
         assert!(h.query_by_label(shown).is_some(), "the tool's 40 %");
     }
     type_into(&mut h, "Stepover", "50");
-    assert!(
-        h.query_by_label("3.175 mm from one pass to the next")
-            .is_some()
-    );
+    assert!(h.query_by_label("3.175 mm between passes").is_some());
     h.key_press(egui::Key::Escape);
     h.run();
     std::fs::remove_dir_all(&dir).unwrap();
@@ -836,7 +819,7 @@ fn export_button_is_at_the_foot_of_the_step_and_the_result_is_a_sheet() {
     h.run();
     assert!(h.query_by_role(Role::Dialog).is_none(), "Done closes it");
     assert!(
-        h.query_by_label_contains("2 programs written to").is_some(),
+        h.query_by_label_contains("2 programs written.").is_some(),
         "the step says what was written"
     );
     assert!(

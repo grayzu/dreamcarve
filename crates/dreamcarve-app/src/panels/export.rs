@@ -663,44 +663,38 @@ pub(crate) fn foot(ui: &mut Ui, state: &FrameState<'_>, rect: egui::Rect, out: &
 }
 
 /// The step's line once the programs are written (capability 77a), under
-/// its readiness card: `circle-check`, *Exported 2 programs to … Nothing
-/// has changed since.*, and *Show result*, which opens the result's
-/// sheet again. It stays until the project changes.
+/// its readiness card: `circle-check` and *2 programs written.*, with
+/// *Show result* at the row's right, which opens the result's sheet
+/// again. It stays until the project changes.
 pub(crate) fn exported(ui: &mut Ui, strings: &Strings, done: &Done, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let line = strings.fmt(
         StrKey::ExportExported,
-        &[
-            ("count", &done.count.to_string()),
-            ("dir", &done.dir().display().to_string()),
-        ],
+        &[("count", &done.count.to_string())],
     );
-    ui.horizontal_top(|ui| {
-        let glyph = crate::widgets::icon::Icon::CircleCheck.galley(
-            ui,
-            theme::ICON_SMALL_PX,
-            palette.status_success.stroke,
-        );
-        let (at, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
-        ui.painter()
-            .galley(at.min, glyph, palette.status_success.stroke);
-        ui.vertical(|ui| {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(line)
-                        .text_style(TextStyle::Body)
-                        .color(palette.text_primary),
-                )
-                .wrap()
-                .selectable(false),
-            );
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), theme::CONTROL_PX),
+        Layout::right_to_left(Align::Center),
+        |ui| {
             let show = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::ExportShowResult))
                 .tooltip(strings.get(StrKey::ExportShowResultHelp));
             if button(ui, show).clicked() {
                 out.push(Action::Export(Request::ShowResult));
             }
-        });
-    });
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                let glyph = crate::widgets::icon::Icon::CircleCheck.galley(
+                    ui,
+                    theme::ICON_SMALL_PX,
+                    palette.status_success.stroke,
+                );
+                let (at, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
+                ui.painter()
+                    .galley(at.min, glyph, palette.status_success.stroke);
+                text(ui, &line, TextStyle::Body, palette.text_primary)
+                    .on_hover_text(done.dir().display().to_string());
+            });
+        },
+    );
 }
 
 /// *Program Details*: the disclosure and, while it is closed, how many

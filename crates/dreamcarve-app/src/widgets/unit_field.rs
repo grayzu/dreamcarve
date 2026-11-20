@@ -45,6 +45,9 @@ const UNIT_PX: f32 = 28.0;
 const RESET_PX: f32 = 24.0;
 /// Inner padding, px.
 const PADDING_PX: f32 = 10.0;
+/// What is kept in view under a field as it takes the
+/// keyboard, px: a line of note under it.
+const REVEAL_PX: f32 = 24.0;
 
 /// A field to draw.
 #[derive(Debug, Clone, Copy)]
@@ -379,10 +382,23 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
             );
         }
     }
+    // The help line takes its room at the panel's foot in the frame
+    // after the field takes the keyboard: the field, and a line of note
+    // under it, are then brought clear of it.
+    let reveal_id = spec.id.with("reveal");
+    if ui.data(|d| d.get_temp::<bool>(reveal_id)).is_some() {
+        ui.data_mut(|d| d.remove::<bool>(reveal_id));
+        // Only when the line would hide it: a field in view stays put.
+        let kept = rect.with_max_y(rect.bottom() + REVEAL_PX);
+        if kept.bottom() > ui.clip_rect().bottom() || kept.top() < ui.clip_rect().top() {
+            ui.scroll_to_rect(kept, None);
+        }
+    }
     if let Some(help) = &help
         && ui.memory(|m| m.has_focus(spec.id))
+        && crate::widgets::help::focused(ui, spec.name, help)
     {
-        crate::widgets::help::focused(ui, spec.name, help);
+        ui.data_mut(|d| d.insert_temp(reveal_id, true));
     }
     let response = match (spec.enabled, spec.disabled_reason, spec.required) {
         (false, Some(reason), _) => {

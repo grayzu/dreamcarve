@@ -3725,7 +3725,7 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     );
     // The step says what was written, and opens the result again.
     assert_eq!(
-        in_export_step_containing(&h, "2 programs written to"),
+        in_export_step_containing(&h, "2 programs written."),
         1,
         "the step's line"
     );

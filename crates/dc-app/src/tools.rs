@@ -640,7 +640,7 @@ const fn pass_decimals(units: Units) -> (usize, f64) {
 }
 
 /// `distance_mm` between passes as a stepover's note says it in `units`
-/// (`0.508 mm from one pass to the next`); a distance too small for the figures
+/// (`0.508 mm between passes`); a distance too small for the figures
 /// shown is said as less than their last place, never as 0. `None` for a
 /// distance that is not above 0.
 #[must_use]
@@ -667,7 +667,7 @@ pub fn between_passes(strings: &Strings, distance_mm: f64, units: Units) -> Opti
 /// The note beside `tool`'s Stepover field while it holds `typed` (the
 /// smoke test's item 7): the distance between passes that percentage of
 /// the tool's diameter comes to, in `units`. `0.08 %` of a 6.35 mm bit
-/// reads `0.005 mm from one pass to the next`, where `8 %` reads `0.508 mm`. `None`
+/// reads `0.005 mm between passes`, where `8 %` reads `0.508 mm`. `None`
 /// while the field is empty or holds no percentage.
 #[must_use]
 pub fn step_over_note(strings: &Strings, tool: &Tool, typed: &str, units: Units) -> Option<String> {

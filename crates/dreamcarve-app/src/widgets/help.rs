@@ -100,8 +100,9 @@ pub(crate) fn take(ui: &Ui, name: &str) -> Option<String> {
 }
 
 /// Says the control named `label` has the keyboard this frame: its
-/// panel's foot shows `help`.
-pub(crate) fn focused(ui: &Ui, label: &str, help: &str) {
+/// panel's foot shows `help`. Whether the line is new, so that the foot
+/// takes its room in the next frame.
+pub(crate) fn focused(ui: &Ui, label: &str, help: &str) -> bool {
     let shown = Shown {
         scope: scope(ui),
         label: label.to_owned(),
@@ -118,6 +119,7 @@ pub(crate) fn focused(ui: &Ui, label: &str, help: &str) {
         ui.ctx().request_repaint();
     }
     ui.data_mut(|d| d.insert_temp(shown_id(), shown));
+    new
 }
 
 /// Gives the control `response`, named `name`, the help its label
@@ -128,7 +130,7 @@ pub(crate) fn control(ui: &Ui, response: Response, name: &str) -> Response {
         return response;
     };
     if response.has_focus() {
-        focused(ui, name, &help);
+        let _ = focused(ui, name, &help);
     }
     response.on_hover_text(help)
 }

@@ -824,8 +824,8 @@ Controls:
   *Done*, the sheet's primary pill, at the right. The sheet takes its
   height from its content, up to the window less 48 px above and below,
   at once when *Run instructions* opens. Closed, the step shows
-  `circle-check` and *2 programs written to …* under its readiness
-  card, with a secondary *Show result*. A failure is one
+  `circle-check` and *2 programs written.* under its readiness
+  card, with a secondary *Show result* at the row's right. A failure is one
   line in status.error with `circle-x` under the readiness card, and
   no sheet.
 - **Scrolling lists.** A list that goes on past the edge of its area

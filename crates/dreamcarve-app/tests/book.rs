@@ -447,7 +447,14 @@ fn coaster(h: &mut H, dialogs: &QueuedDialogs, dir: &Path, out: &Path, text: &st
     click_button(h, "Export G-code");
     settle(h);
     click(h, "Run instructions");
-    shoot(h, out, "14-export-result", Crop::StepPanel);
+    // The result is a sheet: Done closes it, and the step keeps a line.
+    shoot(h, out, "14-export-result", Crop::Sheet);
+    click_button(h, "Done");
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Show result")
+            .is_some(),
+        "the step can open the result again"
+    );
 
     // The window did what the chapter's tables say: the project it holds
     // is the one the steps build headless, and the program it wrote names
@@ -2667,6 +2674,9 @@ fn post_processor_screenshots() {
     h.run();
 
     // One program for all tools, which grblHAL can write.
+    h.get_by_role_and_label(Role::ComboBox, "Programs")
+        .scroll_to_me();
+    h.run();
     h.get_by_role_and_label(Role::ComboBox, "Programs").click();
     h.run();
     click(&mut h, "One program for all tools");
@@ -2697,6 +2707,9 @@ fn post_processor_screenshots() {
         "LinuxCNC has canned cycles, so the tick is offered"
     );
     shoot(&mut h, &out, "post-processor-switched", Crop::StepPanel);
+    h.get_by_role_and_label(Role::ComboBox, "Programs")
+        .scroll_to_me();
+    h.run();
     h.get_by_role_and_label(Role::ComboBox, "Programs").click();
     h.run();
     assert!(

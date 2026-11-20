@@ -495,7 +495,7 @@ folder are app preferences, kept outside the project.
     have taken 20), so under every stepover percentage that is a share of
     a bit's diameter (here, in the library's pane, 64a, and a Pocket's
     own, 68) a quiet line says the distance it comes to in the units
-    shown, *0.508 mm from one pass to the next*, from what is typed, as
+    shown, *0.508 mm between passes*, from what is typed, as
     it is typed; an empty Pocket stepover says its tool's. A finding
     validation locates at one of the tool's fields (a plunge rate above
     the feed, a stepover far too small) shows under that field in its
@@ -1144,7 +1144,7 @@ folder are app preferences, kept outside the project.
 
     *Done*, Escape or a click outside closes the sheet. The Export step,
     whose plan never left it, then says so in one line under its
-    readiness card, *2 programs written to …*, beside its summary
+    readiness card, *2 programs written.*, beside its summary
     *Exported. Nothing has changed since.*, with **Show result**, which
     opens the sheet again. The result is kept until the project changes,
     since it is then no longer what the project would write. A failed
