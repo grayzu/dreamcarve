@@ -68,7 +68,7 @@ pub const MIN_BOUNDARY_SAFETY_MM: f64 = 1e-4;
 /// A ramp run is at most this many tool diameters long: a local zigzag
 /// near the entry point, not a traverse of the pocket.
 pub const MAX_RAMP_RUN_DIAMETERS: f64 = 3.0;
-/// The least a zigzag or On line ramp's last leg may fall, mm (#234): five
+/// The least a zigzag or On line ramp's last leg may fall, mm: five
 /// units of the coarsest place a post-processor may write in mm, and two
 /// in inches, so its ends never round to one Z. A last leg that would
 /// fall less is not cut as it stands (see `EntryPlan::emit_ramp` and
@@ -93,7 +93,7 @@ pub const HELIX_ENDPOINT_ANGLE_SAMPLES: usize = 24;
 /// Most quadtree cells one clearance search visits, and the most cells its
 /// first grid may have.
 pub const MAX_CLEARANCE_CELLS: usize = 20_000;
-/// The entry clearance, mm (#214): a ramp or helix that would start at
+/// The entry clearance, mm: a ramp or helix that would start at
 /// safe Z starts this far above the stock top instead, and a Pocket's
 /// later pass this far above the floor the pass before cleared
 /// (PureCutCNC `pocket.ts`, `levelEntryStartZ`, whose clearance is the
@@ -106,7 +106,7 @@ pub const MAX_CLEARANCE_CELLS: usize = 20_000;
 /// until users ask for one.
 pub const ENTRY_CLEARANCE_MM: f64 = 1.0;
 /// How near, mm, a cut must pass the point a rapid stops over for the
-/// floor it reached there to count as cleared (S2, #214): a helix's start
+/// floor it reached there to count as cleared (S2): a helix's start
 /// lies on the circle the pass before cut flat at its floor, which its 48
 /// chords follow within 0.0022 of its radius. The safety pass allows its
 /// own rounding and arc tolerances on top.
@@ -194,10 +194,10 @@ pub enum FallbackReason {
     TooManyMoves,
     /// A helix whose descending moves the program cannot write: each
     /// would fall less than one unit in its last place, or run less than
-    /// √2 units in XY, so its ends round to one Z or one XY (#265). Also
+    /// √2 units in XY, so its ends round to one Z or one XY. Also
     /// a Profile's ramp after its first pass that would fall less than
     /// [`RAMP_MIN_LAST_DROP_MM`]: its one run would run its whole line,
-    /// past where the passes above cut (#352).
+    /// past where the passes above cut.
     TooSmall,
 }
 
@@ -292,8 +292,7 @@ pub struct EntryTool {
     /// One unit in the last place the program writes, mm (the project's
     /// decimal places in its display units,
     /// `DecimalPlaces::quantum_mm`). A helix whose descending moves would
-    /// fall less than this, or run less than √2 of it in XY, is not cut
-    /// (#265).
+    /// fall less than this, or run less than √2 of it in XY, is not cut.
     pub quantum_mm: f64,
 }
 
@@ -675,7 +674,7 @@ fn move_feed_mm_min(tool: &EntryTool, from: Point3, to: Point3) -> f64 {
 /// component is at most `plunge_mm_min`, `min(feed, plunge × length /
 /// drop)` (S10; upstream `plungeLimitedMoveFeedScale`, applied per move
 /// because a chord of a helix is a little steeper than the helix). Entry
-/// descents and smooth tabs' down slopes both use it (#157).
+/// descents and smooth tabs' down slopes both use it.
 pub(crate) fn plunge_limited_feed_mm_min(
     feed_mm_min: f64,
     plunge_mm_min: f64,
@@ -729,7 +728,7 @@ fn helix_move_count(depth_mm: f64, radius_mm: f64, angle_deg: f64) -> Option<usi
 /// Whether a helix of `radius_mm` at `angle_deg` cut in `n` chords over
 /// `depth_mm` can be written by a program whose last place is
 /// `quantum_mm`: every chord falls at least one unit and runs at least
-/// √2 units in XY (#265). Two numbers a unit or more apart round apart, so
+/// √2 units in XY. Two numbers a unit or more apart round apart, so
 /// each chord's ends are written at two Z values and two XY points, and
 /// the move keeps its slope: written level, it would run at the
 /// plunge-limited feed, which is neither of the tool's rates (S3);
@@ -880,7 +879,7 @@ fn reachable_helix(
 /// target's direction, then alternately either side of it, whose segment
 /// to the target stays inside the region. Only the piece that reaches the
 /// target may leave the flattened rings, and by no more than the target
-/// itself does, at most the target slack (#213): a target on a round
+/// itself does, at most the target slack: a target on a round
 /// boundary lies on the arc, outside its chords. (Changed in #272: the
 /// slack held along the whole handoff let one to a target on an island's
 /// chord run 0.005 mm inside the chords, 0.015 mm inside the island's
@@ -1101,7 +1100,7 @@ impl Area {
     }
 
     /// How far outside the flattened rings a target may lie and still be
-    /// on the region, mm (#213): a ring's start on a round corner of the
+    /// on the region, mm: a ring's start on a round corner of the
     /// tool-centre region lies on the arc, outside the chords that stand
     /// for it here by up to the flattening tolerance.
     fn target_slack_mm(&self) -> f64 {
@@ -1258,7 +1257,7 @@ impl Area {
     /// direction`, the longest interval `[min, max]` between consecutive
     /// boundary crossings that holds `t = 0`, or starts at most
     /// `origin_slack_mm` past it (an origin just outside the flattened
-    /// rings, #213), and lies in the region.
+    /// rings), and lies in the region.
     fn line_interval(
         &self,
         origin: Point,

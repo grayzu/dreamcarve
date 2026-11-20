@@ -21,7 +21,7 @@ fn op() -> OperationId {
 }
 
 /// One warning for every message form, each with the message it printed
-/// before warnings were typed (#248). The values carry float noise so
+/// before warnings were typed. The values carry float noise so
 /// the rounding is checked too.
 #[allow(clippy::too_many_lines)] // one entry per message form
 fn message_fixtures() -> Vec<(Warning, &'static str)> {

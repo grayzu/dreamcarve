@@ -12,13 +12,13 @@
 //! PureCutCNC places tabs as rectangles in the world and grows each by the
 //! tool radius before clipping the path against it (`toolCentreContours`,
 //! `expandedTabFootprints`). DreamCarve places a tab on one outline of
-//! one instance (#105, ADR-0005, [`crate::placed_tabs`]), and centres it
+//! one instance (ADR-0005, [`crate::placed_tabs`]), and centres it
 //! on the tool path at the path's point nearest the tab, so the growth
 //! becomes a span of `width + diameter` along the path: the cutter's full
 //! width must clear the tab.
 //!
 //! A smooth tab leaves a triangular bridge: base `width`, peak `height`
-//! above the cut floor (#66). For a flat bit of radius r the tool centre
+//! above the cut floor. For a flat bit of radius r the tool centre
 //! holds the tab top for `2r` centred on the tab and ramps straight down
 //! over `width / 2` on each side, so the span is still `width + 2r`.
 //! PureCutCNC's raised cosine (`tabProfile.ts`) over the same span touches
@@ -31,7 +31,7 @@
 //! when all its tabs are.
 //!
 //! A tab request ([`TabSpec`], [`Request`]) lays tabs per tool-centre
-//! path ([`Request::fit`], #109): a hole gets none unless
+//! path ([`Request::fit`]): a hole gets none unless
 //! [`TabSpec::on_holes`], and a path whose spans would cover more than
 //! half of it gets the most that cover at most half, so it cuts free
 //! between its tabs. A part's outline keeps at least one tab even then
@@ -41,7 +41,7 @@
 //! GUI. The half-path threshold here is the coverage warning's.
 //!
 //! A request with [`TabSpec::avoid_corners`] moves each tab it lays on a
-//! corner off it before the half-path rule is applied ([`corners`], #285).
+//! corner off it before the half-path rule is applied ([`corners`]).
 
 mod corners;
 
@@ -119,7 +119,7 @@ pub(crate) struct Tabs {
     chord_tolerance_mm: f64,
 }
 
-/// One operation's tab request, checked (#105: a [`TabSpec`] places
+/// One operation's tab request, checked (a [`TabSpec`] places
 /// tabs; it is not cut data).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Request {
@@ -130,9 +130,9 @@ pub(crate) struct Request {
     width_mm: f64,
     /// Length of path one tab raises: tab width plus tool diameter.
     span_mm: f64,
-    /// Holes get tabs too (#109).
+    /// Holes get tabs too.
     on_holes: bool,
-    /// Tabs move off corners (#285).
+    /// Tabs move off corners.
     avoid_corners: bool,
     /// Diameter of the tool that cuts the tabs.
     diameter_mm: f64,
@@ -146,7 +146,7 @@ pub(crate) struct Fit {
     /// What was asked and what is cut, when they would cover more than
     /// half of it.
     pub reduced: Option<Reduced>,
-    /// Where each tab left on a corner is centred (#285), mm along the
+    /// Where each tab left on a corner is centred, mm along the
     /// path as tabs are measured on it, and why it stays.
     pub on_corners_mm: Vec<(f64, TabOnCornerReason)>,
 }
@@ -158,7 +158,7 @@ pub(crate) enum PathEnds {
     /// run through it.
     Closed,
     /// An open path, tabs measured from its first vertex as drawn and
-    /// each span cut short at its ends (#175), where it holds its top
+    /// each span cut short at its ends, where it holds its top
     /// right to the end. `reversed`: it is cut from its last vertex.
     Open {
         /// The path is cut from its last vertex.
@@ -179,14 +179,14 @@ pub(crate) enum Least {
 }
 
 /// The tabs one path asked for and the tabs cut on it, when they cover
-/// more than half of it ([`Request::fit`], #109).
+/// more than half of it ([`Request::fit`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Reduced {
     /// How many tabs the placement puts on the path.
     pub asked: usize,
     /// How many are cut.
     pub cut: usize,
-    /// They are placed tabs, cut as placed (#105), not a request cut down.
+    /// They are placed tabs, cut as placed, not a request cut down.
     pub placed: bool,
 }
 
@@ -231,7 +231,7 @@ impl Tabs {
     /// on it (PureCutCNC grows each tab footprint by the tool radius on
     /// every side; along the path that is the same length). On a closed
     /// path spans are circular: one may run through the path start. On an
-    /// open path ([`PathEnds::Open`], #175) they are measured from its
+    /// open path ([`PathEnds::Open`]) they are measured from its
     /// first vertex as drawn and cut short at its ends; `reversed`, the
     /// path is cut from its last vertex, and the spans are measured from
     /// there, so the tabs stay where they were drawn. A smooth span an
@@ -306,7 +306,7 @@ impl Tabs {
                 // An end of the path cuts the span short: no room is left
                 // for a smooth tab's slope there, so it holds its top
                 // right to that end, as a stock path's stretch does
-                // (#311, `last_pass::raised_span`). A slope laid inside
+                // (`last_pass::raised_span`). A slope laid inside
                 // what is left would start at the pass depth at the
                 // path's end, within the tool radius of the tab's centre
                 // or on its slope, and cut the tab through.
@@ -427,10 +427,10 @@ impl Request {
 
     /// The tabs this request puts on `path`, laid out by `tabs`
     /// ([`Tabs::layout`]). With `avoid_corners` each one on a corner moves
-    /// off it first, where it can ([`corners`], #285); one that cannot
+    /// off it first, where it can ([`corners`]); one that cannot
     /// stays, and is in [`Fit::on_corners_mm`]. When their spans would cover
     /// more than half the path, so the part or hole would not cut free,
-    /// the path gets the most tabs that cover at most half (#109), but
+    /// the path gets the most tabs that cover at most half, but
     /// never fewer than `least` allows: `count` tabs re-spaced evenly, or
     /// the first of `at_distances` in their order, moved off corners as
     /// before. What was asked and what is cut are in [`Reduced`], which is
@@ -512,7 +512,7 @@ impl Request {
         }
     }
 
-    /// This request as each piece of one outline takes it (#710), the
+    /// This request as each piece of one outline takes it, the
     /// pieces `lengths_mm` long, in the outline's order: where the board's
     /// edge leaves a male Inlay's cut-out as several open paths, the
     /// request is for the cut-out, not for each of them. One request for
@@ -587,7 +587,7 @@ impl Request {
     }
 }
 
-/// How many of `count` tabs each piece of one outline takes (#710), the
+/// How many of `count` tabs each piece of one outline takes, the
 /// pieces `lengths_mm` long and each able to hold `most` of them: shared by
 /// length, the largest remainders rounded up so the shares add up to
 /// `count` ([`by_length`]). A piece whose share is more than it holds
@@ -817,7 +817,7 @@ fn merge_closed(mut spans: Vec<Raw>, l: f64) -> (Vec<Raw>, bool) {
 }
 
 /// Spans of an open path, each within it, merged in start order where
-/// they overlap or touch (#311, [`PathTabs::from_spans`]).
+/// they overlap or touch ([`PathTabs::from_spans`]).
 fn merge_open(mut spans: Vec<Raw>) -> Vec<Raw> {
     spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
     let mut merged: Vec<Raw> = Vec::new();
@@ -904,7 +904,7 @@ impl PathTabs {
     }
 
     /// These spans, laid on a closed path, carried onto another closed
-    /// path `length_mm` long that runs beside it (#284, design A8 step 3):
+    /// path `length_mm` long that runs beside it (design A8 step 3):
     /// `along` maps a distance along this path to the distance along the
     /// other of the point nearest it. Each span runs on the other path
     /// from where its start lands to where its end lands (from its end to
@@ -982,10 +982,10 @@ impl PathTabs {
     }
 
     /// The raised stretches `spans` on a path `length_mm` long, laid for
-    /// `tab_count` tabs, merged where they overlap or touch (#310 review:
-    /// a stock path's spans, found from the tabs' material). On a
+    /// `tab_count` tabs, merged where they overlap or touch
+    /// (a stock path's spans, found from the tabs' material). On a
     /// `closed` path a span may run through its start; on an open one
-    /// (#311) each is cut short at the path's ends.
+    /// each is cut short at the path's ends.
     pub(crate) fn from_spans(
         length_mm: f64,
         tab_count: usize,
@@ -1036,7 +1036,7 @@ impl PathTabs {
     }
 
     /// These spans and `other`'s, laid on the same path, merged where they
-    /// overlap or touch (#362: a lap's own tabs and the tabs of other
+    /// overlap or touch (a lap's own tabs and the tabs of other
     /// outlines its cutter reaches). The tab count stays this layout's.
     pub(crate) fn merged(&self, other: &PathTabs) -> Self {
         let l = self.length_mm;
@@ -1075,7 +1075,7 @@ impl PathTabs {
     }
 
     /// These spans, laid on an open path, measured from its other end:
-    /// the layout of the path run backwards (#311, a reversed last pass),
+    /// the layout of the path run backwards (a reversed last pass),
     /// so the tabs stay where they are. Each span's ramps swap. A closed
     /// path's layout is returned as it is; [`PathTabs::carried`] reverses
     /// one.
@@ -1368,7 +1368,7 @@ pub(crate) fn overlap_warning(
 /// wide, on which `reduced.asked` tabs of widths `widths_mm` (one per tab
 /// asked) would have covered more than half, so the part or hole would
 /// not cut free, and `reduced.cut` are cut: fewer when a request was cut
-/// down ([`Request::fit`], #109), all when placed tabs are cut as placed.
+/// down ([`Request::fit`]), all when placed tabs are cut as placed.
 pub(crate) fn coverage_warning(
     op: &OperationId,
     contour: usize,
@@ -1420,7 +1420,7 @@ pub(crate) struct LapCuts {
 
 /// One lap of `path` at `z_mm`, from the path start at
 /// [`LapCuts::start_z_mm`] back to the path start (to its last vertex for
-/// an open path, #175). Where `tabs` is given
+/// an open path). Where `tabs` is given
 /// and `z_mm` lies below a tab's top, the lap rises over that tab's span:
 /// rect tabs with a vertical lift, a traverse at the tab top, and a
 /// vertical descent; smooth tabs along straight ramps either side of a hold

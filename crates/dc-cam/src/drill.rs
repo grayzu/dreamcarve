@@ -19,7 +19,7 @@
 //! units; a dwell is kept as a [`crate::MoveKind::Dwell`] move when the cycle is
 //! written as plain moves (upstream loses it); pecks count from the
 //! retract plane, as a controller's `G83`/`G73` counts them from `R`,
-//! not from the stock top (#153); holes are visited nearest
+//! not from the stock top; holes are visited nearest
 //! neighbour from the first circle in drawing order (D5), not from the
 //! origin, by [`crate::sequence`](fn@crate::sequence); there is no clamp
 //! check, and helical boring is its own operation ([`crate::bore`]).
@@ -199,7 +199,7 @@ fn drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>
     let retract_z_mm = (thickness_mm + op.retract_mm.max(0.0)).min(safe_z_mm);
     // Plunge levels, shallowest first; a simple cycle is one level. Pecks
     // count from the retract plane, as a controller's `G83`/`G73` counts
-    // them from `R` (#153), so a canned cycle and these moves are the
+    // them from `R`, so a canned cycle and these moves are the
     // same motion for any retract height. The pass rule is the one every
     // generator uses, from `R` instead of the stock top; `R` is at or
     // above the top, so no peck cuts deeper than a peck into material.
@@ -302,7 +302,7 @@ fn drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>
         })
         .collect::<Result<_, CamError>>()?;
     let toolpath = sequence(&input)?;
-    // #62: the cutter must stay on the stock.
+    // The cutter must stay on the stock.
     ctx.check_on_stock(&toolpath, tool.cut_radius_mm())?;
     Ok((
         DrillToolpath {
@@ -345,8 +345,8 @@ impl Countersink {
     /// [`countersink_depth_mm`]; the start depth is from 0 to the stock
     /// thickness, and below the stock top an earlier floor holds the bit
     /// at every hole, an enabled Pocket's or an enabled V-Carve's flat
-    /// floor (#426; [`cleared_start_plane`]), or the operation vouches for
-    /// the plane (security review M2); and the flanks engage no deeper
+    /// floor ([`cleared_start_plane`]), or the operation vouches for
+    /// the plane; and the flanks engage no deeper
     /// than the cone, counting the start depth unless that floor is at it
     /// (H4). Upstream's tool `maxCutDepth` check is this
     /// cone check: DreamCarve tools have none. Every check fails the
@@ -539,8 +539,8 @@ enum Fits {
 /// The holes of `op`, in drawing order (target order, then profile order):
 /// each circular closed profile, placed by its instance's transform, with
 /// its centre. Other profiles warn and are skipped. A hole narrower than
-/// the tool by more than the flatten tolerance warns and is skipped
-/// (maintainer decision 2026-10-24), unless the operation allows it, when
+/// the tool by more than the flatten tolerance warns and is skipped,
+/// unless the operation allows it, when
 /// it is drilled at the tool's size and warns. For a countersink, a hole
 /// at least as wide as the mouth, less upstream's `1e-9`, warns and is
 /// skipped instead. No hole left warns once.

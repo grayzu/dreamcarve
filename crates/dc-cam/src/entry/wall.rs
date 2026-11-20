@@ -135,7 +135,7 @@ impl EntryPlan {
         self.ramp.map(|r| (r.start, r.end))
     }
 
-    /// #352: this plan with its ramp run from its target toward `end`
+    /// This plan with its ramp run from its target toward `end`
     /// instead, as far along that line as `domain` holds it, stopped the
     /// boundary safety short of the far boundary and never past `end`,
     /// and with no helix: a pass below the tab top ramps along the line
@@ -168,7 +168,7 @@ impl EntryPlan {
         })
     }
 
-    /// #356: this plan with its ramp run cut short to `run_mm` from its
+    /// This plan with its ramp run cut short to `run_mm` from its
     /// start, along the same line, and with no helix: a pass ramps only as
     /// far along the line as the pass above cut it below the stock top.
     /// The plan itself when its run is no longer; `None` when it places no
@@ -322,15 +322,15 @@ impl Flat {
 /// L, max_run_mm)` and back, again and again, each leg descending at
 /// `angle_deg` until `z_mm`, the final leg cut short there, or sharing the
 /// depth with the leg before when it would fall less than
-/// [`RAMP_MIN_LAST_DROP_MM`] (`plan_legs`; #234, #273); arcs are split
+/// [`RAMP_MIN_LAST_DROP_MM`] (`plan_legs`); arcs are split
 /// into chords within `tolerance_mm` while Z changes, and a chord the
 /// program cannot write is merged into its neighbour
 /// (`merge_unwritable`), else the ramp falls back to a plunge with
-/// [`FallbackReason::TooSmall`] (#273). The tool then
+/// [`FallbackReason::TooSmall`]. The tool then
 /// returns along the path at `z_mm` to the start vertex, where the lap
 /// starts, so the ramped stretch is cut again at full depth; a piece of
 /// that return shorter than the program can write is merged as the
-/// descent's are (#321). On an open
+/// descent's are. On an open
 /// path shorter than a leg the legs turn at its end. Every descending move
 /// runs at the feed scaled so its vertical rate is at most the plunge rate
 /// (S10). A run of no more than `0.02·D`, or one that would need more than
@@ -398,7 +398,7 @@ pub fn along_path(
         if last && let Some(end) = points.last_mut() {
             end.z = z_mm;
         }
-        // #273: a piece of the leg the program cannot write is merged into
+        // A piece of the leg the program cannot write is merged into
         // its neighbour, or the ramp is not cut.
         if !merge_unwritable(&mut points, tool.quantum_mm) {
             descent.used = EntryKind::Plunge;
@@ -424,7 +424,7 @@ pub fn along_path(
             back.push(Point3::new(p.x, p.y, z_mm));
         }
     }
-    // #321: a leg that ends just past a chord vertex leaves a level piece
+    // A leg that ends just past a chord vertex leaves a level piece
     // to that vertex too short to write. The program writes it as nothing,
     // so arc fitting would count a chord S12 does not see. It is merged
     // as the descent's pieces are; if it cannot be, the way back is kept.
@@ -448,7 +448,7 @@ pub fn along_path(
 /// short where it reaches the depth. When that last leg would fall less
 /// than [`RAMP_MIN_LAST_DROP_MM`], the last two legs share their depth
 /// instead, each at the angle, the first cut short and the second back to
-/// where the first began, as the Pocket ramp's do (#234); a ramp of one
+/// where the first began, as the Pocket ramp's do; a ramp of one
 /// such leg runs the whole leg, shallower. (Changed in #273: the shallow
 /// last leg of #234 fell so gently that its chords along an arc each fell
 /// less than an inch program's last place.)
@@ -492,7 +492,7 @@ fn plan_legs(legs: usize, run_mm: f64, slope: f64, depth_mm: f64) -> Vec<(f64, f
     plan
 }
 
-/// #273: merges each piece of `points`, one leg's descent through its
+/// Merges each piece of `points`, one leg's descent through its
 /// stops from its start, that falls less than `quantum_mm` or runs less
 /// than √2 of it in XY, into a neighbour, so every move the program writes
 /// keeps two Z values and two XY points and so its slope (S3, S10, as

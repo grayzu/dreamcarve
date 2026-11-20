@@ -238,7 +238,7 @@ fn tab_no_enabled_operation_crosses_warns() {
     );
 }
 
-/// #105: a tab is a point in its instance's definition space, so it
+/// A tab is a point in its instance's definition space, so it
 /// moves with the instance. The sample turned a quarter turn and moved
 /// to (80, 20) puts the middle of its bottom edge at (80, 45), with
 /// the outward side towards +X: the last pass holds the tab top along
@@ -295,7 +295,7 @@ fn two_profiles_on_one_outline_both_rise_over_its_tabs() {
     }
 }
 
-/// #105: each tab rises to its own top. With passes at Z 4, 2 and 0, a
+/// Each tab rises to its own top. With passes at Z 4, 2 and 0, a
 /// 3 mm tab on the top edge is crossed by the passes at 2 and 0, and a
 /// 1 mm tab on the bottom edge only by the last.
 #[test]
@@ -388,7 +388,7 @@ fn place_keeps_the_rules_for_holes_and_short_outlines() {
     );
 }
 
-/// #105: a tab on a hole of the part is cut, since it was placed, and
+/// A tab on a hole of the part is cut, since it was placed, and
 /// warns `tab_on_hole`.
 #[test]
 fn tab_on_a_hole_is_cut_and_warns() {
@@ -460,7 +460,7 @@ fn hole_tab_ids(p: &Project) -> Vec<TabId> {
         .collect()
 }
 
-/// #300, #302: tabs placed on a hole for the Profile that cuts it, by
+/// Tabs placed on a hole for the Profile that cuts it, by
 /// a request or `--count` with `on_holes` (a version 8 file's migrated
 /// request among them), hold the slug because the user asked, so they
 /// are written with `holds_slug: true` and generation does not warn
@@ -542,7 +542,7 @@ fn hand_placed_hole_tab_still_warns() {
 
 /// #302 (`migrate::v14_placed_tabs_migrate_with_holds_slug_unset`): a
 /// format 14 file's tabs load with `holds_slug: null`, and warn as
-/// format 14 did (#300). A hole tab on the Profile's path round the
+/// format 14 did. A hole tab on the Profile's path round the
 /// hole, where only placing with `on_holes` puts one, holds its slug
 /// and does not warn; one on the hole's outline does, as does one
 /// left off the path by a change of bit. The tabs are those `place`
@@ -712,7 +712,7 @@ fn tab_far_from_its_outline_warns() {
     assert!(warnings.is_empty(), "{warnings:?}");
 }
 
-/// #105: one tab placed with `--at --on-holes` on a hole whose tool
+/// One tab placed with `--at --on-holes` on a hole whose tool
 /// path is shorter than the tab's span covers all of it. It is cut as
 /// placed and warns `tabs_cover_most_of_contour` as a placed tab, not
 /// with the words for the one tab a part keeps; a single tab overlaps
@@ -756,7 +756,7 @@ fn one_placed_tab_on_a_small_hole_warns_as_placed() {
     }
 }
 
-/// #105 review: a Profile crosses a tab only when its cut goes below
+/// A Profile crosses a tab only when its cut goes below
 /// the tab's top. A 1 mm On line score pass of the rectangle stops at
 /// Z 5, above a 3 mm tab, so it does not cross it: it warns nothing
 /// about the tab's range, and alone it leaves the tab `tab_not_crossed`.
@@ -785,7 +785,7 @@ fn a_profile_above_a_tab_does_not_cross_it() {
     );
 }
 
-/// #105: placing the same tabs again adds none, and new tabs take the
+/// Placing the same tabs again adds none, and new tabs take the
 /// next free ids.
 #[test]
 fn place_does_not_place_a_tab_twice() {
@@ -845,7 +845,7 @@ fn replace_swaps_only_the_tabs_the_profile_crosses() {
     assert_eq!(held_runs(&cut, TAB_TOP_MM).len(), 4);
 }
 
-/// #105: tabs are placed for a Profile; anything else is refused.
+/// Tabs are placed for a Profile; anything else is refused.
 #[test]
 fn place_needs_a_profile_of_the_project() {
     let mut p = untabbed();
@@ -967,7 +967,7 @@ fn placing_keeps_tabs_off_corners_and_counts_from_the_start() {
     );
 }
 
-/// #710: the paths one outline is left as take a request between
+/// The paths one outline is left as take a request between
 /// them; every other path takes it for itself, as each outline of a
 /// Profile does (capability 26). Three lines cut On line, 40, 80 and
 /// 80 mm long, and four tabs 1 mm wide (7.35 mm of path each under the

@@ -81,7 +81,7 @@ pub enum BlockProblem {
         entry_z_mm: f64,
     },
     /// The block's first cut does not start at its entry at its entry Z:
-    /// its descent ends elsewhere (security review H1).
+    /// its descent ends elsewhere.
     FirstCutAwayFromEntry {
         /// Where the descent ends, mm, so where the first cut starts.
         start: Point3,
@@ -129,7 +129,7 @@ pub enum PhotoProblem {
         range: &'static str,
     },
     /// The grooves would take more than
-    /// [`crate::photo::MAX_PHOTO_MOVES`] moves (security review L3),
+    /// [`crate::photo::MAX_PHOTO_MOVES`] moves,
     /// counted before anything is allocated.
     TooManyMoves {
         /// How many moves the grooves would take, at least.
@@ -223,7 +223,7 @@ pub enum CamError {
     MissingFeed {
         /// The tool's name.
         tool: String,
-        /// The tool's id: names need not be unique (#71).
+        /// The tool's id: names need not be unique.
         tool_id: ToolId,
         /// Which rate is missing.
         field: FeedField,
@@ -231,7 +231,7 @@ pub enum CamError {
     /// The tool is not a flat end mill and the operation offsets by half
     /// the diameter: an Outside or Inside Profile, or a Pocket. Only a flat
     /// end mill cuts that offset at every depth, so any other cutter makes
-    /// the part the wrong size (#67). Validation reports this first.
+    /// the part the wrong size. Validation reports this first.
     #[error(
         "operation `{op}` cuts with tool `{tool}`, {cutter}; offsetting by half the diameter needs a flat end mill, or the part comes out the wrong size"
     )]
@@ -240,7 +240,7 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
-        /// The tool's id: names need not be unique (#71).
+        /// The tool's id: names need not be unique.
         tool_id: ToolId,
         /// The cutter in words, such as `a V-bit`.
         cutter: &'static str,
@@ -252,7 +252,7 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
-        /// The tool's id: names need not be unique (#71).
+        /// The tool's id: names need not be unique.
         tool_id: ToolId,
     },
     /// Neither the Pocket nor its tool sets a step-over fraction.
@@ -262,7 +262,7 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
-        /// The tool's id: names need not be unique (#71).
+        /// The tool's id: names need not be unique.
         tool_id: ToolId,
     },
     /// The step-over fraction in effect is not in (0, 1], or is so small
@@ -400,11 +400,11 @@ pub enum CamError {
         step_down_mm: f64,
     },
     /// The stock thickness is unset. Validation reports this first; it is
-    /// never defaulted (#64).
+    /// never defaulted.
     #[error("the stock has no thickness_mm; export fails until it is set")]
     MissingThickness,
     /// The operation's depth is unset. Validation reports this first; it is
-    /// never defaulted (#64).
+    /// never defaulted.
     #[error("operation `{op}` has no depth_mm; export fails until it is set")]
     MissingDepth {
         /// The operation.
@@ -431,7 +431,7 @@ pub enum CamError {
     InvalidToolDiameter {
         /// The tool's name.
         tool: String,
-        /// The tool's id: names need not be unique (#71).
+        /// The tool's id: names need not be unique.
         tool_id: ToolId,
         /// The diameter, mm.
         diameter_mm: f64,
@@ -450,7 +450,7 @@ pub enum CamError {
         limit_mm: f64,
     },
     /// The cutter would leave the stock: the operation's swept extent,
-    /// toolpath plus tool radius, runs past a stock edge (#62).
+    /// toolpath plus tool radius, runs past a stock edge.
     #[error("operation `{op}` cuts off the stock: {overhang}")]
     OffStock {
         /// The operation.
@@ -475,10 +475,10 @@ pub enum CamError {
     /// another line of the same region: the band between them (an outline
     /// and an island or hole in it, or two of those) is narrower than the
     /// tool. Inside, the band is waste and the cutter would cut into the
-    /// material the Profile keeps beyond the other line (#192); On line,
-    /// the band is the part, and the two lines' cuts would cut through it
-    /// (#199), as they would beside an open path drawn in the part, away
-    /// from where the two lines meet (#210). `shape` is the one drawn first; `other` is boxed to keep
+    /// material the Profile keeps beyond the other line; On line,
+    /// the band is the part, and the two lines' cuts would cut through it,
+    /// as they would beside an open path drawn in the part, away
+    /// from where the two lines meet. `shape` is the one drawn first; `other` is boxed to keep
     /// the error small.
     #[error(
         "operation `{op}` cuts {shape} and {other}, but the band between them is {band_mm:.3} mm wide, narrower than its {diameter_mm} mm tool, so the bit would cut into material the Profile keeps; no toolpath was produced"
@@ -498,7 +498,7 @@ pub enum CamError {
     /// An On line Profile's part is narrower than the tool everywhere: every
     /// point of it lies within the tool radius of its lines (the part
     /// shrunk by the radius is empty), so the cut along them removes the
-    /// whole part (#223). `shape` is the part's outline.
+    /// whole part. `shape` is the part's outline.
     #[error(
         "operation `{op}` cuts {shape} On line, but the part is nowhere as wide as its {diameter_mm} mm tool, so the bit would remove the whole part; cut it Outside, or use Engrave to mark it; no toolpath was produced"
     )]
@@ -512,7 +512,7 @@ pub enum CamError {
     },
     /// A Profile's last pass has a stock to leave that is not more than 0 and
     /// at most a third of the bit's diameter, or a thickness that is not
-    /// more than 0 and at most the depth (#284). Validation rejects both;
+    /// more than 0 and at most the depth. Validation rejects both;
     /// the generator does not trust its callers.
     #[error("operation `{op}` has last_pass.{field} {value} mm; it must be {range}")]
     InvalidLastPass {
@@ -525,10 +525,10 @@ pub enum CamError {
         /// The allowed range, as the user reads it.
         range: String,
     },
-    /// A Profile that cuts On line has a last pass (#284): it cuts with
+    /// A Profile that cuts On line has a last pass: it cuts with
     /// both flanks, so it leaves no wall to take the stock to leave off.
     /// Validation rejects it; the generator refuses it too. (changed in
-    /// #311: Left and Right take a last pass.)
+    /// Left and Right take a last pass.)
     #[error(
         "operation `{op}` has a last_pass but cuts on the line; a last pass needs a wall to take the stock to leave off, so set last_pass to null or cut Inside, Outside, Left or Right"
     )]
@@ -536,7 +536,7 @@ pub enum CamError {
         /// The operation.
         op: OperationId,
     },
-    /// #284: a Profile with a last pass stock to leave cuts two lines closer
+    /// A Profile with a last pass stock to leave cuts two lines closer
     /// than its passes before the last need, `needed_mm`. Inside, two
     /// lines of one region need the tool and the stock to leave on both,
     /// `diameter + 2 · stock to leave`: those passes, `stock_to_leave_mm` farther
@@ -544,7 +544,7 @@ pub enum CamError {
     /// leave, or into the part. Between two regions (a part and another
     /// part, or one inside another's hole) the passes need
     /// `diameter + stock to leave`, or they would come within the radius of the
-    /// other part (#310 review). `shape` is the one drawn first; `other`
+    /// other part. `shape` is the one drawn first; `other`
     /// is boxed to keep the error small.
     #[error(
         "operation `{op}` cuts {shape} and {other} with a {stock_to_leave_mm} mm last pass stock to leave, but the gap between them is {band_mm:.3} mm, narrower than the {needed_mm:.3} mm its {diameter_mm} mm tool and the stock to leave need there, so the passes before the last would cut into material the Profile keeps; make last_pass.stock_to_leave_mm smaller or set last_pass to null; no toolpath was produced"
@@ -589,8 +589,8 @@ pub enum CamError {
     },
     /// A Left or Right Profile's cut beside one open path comes within the
     /// tool radius of another line of the operation, or of the strip one
-    /// radius wide that a line keeps on the side away from its own cut
-    /// (#207): the bit would cut into material the drawing keeps. `shape`
+    /// radius wide that a line keeps on the side away from its own cut:
+    /// the bit would cut into material the drawing keeps. `shape`
     /// and `other` are in drawing order and may be the same path, whose
     /// cut reaches what it keeps further along. `other` is boxed to keep
     /// the error small.
@@ -607,7 +607,7 @@ pub enum CamError {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
-    /// #311: a Left or Right Profile's passes before the last, `stock_to_leave_mm`
+    /// A Left or Right Profile's passes before the last, `stock_to_leave_mm`
     /// farther from each open path than its last pass, come within the
     /// tool radius plus the stock to leave of another line of the operation,
     /// or of the strip one radius wide that a line keeps on its part side:
@@ -632,7 +632,7 @@ pub enum CamError {
         /// The last pass stock to leave, mm.
         stock_to_leave_mm: f64,
     },
-    /// #342: a Left or Right Profile's cut beside an open path has no room
+    /// A Left or Right Profile's cut beside an open path has no room
     /// at one of the path's ends. The segment that ends there is too short
     /// for the tool, plus the last pass stock to leave when `stock_to_leave_mm` is
     /// set, to cut beside it: on the inside of the turn before it, the cut
@@ -680,14 +680,14 @@ pub enum CamError {
         /// The value, mm.
         value_mm: f64,
     },
-    /// Tabs were asked for an operation the project does not have (#105).
+    /// Tabs were asked for an operation the project does not have.
     #[error("operation `{op}` is not in the project")]
     UnknownOperation {
         /// The operation asked for.
         op: OperationId,
     },
     /// Tabs were asked for an operation that is not a Profile, which is
-    /// the only operation that cuts round tabs (#105).
+    /// the only operation that cuts round tabs.
     #[error("operation `{op}` is a {kind} operation; only a Profile cuts tabs")]
     TabsNeedProfile {
         /// The operation.
@@ -758,13 +758,13 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
-        /// The tool's id: names need not be unique (#71).
+        /// The tool's id: names need not be unique.
         tool_id: ToolId,
         /// The cutter in words, such as `an end mill`.
         cutter: &'static str,
     },
-    /// A V-Carve's tapered ball nose has a value unset or out of range
-    /// (slice 27c, #679): its tip diameter, taper per side or flute length,
+    /// A V-Carve's tapered ball nose has a value unset or out of range:
+    /// its tip diameter, taper per side or flute length,
     /// or a cutting diameter not above its tip, so it has no profile to
     /// carve with. Validation reports which first (`tool_value_unset`,
     /// `tapered_ball_nose_range`).
@@ -793,10 +793,10 @@ pub enum CamError {
         angle_deg: f64,
     },
     /// A V-bit's flanks would be engaged deeper than its cone is tall, so
-    /// its shank would cut (`v_bit_cone_exceeded`; security review H4):
+    /// its shank would cut (`v_bit_cone_exceeded`):
     /// the engagement counts from the stock top, or from the start plane
     /// when an enabled earlier Pocket has cleared it, down to the carve's
-    /// deepest point in `shape`. For a tapered ball nose (slice 27c, #679)
+    /// deepest point in `shape`. For a tapered ball nose
     /// the limit is its cutting height, the lower of its flute length and
     /// the height where its cone reaches its cutting diameter, and `limit`
     /// says which.
@@ -856,7 +856,7 @@ pub enum CamError {
     },
     /// A countersink would engage its V-bit's flanks deeper than the
     /// cone is tall, so the shank would cut (format 21,
-    /// `v_bit_cone_exceeded`; security review H4): its depth plus, unless
+    /// `v_bit_cone_exceeded`): its depth plus, unless
     /// an enabled earlier Pocket at the start depth holds the bit, the
     /// start depth. Validation reports this first.
     #[error(
@@ -884,7 +884,7 @@ pub enum CamError {
     /// A V-Carve, a countersink or a Photo V-Carve starts below the stock
     /// top, no enabled earlier Pocket holds its footprint, and the
     /// operation does not say another
-    /// program cleared it (`start_depth_uncleared`; security review M2).
+    /// program cleared it (`start_depth_uncleared`).
     /// Validation reports this first.
     #[error(
         "operation `{op}` starts {start_depth_mm} mm below the stock top, but no earlier Pocket clears that; add one, or set start_plane_cleared_externally if another program cuts it"
@@ -928,13 +928,13 @@ pub enum CamError {
         /// Where, mm.
         z_mm: f64,
         /// How far past the wall, mm: always more than the flatten
-        /// tolerance the test allows, so the message shows it (#463).
+        /// tolerance the test allows, so the message shows it.
         overlap_mm: f64,
     },
     /// A V-bit toolpath holds an arc move, which the generator-side cone
     /// test (step 10) is not written for: a V toolpath is straight moves.
     /// A defect in the generator, never in the user's project: the
-    /// toolpath is not returned (#463; it was `ConeOffMaterial` at 0 mm).
+    /// toolpath is not returned (it was `ConeOffMaterial` at 0 mm).
     #[error(
         "operation `{op}` has an arc move ending at ({x_mm:.3}, {y_mm:.3}, {z_mm:.3}) mm in {shape}, which its V-bit cone test does not take; no toolpath was produced"
     )]
@@ -950,7 +950,7 @@ pub enum CamError {
         /// Where, mm.
         z_mm: f64,
     },
-    /// A male Inlay's drawn boundary has a problem (format 26, #449;
+    /// A male Inlay's drawn boundary has a problem (format 26;
     /// validation's `inlay_boundary_*`), found again by the generator as
     /// every generator re-checks validation. Validation reports this first.
     #[error("operation `{op}`'s drawn boundary cannot be used: {problem:?}")]
@@ -1010,7 +1010,7 @@ pub enum CamError {
         margin_mm: f64,
     },
     /// A male Inlay's cut-out tool is wider than the band's flat floor
-    /// ring (format 23, #443), `margin_mm − 2·plug_depth_mm·tan(α/2)`
+    /// ring (format 23), `margin_mm − 2·plug_depth_mm·tan(α/2)`
     /// wide, so the cut-out would cut a wall.
     #[error(
         "operation `{op}` cuts its plug out with a {diameter_mm} mm end mill in a flat floor {floor_mm:.3} mm wide; raise margin_mm to at least {needed_mm:.3} mm"
@@ -1026,7 +1026,7 @@ pub enum CamError {
         needed_mm: f64,
     },
     /// An Inlay cut with a tapered ball nose has a part or a gap too narrow
-    /// for the bit (`inlay_too_narrow_for_bit`; slice 27e, #681): rounding
+    /// for the bit (`inlay_too_narrow_for_bit`): rounding
     /// the design for the bit ([`dc_project::rounded_for_bit`]) would
     /// remove, split or join a part or a hole, which is not rounding. A
     /// part needs `2 R_min`, `2 ((D − G)·tan β + w_t)`, and a gap `2 w_t`.
@@ -1056,7 +1056,7 @@ pub enum CamError {
         /// How wide it must be, mm.
         needed_mm: f64,
     },
-    /// A male Inlay's band runs past a stock edge, which clips it (#495),
+    /// A male Inlay's band runs past a stock edge, which clips it,
     /// but its design is too near that edge for what the band holds there:
     /// the V-bit along the plug's foot with its full radius on the board,
     /// the edge pass's floor ring and the V-bit's flank with an open edge,
@@ -1093,8 +1093,7 @@ pub enum CamError {
     },
     /// A Photo V-Carve's setting cannot be cut (format 27): unset, out of
     /// its range (validation's `photo_*` rules, re-checked), or so fine
-    /// that its grooves would pass [`crate::photo::MAX_PHOTO_MOVES`]
-    /// (security review L3).
+    /// that its grooves would pass [`crate::photo::MAX_PHOTO_MOVES`].
     #[error("{}", photo_setting(op, field, *value, problem))]
     PhotoSetting {
         /// The Photo V-Carve.
@@ -1194,7 +1193,7 @@ fn internal_message(op: Option<&OperationId>, what: &str) -> String {
 }
 
 /// `mm` rounded up to the thousandth a message shows, so a length the
-/// user must reach is never shown short of it (#495); a value a hair
+/// user must reach is never shown short of it; a value a hair
 /// above a thousandth stays on it.
 fn up_mm(mm: f64) -> f64 {
     (mm * 1000.0 - ON_THOUSANDTH).ceil() / 1000.0
@@ -1215,7 +1214,7 @@ fn with_stock_to_leave(stock_to_leave_mm: Option<f64>) -> String {
 
 /// [`CamError::VBitConeExceeded`]'s text: a V-bit's as before, its cone
 /// named; a tapered ball nose's naming its flutes or where its cone
-/// reaches its cutting diameter (slice 27c, #679).
+/// reaches its cutting diameter.
 fn cone_exceeded_message(
     op: &OperationId,
     shape: &ShapeRef,

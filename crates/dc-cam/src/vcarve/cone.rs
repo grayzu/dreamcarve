@@ -3,7 +3,7 @@
 
 //! The walls of a carve and the exact cone test on them
 //! (`docs/specs/phase-3/design.md`, "Safety pass", the S17 bullet, and
-//! "V-Carve generator", steps 5 and 10; security review H2 and M1).
+//! "V-Carve generator", steps 5 and 10).
 //!
 //! A V-bit whose tip is at depth `d` below the start plane cuts a disc of
 //! radius `d · slope` there, and it cuts nothing below the carve's final V
@@ -12,13 +12,13 @@
 //! cone at `p` reaches `q` at `d − |q − p| / slope`, which the triangle
 //! inequality keeps above it everywhere when `d · slope ≤ dist(p, wall)`.
 //!
-//! A tapered ball nose (slice 27c, #679) cuts nested discs too, `w(d)`
+//! A tapered ball nose cuts nested discs too, `w(d)`
 //! across at depth `d` ([`BitProfile`]), so the same holds with `w(d)` in
 //! place of `d · slope`.
 //!
 //! Along a straight move the least room to each straight wall segment is
 //! found exactly, with no sampling step, by the shared
-//! [`dc_geometry::profile::least_room`] (#678): the V-bit's closed forms,
+//! [`dc_geometry::profile::least_room`]: the V-bit's closed forms,
 //! the virtual apex on a TBN's cone, the ball's polynomial stationary
 //! points. Arcs are flattened to chords within the caller's tolerance
 //! first, as `dc_geometry::medial` flattens them, so the walls here are
@@ -93,7 +93,7 @@ pub(crate) struct Walls {
     /// The grid's cells, row after row, `columns` to a row: each holds the
     /// walls whose box crosses it, themselves and not their places among
     /// `walls`, so a search of the grid looks nothing up and can miss
-    /// nothing (code review finding 1.2).
+    /// nothing.
     buckets: Vec<Vec<Wall>>,
 }
 
@@ -114,7 +114,7 @@ struct Wall {
     /// The place of the wall as drawn that it is a chord of, among the
     /// regions' drawn walls.
     source: usize,
-    /// That wall as drawn, an arc as an arc (#481).
+    /// That wall as drawn, an arc as an arc.
     drawn: Segment,
 }
 
@@ -262,7 +262,7 @@ impl Walls {
     /// tolerance they were built at (a chord near a concave arc lies up
     /// to that far beyond the true wall) plus [`EPS_MM`]. The generator's
     /// own cone test ([`crate::vcarve::cone_in_material`]) allows this
-    /// much, so fitting holds a chain's stretches to it too (#463).
+    /// much, so fitting holds a chain's stretches to it too.
     pub(crate) fn slack_mm(&self) -> f64 {
         self.tolerance_mm.max(0.0) + EPS_MM
     }
@@ -321,7 +321,7 @@ impl Walls {
         self.nearest_segment(p).map(|(d, q, _)| (d, q))
     }
 
-    /// The unit normal, into the regions, of the wall nearest `p` (#554):
+    /// The unit normal, into the regions, of the wall nearest `p`:
     /// the regions lie left of every wall, outers counter-clockwise and
     /// holes clockwise (ADR-0001). Where `p` is on a wall, its nearest
     /// point is `p` itself, which gives no direction. At a vertex either
@@ -333,8 +333,8 @@ impl Walls {
     }
 
     /// The middle of every wall segment that may come within `margin_mm`
-    /// of the box of `a` and `b`, with its unit normal into the regions
-    /// (#705), as [`Walls::inward_normal`] reads it; a segment with no
+    /// of the box of `a` and `b`, with its unit normal into the regions,
+    /// as [`Walls::inward_normal`] reads it; a segment with no
     /// length has no normal and is left out.
     pub(crate) fn middles_near(&self, a: Point, b: Point, margin_mm: f64) -> Vec<(Point, Vec2)> {
         let lo = Point::new(a.x.min(b.x), a.y.min(b.y));
@@ -434,9 +434,9 @@ impl Walls {
     }
 
     /// How near the straight tip path `a`–`b` comes to a wall, mm, among
-    /// the walls within `reach_mm` of it (#469): 0 where it meets one;
+    /// the walls within `reach_mm` of it: 0 where it meets one;
     /// `reach_mm` or more when none is nearer. The walls are the chords
-    /// and also the arcs as drawn (#481): S17 holds the written path to
+    /// and also the arcs as drawn: S17 holds the written path to
     /// the drawn outline, and beside an arc that bows into the region its
     /// chords lie up to the flatten tolerance beyond it, so a path clear of
     /// them can come within a hair of the arc and, once written, cross it.
@@ -463,7 +463,7 @@ impl Walls {
 
     /// Whether the straight tip path from `g` to `q` keeps, a fraction `t`
     /// of the way along, at least `t · margin_mm` from every wall, chords
-    /// and arcs as drawn (#499). With `q` inside the regions, that holds
+    /// and arcs as drawn. With `q` inside the regions, that holds
     /// exactly when the path from `g` as written to anywhere within
     /// `margin_mm` of `q` stays inside: `g` written exactly (a point of
     /// the program's grid), `q` moved by rounding. A `g` outside fails,
@@ -507,7 +507,7 @@ impl Walls {
         })
     }
 
-    /// Whether a chord of a drawn arc lies within `reach_mm` of `p` (#506):
+    /// Whether a chord of a drawn arc lies within `reach_mm` of `p`:
     /// only there do chords drawn at another tolerance put the walls
     /// elsewhere.
     pub(crate) fn arc_within(&self, p: Point, reach_mm: f64) -> bool {
@@ -538,7 +538,7 @@ impl Walls {
 
     /// Where the straight tip path `a`–`b` first leaves the regions by
     /// more than `slack_mm` ([`Walls::holds_path`]'s test), or `None` when
-    /// it stays in (#463). An end outside is the excursion itself. A
+    /// it stays in. An end outside is the excursion itself. A
     /// stretch outside between two crossings is read every 1/32 of its
     /// length for the point farthest from the walls, so the distance is
     /// what the path leaves by, not the 0 of the walls it crosses; and
@@ -619,8 +619,8 @@ impl Walls {
 
     /// The wall vertex the path from `a` to `b` cuts across where it
     /// leaves the regions at `exit` (the point and the segment crossed)
-    /// and comes back at `entry` through another segment of the same loop
-    /// (#463): of the loop's two ways between them, the one that closes
+    /// and comes back at `entry` through another segment of the same loop:
+    /// of the loop's two ways between them, the one that closes
     /// the smaller polygon with the path (outside an outer, the bay the
     /// path crosses, not the region round it; in a hole, either side), and
     /// on it the vertex farthest from the path's line, with the unit
@@ -755,7 +755,7 @@ impl Walls {
     }
 }
 
-/// A male Inlay's open band edge (#448; `docs/specs/phase-3/design.md`,
+/// A male Inlay's open band edge (`docs/specs/phase-3/design.md`,
 /// "Algorithms → Inlay", step 4): beyond these walls the board stands to
 /// the stock top, so the bit may not cross them below it. The widest disc
 /// a bit cuts below the stock top is the one at the stock top, `w(top −

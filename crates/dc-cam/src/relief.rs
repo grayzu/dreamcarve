@@ -16,7 +16,7 @@
 //! vanishes). Per corner and level the notch goes from the descend point,
 //! where the main path cuts to full depth, out to the end point and back.
 //!
-//! **Inline on the final wall** (maintainer decision 2026-10-24; design
+//! **Inline on the final wall** (design
 //! "Corner relief", steps 5 and 6). Upstream cuts relief as a pass of its
 //! own after the main path, lifting and plunging at every corner.
 //! DreamCarve cuts it from the path that cuts the final wall: a Pocket's
@@ -35,7 +35,7 @@
 //! on a Profile, for a pass whose lap does not reach the corner. A Pocket's
 //! separate pass follows all its main passes, as upstream (a Pocket never
 //! frees material); a Profile's notch blocks follow their pass's lap in its
-//! unit (#189). Nothing of a shape is cut after its freeing pass.
+//! unit. Nothing of a shape is cut after its freeing pass.
 //!
 //! **The touch-the-corner rule.** For corner `C` of the cleared region,
 //! with unit edge directions `u`, `v` from `C`, bisector `b`, cleared-side
@@ -328,7 +328,7 @@ fn not_cut_warning(op: &OperationId, shape: &ShapeRef, g: &CornerGeometry) -> Wa
 /// each corner rejected: an adjacent edge under `2r` (a T-bone's slot and
 /// its cutter need that much along the wall, and arc-like runs of short
 /// edges fail it), no tool-centre ring crossing within reach, or a notch
-/// that would come nearer another wall of the site than `r` (#322). A
+/// that would come nearer another wall of the site than `r`. A
 /// relief that is not where the geometry says is worse than none, so
 /// corners are rejected rather than approximated.
 pub(crate) fn collect(
@@ -396,7 +396,7 @@ fn loop_edges(site: &Site) -> Vec<(usize, Segment)> {
 
 /// Whether the notch at corner `g` of loop `index`, cut from `descend` to
 /// `end` and back, brings the cutter nearer than `radius_mm` to an edge
-/// of `edges` other than the corner's own two (#322). A notch may bite
+/// of `edges` other than the corner's own two. A notch may bite
 /// past its own corner's walls, by design; nearer another wall it cuts
 /// into material past that one too. For an outside Profile that wall is
 /// the far side of a part thinner than the notch is deep, which the notch
@@ -483,7 +483,7 @@ fn moves_cut_at(
 
 /// `corners` in nearest-neighbour order from `start`, by descend point,
 /// ties in the order given: distances within
-/// [`crate::sequence::NEAREST_TIE_MM`] are a tie (#215).
+/// [`crate::sequence::NEAREST_TIE_MM`] are a tie.
 fn nearest_neighbour(mut corners: Vec<ReliefCorner>, start: Point) -> Vec<ReliefCorner> {
     let mut ordered = Vec::with_capacity(corners.len());
     let mut from = start;
@@ -541,7 +541,7 @@ pub(crate) struct Relief {
     pub levels: Vec<f64>,
     /// Absolute safe Z, mm.
     pub safe_z_mm: f64,
-    /// Absolute clearance Z, mm (#283): a notch of another instance than
+    /// Absolute clearance Z, mm: a notch of another instance than
     /// the one before is reached at it.
     pub clearance_z_mm: f64,
     /// The stock top, mm.
@@ -569,7 +569,7 @@ pub(crate) struct Setup<'a> {
     pub through_cut_allowance_mm: f64,
     /// Absolute safe Z, mm.
     pub safe_z_mm: f64,
-    /// Absolute clearance Z, mm (#283).
+    /// Absolute clearance Z, mm.
     pub clearance_z_mm: f64,
     /// The tool's rates.
     pub rates: LapRates,
@@ -672,7 +672,7 @@ impl Relief {
     }
 
     /// A Pocket's notches cut inline on its final wall (design "Corner
-    /// relief", steps 5 and 6; maintainer decision 2026-10-24): the
+    /// relief", steps 5 and 6): the
     /// corners of `sites` whose levels are spliced into the rings of
     /// `blocks`, the Pocket's main blocks before sequencing (its passes at
     /// `pass_z`), and the corners left for the separate pass
@@ -778,7 +778,7 @@ impl Relief {
             return Ok(cut);
         };
         let ordered = nearest_neighbour(cut, start);
-        // #283: a notch of another instance is reached at the clearance
+        // A notch of another instance is reached at the clearance
         // Z, as the sequencer links blocks of different instances. Where
         // the main path ended is not known here, so the first notch is
         // reached at it too.
@@ -806,7 +806,7 @@ impl Relief {
                 stepover_mm: 0.0,
                 feed_mm_min: self.rates.feed_mm_min,
                 plunge_mm_min: self.rates.plunge_mm_min,
-                // #227: the notch's rapid down stops just above the floor
+                // The notch's rapid down stops just above the floor
                 // the main path cut at its descend point.
                 cut_before: &toolpath.moves,
                 groove_link_z_mm: None,
@@ -851,7 +851,7 @@ impl Relief {
             .collect()
     }
 
-    /// A Profile's relief, cut among its shapes' own passes (#189) and
+    /// A Profile's relief, cut among its shapes' own passes and
     /// inline on their laps (design "Corner relief", step 5; maintainer
     /// decision 2026-10-24): the notch blocks left to hand to [`sequence`]
     /// with `blocks`, the main blocks. A corner is cut when its own shape's
@@ -865,7 +865,7 @@ impl Relief {
     /// pass whose lap does not reach it (step 6) cuts those levels as a
     /// separate notch block in its unit, after the lap. A shape's corners
     /// are taken nearest-neighbour from where its first block ends, the
-    /// same order at every pass. With `only_pass` (#284) every level goes
+    /// same order at every pass. With `only_pass` every level goes
     /// to that pass, the last pass, whose lap is the only one on the
     /// part's path: the stock passes never carry a notch.
     fn interleave(
@@ -925,7 +925,7 @@ impl Relief {
         for (corner, pass, levels) in planned {
             // The lap of the corner's shape at this pass that reaches the
             // descend point at the pass's Z (design "Corner relief", step
-            // 5: inline on every pass, not only the freeing one, #193).
+            // 5: inline on every pass, not only the freeing one).
             let lap = blocks.iter_mut().find(|b| {
                 b.shape == corner.shape
                     && b.pass == pass
@@ -1168,7 +1168,7 @@ pub(crate) struct ProfileGeometry<'a> {
     pub paths: &'a [(Polyline, &'a ShapeRef)],
     /// The wall each path cuts and the index of its region.
     pub walls: &'a [(Wall, usize)],
-    /// The only pass whose laps run on `paths` (#284: the last pass of a
+    /// The only pass whose laps run on `paths` (the last pass of a
     /// Profile with a last pass stock to leave, whose earlier passes run on the
     /// stock path and open no column where a notch descends); `None`
     /// when every pass does.
@@ -1215,7 +1215,7 @@ fn profile_sites(side: Side, geometry: &ProfileGeometry<'_>) -> Vec<Site> {
 
 /// A Profile's relief notches (Inside: the hole's corners; Outside: the
 /// part's concave corners), as blocks to sequence with `blocks`, the
-/// Profile's main blocks, among the shapes' own passes (#189; see
+/// Profile's main blocks, among the shapes' own passes (see
 /// [`Relief::interleave`]). On line has no waste side for a notch:
 /// [`Warning::ReliefSkipped`].
 ///

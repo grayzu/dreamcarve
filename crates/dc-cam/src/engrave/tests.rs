@@ -489,7 +489,7 @@ fn open_path_inside_an_outline_is_not_forced_first() {
     assert_approx_eq!(laps[1].x_extent_mm(), 20.0, TOL);
 }
 
-/// #206: Engrave takes no part in D6. It cuts every line as drawn at
+/// Engrave takes no part in D6. It cuts every line as drawn at
 /// one depth, so lines that cross or touch (lettering, a hatch, a
 /// border meeting its corners) are the design, not two shapes cut
 /// into each other: crossing lines and a line touching an outline
@@ -586,7 +586,7 @@ fn unknown_tool_is_an_error() {
     assert!(matches!(err, CamError::UnknownTool { .. }), "{err:?}");
 }
 
-/// S7 (#62): the cutter's edge must stay on the stock. A line starting
+/// S7: the cutter's edge must stay on the stock. A line starting
 /// 1 mm inside the left edge overhangs it by the radius less 1 mm.
 #[test]
 fn toolpath_off_stock_is_an_error() {

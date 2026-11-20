@@ -12,25 +12,25 @@
 //! the material of the region it bounds (the part, or for a hole the frame
 //! around it). Under Inside every path stays inside its own region, at
 //! least `r` from every line of it (`generate_profile` refuses a band
-//! narrower than the tool, #192), so at least `r` from every other
+//! narrower than the tool), so at least `r` from every other
 //! region's line too, and only Outside and On line cuts can warn. A part
 //! and its own holes are one region and are never compared here: Outside,
 //! cutting close to them leaves a thin wall, not a gouge; On line, lines
 //! of one region closer than the tool's diameter would cut through the
-//! part between them, which `generate_profile` refuses (#199).
+//! part between them, which `generate_profile` refuses.
 //!
-//! An open path an On line Profile cuts (#175) is its own line and its own
-//! tool-centre path, compared by the same On line rule (#206). It belongs
+//! An open path an On line Profile cuts is its own line and its own
+//! tool-centre path, compared by the same On line rule. It belongs
 //! to the region whose material holds all of it, as a hole does, and is
 //! not compared with that region's lines: there it cuts into the part, not
 //! beside it, and `generate_profile`'s band check refuses one closer than
-//! the diameter to them away from where they meet (#210). An open path held by no region (in the waste, in a hole's
+//! the diameter to them away from where they meet. An open path held by no region (in the waste, in a hole's
 //! slug, or crossing a line) is a group of its own and is compared with
-//! every other shape, and with itself (#224): where two of its stretches
+//! every other shape, and with itself: where two of its stretches
 //! far apart along it come closer than the radius, as in a tight spiral or
 //! a hairpin, it warns as two separate paths there would. Engrave takes no part: it cuts every line as drawn,
 //! so lines that cross or meet are the design, not shapes too close. Nor
-//! does a Left or Right Profile (#207): a cut of one that comes within the
+//! does a Left or Right Profile: a cut of one that comes within the
 //! radius of another line is `generate_profile`'s error, since the line's
 //! other side is the part.
 
@@ -49,18 +49,18 @@ pub(crate) type CutPath<'a> = (&'a Polyline, Option<&'a ShapeRef>);
 /// the first path of each pair and then the second, and the shape cut
 /// first is named first. `shapes` are the resolved closed targets,
 /// `regions` what `nest` made of them, and `open` the open paths cut On
-/// line, as drawn (#206).
+/// line, as drawn.
 ///
-/// An open path no region holds is also measured against itself (#224,
-/// [`SelfBand`], with the project's flatten tolerance `tolerance_mm` for
+/// An open path no region holds is also measured against itself
+/// ([`SelfBand`], with the project's flatten tolerance `tolerance_mm` for
 /// where it meets itself): where two of its stretches more than
 /// [`MEETING_REACH_DIAMETERS`]` · d` apart along it come closer than the
 /// radius, it warns with itself as both shapes, before its pairs with
 /// later paths. Its sharp corners and the points where it touches or
 /// crosses itself are set aside as `generate_profile`'s band check sets
-/// them aside (#221).
+/// them aside.
 ///
-/// `paths` include a Profile's stock paths (#284), which run
+/// `paths` include a Profile's stock paths, which run
 /// `stock_to_leave_mm` farther from their lines than the radius, so the gap
 /// the warning says two shapes need grows by it.
 #[must_use]
@@ -116,7 +116,7 @@ pub(crate) fn overlap_warnings(
     let mut warned: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
     let mut warnings = Vec::new();
     for (index, &(path_a, shape_a, line_a, region_a)) in placed.iter().enumerate() {
-        // #224: an open path in the waste against itself, as D6 compares
+        // An open path in the waste against itself, as D6 compares
         // two paths there: at the radius.
         if region_a >= regions.len() && !line_a.is_closed() && !warned.contains(&(shape_a, shape_a))
         {
@@ -160,7 +160,7 @@ pub(crate) fn within(path: &Polyline, line: &Polyline, radius_mm: f64) -> bool {
 }
 
 /// True when every point of the open path `path` lies in `region`'s
-/// material or on its lines (#206): each vertex and the middle of each
+/// material or on its lines: each vertex and the middle of each
 /// segment, so a line or arc that runs out of the region between two
 /// vertices inside it does not count.
 pub(crate) fn region_holds_path(region: &Region, path: &Polyline) -> bool {

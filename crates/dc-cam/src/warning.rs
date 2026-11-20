@@ -22,10 +22,10 @@ use crate::stock::StockEdge;
 pub enum WarningCode {
     /// A target shape is an open path, which a Pocket and an Inside or
     /// Outside Profile cannot cut, or an open path with no length on an On
-    /// line Profile (#175); it was skipped.
+    /// line Profile; it was skipped.
     OpenPathSkipped,
     /// A target shape is a closed outline, which a Left or Right Profile
-    /// does not cut: those are sides of an open path (#207). It was
+    /// does not cut: those are sides of an open path. It was
     /// skipped.
     SideNeedsOpenPath,
     /// The tool does not fit: the tool-centre offset of a shape vanished,
@@ -43,25 +43,23 @@ pub enum WarningCode {
     TabsOutsideCutRange,
     /// The tab spans on one tool-centre contour would cover more than half
     /// of its length, so the part or hole would not cut free. The contour
-    /// gets the most tabs that cover at most half, down to none (#109);
-    /// placed tabs are cut as placed (#105).
+    /// gets the most tabs that cover at most half, down to none;
+    /// placed tabs are cut as placed.
     TabsCoverMostOfContour,
     /// A placed tab is on an outline this Profile cuts as a hole, so it
-    /// holds the hole's slug, which is usually waste (#105). It is cut.
+    /// holds the hole's slug, which is usually waste. It is cut.
     TabOnHole,
     /// No enabled Profile crosses a placed tab: none cuts its outline, or
-    /// every path that does runs too far from it, so it holds nothing
-    /// (#105).
+    /// every path that does runs too far from it, so it holds nothing.
     TabNotCrossed,
     /// A placed tab's point is farther from its outline than its width
     /// plus the widest bit that cuts round it, so it is cut at the
-    /// outline's nearest point, which may not be where the user meant
-    /// (#300).
+    /// outline's nearest point, which may not be where the user meant.
     TabOffOutline,
     /// A tab of a request with `avoid_corners` lies on a corner, where
     /// the bit's path turns 30° or more within one bit diameter, and has
     /// nowhere off it within half the gap to its neighbours that is not
-    /// on another tab, so it is cut where it is (#285).
+    /// on another tab, so it is cut where it is.
     TabOnCorner,
     /// The tool path of one shape cuts into material another shape in the
     /// same operation keeps. The shapes are cut as drawn.
@@ -103,17 +101,16 @@ pub enum WarningCode {
     /// uncut material.
     ReliefCornerNotCut,
     /// A Profile has a last pass, but its cut is one pass deep, so that
-    /// pass is the last and no pass leaves stock (#310 review).
+    /// pass is the last and no pass leaves stock.
     LastPassUnused,
     /// A Profile's last pass turns on an inside arc tighter than its
     /// stock to leave, where its feed is lowered only to the least the safety
-    /// pass accepts, so its cutting edge moves faster than the feed
-    /// (#335).
+    /// pass accepts, so its cutting edge moves faster than the feed.
     LastPassEdgeFaster,
     /// A Profile's last pass runs round an inside bend of a curve drawn
     /// as straight segments, which it does not slow down for, so tightly
     /// that its cutting edge there moves faster than the feed by more than
-    /// a set factor (#350).
+    /// a set factor.
     LastPassFlattenedCurve,
     /// An Engrave target path has fewer than two distinct points, so there
     /// is nothing to trace; it was skipped.
@@ -127,7 +124,7 @@ pub enum WarningCode {
     /// Profile cuts through the stock round with tabs, so the cut would
     /// run in a part held only by those tabs, which can flex, chatter or
     /// break one (`docs/specs/phase-2/design.md`, "Operation-order
-    /// warnings"; #269).
+    /// warnings").
     CutInsideTabHeldPart,
     /// A tool is used by operations that do not run one after another, so
     /// it is fitted more than once. Operations are never reordered (D7);
@@ -137,8 +134,7 @@ pub enum WarningCode {
     /// skipped.
     DrillTargetNotCircle,
     /// A Drill hole is narrower than the tool, so it was skipped: a Drill
-    /// never moves sideways, so it would come out the tool's size
-    /// (maintainer decision 2026-10-24).
+    /// never moves sideways, so it would come out the tool's size.
     DrillHoleTooSmall,
     /// The drilling tool is wider than the hole it drills, and the
     /// operation's `allow_tool_wider_than_hole` is set, so the hole was
@@ -159,7 +155,7 @@ pub enum WarningCode {
     /// rim would sit inside the hole. That hole is skipped.
     CountersinkMouthNotWiderThanHole,
     /// A Bore target is not a circle (or is an open path), so it was
-    /// skipped (format 18; maintainer decision 2026-10-24).
+    /// skipped (format 18).
     BoreTargetNotCircle,
     /// A Bore hole leaves the helix less than
     /// [`crate::BORE_MIN_HELIX_RADIUS_MM`] of radius: the tool, with
@@ -212,32 +208,32 @@ pub enum WarningCode {
     /// A male Inlay has clearing passes, but none fits the band's flat
     /// floor ring (or the V-bit's flank would reach past the band's edge
     /// at the stock top), so the band's outer edge is a V wall, cut by the
-    /// V-bit, not the end mill's upright one (#448).
+    /// V-bit, not the end mill's upright one.
     InlayBandEdgeVWall,
     /// A male Inlay's band runs past the board's edge and is clipped to
-    /// it (#495): with an open edge the board's edge is the plug's rim
+    /// it: with an open edge the board's edge is the plug's rim
     /// there, and a cut-out stops at it.
     InlayBandClipped,
     /// Two parts of an Inlay's design come closer than the merge distance
     /// ([`dc_project::INLAY_MERGE_MM`]), so both sides cut them as one
-    /// shape, with no wall between them (#479).
+    /// shape, with no wall between them.
     InlayPartsMerged,
     /// A hole of an Inlay's design is narrower than the merge distance
     /// everywhere, so both sides cut it as part of the shape round it, with
-    /// no wall there (#511).
+    /// no wall there.
     InlayHoleFilled,
     /// An Inlay's male board has no thickness set, so its male is not cut
-    /// and only its female's programs are written (#498). Located at the
+    /// and only its female's programs are written. Located at the
     /// male board's thickness, the value to measure ([`Warning::field`]).
     InlayMaleBoardUnset,
     /// A male Inlay with a drawn boundary has `margin_mm` or
-    /// `outline_rounding_mm` set (format 26, #449): the boundary replaces
+    /// `outline_rounding_mm` set (format 26): the boundary replaces
     /// both. Validation reports it too.
     InlayMarginIgnored,
     /// An Inlay's boundary instance holds no part of its design (format
-    /// 26, #449); it still widens the band. Validation reports it too.
+    /// 26); it still widens the band. Validation reports it too.
     InlayBoundaryEmpty,
-    /// An Inlay's boundary shape has a hole (format 26, #449), which the
+    /// An Inlay's boundary shape has a hole (format 26), which the
     /// band ignores. Validation reports it too.
     InlayBoundaryHoleIgnored,
     /// A Photo V-Carve's `line_spacing_fraction` is below 1 (format 27),
@@ -245,19 +241,19 @@ pub enum WarningCode {
     /// Validation reports it too.
     PhotoLinesOverlap,
     /// A V-Carve cut with a tapered ball nose has convex corners sharper
-    /// than the bit's ball can follow below the surface (slice 27c, #679;
-    /// functional 49j): their walls meet in a round valley.
+    /// than the bit's ball can follow below the surface
+    /// (functional 49j): their walls meet in a round valley.
     TaperedCornersSoftened,
     /// An Inlay cut with a tapered ball nose rounds its design for the bit
-    /// on both boards (slice 27e, #681): its points by `R_min`, its notches
+    /// on both boards: its points by `R_min`, its notches
     /// by `w_t`. Once for points and once for notches.
     InlayRoundedForBit,
     /// An Inlay cut with a tapered ball nose has a glue gap below the
-    /// bit's tangent height (#681): the plug rides on the pocket's fillet.
+    /// bit's tangent height: the plug rides on the pocket's fillet.
     /// Validation reports it too.
     InlayGlueGapBelowBall,
     /// An Inlay cut with a tapered ball nose has a plug depth below the
-    /// bit's tangent height (#681): the plug's wall near the surface is
+    /// bit's tangent height: the plug's wall near the surface is
     /// the ball's. Validation reports it too.
     InlayPlugDepthBelowBall,
 }
@@ -345,7 +341,7 @@ impl fmt::Display for WarningCode {
 pub enum FloorKind {
     /// A Pocket's floor, its depth.
     Pocket,
-    /// A V-Carve's flat floor, its start depth plus its flat depth (#426).
+    /// A V-Carve's flat floor, its start depth plus its flat depth.
     VCarve,
 }
 
@@ -355,11 +351,11 @@ pub enum OpenPathReason {
     /// A Pocket or an Inside or Outside Profile cannot cut an open path:
     /// it has no inside or outside.
     NoSide,
-    /// An On line Profile's open path has no length (#175).
+    /// An On line Profile's open path has no length.
     NoLength,
 }
 
-/// Why a tab stays on a corner ([`Warning::TabOnCorner`], #285).
+/// Why a tab stays on a corner ([`Warning::TabOnCorner`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabOnCornerReason {
     /// The bit's path is a corner wherever the tab could go: it turns 30°
@@ -402,7 +398,7 @@ pub enum LeadDroppedReason {
     /// cuts without one.
     OnLine,
     /// A Left or Right Profile cuts open paths, which VCarve gives no lead
-    /// either (#207), so the operation cuts without one.
+    /// either, so the operation cuts without one.
     OpenPath,
 }
 
@@ -415,7 +411,7 @@ pub enum ReliefSkippedReason {
     /// An On line Profile has no waste side to put a notch in.
     OnLine,
     /// A Left or Right Profile cuts open paths, whose corners have no
-    /// inside or outside to relieve (#207).
+    /// inside or outside to relieve.
     OpenPath,
 }
 
@@ -428,7 +424,7 @@ pub enum ReliefCornerReason {
     NoWallPath,
     /// The notch would bring the cutter nearer another wall than its
     /// radius, cutting into the material past that wall too: past a part
-    /// thinner there than the notch is deep, or into an island (#322).
+    /// thinner there than the notch is deep, or into an island.
     NearOtherWall,
 }
 
@@ -519,7 +515,7 @@ pub enum Warning {
         /// The widest tab at `tab_count` that covers at most half; `None`
         /// when none fits.
         max_width_mm: Option<f64>,
-        /// The tabs are placed tabs, all cut as placed (#105), rather than
+        /// The tabs are placed tabs, all cut as placed, rather than
         /// a tab request cut down.
         placed: bool,
     },
@@ -921,8 +917,8 @@ pub enum Warning {
         cleared_by: OperationId,
         /// Which of the two it is.
         floor: FloorKind,
-        /// What of the operation the floor holds, as the message names it
-        /// (#648): a V-Carve's targets, a countersink's bit at each hole,
+        /// What of the operation the floor holds, as the message names it:
+        /// a V-Carve's targets, a countersink's bit at each hole,
         /// a Photo V-Carve's picture's footprint.
         footprint: StartFootprint,
         /// The operation's start depth below the stock top.
@@ -1415,7 +1411,7 @@ const fn relief_name(relief: CornerRelief) -> &'static str {
 /// What is cut instead of `tab_count` tabs that would cover most of a
 /// contour (`cut_count` of them; `kept_covers_most` when that is the one
 /// tab a part keeps and it still covers more than half; `placed` when
-/// they are placed tabs, all cut as placed, #105), and the width at which
+/// they are placed tabs, all cut as placed), and the width at which
 /// all of them would fit, `max_width_mm`.
 fn coverage_advice(
     tab_count: usize,

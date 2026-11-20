@@ -7,7 +7,7 @@
 //! (cited in the functional spec), which VCarve's "V-Carve Inlay" also
 //! follows.
 //!
-//! One Inlay cuts two boards (#498): the female on the project's stock,
+//! One Inlay cuts two boards: the female on the project's stock,
 //! and the male on the Inlay's male board ([`Project::on_male_board`]),
 //! which shares the stock's bottom-left corner and has its own thickness;
 //! [`generate_inlay`] gives both boards' runs, each tagged with its
@@ -31,9 +31,9 @@
 //!   `margin_mm` wide round the mirrored design, and every hole in it. Its
 //!   start plane is `D − G` below the stock top (`glue_gap_mm` `G`), flat
 //!   `plug_depth_mm` `P` below that, and its flank is engaged from the
-//!   stock top, since the plug above the start plane is never cleared
-//!   (security review H4). A band that runs past the board's edge is
-//!   clipped to the board ([`MaleBand::board`], #495), and its cut-out
+//!   stock top, since the plug above the start plane is never cleared.
+//!   A band that runs past the board's edge is
+//!   clipped to the board ([`MaleBand::board`]), and its cut-out
 //!   stops at the board's edge.
 //!
 //! On both sides, parts of the design that come closer than
@@ -47,7 +47,7 @@
 //! (design step 5, the fit property). The plug seats with its start plane
 //! at the female's surface and its top `G` above the pocket's floor.
 //!
-//! **A tapered ball nose** (slice 27e, #681; design spec, "Inlay fit")
+//! **A tapered ball nose** (design spec, "Inlay fit")
 //! cuts both sides on its profile: the walls mate wherever both are cut by
 //! its cone. Its design, merged, is rounded for the bit on both boards
 //! ([`dc_project::rounded_for_bit`]: opened by `R_min = (D − G)·tan β +
@@ -192,7 +192,7 @@ impl Values {
         }
         let margin_mm = match board {
             Board::Female => None,
-            // #449: the drawn boundary replaces `margin_mm`; the narrowest
+            // The drawn boundary replaces `margin_mm`; the narrowest
             // band it leaves takes its place in every rule.
             Board::Male if op.has_boundary() => {
                 let drawn = dc_project::drawn_boundary(project, op)
@@ -211,7 +211,7 @@ impl Values {
                 Some(positive_margin(op, margin_mm)?)
             }
         };
-        // #448: as validation's `inlay_outline_rounding`, on either side.
+        // As validation's `inlay_outline_rounding`, on either side.
         if let Some(rounding_mm) = op.outline_rounding_mm {
             positive("outline_rounding_mm", rounding_mm)?;
         }
@@ -266,23 +266,23 @@ pub(crate) struct Side {
     /// no closed outline.
     pub mirror_x_mm: Option<f64>,
     /// The male's mirrored design, nested, whose outer outlines its
-    /// cut-out runs round (#443); empty for the female.
+    /// cut-out runs round; empty for the female.
     pub design: Vec<Region>,
-    /// The male's band (#448): its edge and roundings, from
+    /// The male's band: its edge and roundings, from
     /// [`dc_project::male_band`]; `None` for the female.
     pub band: Option<MaleBand>,
     /// The male's band edge `B` before it is clipped to the board
-    /// ([`dc_project::band_edge`], #603), the cut-out's paths' source;
+    /// ([`dc_project::band_edge`]), the cut-out's paths' source;
     /// empty for the female.
     pub band_edge: Vec<Region>,
-    /// The male's band edge when a clearing pass cuts it upright (#448).
+    /// The male's band edge when a clearing pass cuts it upright.
     pub open_edge: Option<OpenEdge>,
-    /// Where the board's edge clips the male's band (#495); `None` when
+    /// Where the board's edge clips the male's band; `None` when
     /// the band stays on the board, and for the female.
     pub clipped: Option<Clipped>,
 }
 
-/// Where the board's edge clips a male Inlay's band (#495; design "Inlay"
+/// Where the board's edge clips a male Inlay's band (design "Inlay"
 /// step 4): the band `B` is clipped to [`MaleBand::board`], the stock's
 /// rectangle with an open edge, inset by the V-bit's radius with a V
 /// wall.
@@ -373,7 +373,7 @@ fn bounds_of<'c>(contours: impl Iterator<Item = &'c Contour>) -> Option<Rect> {
         .reduce(|all, b| all.including(b.min).including(b.max))
 }
 
-/// `project` as `board` of Inlay `op` cuts it (#498): the project itself
+/// `project` as `board` of Inlay `op` cuts it: the project itself
 /// for the female, whose board is the stock, and
 /// [`Project::on_male_board`] for the male.
 fn on_board<'p>(project: &'p Project, op: &InlayOp, board: Board) -> Cow<'p, Project> {
@@ -388,7 +388,7 @@ fn on_board<'p>(project: &'p Project, op: &InlayOp, board: Board) -> Cow<'p, Pro
 /// ([`on_board`]). Warnings of the design's outlines (an open path, a
 /// duplicate, near parts merged) go to `warnings`.
 ///
-/// The male's drawn boundary (format 26, #449), as every generator
+/// The male's drawn boundary (format 26), as every generator
 /// re-checks validation: the boundary's own problems are
 /// [`CamError::InlayBoundary`]; on the male, what validation warns of it
 /// ([`Warning::InlayMarginIgnored`], [`Warning::InlayBoundaryHoleIgnored`],
@@ -495,24 +495,24 @@ fn side_of(
     let mirror = mirror_x_mm.map(Transform::mirror_x_about);
     let design = carve_regions_then(project, &op.id, &op.targets, mirror, warnings)?;
     let design = merge_near(design, project, op, mirror, warnings)?;
-    // #681: rounded for a tapered ball nose, on the mirrored design, as the
+    // Rounded for a tapered ball nose, on the mirrored design, as the
     // female's is on the design.
     let design = round_for_bit(design, project, op, mirror, warnings)?;
-    // #448: the band's edge, closed by `R'`, and whether it is open.
+    // The band's edge, closed by `R'`, and whether it is open.
     let band = male_band(project, op);
     let edge_rounding_mm = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
     let tolerance_mm = project.flatten_tolerance_mm;
-    // #478: the plug's outline within the V-bit's wall tolerance; the
+    // The plug's outline within the V-bit's wall tolerance; the
     // band's edge within the project's.
     let plug_tolerance_mm = plug_tolerance_mm(project, op);
-    // #603: the one function the safety pass derives the band by too.
+    // The one function the safety pass derives the band by too.
     let edge = band
         .as_ref()
         .and_then(|b| band_edge_of(project, op, b, mirror, &design.regions))
         .unwrap_or_else(|| {
             rounded_band(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm)
         });
-    // #495: a band that runs past the board's edge is clipped to it.
+    // A band that runs past the board's edge is clipped to it.
     let on_board = band.as_ref().and_then(|b| {
         let board = b.board(&project.stock);
         let clipped = band_on_board(&edge, board, tolerance_mm)?;
@@ -532,7 +532,7 @@ fn side_of(
     );
     let (regions, clipped_edge, clipped) = match on_board {
         // A computed band is the design's surround; a drawn one is its
-        // edge less the design (#603).
+        // edge less the design.
         None if drawn => (
             difference_within(&edge, &design.regions, tolerance_mm, plug_tolerance_mm),
             edge.clone(),
@@ -585,10 +585,10 @@ fn side_of(
     })
 }
 
-/// How near, mm, the plug's outline is drawn for Inlay `op` (#478): the
+/// How near, mm, the plug's outline is drawn for Inlay `op`: the
 /// project's flatten tolerance scaled for its bit's flank
 /// ([`wall_tolerance_mm`]: a V-bit's `tan(α/2)`, a tapered ball nose's
-/// `tan β`, #681), or the tolerance itself when the tool is not a usable
+/// `tan β`), or the tolerance itself when the tool is not a usable
 /// carving bit.
 fn plug_tolerance_mm(project: &Project, op: &InlayOp) -> f64 {
     let tolerance_mm = project.flatten_tolerance_mm;
@@ -675,7 +675,7 @@ fn round_for_bit(
 /// named by the shape of its first part, and the containment pairs follow
 /// the names, less those inside one merged region.
 ///
-/// A merged group is drawn within the V-bit's wall tolerance (#478), as
+/// A merged group is drawn within the V-bit's wall tolerance, as
 /// the plug's outline is.
 ///
 /// # Errors
@@ -814,7 +814,7 @@ fn bordering_shape(region: &Region, design: &Targets) -> Result<ShapeRef, CamErr
 
 /// The ridges the V-bit leaves on the floor of `board` of Inlay `op`,
 /// along its rings and at their corners (the same height since #527), as
-/// for a V-Carve ([`vcarve::floor_ridges`]; #522); `None` when that board has no floor
+/// for a V-Carve ([`vcarve::floor_ridges`]); `None` when that board has no floor
 /// wide enough, no usable V-bit or step-over, or does not resolve (the
 /// male's, while its board is not measured).
 #[must_use]
@@ -839,7 +839,7 @@ pub fn floor_ridges(project: &Project, op: &InlayOp, board: Board) -> Option<Flo
     )
 }
 
-/// Generates both boards of the Inlay `op` in `project` (#498): the
+/// Generates both boards of the Inlay `op` in `project`: the
 /// female's runs on the stock, then the male's on its male board, each
 /// [`ToolRun`] tagged with its [`Board`], as [`generate_inlay_board`]
 /// generates each. While the male board has no thickness the male is not
@@ -876,7 +876,7 @@ pub fn generate_inlay(
     Ok((runs, warnings))
 }
 
-/// Generates `board` of the Inlay `op` in `project` (#498), in that
+/// Generates `board` of the Inlay `op` in `project`, in that
 /// board's project space (Y-up, mm, its bottom at Z = 0, safe Z at its
 /// `thickness + op.safe_z_mm`; the male board shares the stock's
 /// bottom-left corner, [`Project::on_male_board`]): one [`ToolRun`] per
@@ -897,7 +897,7 @@ pub fn generate_inlay(
 /// While the male board has no thickness the male has no runs, and warns
 /// [`Warning::InlayMaleBoardUnset`] instead. On either board, parts of the
 /// design closer than [`INLAY_MERGE_MM`] are cut as one shape, each pair
-/// warning [`Warning::InlayPartsMerged`] (#479). The female ignores the
+/// warning [`Warning::InlayPartsMerged`]. The female ignores the
 /// cut-out.
 ///
 /// # Errors
@@ -909,7 +909,7 @@ pub fn generate_inlay(
 /// [`CamError::InlayMargin`]; [`CamError::VBitConeExceeded`] when the
 /// flank's engagement from the board's top, `D` or `D − G + P`, is past
 /// the bit's cone or a tapered ball nose's cutting height (security review
-/// H4); [`CamError::InlayTooNarrowForBit`] (#681); a clearing pass that
+/// H4); [`CamError::InlayTooNarrowForBit`]; a clearing pass that
 /// cannot run;
 /// and what [`vcarve::blocks`] and the V-Carve's sequencing and cone test
 /// refuse.
@@ -940,7 +940,7 @@ fn generate_on(
     board: Board,
 ) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
     let tool = tool_of(project, &op.id, &op.tool)?;
-    // #681: a V-bit or a tapered ball nose.
+    // A V-bit or a tapered ball nose.
     let bit = checked_bit(&op.id, tool)?;
     rates_of(tool)?;
     check_safe_z(&op.id, op.safe_z_mm)?;
@@ -951,7 +951,7 @@ fn generate_on(
     let clearing_tools = clearing::checked_tools(project, &passes, true)?;
     let side = side_of(project, op, values, &mut warnings)?;
     // Step 1: the flank is engaged from the stock top, so the plug above
-    // the male's start plane counts (security review H4).
+    // the male's start plane counts.
     let engaged_mm = values.engagement_mm();
     // The error names the first shape carved; with none, nothing is carved
     // and no flank is engaged.
@@ -966,7 +966,7 @@ fn generate_on(
             limit: bit.limit,
         });
     }
-    // #681: a glue gap or plug depth below a tapered ball nose's tangent
+    // A glue gap or plug depth below a tapered ball nose's tangent
     // height (validation reports both too).
     if let Some(cost) = dc_project::glue_gap_below_ball(&bit.profile, values.glue_gap_mm) {
         warnings.push(Warning::InlayGlueGapBelowBall {
@@ -1001,7 +1001,7 @@ fn generate_on(
             });
         }
     }
-    // #495: where the board's edge clips the band, the design must still
+    // Where the board's edge clips the band, the design must still
     // leave the band's room there.
     if let (Some(clipped), Some(band)) = (&side.clipped, &side.band) {
         let cut_out_diameter_mm = cut_out.as_ref().map(|(_, _, d)| *d);
@@ -1013,7 +1013,7 @@ fn generate_on(
             narrowest_mm: clipped.narrowest_mm(),
         });
     }
-    // #448: clearing passes that leave the band's edge a V wall.
+    // Clearing passes that leave the band's edge a V wall.
     if let Some(BandEdge::VWall {
         margin_needed_mm: Some(margin_needed_mm),
     }) = side.band.as_ref().map(|b| &b.edge)
@@ -1048,7 +1048,7 @@ fn generate_on(
             })
             .collect(),
         open_edge,
-        // #452: the male's walls along the plug reach every corner.
+        // The male's walls along the plug reach every corner.
         design: values.margin_mm.map(|_| design.clone()),
     };
     let mut runs = clearing::runs(
@@ -1075,7 +1075,7 @@ fn generate_on(
         toolpath,
         board,
     });
-    // #443: the cut-out last, so the piece is freed only once carved.
+    // The cut-out last, so the piece is freed only once carved.
     if let (Some((cut_out, band, diameter_mm)), Some(thickness_mm)) =
         (cut_out, project.stock.thickness_mm)
     {
@@ -1108,8 +1108,8 @@ fn generate_on(
     Ok((runs, warnings))
 }
 
-/// The cut-out of `op` (#443), checked as validation checks it, with the
-/// male's band ([`dc_project::male_band`], #448) and its tool's diameter,
+/// The cut-out of `op`, checked as validation checks it, with the
+/// male's band ([`dc_project::male_band`]) and its tool's diameter,
 /// mm: `None` without one, and on the female (no margin in `values`),
 /// which has no plug to free.
 ///
@@ -1162,8 +1162,8 @@ fn checked_cut_out<'o>(
     Ok(Some((cut_out, band, tool.diameter_mm)))
 }
 
-/// A male Inlay's cut-out paths for an end mill `diameter_mm` wide (#443,
-/// #448, #461, #495, #603; design "Inlay", step 6): the outer outlines of
+/// A male Inlay's cut-out paths for an end mill `diameter_mm` wide
+/// (design "Inlay", step 6): the outer outlines of
 /// the band's edge `edge`, `B` before it is clipped
 /// ([`dc_project::band_edge`]: the design grown by the margin and closed
 /// by the edge's rounding, or the drawn boundary mirrored), clipped to
@@ -1180,7 +1180,7 @@ fn checked_cut_out<'o>(
 /// open paths from the board's edge to the board's edge, their ends the
 /// radius inside it. Every other path is closed.
 ///
-/// The paths come back by outline (#710): for each outline the one closed
+/// The paths come back by outline: for each outline the one closed
 /// path it is, or the open pieces the board's edge leaves of it, in its
 /// order. An outline that runs only along the board's edge gives none.
 /// The pieces of one outline are one cut to the user, and share its tabs
@@ -1218,10 +1218,10 @@ pub fn cut_out_paths(
         .collect()
 }
 
-/// The On line Profile a male Inlay's cut-out is (#443), and a copy of
+/// The On line Profile a male Inlay's cut-out is, and a copy of
 /// `project` that holds it: the paths of `outlines` ([`cut_out_paths`]:
 /// project space, by outline; closed, or open from the board's edge to
-/// the board's edge where the band is clipped, #495) as the
+/// the board's edge where the band is clipped) as the
 /// profiles of one definition placed in place, which the Profile targets
 /// with the cut-out's tool and through-cut allowance, through the
 /// stock `thickness_mm` thick, climb, plunging, with the Inlay's id,
@@ -1229,7 +1229,7 @@ pub fn cut_out_paths(
 /// operation.
 ///
 /// The cut-out's tab request is placed here, before anything is cut
-/// (#710, ADR-0005): the copy holds its tabs as placed tabs on that one
+/// (ADR-0005): the copy holds its tabs as placed tabs on that one
 /// instance, and the Profile carries no request. Each outline takes the
 /// request, as `dreamcarve tabs place` places a Profile's
 /// ([`crate::placed_tabs::place`]); the pieces the board's edge leaves of

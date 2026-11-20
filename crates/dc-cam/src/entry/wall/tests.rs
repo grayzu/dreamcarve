@@ -61,7 +61,7 @@ fn low_domain(height_mm: f64) -> EntryDomain {
     EntryDomain::new(&regions, 4.0, FLATTEN_TOLERANCE_DEFAULT_MM)
 }
 
-/// #352: a plan follows another plan's ramp line from its target as
+/// A plan follows another plan's ramp line from its target as
 /// far as its own domain holds it: the whole line where the domain
 /// holds it all, else stopped the boundary safety short of where the
 /// domain ends, and not at all when that leaves no run. The follower
@@ -91,7 +91,7 @@ fn following_keeps_to_the_line_as_far_as_the_domain_holds_it() {
     assert!(low.following(&low_domain(0.4), end).is_none());
 }
 
-/// #356: a plan cut short keeps its ramp line from its target, ends
+/// A plan cut short keeps its ramp line from its target, ends
 /// it `run_mm` along, and drops its helix; one no longer than that is
 /// kept whole, and a run no longer than a ramp run may be short leaves
 /// none.
@@ -178,7 +178,7 @@ fn along_path_stops_short_of_the_limit() {
 /// 5° along a 50 mm line), the fifth leg would fall 0.0019 mm over
 /// 0.02 mm, a fragment the program writes level at the scaled feed.
 /// Falling less than `RAMP_MIN_LAST_DROP_MM`, it shares the depth with
-/// the fourth instead (#273), each at 5° over 6.01 mm; no descending
+/// the fourth instead, each at 5° over 6.01 mm; no descending
 /// move is shorter than a tenth of a leg or steeper than 5°, and the
 /// drops sum to the depth.
 #[test]
@@ -215,10 +215,10 @@ const INCH_QUANTUM_MM: f64 = 0.00254;
 /// place (0.00254 mm). Three such legs: cut short 0.0055 mm past a
 /// vertex of a line; turning 0.002 mm past one; and on that issue's
 /// 14.33 mm circle by a 1.614 mm bit at 14.3°, a depth one leg and
-/// 0.004 mm deep, whose last leg run whole and shallower (#234) fell
+/// 0.004 mm deep, whose last leg run whole and shallower fell
 /// under 0.001 mm a chord. Every descending move falls at least a unit
 /// and runs at least √2 units in XY, so its ends round apart (as the
-/// helix's, #265); none leaves the path by more than the flatten
+/// helix's); none leaves the path by more than the flatten
 /// tolerance and a unit; the drops sum to the depth.
 #[test]
 fn along_path_writes_no_move_too_short_for_the_program() {
@@ -288,10 +288,10 @@ fn along_path_writes_no_move_too_short_for_the_program() {
     }
 }
 
-/// #273: a run whose every leg falls less than a unit (0.05 mm at 15°
+/// A run whose every leg falls less than a unit (0.05 mm at 15°
 /// falls 0.0134 mm, under the 0.0254 mm of a 3-decimal inch program)
 /// cannot be written as a ramp; it falls back to a plunge, reason
-/// `too_small`, as a helix that small does (#265).
+/// `too_small`, as a helix that small does.
 #[test]
 fn along_path_too_small_to_write_falls_back_to_a_plunge() {
     let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(50.0, 0.0)], false);
@@ -310,7 +310,7 @@ fn along_path_too_small_to_write_falls_back_to_a_plunge() {
 /// of an On line ramp at 43.4° by a 3.455 mm bit round a 12.42 mm
 /// circle, clockwise from (10.802, 6.135), 1.845 mm deep in a 3-place
 /// mm program. Its one leg ends 0.00015 mm past a chord vertex; the
-/// descent merges that piece (#273), but the way back went to the
+/// descent merges that piece, but the way back went to the
 /// vertex first, a level move of 0.00015 mm the program writes as
 /// nothing, which arc fitting counted as one of a fitted arc's three
 /// chords and S12 did not. Every move of the ramp, down and back, runs

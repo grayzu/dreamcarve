@@ -289,7 +289,7 @@ fn on_line_follows_the_shape() {
     }
 }
 
-/// #62: the outside cut of the rect at (20, 20) sweeps X 13.65..126.35
+/// The outside cut of the rect at (20, 20) sweeps X 13.65..126.35
 /// with the 6.35 mm tool. On 120 mm wide stock that is 6.35 mm past
 /// the right edge; the inside cut, which sweeps to 120 exactly, fits.
 #[test]
@@ -543,7 +543,7 @@ fn open_path_is_skipped_with_warning() {
     };
     assert_eq!((shape.instance.as_str(), shape.profile), ("i1", 1));
     assert_eq!(*reason, OpenPathReason::NoSide);
-    // #175: the message says what does cut it.
+    // The message says what does cut it.
     let message = warnings[0].to_string();
     assert!(
         message.contains("On line") && message.contains("Engrave"),
@@ -573,7 +573,7 @@ fn tool_larger_than_hole_warns_and_skips() {
     }
 }
 
-/// #192: an Inside Profile of the 100 × 50 rect with a radius-22
+/// An Inside Profile of the 100 × 50 rect with a radius-22
 /// island leaves a 3 mm band above and below the island, narrower than
 /// the 6.35 mm bit. The island's lap would run 3.175 mm outside it, to
 /// Y 19.825, past the rect's bottom edge at Y 20, and gouge the part
@@ -604,7 +604,7 @@ fn inside_cut_in_band_narrower_than_tool_is_refused() {
     }
 }
 
-/// #192: a band exactly as wide as the bit is cut: each lap's cutter
+/// A band exactly as wide as the bit is cut: each lap's cutter
 /// just touches the other line. Outside, the same narrow ring is a
 /// thin wall around the hole, not a gouge, and is cut too.
 #[test]
@@ -660,7 +660,7 @@ fn refused_band(p: &Project, side: Side) -> (usize, usize, f64) {
     (shape.profile, other.profile, *band_mm)
 }
 
-/// #199: On line, the tool centre follows each line and the bit cuts
+/// On line, the tool centre follows each line and the bit cuts
 /// `r` of the ring on both sides of it, so the outline's cut and the
 /// hole's together cut through a ring narrower than the bit: the part
 /// loses material it keeps, as in #192's Inside band. A 3 mm ring
@@ -687,7 +687,7 @@ fn on_line_ring_narrower_than_tool_is_refused() {
     assert_approx_eq!(band, 2.0, TOL);
 }
 
-/// #199: an On line ring wider than the bit is cut as drawn, both
+/// An On line ring wider than the bit is cut as drawn, both
 /// lines at every pass, with no finding.
 #[test]
 fn on_line_ring_wider_than_the_tool_is_cut() {
@@ -748,7 +748,7 @@ fn descent_uses_plunge_feed() {
     for pair in tp.moves.windows(2) {
         let (prev, mv) = (pair[0], pair[1]);
         if mv.is_rapid() && mv.to.z < prev.to.z - EPS_MM {
-            // #227: from safe Z straight down to 1 mm above the stock.
+            // From safe Z straight down to 1 mm above the stock.
             assert_approx_eq!(prev.to.z, SAFE_Z_MM, TOL);
             assert_approx_eq!(mv.to.z, THICKNESS_MM + 1.0, TOL);
             assert!(prev.to.xy().distance_to(mv.to.xy()) <= EPS_MM, "vertical");
@@ -773,7 +773,7 @@ fn retracts_to_safe_z_between_contours() {
             continue;
         }
         if mv.to.z < prev.to.z - EPS_MM {
-            // #227: down from safe Z to 1 mm above the stock, in Z
+            // Down from safe Z to 1 mm above the stock, in Z
             // alone, before a plunge.
             assert_approx_eq!(prev.to.z, SAFE_Z_MM, TOL);
             assert_approx_eq!(mv.to.z, THICKNESS_MM + 1.0, TOL);
@@ -793,7 +793,7 @@ fn retracts_to_safe_z_between_contours() {
     }
     assert_eq!(retracts, 2, "one retract after each contour");
     // Hole done, retract, rapid across at safe Z, outer starts; and a
-    // rapid down before each contour's first plunge (#227).
+    // rapid down before each contour's first plunge.
     let rapids: Vec<&Move> = tp.moves.iter().filter(|m| m.is_rapid()).collect();
     assert_eq!(rapids.len(), 4 + 2);
 }
@@ -880,7 +880,7 @@ fn missing_feed_is_error_not_invented() {
     ));
 }
 
-/// #71: two tools may share a name, so an error about a tool carries
+/// Two tools may share a name, so an error about a tool carries
 /// its id as well as the name it prints.
 #[test]
 fn tool_errors_carry_the_tool_id() {
@@ -910,7 +910,7 @@ fn tool_errors_carry_the_tool_id() {
     }
 }
 
-/// #67: Profile offsets by half the diameter, right only for a flat end
+/// Profile offsets by half the diameter, right only for a flat end
 /// mill. Validation reports it first; the generator refuses too, so no
 /// caller gets a wrong-size part.
 #[test]
@@ -1007,7 +1007,7 @@ fn through_cut_goes_exactly_to_the_allowance() {
     ));
 }
 
-/// #64: an unset thickness or depth fails generation; neither is
+/// An unset thickness or depth fails generation; neither is
 /// defaulted. Validation reports both first, so this is the generator
 /// protecting itself.
 #[test]
@@ -1244,7 +1244,7 @@ fn tab_warnings_index_contours_in_cut_order() {
 const STAR_CENTRE: Point = Point::new(50.0, 50.0);
 const STAR_HOLE_CENTRE: Point = Point::new(50.0, 70.0);
 
-/// The maintainer's manual case (`tests/manual/star_with_hole`, #109),
+/// The maintainer's manual case (`tests/manual/star_with_hole`),
 /// redrawn with straight edges: a five-pointed star (points 40 mm and
 /// notches 22 mm from (50, 50), one point straight up) as instance
 /// `i1`, and a 7 mm circle 20 mm up its top arm as instance `i2`,
@@ -1298,7 +1298,7 @@ fn star_with_hole_project() -> Project {
     p
 }
 
-/// #109: one Outside Profile of the star and its hole, with four
+/// One Outside Profile of the star and its hole, with four
 /// smooth 6 × 3 mm tabs and the 6.35 mm bit, 12 mm deep in 4 mm
 /// passes, as the manual file set it. Containment cuts the hole first; the
 /// hole, a slug of waste, gets no tabs and is cut free; only the
@@ -1562,7 +1562,7 @@ fn held_at_tab_top(tp: &Toolpath) -> (Vec<(Point, Point)>, f64) {
     (held, length_mm)
 }
 
-/// #176: with a tab centred on the path's start, a ramp below the tab
+/// With a tab centred on the path's start, a ramp below the tab
 /// top would run through the tab, so slice 10 plunged onto it with
 /// `entry_fallback`. The start moves to where the ramp fits clear of
 /// the tab: no entry falls back and no straight plunge goes below the
@@ -1610,7 +1610,7 @@ fn start_under_a_tab_moves_so_the_ramp_fits() {
     }
 }
 
-/// #176: moving the start does not move the tabs. A tab is placed by
+/// Moving the start does not move the tabs. A tab is placed by
 /// its distance from the path's own start, where the plunge entry
 /// (which keeps the start) cuts it; with a ramp the start moves and
 /// the tab top is held over exactly the same stretch.
@@ -1671,7 +1671,7 @@ fn xy_cuts(tp: &Toolpath) -> Vec<(Point3, Move)> {
         .collect()
 }
 
-/// #175: an On line Profile cuts an open path, as VCarve's Profile
+/// An On line Profile cuts an open path, as VCarve's Profile
 /// "On" cuts an open vector. Each pass runs the line from its first
 /// vertex to its last at the pass Z (conventional), then the tool
 /// retracts and comes back to the first vertex for the next. (changed
@@ -1705,7 +1705,7 @@ fn on_line_cuts_an_open_path() {
     }
 }
 
-/// #175: an open path with no length has nothing to cut On line; it
+/// An open path with no length has nothing to cut On line; it
 /// is skipped with `open_path_skipped` ([`OpenPathReason::NoLength`]).
 #[test]
 fn on_line_open_path_with_no_length_is_skipped() {
@@ -1750,7 +1750,7 @@ fn assert_open_line_runs(direction: CutDirection, start: f64, end: f64) {
     }
 }
 
-/// #242: conventional cuts an open path from its first vertex to its
+/// Conventional cuts an open path from its first vertex to its
 /// last, as VCarve's "Conventional starts cutting at the Start point".
 /// (Replaces #175's `open_path_direction_picks_the_end_it_starts_at`,
 /// which pinned the opposite ends.)
@@ -1759,7 +1759,7 @@ fn open_on_line_conventional_starts_at_first_vertex() {
     assert_open_line_runs(CutDirection::Conventional, 20.0, 120.0);
 }
 
-/// #242: climb cuts an open path from its last vertex to its first,
+/// Climb cuts an open path from its last vertex to its first,
 /// as VCarve's "Climb cutting starts cutting at the end point". A tab
 /// at a distance stays at the same XY whichever end the cut starts at.
 #[test]
@@ -1791,7 +1791,7 @@ fn open_on_line_climb_starts_at_last_vertex() {
     assert_approx_eq!(climb[climb.len() - 1], 50.0 + TAB_SPAN_MM / 2.0, TOL);
 }
 
-/// Acceptance 26 (#175): an On line Profile of a 100 mm line ramps
+/// Acceptance 26: an On line Profile of a 100 mm line ramps
 /// back and forth along the line itself, at most three diameters from
 /// its first vertex, then cuts the whole line at the pass Z. A pass
 /// after the first comes down the slot the pass above cut, to that
@@ -1854,7 +1854,7 @@ fn on_line_open_path_ramps_back_and_forth_along_the_line() {
     }
 }
 
-/// #175: tabs on an open path are placed by distance from its first
+/// Tabs on an open path are placed by distance from its first
 /// vertex as drawn, whichever end the cut starts at.
 #[test]
 fn open_path_tabs_are_measured_from_its_first_vertex() {
@@ -1890,7 +1890,7 @@ fn smooth_tab_floor_mm(along_mm: f64) -> f64 {
 /// A smooth tab whose span an end of an open path cuts short is held
 /// to that end: no room is left for its slope there, so the cut keeps
 /// the tab top right to the end, as a rect tab's does and as a stock
-/// path's stretch does (#311). The 100 mm line, cut On line, Left and
+/// path's stretch does. The 100 mm line, cut On line, Left and
 /// Right, from either end, with one smooth tab 8 mm wide and 3 mm
 /// tall centred 0, 2, 5, 96 and 99 mm along it: its span is 7.175 mm
 /// either side of the centre, so each runs past an end. No feed move
@@ -2023,12 +2023,12 @@ fn assert_laps_run(tp: &Toolpath, along_x: bool, fixed: f64, (start, end): (f64,
     }
 }
 
-/// #207: Left puts the tool centre one radius to the left of the path,
+/// Left puts the tool centre one radius to the left of the path,
 /// looking from its first vertex to its last: in Y-up the normal
 /// `(−dy, dx)`. The line from (20, 20) to (120, 20) is cut at Y 20 + r
 /// over its whole length, the cut ending square on the normals through
 /// its ends; drawn the other way, its left is −Y; drawn upward, −X.
-/// Climb, so each pass runs from the first vertex (#287).
+/// Climb, so each pass runs from the first vertex.
 #[test]
 fn open_path_left_offsets_to_the_left() {
     let climb = CutDirection::Climb;
@@ -2049,9 +2049,9 @@ fn open_path_left_offsets_to_the_left() {
     assert_laps_run(&tp, false, 20.0 - R_MM, (20.0, 70.0), "left, drawn +Y");
 }
 
-/// #207: Right is the mirror of Left: the tool centre one radius to
+/// Right is the mirror of Left: the tool centre one radius to
 /// the right of the path as drawn, `(dy, −dx)`. Conventional, so each
-/// pass runs from the first vertex (#287).
+/// pass runs from the first vertex.
 #[test]
 fn open_path_right_offsets_to_the_right() {
     let conventional = CutDirection::Conventional;
@@ -2072,7 +2072,7 @@ fn open_path_right_offsets_to_the_right() {
     assert_laps_run(&tp, false, 20.0 + R_MM, (20.0, 70.0), "right, drawn +Y");
 }
 
-/// #207: Left and Right are sides of an open path only. A closed
+/// Left and Right are sides of an open path only. A closed
 /// target is skipped with `side_needs_open_path` naming it, not
 /// mapped to Inside or Outside by its winding, which the drawing does
 /// not show; the open paths are cut. Inside and Outside still skip
@@ -2158,7 +2158,7 @@ fn assert_side_cut(
     }
 }
 
-/// #287: on a Left cut only the bit's flank toward the line meets kept
+/// On a Left cut only the bit's flank toward the line meets kept
 /// material, so `direction` is the milling mode, as for closed shapes:
 /// the spindle turns clockwise from above, so climb keeps the part on
 /// the right of travel. The tool runs left of the line and the part is
@@ -2174,7 +2174,7 @@ fn left_climb_keeps_the_part_on_the_right_of_travel() {
     assert_side_cut(&back, climb, 20.0 - R_MM, (120.0, 20.0), true);
 }
 
-/// #287: on a Right cut the part is on the line's left, so climb, the
+/// On a Right cut the part is on the line's left, so climb, the
 /// part on the right of travel, runs from the end beside the last
 /// vertex to the end beside the first: at Y 20 − r moving −X, the part
 /// (above) on its right; drawn the other way, at Y 20 + r moving +X.
@@ -2186,7 +2186,7 @@ fn right_climb_keeps_the_part_on_the_right_of_travel() {
     assert_side_cut(&back, climb, 20.0 + R_MM, (20.0, 120.0), true);
 }
 
-/// #287: conventional is the reverse of climb, the part on the left
+/// Conventional is the reverse of climb, the part on the left
 /// of travel: Left conventional runs from the end beside the last
 /// vertex, Right conventional from the end beside the first.
 #[test]
@@ -2201,7 +2201,7 @@ fn left_conventional_is_the_reverse() {
     assert_side_cut(&back, right, 20.0 + R_MM, (120.0, 20.0), false);
 }
 
-/// #207: VCarve allows ramps and tabs on open profile toolpaths, and
+/// VCarve allows ramps and tabs on open profile toolpaths, and
 /// no leads. A Left or Right ramp runs back and forth along the offset
 /// path, as On line's runs along the line (acceptance 26), within
 /// three diameters of its start; tabs are measured along the offset
@@ -2212,7 +2212,7 @@ fn left_conventional_is_the_reverse() {
 #[test]
 fn left_right_ramp_and_tabs() {
     let p = line_project();
-    // The direction that starts beside the first vertex (#287).
+    // The direction that starts beside the first vertex.
     for (side, y, forward) in [
         (Side::Left, 20.0 + R_MM, CutDirection::Climb),
         (Side::Right, 20.0 - R_MM, CutDirection::Conventional),
@@ -2308,7 +2308,7 @@ fn left_right_ramp_and_tabs() {
     }
 }
 
-/// #207: the side a Left or Right cut runs on is waste, the other side
+/// The side a Left or Right cut runs on is waste, the other side
 /// is the part. A cut that comes within the tool radius of another
 /// line of the operation crosses into what that line keeps; one that
 /// comes within the radius of the strip one radius wide that a line
@@ -2413,7 +2413,7 @@ fn left_right_cut_into_the_kept_side_is_refused() {
     assert_eq!(laps(&tp).len(), PASS_Z_MM.len());
 }
 
-/// #207: an offset that vanishes leaves nothing to cut: a half circle
+/// An offset that vanishes leaves nothing to cut: a half circle
 /// of radius 2 mm cut on the side its centre lies on, with a 6.35 mm
 /// bit, warns `tool_too_large` and is not cut. Cut on its other side
 /// it is.
@@ -2467,7 +2467,7 @@ fn every_line_cut(case: &str, p: &Project) {
     );
 }
 
-/// #210: an open path that runs alongside a line of its own part,
+/// An open path that runs alongside a line of its own part,
 /// closer than the 6.35 mm bit, cuts through the wall between them
 /// together with that line's cut, as #199's narrow ring: refused with
 /// `BandNarrowerThanTool`, the two shapes in drawing order and the band
@@ -2551,7 +2551,7 @@ fn open_path_alongside_its_part_wall_is_refused() {
     }
 }
 
-/// #210: an open path that meets a line of its part, a kerf slot from
+/// An open path that meets a line of its part, a kerf slot from
 /// the edge or a saw cut across the part, opens into that line's cut
 /// as the user drew it: cut, with no finding. So are a slot meeting
 /// the edge at 60°, two slots joined at a corner, two lines crossing,
@@ -2602,7 +2602,7 @@ fn open_slot_from_the_edge_is_cut() {
     }
 }
 
-/// #210: an open path at least the bit's diameter from every other
+/// An open path at least the bit's diameter from every other
 /// line of its part is cut; a band exactly `d` wide is cut, as #199's
 /// ring is.
 #[test]
@@ -2668,13 +2668,13 @@ fn v_turn(tip: (f64, f64), angle_deg: f64) -> Polyline {
     ])
 }
 
-/// #221: two stretches of one line, more than `√2·d` apart along it,
+/// Two stretches of one line, more than `√2·d` apart along it,
 /// that come closer than the 6.35 mm bit cut through the part between
-/// them, as two lines do (#199, #210): refused with
+/// them, as two lines do: refused with
 /// `BandNarrowerThanTool` naming the shape twice. A U with square
 /// corners and legs 2 mm apart, one with a round end and legs 3 mm
 /// apart, and a closed outline with a 3 mm neck (a dumbbell). A sharp
-/// corner is where two lines meet (#210): its arms are set aside
+/// corner is where two lines meet: its arms are set aside
 /// within `√2·d` of the tip, so a 10° spike is refused with the band
 /// `√2·d·sin 10°`, as a slot meeting the edge at 10° is.
 #[test]
@@ -2731,7 +2731,7 @@ fn on_line_hairpin_narrower_than_tool_is_refused() {
     assert_approx_eq!(band, 3.0, TOL);
 }
 
-/// #221: an open spiral in a part whose turns are 4 mm apart, closer
+/// An open spiral in a part whose turns are 4 mm apart, closer
 /// than the 6.35 mm bit, cuts through the part between its turns:
 /// refused naming the spiral twice, drawn as fine chords or as half
 /// circles about two centres.
@@ -2760,11 +2760,11 @@ fn on_line_spiral_with_tight_turns_is_refused() {
     assert_approx_eq!(band, 4.0, TOL);
 }
 
-/// #221: neighbouring stretches of one line are not compared with each
+/// Neighbouring stretches of one line are not compared with each
 /// other, only stretches more than `√2·d` apart along it, so a smooth
 /// curve, a corner of 90° or more, and a round hole are cut as drawn.
 /// A sharp corner sets its arms aside within `√2·d` of the tip, as
-/// where two lines meet (#210), so a V of 60°, or of exactly 45°, is
+/// where two lines meet, so a V of 60°, or of exactly 45°, is
 /// cut too.
 #[test]
 fn on_line_smooth_curve_is_not_compared_with_itself() {
@@ -2808,7 +2808,7 @@ fn on_line_smooth_curve_is_not_compared_with_itself() {
     }
 }
 
-/// #221: only the part between two stretches of one line is kept. A
+/// Only the part between two stretches of one line is kept. A
 /// 3 mm notch cut into an outline, and a hole with a 3 mm neck, have
 /// waste between their stretches, which the cut may clear: both are
 /// cut as drawn.
@@ -2848,7 +2848,7 @@ fn on_line_narrow_notch_in_an_outline_is_cut() {
     every_line_cut("a necked hole", &part_with(vec![necked_hole]));
 }
 
-/// #221: an open path drawn twice, the same vertices in either
+/// An open path drawn twice, the same vertices in either
 /// direction, is cut once and the copies are dropped with
 /// `duplicate_shape_dropped`, as a closed shape's are, before the band
 /// check (which would see a band of 0 between them).
@@ -2899,7 +2899,7 @@ fn part_of(outline: Polyline) -> Project {
     project(vec![outline], &[("i1", at_20_20())])
 }
 
-/// #223: a part whose outline cut On line lies everywhere within the
+/// A part whose outline cut On line lies everywhere within the
 /// tool radius of the line (the part inset by `r` is empty) is removed
 /// whole by the cut: refused with `PartNarrowerThanTool` naming the
 /// outline. That holds for a part too short round for the self-band
@@ -2971,7 +2971,7 @@ fn on_line_part_smaller_than_the_bit_is_refused() {
     );
 }
 
-/// #223: a part a little wider than the bit everywhere (a 3.3 mm
+/// A part a little wider than the bit everywhere (a 3.3 mm
 /// radius circle, a 7 mm square) keeps material inside the cut and is
 /// cut as drawn, as is a 2.5 mm radius hole.
 #[test]
@@ -3090,7 +3090,7 @@ fn gap_range_mm(line: &Polyline, from: Point3, moves: &[Move]) -> Option<(f64, f
 }
 
 /// Where the last pass leaves its stock path in a one-shape,
-/// full-depth-first toolpath (#339): the first move, after the first
+/// full-depth-first toolpath: the first move, after the first
 /// one below `roughing_floor_mm` (the deepest pass before the last),
 /// that ends nearer `outline` than the stock path, `r +
 /// stock_to_leave_mm`. The last pass goes down on that path, as one more
@@ -3158,7 +3158,7 @@ fn last_pass_stock_to_leave_offsets_earlier_passes() {
     let (near, far) = gap_range_mm(&outline, tp.moves[split].to, &tp.moves[split + 1..]).unwrap();
     assert_approx_eq!(near, R_MM, TOL);
     assert_approx_eq!(far, R_MM, TOL);
-    // #339: the last pass plunges where the pass before ended, on the
+    // The last pass plunges where the pass before ended, on the
     // stock path, one step-down to the full depth, then steps the
     // stock to leave across onto its own path at the feed.
     let step = tp.moves[split];
@@ -3179,7 +3179,7 @@ fn last_pass_stock_to_leave_offsets_earlier_passes() {
 }
 
 /// [`laps`], without the step across the stock to leave a last pass's lap
-/// starts with (#339): a lap that starts with a straight move no
+/// starts with: a lap that starts with a straight move no
 /// longer than a third of the bit and does not end where it starts.
 /// (The tests' open paths start with a longer move.)
 fn last_pass_laps(tp: &Toolpath) -> Vec<Lap> {
@@ -3245,7 +3245,7 @@ fn last_pass_thickness_adds_final_depth() {
         assert_approx_eq!(*z, expected, TOL);
     }
 
-    // The coordinator's rule (#310 review): the last pass is never
+    // The coordinator's rule: the last pass is never
     // thicker than the step-down, so 10 mm, or all 12 mm, of a cut in
     // 4 mm steps is refused, not cut in one go.
     for thickness_mm in [10.0, LAST_STOCK_MM] {
@@ -3741,7 +3741,7 @@ fn last_pass_refuses_a_last_pass_thicker_than_the_stock_to_leave() {
         };
         generate_profile(&p, &op).unwrap_or_else(|e| panic!("{case} {side:?}: {e}"));
     }
-    // #324: with 0.2 mm the tip's wedge is 1.15 mm, within a third of
+    // With 0.2 mm the tip's wedge is 1.15 mm, within a third of
     // the bit, and the notch's cut no more than a square corner's.
     for (case, side, outline) in [
         ("10° tip", Side::Inside, tipped),
@@ -3887,7 +3887,7 @@ fn last_pass_removal(tp: &Toolpath, split: usize, layer_z_mm: f64) -> (f64, f64)
     )
 }
 
-/// #324: sharp corners are cut, not refused. Inside the 60° and 45°
+/// Sharp corners are cut, not refused. Inside the 60° and 45°
 /// triangles and the star of radii 35 and 15 (42° tips), Outside that
 /// star and 80° and 60° V notches, at 0.2 and 0.5 mm with the 6.35 mm
 /// bit: each is generated (and passes `assert_safe`), the earlier
@@ -3947,7 +3947,7 @@ fn last_pass_allows_sharp_corners() {
 }
 
 /// A round hole `diameter_mm` across, centred on the origin: two half
-/// arcs, counter-clockwise (#335).
+/// arcs, counter-clockwise.
 fn round_hole(diameter_mm: f64) -> Polyline {
     let r = diameter_mm / 2.0;
     Polyline::new(
@@ -3956,8 +3956,8 @@ fn round_hole(diameter_mm: f64) -> Polyline {
     )
 }
 
-/// The tool-centre arcs of the last pass of a one-shape toolpath
-/// (#335): every level arc after [`last_pass_start`], with its radius
+/// The tool-centre arcs of the last pass of a one-shape toolpath:
+/// every level arc after [`last_pass_start`], with its radius
 /// and feed.
 fn last_pass_arcs(tp: &Toolpath, outline: &Polyline, stock_to_leave_mm: f64) -> Vec<(f64, f64)> {
     let split = last_pass_start(tp, outline, LAST_PASS_Z_MM[1], stock_to_leave_mm);
@@ -3974,7 +3974,7 @@ fn last_pass_arcs(tp: &Toolpath, outline: &Polyline, stock_to_leave_mm: f64) -> 
     arcs
 }
 
-/// #335: in a round hole cut Inside, the tool centre runs a circle of
+/// In a round hole cut Inside, the tool centre runs a circle of
 /// `ρ − r` round a wall of `ρ`, so its cutting edge moves `ρ / (ρ − r)`
 /// times as fast as the centre. The last pass runs those arcs at
 /// `feed · (ρ − r) / ρ` (the spec's `k` is 1), so its edge moves at the
@@ -4034,7 +4034,7 @@ fn last_pass_small_hole_edge_feed() {
     }
 }
 
-/// #335: where the last pass's inside arc is tighter than the
+/// Where the last pass's inside arc is tighter than the
 /// stock to leave (`ρ − r < a`), its feed is lowered only as far as the
 /// smallest hole the last pass cuts needs, `feed · a / (a + r)`, the
 /// least the safety pass's S3 accepts, and the edge there moves faster
@@ -4080,7 +4080,7 @@ fn last_pass_tight_inside_arc_warns() {
 /// An ellipse `width_mm` × `height_mm` centred on the origin, flattened
 /// counter-clockwise to straight segments no farther than
 /// `tolerance_mm` from the curve, as an importer flattens a DXF
-/// `ELLIPSE` or SVG Bézier (#350): each chord's sagitta is
+/// `ELLIPSE` or SVG Bézier: each chord's sagitta is
 /// `tolerance_mm` at the curve's local radius of curvature.
 fn flattened_ellipse(width_mm: f64, height_mm: f64, tolerance_mm: f64) -> Polyline {
     let (a, b) = (width_mm / 2.0, height_mm / 2.0);
@@ -4104,7 +4104,7 @@ fn flattened_curve_warnings(warnings: &[Warning]) -> Vec<&Warning> {
         .collect()
 }
 
-/// #350: a curve drawn as straight segments gets none of #335's
+/// A curve drawn as straight segments gets none of #335's
 /// slowdown, so round its inside bends the last pass's cutting edge
 /// moves faster than the feed. The last pass's feeds stay as they are,
 /// and the result warns `last_pass_flattened_curve`, naming the shape:
@@ -4156,7 +4156,7 @@ fn last_pass_flattened_hole_edge_feed() {
     );
 }
 
-/// #310 review: a cut of one pass has no pass before the last to
+/// A cut of one pass has no pass before the last to
 /// leave the stock to leave, so it cuts as without a last pass and warns
 /// `last_pass_unused`.
 #[test]
@@ -4184,7 +4184,7 @@ fn last_pass_on_a_one_pass_cut_warns_unused() {
     );
 }
 
-/// #284: Inside, an island 7 mm from the outline leaves room for the
+/// Inside, an island 7 mm from the outline leaves room for the
 /// 6.35 mm bit but not for the bit plus a 0.5 mm stock to leave on both
 /// lines (7.35 mm): refused, naming the stock to leave, where the plain
 /// cut and a 0.3 mm stock to leave are cut.
@@ -4231,7 +4231,7 @@ fn last_pass_band_too_narrow_for_stock_to_leave() {
     }
 }
 
-/// #284: Inside a shape whose neck, or whose slot, is wider than the
+/// Inside a shape whose neck, or whose slot, is wider than the
 /// bit but narrower than the bit plus the stock to leave on both sides,
 /// the stock passes would skip it and leave the last pass a full
 /// slot at full depth there; a hole that only the bit fits leaves the
@@ -4303,7 +4303,7 @@ fn last_pass_neck_slot_or_hole_too_narrow_for_stock_to_leave() {
     }
 }
 
-/// #284: Outside, a part inside another part's 40 mm hole, 6.6 mm
+/// Outside, a part inside another part's 40 mm hole, 6.6 mm
 /// from its walls: the plain cut keeps the radius from every line,
 /// but the part's stock passes, 0.5 mm farther out, would cut
 /// 0.25 mm into the frame round the hole, which S9 rejects. Refused,
@@ -4406,7 +4406,7 @@ fn last_pass_inside_rectangle() {
     assert_approx_eq!(far, R_MM, TOL);
 }
 
-/// #284: with `last_pass: null` the toolpath is the one the Profile
+/// With `last_pass: null` the toolpath is the one the Profile
 /// cut before: move for move the phase 1 recipe of
 /// [`one_shape_golden_is_byte_identical_after_sequence`], and the same
 /// as with a last pass whose cut has only one pass, which the last
@@ -4577,7 +4577,7 @@ fn side_sign(side: Side) -> f64 {
 }
 
 /// The direction that cuts `side` from the end beside the first
-/// vertex (#287): Left climb, Right conventional.
+/// vertex: Left climb, Right conventional.
 fn from_first_vertex(side: Side) -> CutDirection {
     if side == Side::Left {
         CutDirection::Climb
@@ -4595,7 +4595,7 @@ fn side_last_pass_op(p: &Project, side: Side, direction: CutDirection) -> Profil
     }
 }
 
-/// #311: a 60 mm open line cut Left, 12 mm deep in 4 mm passes with a
+/// A 60 mm open line cut Left, 12 mm deep in 4 mm passes with a
 /// 0.5 mm stock to leave: passes 1–2 run `r + 0.5` to the left, pass 3 is
 /// the plain Left path, move for move. Every pass starts and ends on
 /// the normals through the line's ends (X 20 and 80): the stock to leave
@@ -4653,7 +4653,7 @@ fn last_pass_left_offsets_earlier_passes() {
     }
 }
 
-/// #339: with a ramp entry the last pass ramps. The rectangle Outside
+/// With a ramp entry the last pass ramps. The rectangle Outside
 /// and Inside and the 60 mm line Left and Right, `reverse` off and on:
 /// no straight move down goes farther than the 1 mm a descent starts
 /// above the floor it reaches (so none runs through the stock to leave's
@@ -4753,7 +4753,7 @@ fn last_pass_steps_beside_a_neighbours_kerf() {
     assert!(!tp.moves.is_empty());
 }
 
-/// #339 review: the last pass's step across the stock to leave runs above
+/// The last pass's step across the stock to leave runs above
 /// the tab material its lap leaves, and only there. A 60 mm path along
 /// X raised to Z 3 from 20 to 34 mm (a rect tab over its bit's span),
 /// floor 0, a 6.35 mm bit: a step across the stock to leave at X 27, over
@@ -4802,7 +4802,7 @@ fn last_pass_step_runs_over_tab_material_only() {
     );
 }
 
-/// #311: an open path's tabs are laid on its last pass's path and
+/// An open path's tabs are laid on its last pass's path and
 /// carried onto the stock path as on a closed shape
 /// (`last_pass::twin_tabs`, the #310 review's rule: the issue's
 /// "widened by a" was #284's, which it replaced). The 60 mm line with
@@ -4944,7 +4944,7 @@ fn last_pass_left_right_tabs_keep_off_the_tab_material() {
     }
 }
 
-/// #311: with `reverse` an open path's last pass runs from its other
+/// With `reverse` an open path's last pass runs from its other
 /// end, so it mills the other way, as a closed shape's does: from X 80
 /// to X 20 where the earlier passes run from X 20 to X 80. The
 /// earlier passes are unchanged, and a tab 20 mm from the first
@@ -5008,7 +5008,7 @@ fn last_pass_left_right_reverse_runs_from_the_other_end() {
     }
 }
 
-/// #311: every #284 refusal that applies to an open path cut on its
+/// Every #284 refusal that applies to an open path cut on its
 /// side. Each case is cut without a last pass and with 0.2 mm, and
 /// refused at 0.5 mm:
 ///
@@ -5152,7 +5152,7 @@ fn last_pass_left_right_allows_sharp_corners() {
 
 // ── #342: square ends of a Left or Right cut ──
 
-/// #342: an open path whose end segment is too short for the bit on
+/// An open path whose end segment is too short for the bit on
 /// the inside of the turn before it is refused at that end, rather
 /// than cut past the end normal (A8, "Ends"). A 30° V drawn down a
 /// 20 mm arm and up a 2 mm one, cut inside (Left): a cut beside the
@@ -5230,7 +5230,7 @@ fn left_right_end_segment_with_no_room_is_refused() {
     );
 }
 
-/// #342: the strip a line keeps is closed at each end by the normal
+/// The strip a line keeps is closed at each end by the normal
 /// through the end vertex, so a cut that reaches into it past the end
 /// is refused even where it keeps the radius from the line and from
 /// the kept edge. Placed at (20, 20), a 20 mm line from (0, 0) cut Left keeps the strip
@@ -5279,7 +5279,7 @@ fn reach_below_mm(start: Point, legs: &[(Point3, Point3)], top_mm: f64) -> f64 {
         .fold(0.0, f64::max)
 }
 
-/// The Profile property's `e577fed0` regression (#356): a 1 mm deep
+/// The Profile property's `e577fed0` regression: a 1 mm deep
 /// Outside Profile of a 33.77 mm circle with a small hole, ramped at
 /// 1.33° by a 7.27 mm tool stepping down 0.415 mm. The first pass
 /// starts its ramp 1 mm above the stock, so it cuts only 17.1 mm of

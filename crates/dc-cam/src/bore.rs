@@ -16,7 +16,7 @@
 //! cycle. The helix falls a pitch per turn (Fusion's "Pitch", the tool's
 //! step-down by default), not at a ramp angle. It starts
 //! [`crate::entry::ENTRY_CLEARANCE_MM`] above the stock top over its own
-//! start (#214), not at a retract height reached over the hole's centre.
+//! start, not at a retract height reached over the hole's centre.
 //! It has at least [`HELIX_SEGMENTS_PER_REV`] chords a turn, more when a
 //! chord would bow in by more than the flatten tolerance. The bottom
 //! revolution is four exact arcs, not 48 chords, and the tool then moves to
@@ -47,7 +47,7 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 /// chords a turn a helix this small has chords `2 · 0.05 · sin(3.75°)` =
 /// 0.0065 mm long, more than √2 units of the coarsest place a
 /// post-processor writes in inches (0.0001 in), so every chord's ends
-/// round apart, as `entry` keeps its helix (#265). A hole that leaves less
+/// round apart, as `entry` keeps its helix. A hole that leaves less
 /// is within 0.1 mm of the bit, which is a Drill's job.
 pub const BORE_MIN_HELIX_RADIUS_MM: f64 = 0.05;
 
@@ -106,7 +106,7 @@ pub fn generate_bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Wa
 fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamError> {
     let tool = tool_of(project, &op.id, &op.tool)?;
     // The helix radius is the hole less half the diameter, right only for
-    // a flat end mill, as a Pocket's offset (#67).
+    // a flat end mill, as a Pocket's offset.
     if !tool.cutter.is_flat() {
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
@@ -188,7 +188,7 @@ fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamE
         blocks.push(helix.block(hole.shape, chords, rates.feed_mm_min, rates.plunge_mm_min));
     }
     let toolpath = sequence(&SequenceInput::new(&ctx, blocks))?;
-    // #62: the cutter must stay on the stock.
+    // The cutter must stay on the stock.
     ctx.check_on_stock(&toolpath, tool.cut_radius_mm())?;
     Ok((toolpath, warnings))
 }

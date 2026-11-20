@@ -1,7 +1,7 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Photo V-Carve (format 27, #646; `docs/specs/phase-3/design.md`,
+//! Photo V-Carve (format 27; `docs/specs/phase-3/design.md`,
 //! "Algorithms → Photo V-Carve"; functional capability 47): a picture
 //! carved as parallel V-bit grooves, each as deep as the picture is dark
 //! under it, up to `max_depth_mm`.
@@ -33,7 +33,7 @@
 //!   plunges ([`crate::SequenceInput::groove_link_z_mm`]): `start_plane +
 //!   stepover_retract_mm` when the start plane is the stock top or an
 //!   earlier floor cleared it at the start depth, else no lower than the
-//!   stock top plus [`ENTRY_CLEARANCE_MM`] (security review L1). The
+//!   stock top plus [`ENTRY_CLEARANCE_MM`]. The
 //!   first approach, the step between the families and the last retract
 //!   are at safe Z.
 //! - **Limits**: the depth is never past the bit's cone, counted from the
@@ -61,7 +61,7 @@ use dc_project::{
 };
 
 /// The most samples a Photo V-Carve's grooves may hold, both families
-/// together (security review L3): two million straight moves, about 60 MB
+/// together: two million straight moves, about 60 MB
 /// of toolpath. Counted before anything is allocated, as `MAX_RINGS`
 /// bounds a Pocket. The design's example, a 100 × 50 mm picture at 30°,
 /// 2 mm and 1.1 sampled every 0.25 mm, takes about 20 000.
@@ -170,7 +170,7 @@ const fn too_many(moves: f64) -> PhotoProblem {
 /// centres, clamped to the edge pixels outside them (and so outside the
 /// footprint). Row 0 is the picture's top row, at the highest Y. Indices
 /// come from `f64::floor` clamped into the picture and are read with
-/// `get`, never from subtraction on a `u32` (security review M4); a point
+/// `get`, never from subtraction on a `u32`; a point
 /// that is not a number reads the top-left pixel, and a picture with no
 /// pixels reads white.
 #[must_use]
@@ -451,9 +451,9 @@ struct Plane {
     start_plane_z_mm: f64,
     /// Where the flanks are engaged from: the start plane when it is the
     /// stock top or a floor at the start depth cleared it, else the stock
-    /// top (security review H4).
+    /// top.
     engaged_from_z_mm: f64,
-    /// Where the bit crosses between grooves (security review L1).
+    /// Where the bit crosses between grooves.
     link_z_mm: f64,
 }
 

@@ -155,7 +155,7 @@ fn pocket(project: &Project, op: &PocketOp) -> Result<(Toolpath, Vec<Warning>), 
 /// regions' indices (`Region::outer_index`, `Region::hole_indices`); a
 /// hole with no entry there is an island no shape names, and is not
 /// warned about. With `reached_by` the operation is rest machining on
-/// those references, as a `rest_of` Pocket is on its one (#406: a carve's
+/// those references, as a `rest_of` Pocket is on its one (a carve's
 /// earlier clearing passes), read from their tools and never from a
 /// toolpath (S14); `op.rest_of` is then `None`.
 ///
@@ -204,7 +204,7 @@ impl<'p> Setup<'p> {
     ) -> Result<Self, CamError> {
         let tool = tool_of(project, &op.id, &op.tool)?;
         // The tool-centre region is the pocket inset by half the diameter,
-        // right only for a flat end mill (#67).
+        // right only for a flat end mill.
         if !tool.cutter.is_flat() {
             return Err(CamError::CutterNotFlat {
                 op: op.id.clone(),
@@ -387,7 +387,7 @@ impl<'p> Setup<'p> {
                 rest_found = true;
                 (centre, Some(left))
             };
-            // #167: a rest operation skips the root rings that run along the
+            // A rest operation skips the root rings that run along the
             // leftover's edge against the cleared area, cutting only air. The
             // tool-centre region itself is unchanged, as are the entry domain
             // and every ring's cleared area.
@@ -467,7 +467,7 @@ impl<'p> Setup<'p> {
         // of the pass before.
         let mut above_mm = thickness_mm;
         for (pass, &z_mm) in pass_z.iter().enumerate() {
-            // #214: a ramp or helix starts the entry clearance above the stock
+            // A ramp or helix starts the entry clearance above the stock
             // top, and on a later pass above the floor the pass before cleared
             // (the whole tool-centre region, every pass), not at safe Z.
             let descent_from_z_mm = entry::descent_start_z_mm(above_mm, safe_z_mm);
@@ -512,7 +512,7 @@ impl<'p> Setup<'p> {
             }
         }
         warnings.extend(entry_warnings.into_warnings(&op.id));
-        // Design step 10 (maintainer decision 2026-10-24): each corner's
+        // Design step 10: each corner's
         // notch is cut from the wall or island ring of every pass that turns
         // it; stock to leave means no final wall, and a corner some pass has
         // no ring for is left for the separate pass after the main passes.
@@ -549,7 +549,7 @@ impl<'p> Setup<'p> {
             }
         }
 
-        // #62: the cutter must stay on the stock.
+        // The cutter must stay on the stock.
         ctx.check_on_stock(&toolpath, radius_mm)?;
         check_in_material(
             op,
@@ -646,7 +646,7 @@ fn entry_regions(tree: &RingTree, wall: WallRings) -> Result<Vec<Region>, CamErr
 
 /// [`Warning::PocketIslandTooClose`] for every island of `region`
 /// nearer the wall or a later island than the tool needs to pass between
-/// them: its diameter plus twice `op.stock_to_leave_mm` (#168), the gap at which
+/// them: its diameter plus twice `op.stock_to_leave_mm`, the gap at which
 /// the tool-centre region splits.
 fn island_gap_warnings(
     op: &PocketOp,
@@ -698,7 +698,7 @@ fn island_gap_warnings(
 
 /// `ring` as a path: wound by the direction rule ([`ring_is_ccw`]) for
 /// `direction`, starting at its start point, with each of its clean-ups
-/// spliced in where the lap reaches its point (#267): straight to the
+/// spliced in where the lap reaches its point: straight to the
 /// residual ring's start, round it (wound by the same rule), and straight
 /// back. A clean-up reached from the start is cut when the lap closes
 /// there, after the ring has cleared round it.
@@ -760,7 +760,7 @@ pub(crate) fn ring_path(ring: Ring, direction: CutDirection) -> Polyline {
 
 /// `path` (closed) rotated to start at `start` (`rotateContourToNearestEntry`),
 /// split there first when `start` lies inside a segment
-/// ([`rings::split_at`], #196); unchanged when `start` is not on it.
+/// ([`rings::split_at`]); unchanged when `start` is not on it.
 fn starting_at(path: &Polyline, start: Point) -> Polyline {
     let mut vertices = rings::split_at(path, start).vertices().to_vec();
     let index = vertices
@@ -778,7 +778,7 @@ fn starting_at(path: &Polyline, start: Point) -> Polyline {
 /// pair is `(pocket around, pocket inside)`. Pockets free nothing, so this
 /// orders the work only; it is the design's "after the island".
 ///
-/// Two pockets of one shape are never paired (#482): `sequence` cuts a
+/// Two pockets of one shape are never paired: `sequence` cuts a
 /// shape's blocks at a pass as one unit, in generator order, and would
 /// read the pair as the shape enclosing itself, a containment cycle. A
 /// user's Pocket names every region by its own outline, so this happens

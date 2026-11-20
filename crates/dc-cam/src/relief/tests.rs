@@ -345,7 +345,7 @@ fn pocket_run(project: &Project, op: &PocketOp) -> (Toolpath, Vec<Warning>, Vec<
     };
     let (without, _) = generate_pocket(project, &none).unwrap();
     assert_safe(&with, project, &Operation::Pocket(op.clone()));
-    // Inline (maintainer decision 2026-10-24) or in the separate pass
+    // Inline or in the separate pass
     // after the main path, the main path's cuts stay in order.
     let relief = interleaved_relief(&with, &without)
         .into_iter()
@@ -390,7 +390,7 @@ fn xy_cuts(start: Point3, moves: &[Move]) -> Vec<(usize, Cut)> {
 
 /// The XY cutting moves `with` (a Profile with relief) adds to
 /// `without` (the same Profile without), each with its index in
-/// `with`. A Profile's notches are cut among its passes (#189), so
+/// `with`. A Profile's notches are cut among its passes, so
 /// every cut of `without` must appear in `with` in the same order, and
 /// the rest are the notches.
 fn interleaved_relief(with: &Toolpath, without: &Toolpath) -> Vec<(usize, Cut)> {
@@ -679,7 +679,7 @@ fn square_pocket_yields_four_corners_and_descend_points() {
     }
 }
 
-/// #215: from the first corner of a square, the two next to it are
+/// From the first corner of a square, the two next to it are
 /// equally near. A later one nearer by less than
 /// [`crate::sequence::NEAREST_TIE_MM`] (the 1e-6 mm an `f32` import
 /// moves a coordinate) is still a tie, taken in drawing order, so the
@@ -1241,7 +1241,7 @@ fn corner_under_tab_is_skipped() {
     assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
 }
 
-/// Relief composes with a lead (slice 11): the lead re-seams each lap
+/// Relief composes with a lead: the lead re-seams each lap
 /// and the notches follow the last pass, in the same four corners.
 #[test]
 fn inside_profile_with_lead_relieves_the_same_corners() {
@@ -1283,10 +1283,10 @@ fn on_line_profile_skips_with_warning() {
     );
 }
 
-/// #189: on a Profile through the stock with no tabs, every notch of a
+/// On a Profile through the stock with no tabs, every notch of a
 /// shape, at every level down to the bottom, is cut before that
 /// shape's freeing lap (the final lap at Z 0) closes, the bottom level
-/// from within it (#193), and nothing of the shape is cut after it:
+/// from within it, and nothing of the shape is cut after it:
 /// inside (two 40 mm square holes, four notches
 /// each) and outside (two L parts, one notch each), under both
 /// machining orders. Shapes lie apart in X, so a move's X names its
@@ -1357,7 +1357,7 @@ fn profile_notches_precede_the_freeing_pass() {
                     panic!("{side:?} {order:?}: no freeing lap");
                 };
                 // The levels above the bottom come before the final
-                // lap; the bottom level is cut within it (#193),
+                // lap; the bottom level is cut within it,
                 // after the pass above and before the lap's last move
                 // (right after the plunge when the lap starts at the
                 // corner).
@@ -1390,7 +1390,7 @@ fn profile_notches_precede_the_freeing_pass() {
     }
 }
 
-/// #193: an inside 40 × 40 mm Profile through the stock with a ramp
+/// An inside 40 × 40 mm Profile through the stock with a ramp
 /// entry, and no tabs, never plunges into uncut material at a descend
 /// point: every straight plunge there ends at or above a Z some earlier
 /// cut already reached at that point. The bottom-level notches
@@ -1497,7 +1497,7 @@ fn bottom_level_notches_do_not_plunge() {
     }
 }
 
-/// #240: an inside 40 × 40 mm Profile with dogbones starts and ends
+/// An inside 40 × 40 mm Profile with dogbones starts and ends
 /// each lap on the descend point at (22, 22). Cut inline (maintainer
 /// decision 2026-10-24), that corner's notch is cut right after the
 /// lap's descent, from the column it opens, with no rapid: no lift to
@@ -1561,7 +1561,7 @@ fn dogbone_ends_40x30() -> Vec<Point> {
 
 /// Acceptance 29: a 40 × 30 mm pocket with dogbones gets four notches
 /// along the corner bisectors, cut inline from the wall ring of each
-/// pass that cuts the final wall (#373), each ending exactly one tool
+/// pass that cuts the final wall, each ending exactly one tool
 /// radius past the corner, so a 40 × 30 block fits.
 #[test]
 fn acceptance_29_pocket_dogbone_four_notches_on_bisectors() {
@@ -1646,7 +1646,7 @@ fn acceptance_29_outside_l_part_one_notch() {
     assert!(out[0].start.distance_to(at(28.0, 32.0)) < 1e-6, "{out:?}");
 }
 
-/// #322: an outside Profile of a 30 mm wide frame round a 14 × 10 mm
+/// An outside Profile of a 30 mm wide frame round a 14 × 10 mm
 /// hole, by the 4 mm tool. Each T-bone in the hole runs along its
 /// 14 mm walls and reaches `r` = 2 mm past the top or bottom wall. With
 /// the frame 1.5 mm thick there, that notch would cut through it into
@@ -1708,7 +1708,7 @@ fn footprint_of_notch_stays_in_removed_material() {
         ..op.clone()
     };
     let (without, _) = generate_pocket(&p, &none).unwrap();
-    // The notches are cut inline (maintainer decision 2026-10-24): what
+    // The notches are cut inline: what
     // the relief sweeps is what the Pocket with it sweeps beyond the
     // one without.
     let swept = difference(
@@ -1739,7 +1739,7 @@ fn footprint_of_notch_stays_in_removed_material() {
     }
 }
 
-// ── 8. Inline on the final wall (maintainer decision 2026-10-24) ────
+// ── 8. Inline on the final wall ────
 
 /// The dogbone end points of a `w` × `h` rectangle at (`O`, `O`).
 fn dogbone_ends(w: f64, h: f64) -> Vec<Point> {

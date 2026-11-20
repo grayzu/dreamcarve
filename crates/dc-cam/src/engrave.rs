@@ -140,7 +140,7 @@ fn engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>)
         ..SequenceInput::new(&ctx, blocks)
     };
     let toolpath = sequence(&input)?;
-    // #62: the cutter must stay on the stock.
+    // The cutter must stay on the stock.
     ctx.check_on_stock(&toolpath, tool.cut_radius_mm())?;
     Ok((toolpath, warnings))
 }

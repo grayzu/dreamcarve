@@ -528,7 +528,7 @@ fn offset_coverage_reaches_inset_region() {
 
 /// The step-overs the coverage tests run at: the fixtures' 40 % and
 /// three above half the diameter, where the ring tree alone left
-/// material standing (#258).
+/// material standing.
 const STEP_OVERS: [f64; 4] = [0.4, 0.6, 0.8, 1.0];
 
 /// The reachable area of a pocket whose (placed) wall is `outer`: the
@@ -589,7 +589,7 @@ fn assert_covers_at_every_pass(tp: &Toolpath, outer: &Polyline, what: &str) {
     }
 }
 
-/// #258: above half the diameter, the ring tree stops when a region
+/// Above half the diameter, the ring tree stops when a region
 /// cannot be inset by another step-over, so its innermost ring can lie
 /// up to a step-over from the middle while the tool reaches only its
 /// radius, and with step-over 1.0 each ring's sharp corners lie more
@@ -635,7 +635,7 @@ fn offset_above_half_step_over_leaves_no_centre_pin() {
     }
 }
 
-/// Raster has no such gap (#258): its lines are `s ≤ 2r` apart, and a
+/// Raster has no such gap: its lines are `s ≤ 2r` apart, and a
 /// point between two lines is within `s/2` of one of them or of the
 /// wall ring.
 #[test]
@@ -664,8 +664,8 @@ fn lifts_from(tp: &Toolpath, z_mm: f64) -> usize {
         .count()
 }
 
-/// #267: above `(1 + √2/2)·r` step-over every sharp corner of a ring
-/// with a child has a residual ring (#258), and each one cut as a ring
+/// Above `(1 + √2/2)·r` step-over every sharp corner of a ring
+/// with a child has a residual ring, and each one cut as a ring
 /// of its own lifted: 13 lifts per pass on the 100 × 50 rect at 1.0,
 /// where 0.8 lifts once. Each is now cut from the ring that leaves it,
 /// out from that ring's corner and back, at the pass Z: 1 lift per pass
@@ -767,7 +767,7 @@ fn island_wall_runs_opposite_to_pocket_wall() {
     }
 }
 
-/// Acceptance test 20 (#249): "the wall pass runs along the rectangle
+/// Acceptance test 20: "the wall pass runs along the rectangle
 /// and around the circle". The offset wall pass is two rings, the
 /// outer wall (tool centre on the rect inset by r) and the island ring
 /// (tool centre on a circle of radius 10 + r about (70, 45)), cut as
@@ -961,7 +961,7 @@ fn island_splits_region_into_two_tool_centre_regions() {
     }
 }
 
-/// #168: with stock to leave the tool needs `diameter + 2 × stock to leave`
+/// With stock to leave the tool needs `diameter + 2 × stock to leave`
 /// between an island and the wall. A 10 × 30 island 7 mm from the left
 /// wall leaves the 6.35 mm tool room at stock to leave 0, and none at 0.5
 /// (7.35 needed): the gap warns then, with `needed_mm` and
@@ -1026,7 +1026,7 @@ fn island_gap_warning_accounts_for_stock_to_leave() {
     );
 }
 
-/// #482: a pocket inside an island is paired with the pocket round the
+/// A pocket inside an island is paired with the pocket round the
 /// island when the two are different shapes, and not when they are one
 /// (a clearing pass's floor pieces of one carved region, the V-bit's
 /// inset having closed a bay into the island): `sequence` would read
@@ -1254,7 +1254,7 @@ fn levels_rapid_at_safe_z_before_plunging() {
     assert_approx_eq!(m[first_deep].feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
 }
 
-/// Corner relief (slice 12) with a ramp entry: no warning, and the
+/// Corner relief with a ramp entry: no warning, and the
 /// notches are cut from the wall rings (maintainer decision
 /// 2026-10-24): the Pocket has every move of the same Pocket without
 /// relief, in order, more moves, and no more rapids
@@ -1564,7 +1564,7 @@ fn rest_coverage_with_rough_reaches_small_tool_inset() {
     );
 }
 
-/// #493: a 6.35 mm rough with no stock to leave, then a 3.175 mm
+/// A 6.35 mm rough with no stock to leave, then a 3.175 mm
 /// rest Pocket, of the 100 × 50 rect with a 2 mm round island 5.2 mm
 /// off its bottom wall. The rough tool cannot pass the island, so its
 /// tool-centre region goes round it, a C whose mouth, the 5.75 mm
@@ -1671,7 +1671,7 @@ fn ring_length_mm(ring: &Ring) -> f64 {
 /// both passes, the ring along the band's inner edge included.
 const REST_BEFORE_167_MM: f64 = 1237.0;
 
-/// #167: with the offset strategy no rest ring runs wholly in the area
+/// With the offset strategy no rest ring runs wholly in the area
 /// the rough cleared. Each ring's footprint takes off more of what the
 /// rough left than a noise strip along it (`FLAT_TOL` × its length),
 /// so the ring along the wall band's inner edge, 276 mm a pass in air,
@@ -1714,7 +1714,7 @@ fn rest_offset_cuts_no_ring_entirely_in_air() {
 /// included.
 const RASTER_REST_BEFORE_167_MM: f64 = 1602.0;
 
-/// #167: the raster strategy's wall pass skips the ring in air too;
+/// The raster strategy's wall pass skips the ring in air too;
 /// its lines already end at the rest tool-centre region's edge.
 #[test]
 fn rest_raster_wall_pass_skips_the_ring_in_air() {
@@ -2335,7 +2335,7 @@ fn rings_start_nearest_the_previous_ring() {
     }
 }
 
-/// #196: every ring starts at the point of its contour nearest the end
+/// Every ring starts at the point of its contour nearest the end
 /// of the ring before it, arcs included, not at its nearest vertex. A
 /// ring round the circular island is two arcs; its nearest vertex can
 /// be 7.6 mm from the previous ring where its nearest point is a
@@ -2826,7 +2826,7 @@ fn raster_gaps_at(tp: &Toolpath, z_mm: f64, angle_deg: f64, tc: &Region) -> Vec<
 /// checked: a retract; or a straight stay-down, linear feed moves at
 /// `z_mm` together no longer than one diameter plus a step-over,
 /// inside the tool-centre region (so clear of the island); or an edge
-/// link (#202), feed moves at `z_mm` no longer than that along their
+/// link, feed moves at `z_mm` no longer than that along their
 /// path, every point of it on the tool-centre region's edge.
 fn raster_lifts_at(tp: &Toolpath, z_mm: f64, profiles: &[Polyline]) -> (usize, Vec<Link>) {
     let region = region_of(profiles, at_20_20());
@@ -2860,7 +2860,7 @@ fn raster_lifts_at(tp: &Toolpath, z_mm: f64, profiles: &[Polyline]) -> (usize, V
     (lifts, edges)
 }
 
-/// #150, #202: the pieces of lines split by an island are cut
+/// The pieces of lines split by an island are cut
 /// nearest-first (upstream `orderOpenSegmentsGreedy`), so the tool
 /// zigzags down one side of the island before it crosses to the other,
 /// as far as each link stays inside the region. In scan order every
@@ -2870,7 +2870,7 @@ fn raster_lifts_at(tp: &Toolpath, z_mm: f64, profiles: &[Polyline]) -> (usize, V
 /// between two line ends against it cuts into the island, so without
 /// an edge to follow any order lifts about once per split line: 11.
 /// With a wall pass the tool follows the island's tool-centre ring
-/// instead (#202), which cuts only what the island's wall ring cuts
+/// instead, which cuts only what the island's wall ring cuts
 /// anyway: round the circle 1 lift per pass with the wall pass last
 /// and 2 with it first (the lines start from where the rings end),
 /// from 11; round the square, whose ring has round corners, 2, from 4.
@@ -2901,7 +2901,7 @@ fn raster_lifts_around_island_are_minimised() {
     }
 }
 
-/// #392: the plaque's Panel (100 × 50 with 5 mm corners and a 20 mm
+/// The plaque's Panel (100 × 50 with 5 mm corners and a 20 mm
 /// island, placed at (35, 52) as in the plaque) at 0° with a wall pass
 /// last and a helix entry, moved up by 1 to 50 µm, the size of the
 /// noise an SVG import leaves, plans the same toolpath moved by as
@@ -2975,7 +2975,7 @@ fn raster_plan_ignores_a_micrometre_shift_of_the_scan_lines() {
 /// 10 mm plus the tool radius.
 const ISLAND_RING_MM: f64 = 10.0 + RADIUS_MM;
 
-/// #202: on the 100 × 50 pocket with the 20 mm circle island at 0°,
+/// On the 100 × 50 pocket with the 20 mm circle island at 0°,
 /// with a wall pass, the link between two line ends against the
 /// island follows the island's tool-centre ring, an arc about its
 /// centre, at pass Z and the cutting feed, instead of lifting: 1 lift
@@ -3141,11 +3141,11 @@ fn concave_walls() -> [(&'static str, Polyline, Point, f64, [usize; 2]); 2] {
     ]
 }
 
-/// #218: where the pocket wall curves inward, the tool-centre region's
+/// Where the pocket wall curves inward, the tool-centre region's
 /// outer ring is an arc bulging into it (radius `r` round the L's
 /// reflex corner, 15 + `r` round the bay), and a straight link between
 /// two line ends against it leaves the region. With a wall pass the
-/// link follows that ring, as round an island (#202), at pass Z and the
+/// link follows that ring, as round an island, at pass Z and the
 /// cutting feed: on the L 0 lifts per pass from 1, on the bay 1 from 6.
 /// Every point of every edge link lies on the arc, at most the
 /// flattening tolerance off it. Without a wall pass the counts stay.
@@ -3361,7 +3361,7 @@ fn raster_coverage_reaches_inset_region() {
     let outer = at_20_20().apply_polyline(&rect_100x50()).unwrap();
     // Raster lines `s` apart each clear `r` either side, and
     // `s ≤ 2r` at every allowed step-over, so no ridge is left between
-    // them (#258).
+    // them.
     for fraction in STEP_OVERS {
         for angle_deg in [0.0, 45.0, 100.0] {
             let mut op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::Last);
@@ -3451,7 +3451,7 @@ fn rounded_island_project() -> Project {
     )
 }
 
-/// #213: a raster Pocket with an island and a wall pass places the
+/// A raster Pocket with an island and a wall pass places the
 /// wall ring's helix or ramp, as the island ring's. The wall ring
 /// starts at its point nearest the last line's end, here on a round
 /// corner of the tool-centre region, which the entry domain holds as
@@ -3481,7 +3481,7 @@ fn raster_wall_ring_gets_its_entry() {
     }
 }
 
-/// #213: the step from the last raster line's end to the wall ring's
+/// The step from the last raster line's end to the wall ring's
 /// start, inside material that line has just cut, is a stay-down link,
 /// not a lift: the ring's start on the corner arc lay a hair outside
 /// the cleared area as the sequencer flattens it.
@@ -3649,7 +3649,7 @@ fn vertex_count(regions: &[Region]) -> usize {
         .sum()
 }
 
-/// #474: rings stepping round the blob islands no longer double their
+/// Rings stepping round the blob islands no longer double their
 /// vertices at each pass through the boolean fallback. Before, one ring
 /// had 4 931 vertices, ten times the 484 of all the outlines together;
 /// every ring of the Pocket now has at most `K` times as many as all
@@ -3689,7 +3689,7 @@ fn ring_vertex_count_stays_bounded() {
     }
 }
 
-/// #474: each step of the ring tree, computed from its parent with the
+/// Each step of the ring tree, computed from its parent with the
 /// parent's polygonal rings simplified, sweeps the area the
 /// unsimplified step does within the flatten tolerance times the
 /// rings' length, and never more: the simplified step lies inside the

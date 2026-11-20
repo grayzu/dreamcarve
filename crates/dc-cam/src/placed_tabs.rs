@@ -1,7 +1,7 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Placed tabs (#105, ADR-0005; `docs/specs/phase-2/design.md`, "Placed
+//! Placed tabs (ADR-0005; `docs/specs/phase-2/design.md`, "Placed
 //! tabs"): placing them from a tab request with the phase 2 layout rules,
 //! and the project-level check that every tab is cut round.
 //!
@@ -55,12 +55,12 @@ pub struct TabSize {
 }
 
 /// Places the tabs `spec` asks for on the outlines Profile `op` cuts, with
-/// the phase 2 layout rules (#109): per tool path, `count` tabs evenly
+/// the phase 2 layout rules: per tool path, `count` tabs evenly
 /// spaced or tabs at `at_distances` along it from its start (the
-/// Profile's start point when it sets one, #285); off corners where they
+/// Profile's start point when it sets one); off corners where they
 /// can be with `avoid_corners` ([`Warning::TabOnCorner`] for one that
 /// cannot); none on a hole unless `on_holes`, and those it puts there
-/// with `holds_slug: true` (#302), every other with `false`; and on a path
+/// with `holds_slug: true`, every other with `false`; and on a path
 /// too short for them, the most that cover at most half of it, but at
 /// least one on a part. Each tab is
 /// placed at its centre on the tool path itself, taken into the
@@ -77,7 +77,7 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
     place_shared(project, op, spec, &[])
 }
 
-/// [`place`] for a Profile that cuts an outline in pieces (#710): a male
+/// [`place`] for a Profile that cuts an outline in pieces: a male
 /// Inlay's cut-out, where the board's edge frees the plug and leaves its
 /// outline as several open paths ([`crate::inlay::cut_out_paths`]). Each
 /// of `pieces` is the profiles, in the definition of a target of `op`,
@@ -143,7 +143,7 @@ pub fn place_shared(
     let mut next = next_number(project);
     for (j, ((path, shape), fit)) in cut.paths.iter().zip(&fits).enumerate() {
         let length_mm = path.length_mm();
-        // #302: a tab the request puts on a hole, which it does only with
+        // A tab the request puts on a hole, which it does only with
         // `on_holes`, is there to hold the slug.
         let on_hole = *at(
             &cut.holes,
@@ -169,7 +169,7 @@ pub fn place_shared(
                 .warnings
                 .push(overlap_warning(op, j, Some(shape), length_mm));
         }
-        // #285: a tab left on a corner is placed there, warned.
+        // A tab left on a corner is placed there, warned.
         placement
             .warnings
             .extend(
@@ -221,7 +221,7 @@ pub fn place_shared(
 /// Places a tab of `size` at each of `at_mm`, distances along the outline
 /// from its first vertex as drawn (mm, definition space), on every
 /// outline Profile `op` cuts: none on a hole unless `on_holes`, and those
-/// it puts there with `holds_slug: true` (#302), every other with
+/// it puts there with `holds_slug: true`, every other with
 /// `false`. A closed
 /// outline takes each distance modulo its length; an open one clamps it
 /// to its ends. The tabs are cut as placed; the warnings say where they
@@ -286,7 +286,7 @@ pub fn place_on_outlines(
                 width_mm: size.width_mm,
                 height_mm: size.height_mm,
                 shape: size.shape,
-                // #302: only `on_holes` puts a tab on a hole, to hold
+                // Only `on_holes` puts a tab on a hole, to hold
                 // its slug.
                 holds_slug: Some(hole),
             };
@@ -328,8 +328,8 @@ pub fn place_on_outlines(
 }
 
 /// `project` with the tab request of every enabled Profile placed
-/// ([`place`]) and cleared, as `dreamcarve` saves a project (#105,
-/// ADR-0005), with what placing found. A disabled Profile keeps its
+/// ([`place`]) and cleared, as `dreamcarve` saves a project
+/// (ADR-0005), with what placing found. A disabled Profile keeps its
 /// request, so it cuts as it would have when it is enabled again.
 ///
 /// Fails as [`place`] does for the first request that cannot be placed.
@@ -383,7 +383,7 @@ pub struct Replacement {
 
 /// `project` with the tabs Profile `op` crosses ([`crossed_by`], the set
 /// `tabs clear <dcv> <op>` removes) replaced by what `place` places on the
-/// project without them (#293). `place` sees the removed tabs gone, so a
+/// project without them. `place` sees the removed tabs gone, so a
 /// tab at a removed tab's point is placed again; the tabs it places are
 /// renumbered after every tab `project` had, so no removed tab's id names
 /// a new tab.
@@ -431,7 +431,7 @@ pub fn crossed_by(project: &Project, op: &ProfileOp) -> Result<Vec<TabId>, CamEr
 /// its last pass frees it. A Profile whose depth or the stock's thickness
 /// is unset, or that cannot be cut, is left out. In operation order, then
 /// drawing order. `tabs clear` compares this before and after to say which
-/// parts the tabs it removed held (#105).
+/// parts the tabs it removed held.
 #[must_use]
 pub fn freed_parts(project: &Project) -> Vec<(OperationId, ShapeRef)> {
     let mut freed = Vec::new();
@@ -477,7 +477,7 @@ pub fn freed_parts(project: &Project) -> Vec<(OperationId, ShapeRef)> {
 /// Profile of `generated` crosses ([`crossed_by`]), and
 /// [`Warning::TabOffOutline`] for one that is crossed but whose point is
 /// more than [`off_outline_limit_mm`] from its outline
-/// ([`off_outline_mm`], #300). `generated` holds every enabled operation
+/// ([`off_outline_mm`]). `generated` holds every enabled operation
 /// whose toolpath was generated, as for [`crate::order::check`].
 #[must_use]
 pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning> {
@@ -534,7 +534,7 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
 
 /// How far a tab's point may be from its outline before
 /// [`Warning::TabOffOutline`], mm: its width plus `diameter_mm`, the
-/// widest bit that cuts round it (#300). A tab placed on the outline is on
+/// widest bit that cuts round it. A tab placed on the outline is on
 /// it, and one placed from a request or `--count` a bit radius off, so
 /// neither warns; a point farther than a whole tab and bit away is not one
 /// a placing command wrote, and is likely a hand edit or left behind
@@ -556,7 +556,7 @@ pub fn off_outline_mm(project: &Project, tab: &PlacedTab) -> Option<f64> {
 /// The placed tabs Profile `op` crosses on a tool path round a hole, with
 /// the hole, in project order: those generation warns
 /// [`Warning::TabOnHole`] for, and those that hold their slugs, which it
-/// does not (#300, #302: `holds_slug`, or unset and on this Profile's path
+/// does not (`holds_slug`, or unset and on this Profile's path
 /// round the hole). `tabs place` warns for the ones it places. Fails as
 /// [`crossed_by`] does.
 pub fn on_holes(project: &Project, op: &ProfileOp) -> Result<Vec<(TabId, ShapeRef)>, CamError> {
@@ -621,7 +621,7 @@ fn profile_op<'p>(project: &'p Project, op: &OperationId) -> Result<&'p ProfileO
 }
 
 /// Lays `spec` anew on the tool paths of every outline `pieces` names
-/// among the profiles of each of `targets` (#710, [`place_shared`]), in
+/// among the profiles of each of `targets` ([`place_shared`]), in
 /// `fits`, one for each path of `cut`: the paths of one outline take the
 /// request between them (`Request::shared`), and each lays its share as
 /// [`place`] lays a request on a path. A hole's path takes none without
@@ -660,7 +660,7 @@ fn share(
         }
         let lengths_mm: Vec<f64> = of.iter().map(|(path, _, _)| path.length_mm()).collect();
         for ((path, hole, fit), request) in of.into_iter().zip(request.shared(&lengths_mm)) {
-            // #109: a part keeps a tab; a hole or an open path may not.
+            // A part keeps a tab; a hole or an open path may not.
             let least = if hole || !path.is_closed() {
                 Least::Zero
             } else {

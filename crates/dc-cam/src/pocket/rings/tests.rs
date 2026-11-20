@@ -68,7 +68,7 @@ fn inset_of_a_thin_band_is_empty() {
     assert_eq!(tree.nodes.len(), 1);
 }
 
-/// #196: a ring starts at its point nearest the anchor, on an arc too,
+/// A ring starts at its point nearest the anchor, on an arc too,
 /// not at its nearest vertex. A circle of radius 10 about the origin
 /// has vertices at (±10, 0); from (12, 1) its nearest point is at
 /// θ = atan2(1, 12), and the ring's contour gains a vertex there.
@@ -123,7 +123,7 @@ fn split_at_a_line_and_at_a_vertex() {
     assert_approx_eq!(d, 29.0_f64.sqrt(), 1e-9);
 }
 
-/// #258: a 6.35 mm tool at step-over 1.0 (`s = 6.35`, `r = 3.175`). A
+/// A 6.35 mm tool at step-over 1.0 (`s = 6.35`, `r = 3.175`). A
 /// tool-centre circle of radius 5.325 has no room for another ring, and
 /// its ring reaches only 3.175 in; it gets one residual ring, the circle
 /// inset by `r` and the tolerance, which reaches the centre. At radius
@@ -143,7 +143,7 @@ fn leaf_gets_a_residual_ring_only_when_needed() {
         std::f64::consts::PI * (5.325 - 3.175 - tol).powi(2),
         1e-6
     );
-    // #267: it is cut from the ring, out and back along a radius.
+    // It is cut from the ring, out and back along a radius.
     let rings = tree.walk(WallRings::Last, &mut None).expect("a walk");
     assert_eq!(rings.iter().map(|r| r.node).collect::<Vec<_>>(), [0]);
     let cleanups = &rings[0].cleanups;
@@ -163,7 +163,7 @@ fn leaf_gets_a_residual_ring_only_when_needed() {
     assert!(tree.nodes.iter().all(|n| !n.residual), "{tree:?}");
 }
 
-/// #258: at step-over 1.0 the child of a rect has its corners `2r` in
+/// At step-over 1.0 the child of a rect has its corners `2r` in
 /// from each side, so a point `1.1r` from both sides of a corner is
 /// more than `r` from the ring and from the child (`0.9·√2·r`). The
 /// 100 × 50 pocket's tool-centre rect gets one residual ring in each
@@ -196,7 +196,7 @@ fn square_corners_get_residual_rings_at_full_step_over() {
             }),
             "no residual ring at {corner:?}"
         );
-        // #267: each is cut from the root ring, out from its corner.
+        // Each is cut from the root ring, out from its corner.
         assert!(
             residual.iter().any(|n| n.splice.is_some_and(|s| s.ring == 0
                 && s.at.distance_to(corner) <= EPS_MM

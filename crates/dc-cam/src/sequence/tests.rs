@@ -572,7 +572,7 @@ fn stay_down_link_skips_the_descent() {
 
     // Reached by a retract, the descent is cut as given, after a rapid
     // straight down to 1 mm above the stock top (nothing was cut at
-    // (14, 5)) and a plunge to where it starts (#214).
+    // (14, 5)) and a plunge to where it starts.
     let mut retract = input(blocks, MachiningOrder::FullDepthFirst, &[]);
     retract.stepover_mm = 2.0;
     let tp = run(&retract);
@@ -719,7 +719,7 @@ fn equidistant_shapes_keep_drawing_order() {
     }
 }
 
-/// #215: two shapes nearer each other than [`NEAREST_TIE_MM`] in their
+/// Two shapes nearer each other than [`NEAREST_TIE_MM`] in their
 /// distance from the current exit are a tie, kept in drawing order, so
 /// the 1e-6 mm noise of an `f32` import does not pick the later one.
 #[test]
@@ -858,7 +858,7 @@ fn notch(name: &str, x: f64, y: f64, pass: usize) -> CutBlock {
     }
 }
 
-/// #189: nothing of a shape is cut after its freeing pass. Each pass of
+/// Nothing of a shape is cut after its freeing pass. Each pass of
 /// an outline and of its hole is followed, in generator order, by a
 /// notch block at that pass, as `relief::profile_notches` hands them
 /// over. The sequencer cuts a unit's freeing blocks last, so the
@@ -936,7 +936,7 @@ fn same_shape_next_pass_stays_down() {
 /// Link rule 2: a next pass whose descent starts elsewhere (a moved
 /// seam) is reached by a retract to safe Z, an XY rapid, a rapid down
 /// to 1 mm above the floor pass 0 cut there, and a plunge (changed in
-/// #227: the plunge started at safe Z).
+/// The plunge started at safe Z).
 #[test]
 fn moved_entry_retracts_between_passes() {
     let mut blocks = squares("s", 0.0, 0.0, 20.0, 2);
@@ -956,7 +956,7 @@ fn moved_entry_retracts_between_passes() {
     );
 }
 
-/// Link rule 1 (#240): a block of the same shape and pass whose
+/// Link rule 1: a block of the same shape and pass whose
 /// descent is a straight plunge starting where the tool is, inside the
 /// column the previous block just cut to at least the plunge's end,
 /// has no link. The plunge goes from where the tool is (dropped when
@@ -1036,7 +1036,7 @@ fn first_and_last_moves_are_rapids_at_safe_z() {
 /// that ends where the tool already is (the previous pass's exit) is
 /// dropped rather than written as a zero-length move. A descent that
 /// opens with a straight plunge from safe Z is reached by a rapid
-/// straight down to 1 mm above the stock first (#227).
+/// straight down to 1 mm above the stock first.
 #[test]
 fn generator_descent_is_used_and_zero_length_moves_are_dropped() {
     let mut blocks = squares("s", 5.0, 0.0, 20.0, 2);
@@ -1314,7 +1314,7 @@ fn plan_matches_the_emitted_order() {
     assert_eq!(plan(&input).unwrap(), [0, 4, 2, 3, 5, 1]);
 }
 
-/// #232: a link between two points on a cleared area's boundary that
+/// A link between two points on a cleared area's boundary that
 /// bridges a dent of the material into it, shorter than the old
 /// 0.5 mm sample step. A 20 mm square with a diamond hole whose two
 /// tips (10, 10.15) and (10, 9.85) are 0.3 mm apart: the straight link

@@ -18,7 +18,7 @@
 //! last, climb (the region's own winding), so the flank meets the outline
 //! at the start plane and the wall is a clean slope.
 //!
-//! With a tapered ball nose (slice 27c, #679) the inset is the bit's
+//! With a tapered ball nose the inset is the bit's
 //! half-width at the floor, `w(F)`, and the step-over the same fraction
 //! of `2 w(F)`; the trace's wall is the cone down to `F − h_t`, then the
 //! ball's fillet of radius `ρ` into the floor, and two grooves leave the
@@ -26,7 +26,7 @@
 //!
 //! Two additions to the Pocket rings:
 //!
-//! - **Leftover pieces (#527).** The rings alone leave some floor more
+//! - **Leftover pieces.** The rings alone leave some floor more
 //!   than half a step-over from a cut: the middle of an innermost ring,
 //!   which gets one more ring inside it (its centre ring, upstream's
 //!   `appendResidualCoreGuides`), and the slivers along the rings' corner
@@ -95,8 +95,8 @@ impl Floor {
     /// [`Floor::inset_mm`] ([`floor_regions`]), less any thinner than twice
     /// `tolerance_mm` (Pocket's noise rule). The medial chains, clamped at
     /// the flat depth, stop as far short of the walls as a dropped piece
-    /// is wide, so the medial strategy passes the wall tolerance (#506,
-    /// [`dc_geometry::wall_tolerance_mm`]), which keeps that under what the
+    /// is wide, so the medial strategy passes the wall tolerance
+    /// ([`dc_geometry::wall_tolerance_mm`]), which keeps that under what the
     /// cone turns into a seat error. Empty where the region is nowhere
     /// wider than `2 · inset_mm`.
     pub(crate) fn regions(&self, region: &Region, tolerance_mm: f64) -> Vec<Region> {
@@ -108,7 +108,7 @@ impl Floor {
 
     /// The floor regions of carved region `region` of `carve`: as
     /// [`Floor::regions`], except that a band region of a carve with an
-    /// open edge (#448, [`super::OpenEdge`]) keeps the band's edge where it
+    /// open edge ([`super::OpenEdge`]) keeps the band's edge where it
     /// is and is inset only from the design ([`surround_floor_regions`]),
     /// less noise.
     pub(crate) fn regions_of(
@@ -174,11 +174,11 @@ pub(crate) struct FloorCut<'a> {
     /// The project's flatten tolerance, mm.
     pub tolerance_mm: f64,
     /// How near the boundary trace draws the arcs it runs along, mm
-    /// ([`super::wall_tolerance_mm`]; #478): the trace is where the flank
+    /// ([`super::wall_tolerance_mm`]): the trace is where the flank
     /// meets the walls, and the cone turns its distance off them into
     /// height. The rings inside it, whose grooves the trace's walls stand
     /// beyond, keep `tolerance_mm`; the leftover pieces between them
-    /// (#527) are found within this one.
+    /// are found within this one.
     pub wall_tolerance_mm: f64,
 }
 
@@ -192,12 +192,12 @@ pub(crate) struct FloorCut<'a> {
 /// `sequence` may link two of them at the floor inside the floor. Nothing
 /// when `floors` is empty.
 ///
-/// After the clearing passes `reached_by` (#406; design step 7; empty
+/// After the clearing passes `reached_by` (design step 7; empty
 /// without them) the boundary trace is still the whole floor's outline and
 /// islands, cut last, but the rings clear only what no pass reached: each
 /// floor region less every pass's reach ([`rest::left_wide_by`], from the
 /// passes' radii, never from their toolpaths: S14; a cusp the passes
-/// leave at a corner is never dropped as noise, #695). Each piece left is
+/// leave at a corner is never dropped as noise). Each piece left is
 /// cleared as a floor region is, its own outline included
 /// (`WallRings::Last`): that outline runs along the edge the end mills left
 /// as well as along the trace, and without it the groove next to that edge
@@ -222,7 +222,7 @@ pub(crate) fn blocks(
 }
 
 /// Where a V-bit may cut the floor of a male Inlay's band whose outer
-/// edge is open (#448; `docs/specs/phase-3/design.md`, "Algorithms →
+/// edge is open (`docs/specs/phase-3/design.md`, "Algorithms →
 /// Inlay", step 4): the end mill cuts that edge upright, and beyond it the
 /// board stands to the stock top.
 #[derive(Debug, Clone)]
@@ -260,7 +260,7 @@ impl OpenFloor {
     }
 }
 
-/// [`blocks`] of a band floor whose outer edge is open (#448), when
+/// [`blocks`] of a band floor whose outer edge is open, when
 /// `open` is set: the V-bit's rings clear only the part of what the
 /// passes leave that lies in [`OpenFloor::tip_room`], and its boundary
 /// trace runs only along the plug's foot, never round the band's edge,
@@ -308,8 +308,8 @@ pub(crate) fn blocks_open(
         let one = std::slice::from_ref(region);
         let reachable = open.within(one, cut.tolerance_mm, cut.tolerance_mm);
         if reaching.is_empty() {
-            // #565: a piece is noise only below the wall tolerance, the
-            // floors' own noise rule (`Floor::regions_of`, #506): the
+            // A piece is noise only below the wall tolerance, the
+            // floors' own noise rule (`Floor::regions_of`): the
             // medial chains on every floor piece kept are dropped, so a
             // piece dropped here is cut by nothing. A floor under 0.02 mm wide
             // in a channel between two strokes is noise at the project's
@@ -352,8 +352,8 @@ fn distance_to_loops(region: &Region, p: Point) -> f64 {
 /// the floor: a Pocket ring tree, innermost first, the region's own
 /// outline and islands last; each ring with its node's region as
 /// `cleared`. What the rings leave more than half a step-over from a cut
-/// (#527, [`Leftovers`]) is cut too: a leaf's middle as rings of its own
-/// before the leaf's ring (its centre ring, #405), the rest from inside
+/// ([`Leftovers`]) is cut too: a leaf's middle as rings of its own
+/// before the leaf's ring (its centre ring), the rest from inside
 /// the rings' laps.
 fn rings_clearing(
     region: &Region,
@@ -420,7 +420,7 @@ fn rings_clearing(
     Ok(out)
 }
 
-/// How far from a cut the floor may be left (#527): half a step-over, the
+/// How far from a cut the floor may be left: half a step-over, the
 /// straight-run ridge's reach, and the tolerance the pieces past it are
 /// found within (the bit's wall tolerance, so the cone turns it into no
 /// more height than the 60° bit's).
@@ -441,13 +441,13 @@ const NEST_DEPTH: usize = 8;
 /// it bounds an arc's pieces at `2π / 1e-6` whatever the tolerance.
 const MIN_FLATTEN_STEP_RAD: f64 = 1e-6;
 
-/// What a node of a floor's ring tree leaves uncut (#527): the points of
+/// What a node of a floor's ring tree leaves uncut: the points of
 /// `node` more than `reach.reach_mm` (half a step-over) from its rings and
 /// from every one of `children` (whose own rings and subtrees cut them),
 /// each piece however small. Measured `reach.tolerance_mm` further in, as
 /// Pocket's `residual_regions` measures them, but no piece is dropped as
 /// noise: a piece a few hundredths across is what a sharp ring corner
-/// leaves (#522), and the cone turns its distance from a cut into height
+/// leaves, and the cone turns its distance from a cut into height
 /// at `1 / tan(α/2)`. Only a piece of no area is dropped.
 fn leftover(node: &Region, children: &[Region], reach: Reach) -> Vec<Region> {
     let by_mm = reach.reach_mm + reach.tolerance_mm;
@@ -469,7 +469,7 @@ fn leftover(node: &Region, children: &[Region], reach: Reach) -> Vec<Region> {
 /// Splices into `rings` (the rings of `region`, cut by node `node`'s lap,
 /// in any order) the leftover pieces of `region` itself ([`leftover`] with
 /// no children), each into the ring it lies nearest, and so on inside
-/// each piece, at most `depth` deep (#527). A piece is about a step-over
+/// each piece, at most `depth` deep. A piece is about a step-over
 /// across, so one ring round it usually covers it; but a piece is wider
 /// where the tree dropped an inset as noise (Pocket's `is_noise`, up to
 /// twice the flatten tolerance across), and its middle then stands that
@@ -528,12 +528,12 @@ fn loops_of(region: &Region) -> impl Iterator<Item = (&Contour, RingKind)> {
         .chain(region.holes().iter().map(|h| (h, RingKind::Hole)))
 }
 
-/// The leftover pieces of a floor's ring tree (#527, [`leftover`]) and
+/// The leftover pieces of a floor's ring tree ([`leftover`]) and
 /// how each is cut.
 #[derive(Debug, Default)]
 struct Leftovers {
     /// The pieces cut as rings of their own, before the first ring of
-    /// their node: a leaf's middle (its centre ring, #405), a piece with
+    /// their node: a leaf's middle (its centre ring), a piece with
     /// an island, or one no ring's lap reaches.
     own: Vec<(usize, Region)>,
     /// The pieces cut from inside a ring's lap: the ring's node, its index
@@ -616,8 +616,8 @@ fn ring_index(region: &Region, ring: &Ring) -> Option<usize> {
 }
 
 /// The loop `contour` (of kind `kind`) cut from inside the lap of the ring
-/// of `region` (node `node`) nearest it, as Pocket splices a residual ring
-/// (#267): the lap leaves the ring at its point nearest the loop's nearest
+/// of `region` (node `node`) nearest it, as Pocket splices a residual ring:
+/// the lap leaves the ring at its point nearest the loop's nearest
 /// vertex, runs straight to that vertex, cuts round the loop and comes
 /// back. Returns the node, the ring's index ([`ring_index`]), the clean-up
 /// and the link's length.
@@ -877,11 +877,11 @@ impl Floor {
     /// The straight-run ridge is `step_over_fraction · F`. Since #527 it
     /// holds at the rings' corners too: [`leftover`] cuts every point the
     /// rings leave more than half a step-over from a cut, so the corner
-    /// ridge (#522) is the straight-run ridge. With clearing passes the
+    /// ridge is the straight-run ridge. With clearing passes the
     /// V-bit's rings cut only what no pass reaches, and the report holds
     /// for them too.
     ///
-    /// With a tapered ball nose (#679) the ridge is the profile's height
+    /// With a tapered ball nose the ridge is the profile's height
     /// half a step-over from a groove, `w⁻¹(s / 2)`: the ball's scallop
     /// `ρ − √(ρ² − s²/4)` while `s / 2 ≤ w_t`.
     pub(crate) fn ridges(

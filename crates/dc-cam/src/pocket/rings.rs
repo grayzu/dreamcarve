@@ -23,14 +23,14 @@
 //! explicit stack here, so a fine step-over on a large pocket cannot
 //! exhaust the call stack.
 //!
-//! Above half the diameter the rings alone leave material standing (#258):
+//! Above half the diameter the rings alone leave material standing:
 //! a ring sweeps `r` either side, so a point more than `r` from its node's
 //! ring and more than `r` from every child is never cut, the middle of a
 //! region too small for another step-over, or a sharp corner of one with a
 //! child. [`RingTree::build`] gives each such node residual rings that
 //! reach it, as upstream's trochoidal pocket does for its leaves
 //! (`appendResidualCoreGuides`). Each residual ring is cut from inside the
-//! lap of the ring that leaves it (#267, [`Splice`]), not as a ring of its
+//! lap of the ring that leaves it ([`Splice`]), not as a ring of its
 //! own, so the far-apart corner pieces cost no lift.
 
 use dc_geometry::simplify::simplify_polygonal;
@@ -60,7 +60,7 @@ pub fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Re
 
 /// The next step of the ring tree inside `region`: [`inset_region`] by
 /// `stepover_mm`, from `region` with its polygonal rings simplified within
-/// half of `tolerance_mm` (#474).
+/// half of `tolerance_mm`.
 ///
 /// A ring that went through `inset_region`'s boolean fallback has its
 /// arcs flattened, and the next offset puts a round join on each of its
@@ -89,7 +89,7 @@ fn stepped(region: &Region, stepover_mm: f64, tolerance_mm: f64) -> Vec<Region> 
 /// area is under the tolerance times its perimeter, a piece thinner than
 /// twice the tolerance (rest machining's rule, [`super::rest`]); for a
 /// circle, a radius under twice the tolerance. A ring that small is
-/// below what a program can be trusted to write (#235: one of radius
+/// below what a program can be trusted to write (one of radius
 /// 0.0002 mm, three arcs whose ends round to one point, failed S6), and
 /// it cuts nothing the ring around it does not already reach within the
 /// tolerance when the step-over is at most the tool radius.
@@ -102,7 +102,7 @@ pub(crate) fn is_noise(region: &Region, tolerance_mm: f64) -> bool {
 }
 
 /// What the rings of a node of `region` whose children are `children`
-/// leave uncut, as regions whose rings cut it (#258): the points more than
+/// leave uncut, as regions whose rings cut it: the points more than
 /// `r` from the node's rings and from every child, which the walk's rings
 /// never reach when the step-over is above `r`. Each ring sweeps `r` either
 /// side, and a child's subtree clears the child, so the rest of the node
@@ -166,16 +166,16 @@ pub struct RingNode {
     pub region: Region,
     /// Indices of the node's children in [`RingTree::nodes`].
     pub children: Vec<usize>,
-    /// A residual node (#258): a leaf that reaches what its parent's rings
+    /// A residual node: a leaf that reaches what its parent's rings
     /// and its siblings leave, not an inset of its parent.
     pub residual: bool,
-    /// For a residual node, where its parent's ring cuts it (#267); `None`
+    /// For a residual node, where its parent's ring cuts it; `None`
     /// when no straight link from a ring of the parent reaches it, and the
     /// node is then cut as a ring of its own.
     pub splice: Option<Splice>,
 }
 
-/// Where a residual node is cut from inside its parent's lap (#267): the
+/// Where a residual node is cut from inside its parent's lap: the
 /// lap leaves its ring at `at`, runs straight to `start`, cuts the
 /// residual ring round to `start`, and runs straight back to `at`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -211,7 +211,7 @@ pub struct Ring {
     /// the ring before it ([`nearest`]), a vertex or a point inside a
     /// segment, which [`split_at`] makes a vertex of the ring's path.
     pub start: Point,
-    /// The residual rings cut from inside this ring's lap (#267), each
+    /// The residual rings cut from inside this ring's lap, each
     /// with the point of this ring it is reached from.
     pub cleanups: Vec<Cleanup>,
 }
@@ -241,8 +241,8 @@ impl RingTree {
     /// `radius_mm`, or `None` when it would have more than `max_nodes`
     /// nodes. Each node's children are its [`inset_region`] by the
     /// step-over, then its [`residual_regions`] as residual leaves. An
-    /// inset that is noise at `tolerance_mm` (`is_noise`) is not a node
-    /// (#235); what it stood for is then in the residual regions. Each
+    /// inset that is noise at `tolerance_mm` (`is_noise`) is not a node;
+    /// what it stood for is then in the residual regions. Each
     /// residual node gets its [`Splice`] when a straight link no longer
     /// than one diameter plus the step-over, inside the parent's region,
     /// joins it to one of the parent's rings (`splice_of`).
@@ -320,7 +320,7 @@ impl RingTree {
     /// `wall` says; with the root's rings omitted, so are its residual
     /// nodes, which reach only what those rings would leave. A residual
     /// node with a [`Splice`] onto a ring that is cut is not visited: it is
-    /// a [`Cleanup`] of that ring (#267). `anchor` is updated to each
+    /// a [`Cleanup`] of that ring. `anchor` is updated to each
     /// ring's point nearest it, which is where that ring will start and
     /// end.
     ///
@@ -336,7 +336,7 @@ impl RingTree {
 
     /// [`RingTree::walk`] over the rings `keep` accepts: a ring it refuses
     /// is not cut, and the next ring starts nearest the end of the last one
-    /// kept. Rest machining refuses the rings that cut only air (#167).
+    /// kept. Rest machining refuses the rings that cut only air.
     ///
     /// # Errors
     ///
@@ -500,8 +500,8 @@ impl RingTree {
 /// The step, mm, at which [`link_inside`] samples a link.
 const SPLICE_SAMPLE_STEP_MM: f64 = 0.1;
 
-/// Where the residual `piece` of `parent` is cut from a ring of `parent`
-/// (#267): the point of one of its rings ([`nearest`], so a straight edge
+/// Where the residual `piece` of `parent` is cut from a ring of `parent`:
+/// the point of one of its rings ([`nearest`], so a straight edge
 /// offers its corners) nearest a vertex of the piece's ring, and the
 /// piece's point nearest that. `None` when the piece has a hole, or when
 /// the straight link between the two is longer than `limit_mm` (one
@@ -587,13 +587,13 @@ pub fn nearest(contour: &Contour, anchor: Option<Point>) -> Result<(Point, f64),
 /// nearest vertex of a Clipper polygon, whose arcs are sampled densely, so
 /// on an arc its nearest vertex is in effect the nearest point, and on a
 /// straight edge it is a corner. DreamCarve keeps arcs, so a circle has
-/// two vertices and its nearest vertex can be far from its nearest point
-/// (#196); the nearest point of an arc stands in for upstream's dense
+/// two vertices and its nearest vertex can be far from its nearest point;
+/// the nearest point of an arc stands in for upstream's dense
 /// vertices. A straight edge offers only its corners, as upstream's does
 /// (the `pocket-offset-rect` golden case links its rings corner to
 /// corner). A point within [`EPS_MM`] of an arc's end is that end, so no
 /// sliver arc is made. Ties go to the earlier segment, points within
-/// `NEAREST_TIE_MM` of the nearest included (#215).
+/// `NEAREST_TIE_MM` of the nearest included.
 fn nearest_to(contour: &Contour, anchor: Point) -> Option<(Point, f64)> {
     let polyline = contour.polyline();
     let first = polyline.vertices().first().map(|v| v.point());
@@ -714,7 +714,7 @@ pub fn closest_point(path: &Polyline, p: Point) -> Option<(Point, f64)> {
 }
 
 /// The part of the closed `ring` from `from` to `to`, two points on it,
-/// the shorter way round, as an open path keeping the ring's arcs (#202).
+/// the shorter way round, as an open path keeping the ring's arcs.
 /// Ties go the ring's own way. `None` when either point is not on it.
 #[must_use]
 pub fn shorter_way(ring: &Polyline, from: Point, to: Point) -> Option<Polyline> {

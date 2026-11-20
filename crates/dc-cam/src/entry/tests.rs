@@ -634,7 +634,7 @@ fn helix_placed_near_target_not_roomiest_spot() {
 /// 6.8532 mm, by a 3.2349 mm tool, rotated −5.49°), entered by a 0.976
 /// helix at 9.316° at a raster start on the island's flattened circle.
 /// The reachable placement's handoff to it was checked with the target
-/// slack (#213) along its whole length, so it ran 0.0051 mm inside the
+/// slack along its whole length, so it ran 0.0051 mm inside the
 /// island's chords, 0.0151 mm inside its circle: past the flatten
 /// tolerance S9 allows, into the island. The slack is for the piece
 /// that ends on the target; the rest of the handoff stays in the

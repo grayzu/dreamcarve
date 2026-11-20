@@ -301,7 +301,7 @@ fn square_and_lines(lines: &[(&str, Polyline)]) -> Project {
     project(&definitions, &instances)
 }
 
-/// #206: an open line cut On line beside a part, closer than the tool
+/// An open line cut On line beside a part, closer than the tool
 /// radius to its outline, or crossing it, warns as two close parts do.
 #[test]
 fn open_on_line_path_too_close_to_a_part_warns() {
@@ -327,7 +327,7 @@ fn open_on_line_path_too_close_to_a_part_warns() {
     assert!(gap_mm(found[0]).abs() < TOL, "{:?}", found[0]);
 }
 
-/// #206: a line a tool radius clear of the part is quiet.
+/// A line a tool radius clear of the part is quiet.
 #[test]
 fn open_line_far_from_shapes_is_quiet() {
     let p = square_and_lines(&[("l", line((43.5, 20.0), (43.5, 40.0)))]);
@@ -335,7 +335,7 @@ fn open_line_far_from_shapes_is_quiet() {
     assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
 }
 
-/// #206: two open lines closer than the radius, or crossing, are two
+/// Two open lines closer than the radius, or crossing, are two
 /// shapes whose cuts meet; each has its own line, so it is never
 /// compared with itself.
 #[test]
@@ -363,7 +363,7 @@ fn open_lines_too_close_to_each_other_warn() {
     assert!(gap_mm(found[0]).abs() < TOL, "{:?}", found[0]);
 }
 
-/// #206: a line in a part's material belongs to that part's region,
+/// A line in a part's material belongs to that part's region,
 /// as a hole does, so it is not compared with the part's own lines
 /// (a cut into the part, not a second shape beside it). A slot from
 /// the square's left edge touches it, which D6 would warn about with
@@ -384,7 +384,7 @@ fn open(points: &[(f64, f64)]) -> Polyline {
     )
 }
 
-/// #224: one open path in the waste whose stretches far apart along it
+/// One open path in the waste whose stretches far apart along it
 /// come closer than the tool radius warns `toolpaths_overlap` against
 /// itself, as two separate paths there do: a U with legs 2 mm apart,
 /// and a square spiral whose turns are 2 mm apart, both on bare stock
@@ -430,7 +430,7 @@ fn self_close_open_path_in_the_waste_warns() {
     assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
 }
 
-/// #224: a smooth curve, an L and a 60° V in the waste never come
+/// A smooth curve, an L and a 60° V in the waste never come
 /// within the radius of themselves away from their neighbouring
 /// stretches and corners, so they are quiet.
 #[test]

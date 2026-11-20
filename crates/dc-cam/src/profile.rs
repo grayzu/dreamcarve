@@ -95,13 +95,13 @@ pub fn traversal_is_ccw(wall: Wall, direction: CutDirection) -> bool {
 /// The open-path direction rule: true when an open path cut on `side`
 /// with `direction` runs from its last vertex to its first.
 ///
-/// Left and Right (#207) cut one flank of the bit against kept material,
+/// Left and Right cut one flank of the bit against kept material,
 /// so `direction` is the milling mode, as in [`traversal_is_ccw`]: climb
-/// keeps the part on the right of travel (#287). Left runs the tool to the
+/// keeps the part on the right of travel. Left runs the tool to the
 /// path's left with the part beyond the path, which is on the tool's right
 /// going from the first vertex to the last; Right is the mirror. On line
 /// cuts with both flanks, so no milling mode exists and `direction` picks
-/// the starting end as VCarve's does (#242): "Conventional starts cutting
+/// the starting end as VCarve's does: "Conventional starts cutting
 /// at the Start point Climb cutting starts cutting at the end point".
 fn open_runs_reversed(side: Side, direction: CutDirection) -> bool {
     let climb = direction == CutDirection::Climb;
@@ -129,7 +129,7 @@ enum Role {
 ///
 /// Inside and Outside are relative to the part (the region's area), so a
 /// hole is offset the opposite way to its outer. Left and Right cut no
-/// closed outline (#207), and their closed targets are set aside before
+/// closed outline, and their closed targets are set aside before
 /// any is placed: [`CamError::Internal`] for one, which would otherwise
 /// be cut on its line.
 fn placement(side: Side, role: Role) -> Result<(Offset, Wall), CamError> {
@@ -149,7 +149,7 @@ fn placement(side: Side, role: Role) -> Result<(Offset, Wall), CamError> {
 }
 
 /// How far, mm, a Profile's last pass may step from the path its earlier
-/// passes cut onto its own (#339): the most it may take off anywhere, a
+/// passes cut onto its own: the most it may take off anywhere, a
 /// third of the bit `diameter_mm` or a square corner's `√2 · a` plus
 /// 0.05 mm, and 0.05 mm for the sampling that holds it there. The safety
 /// pass's S9 holds a Left or Right last pass's step to the same bound.
@@ -206,7 +206,7 @@ pub fn generate_profile(
 }
 
 /// [`generate_profile`] with its passes starting `start_depth_mm` below
-/// the stock top (#443, a male Inlay's cut-out, whose floor the carve has
+/// the stock top (a male Inlay's cut-out, whose floor the carve has
 /// already cleared): the first pass is a step-down below that plane, and
 /// no pass cuts above it. Everything else, safe Z, the rapids' clearance
 /// above the stock top, the tab heights and the through-cut limit, keeps
@@ -229,7 +229,7 @@ fn profile_below(
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
     let tool = tool_of(project, &op.id, &op.tool)?;
     // Outside and Inside offset by half the diameter, right only for a flat
-    // end mill at every depth (#67). On the line the tool centre follows
+    // end mill at every depth. On the line the tool centre follows
     // the line, so any cutter cuts it as drawn.
     if op.side != Side::OnLine && !tool.cutter.is_flat() {
         return Err(CamError::CutterNotFlat {
@@ -249,12 +249,12 @@ fn profile_below(
     let step_down_mm = context::step_down_mm(&op.id, op.step_down_mm, tool)?;
     let thickness_mm = context::thickness_mm(project)?;
     let depth_mm = context::depth_mm(&op.id, op.depth_mm)?;
-    // #284: a last pass, with its own depth when it sets a thickness.
+    // A last pass, with its own depth when it sets a thickness.
     let last_pass = op.last_pass.as_ref();
     if let Some(last_pass) = last_pass {
         last_pass::check(op, last_pass, tool.diameter_mm, depth_mm, step_down_mm)?;
     }
-    // #443: from a plane below the stock top, the passes step down from
+    // From a plane below the stock top, the passes step down from
     // it as from a thinner stock's top.
     let pass_z = last_pass::pass_z(
         op,
@@ -275,7 +275,7 @@ fn profile_below(
     let start_z_mm = entry::descent_start_z_mm(thickness_mm, safe_z_mm);
 
     // A tab request is checked before the targets, as phase 2 checked
-    // its tab setting (#105: it is placed, then cut as placed tabs).
+    // its tab setting (it is placed, then cut as placed tabs).
     let request = op
         .tabs
         .as_ref()
@@ -285,7 +285,7 @@ fn profile_below(
     let mut warnings = Vec::new();
     // The tab range warnings come first, where phase 2 gave them.
     let range_at = warnings.len();
-    // #175: On line cuts open paths too; Inside and Outside skip them.
+    // On line cuts open paths too; Inside and Outside skip them.
     let (shapes, open_paths, regions) = target_geometry(project, op, &mut warnings)?;
     let radius_mm = tool.diameter_mm / 2.0;
     let reversed_open = open_runs_reversed(op.side, op.direction);
@@ -299,7 +299,7 @@ fn profile_below(
         stock_to_leave_mm,
         &mut warnings,
     )?;
-    // #285: an explicit start re-seams each closed path, and its stock to leave
+    // An explicit start re-seams each closed path, and its stock to leave
     // twin, nearest the start point, before the tabs are laid on it.
     let (placed, fixed) = start::seat(project, op, placed)?;
     let walls: Vec<(Wall, Option<usize>)> = placed.iter().map(|c| (c.wall, c.region)).collect();
@@ -311,7 +311,7 @@ fn profile_below(
         paths.push((c.path, c.shape));
     }
 
-    // Tab layout per path, and one block per path per pass (#105): the
+    // Tab layout per path, and one block per path per pass: the
     // placed tabs on each path's outline, and the tabs a request asks for.
     let TabPlan {
         tabs,
@@ -335,7 +335,7 @@ fn profile_below(
         warnings.splice(range_at..range_at, range);
     }
     // A hole tab that holds its slug does because the user asked:
-    // `tabs place` warned when it placed it (#300, #302).
+    // `tabs place` warned when it placed it.
     for (tab, shape, _) in on_holes.into_iter().filter(|(_, _, asked)| !asked) {
         warnings.push(Warning::TabOnHole {
             op: op.id.clone(),
@@ -343,7 +343,7 @@ fn profile_below(
             shape,
         });
     }
-    // #285: a requested tab with nowhere off its corner is cut there.
+    // A requested tab with nowhere off its corner is cut there.
     for ((_, shape), on) in paths.iter().zip(&on_corners_mm) {
         warnings.extend(
             on.iter()
@@ -355,7 +355,7 @@ fn profile_below(
                 }),
         );
     }
-    // #284: the part's `n` paths, then each one's stock to leave twin, which
+    // The part's `n` paths, then each one's stock to leave twin, which
     // the passes before the last cut; `twin_of` finds it. A twin's tabs
     // are its part path's, carried onto it and widened by the stock to leave;
     // a reversed last pass runs its path the other way from the same
@@ -363,7 +363,7 @@ fn profile_below(
     let n = paths.len();
     let mut walls = walls;
     let mut layouts = layouts;
-    // #362: a lap rises over every tab its bit reaches, not only its own
+    // A lap rises over every tab its bit reaches, not only its own
     // outline's. Each part path, and further down each one's stock to leave
     // twin, rises over the tabs the other part paths' last passes leave,
     // standing from their floor (`reached`).
@@ -444,7 +444,7 @@ fn profile_below(
             .zip(reversed.iter_mut())
             .take(n);
         for (((path, _), layout), flag) in part_paths {
-            // #311: an open path's last pass runs from its other end,
+            // An open path's last pass runs from its other end,
             // where the earlier passes end, its tabs measured from there.
             let back = if path.is_closed() {
                 last_pass::reversed_from_start(path)
@@ -508,7 +508,7 @@ fn profile_below(
         Vec::new()
     };
     let below_tabs = |z_mm: f64| tabs.as_ref().is_some_and(|t| z_mm < t.top_z_mm() - EPS_MM);
-    // #339: each stock to leave twin's part path, whose last pass enters from
+    // Each stock to leave twin's part path, whose last pass enters from
     // the twin.
     let mut part_of: Vec<Option<usize>> = vec![None; paths.len()];
     for (i, twin) in twin_of.iter().enumerate() {
@@ -539,17 +539,17 @@ fn profile_below(
         )?,
         None => paths.iter().map(|_| None).collect(),
     };
-    // #176: a path whose entry has no room at its start for the tabs
+    // A path whose entry has no room at its start for the tabs
     // starts where it has, on every pass; its tabs stay put. A path with a
-    // lead keeps the lead's seam, and one with an explicit start its start
-    // (#285). The domains are the same either way.
+    // lead keeps the lead's seam, and one with an explicit start its start.
+    // The domains are the same either way.
     let kept: Vec<bool> = leads
         .iter()
         .zip(&fixed)
         .map(|(lead, fixed)| lead.is_some() || *fixed)
         .collect();
     let mut seams = tab_seams(&setup, &domains, &kept)?;
-    // #339: a closed part path whose seam is free starts within a step
+    // A closed part path whose seam is free starts within a step
     // of where its twin starts, where the last pass enters from the
     // twin's kerf: as it is when it already does, else at its point
     // nearest there.
@@ -637,9 +637,9 @@ fn profile_below(
     let mut blocks = Vec::with_capacity(n * pass_z.len());
     // The part's path each block cuts, for naming contours in cut order.
     let mut block_paths = Vec::with_capacity(blocks.capacity());
-    // #335: each shape's tightest inside arc held at the floor feed.
+    // Each shape's tightest inside arc held at the floor feed.
     let mut tight_arcs: Vec<(ShapeRef, f64)> = Vec::new();
-    // #350: each shape's tightest bend of straight cuts.
+    // Each shape's tightest bend of straight cuts.
     let mut bends: Vec<(ShapeRef, last_pass::FlattenedBend)> = Vec::new();
     let ctx = PassCtx {
         op,
@@ -674,7 +674,7 @@ fn profile_below(
         let shape = at(&paths, i, "a part path is missing")?.1;
         for (pass, &z_mm) in pass_z.iter().enumerate() {
             let block = match twin {
-                // #339: the last pass enters from its twin's kerf.
+                // The last pass enters from its twin's kerf.
                 Some(t) if pass == last_index => {
                     let entered = last_pass_block(
                         &ctx,
@@ -714,7 +714,7 @@ fn profile_below(
                     }
                     entered.block
                 }
-                // #284: every pass but the last cuts the stock to leave twin.
+                // Every pass but the last cuts the stock to leave twin.
                 _ => {
                     let p = path_at(twin.unwrap_or(i))?;
                     pass_block(&ctx, &p, pass, z_mm, &mut previous, &mut entry_warnings)?
@@ -786,7 +786,7 @@ fn profile_below(
         }
     }
     // D6: paths in cut order, so the warnings follow it; each part path's
-    // stock to leave twin, cut before it, with it (#284).
+    // stock to leave twin, cut before it, with it.
     let mut cut_paths: Vec<CutPath<'_>> = Vec::with_capacity(paths.len());
     for (cut_index, &path_index) in path_order.iter().enumerate() {
         let (path, shape) = at(&paths, path_index, "the cut order names a missing path")?;
@@ -816,7 +816,7 @@ fn profile_below(
             ));
         }
     }
-    // #207: a Left or Right cut that comes within the radius of another
+    // A Left or Right cut that comes within the radius of another
     // line, D6's condition, was refused above (`check_kept_sides`).
     if !op.side.is_open_path_side() {
         warnings.extend(overlap_warnings(
@@ -832,10 +832,10 @@ fn profile_below(
     }
 
     // Corner relief among each shape's own passes, never after the pass
-    // that frees it (`crate::relief`, #189); a freeing pass's notches are
-    // cut from inside its lap (#193). With a last pass stock to leave only the
+    // that frees it (`crate::relief`); a freeing pass's notches are
+    // cut from inside its lap. With a last pass stock to leave only the
     // last pass runs on the part's paths, so it opens every notch's column
-    // and cuts every level (#284).
+    // and cuts every level.
     // The part paths, the first `n`, that cut a region's wall: relief
     // looks each region's paths up by its index, and an open path bounds
     // no region.
@@ -864,9 +864,9 @@ fn profile_below(
     )?;
     input.blocks.extend(notches);
     let toolpath = sequence(&input)?;
-    // #62: the cutter must stay on the stock.
+    // The cutter must stay on the stock.
     op_ctx.check_on_stock(&toolpath, radius_mm)?;
-    // #310 review: a one-pass cut has no pass to leave the stock to leave.
+    // A one-pass cut has no pass to leave the stock to leave.
     if last_pass.is_some() && pass_z.len() < 2 {
         warnings.push(Warning::LastPassUnused { op: op.id.clone() });
     }
@@ -874,7 +874,7 @@ fn profile_below(
 }
 
 /// A Profile's targets placed in project space: its closed shapes, the
-/// open paths it cuts (On line only, #175), and the closed shapes nested
+/// open paths it cuts (On line only), and the closed shapes nested
 /// into regions. Shapes drawn twice are dropped with a warning.
 type TargetGeometry = (
     Vec<(ShapeRef, Contour)>,
@@ -888,7 +888,7 @@ fn target_geometry(
     op: &ProfileOp,
     warnings: &mut Vec<Warning>,
 ) -> Result<TargetGeometry, CamError> {
-    // #207: Left and Right cut open paths only and skip closed outlines.
+    // Left and Right cut open paths only and skip closed outlines.
     let mut open_paths = Vec::new();
     let keep_open = op.side.cuts_open_paths().then_some(&mut open_paths);
     let mut shapes = resolve_shapes(project, &op.id, &op.targets, keep_open, warnings)?;
@@ -914,8 +914,8 @@ fn target_geometry(
             duplicate_of: kept.clone(),
         });
     }
-    // #221: an open path drawn twice is cut once, as a closed shape is.
-    // #207: drawn the other way, its left is the other side, so under Left
+    // An open path drawn twice is cut once, as a closed shape is.
+    // Drawn the other way, its left is the other side, so under Left
     // and Right only a copy drawn the same way repeats it.
     let open_paths = drop_duplicate_paths(open_paths, !op.side.is_open_path_side(), warnings);
     Ok((shapes, open_paths, regions))
@@ -934,7 +934,7 @@ struct CentrePath<'s> {
     region: Option<usize>,
     /// The shape is a hole.
     hole: bool,
-    /// #284: the stock path the passes before the last cut instead,
+    /// The stock path the passes before the last cut instead,
     /// `stock_to_leave_mm` farther from the shape, running the same way.
     twin: Option<Polyline>,
 }
@@ -942,12 +942,12 @@ struct CentrePath<'s> {
 /// Every tool-centre path of `op` cut with `tool`, in drawing order:
 /// each closed shape offset per `op.side` and oriented per
 /// [`traversal_is_ccw`], then each open path as drawn (reversed under
-/// climb, #242). Shapes the tool does not fit warn
+/// climb). Shapes the tool does not fit warn
 /// [`Warning::ToolTooLarge`]; bands narrower than the tool fail. With a
-/// last pass `stock_to_leave_mm` (#284) each closed shape's path has its
+/// last pass `stock_to_leave_mm` each closed shape's path has its
 /// stock to leave twin, or the shape is refused ([`last_pass::twins`]); so has
-/// each Left or Right piece of an open path (#311,
-/// [`last_pass::open_twins`]).
+/// each Left or Right piece of an open path
+/// ([`last_pass::open_twins`]).
 #[allow(
     clippy::too_many_arguments,
     reason = "every argument is one fact about the paths; a struct would only rename them"
@@ -997,7 +997,7 @@ fn centre_paths<'s>(
                 shapes,
                 tolerance_mm,
             )?;
-            // #284: each part path's stock to leave twin.
+            // Each part path's stock to leave twin.
             let twins: Vec<Option<Contour>> = match stock_to_leave_mm {
                 Some(stock_to_leave_mm) => {
                     let outline = last_pass::Outline {
@@ -1049,7 +1049,7 @@ fn centre_paths<'s>(
         }
     }
     check_open_bands(op, tool, regions, shapes, open_paths, tolerance_mm)?;
-    // #207: Left and Right cut each open path offset by the radius to that
+    // Left and Right cut each open path offset by the radius to that
     // side, looking from its first vertex to its last; a path whose
     // offset vanishes is not cut. The cut keeps the radius from every
     // other line and from the strip each line keeps.
@@ -1081,7 +1081,7 @@ fn centre_paths<'s>(
         open_centres.push((shape, centres));
         open_lines.push(path);
     }
-    // #311: each Left or Right piece's stock to leave twin, the path offset by
+    // Each Left or Right piece's stock to leave twin, the path offset by
     // `r + a` to the same side, ending on the same end normals; then the
     // twins held to the kept-side rule with the radius grown by `a`.
     let mut open_twins: Vec<Vec<Option<Polyline>>> = open_centres
@@ -1110,10 +1110,10 @@ fn centre_paths<'s>(
                 .collect();
         }
     }
-    // #175: an open path is cut On line as drawn, from the end
+    // An open path is cut On line as drawn, from the end
     // `open_runs_reversed` picks (#242 On line, #287 Left and Right); a
-    // Left or Right offset of one (#207) from the end beside that vertex,
-    // and its stock to leave twin (#311) the same way. It bounds no region, so
+    // Left or Right offset of one from the end beside that vertex,
+    // and its stock to leave twin the same way. It bounds no region, so
     // no containment and no waste domain; its wall is never asked.
     let reversed_open = open_runs_reversed(op.side, op.direction);
     let as_cut = |path: Polyline| if reversed_open { path.reversed() } else { path };
@@ -1145,8 +1145,8 @@ fn centre_paths<'s>(
 /// What [`plan_tabs`] reports for a path with no entry in `holes`.
 const NO_HOLE_FLAG: &str = "a Profile path does not say whether it is cut round a hole";
 
-/// The tabs a Profile cuts on each of its tool-centre paths (#105,
-/// ADR-0005), in path order.
+/// The tabs a Profile cuts on each of its tool-centre paths
+/// (ADR-0005), in path order.
 pub(crate) struct TabPlan {
     /// What the tabs share; `None` when the operation crosses no placed
     /// tab and requests none.
@@ -1162,9 +1162,8 @@ pub(crate) struct TabPlan {
     pub tops_z_mm: Vec<f64>,
     /// The placed tabs cut on a path round a hole, with the hole, and
     /// whether the tab holds the slug, so does not warn: its
-    /// `holds_slug` (#302), or, unset, whether it sits on that path, where
-    /// placing a request or `--count` that asked for tabs on holes puts it
-    /// (#300).
+    /// `holds_slug`, or, unset, whether it sits on that path, where
+    /// placing a request or `--count` that asked for tabs on holes puts it.
     pub on_holes: Vec<(TabId, ShapeRef, bool)>,
     /// Every placed tab the operation crosses, in project order.
     pub crossed: Vec<TabId>,
@@ -1173,7 +1172,7 @@ pub(crate) struct TabPlan {
     /// Per path, what the request asked and cut when it cut some down.
     pub request_reductions: Vec<Option<(Reduced, Vec<f64>)>>,
     /// Per path, where each tab the request leaves on a corner is
-    /// centred, mm along it as tabs are measured on it, and why (#285).
+    /// centred, mm along it as tabs are measured on it, and why.
     pub on_corners_mm: Vec<Vec<(f64, TabOnCornerReason)>>,
 }
 
@@ -1182,7 +1181,7 @@ pub(crate) struct TabPlan {
 /// `reversed_open`), cut with a tool `diameter_mm` wide.
 ///
 /// A tab `request` is laid per path as phase 2 laid the tab setting
-/// ([`Request::fit`], #109). Each placed tab of [`Project::tabs`] on an
+/// ([`Request::fit`]). Each placed tab of [`Project::tabs`] on an
 /// outline `op` cuts goes on the path of that outline nearest it, centred
 /// at the path's point nearest the tab ([`nearest_point`]), when that
 /// path comes within the tool radius plus half the tab's width of where
@@ -1226,7 +1225,7 @@ fn plan_tabs(
             on_corners.push(Vec::new());
             continue;
         };
-        // #109: a part keeps a tab; a hole or an open path may not.
+        // A part keeps a tab; a hole or an open path may not.
         let least = if hole || !path.is_closed() {
             Least::Zero
         } else {
@@ -1302,9 +1301,9 @@ fn plan_tabs(
         });
         crossed.push(tab.id.clone());
         if *at(holes, j, NO_HOLE_FLAG)? {
-            // #302: the tab says whether it holds the slug. A format 14
+            // The tab says whether it holds the slug. A format 14
             // tab does not; only `place` with `on_holes` put one on this
-            // path round a hole, so one still on it was asked for (#300).
+            // path round a hole, so one still on it was asked for.
             let holds_slug = tab.holds_slug.unwrap_or(near.gap_mm <= EPS_MM);
             on_holes.push((tab.id.clone(), shape.clone(), holds_slug));
         }
@@ -1365,13 +1364,13 @@ fn plan_tabs(
 }
 
 /// The tool-centre paths of a Profile with the shape each cuts, and its
-/// tab plan ([`plan_tabs`]), without its toolpath (#105).
+/// tab plan ([`plan_tabs`]), without its toolpath.
 pub(crate) struct OpTabs {
     /// Each tool-centre path with the shape it cuts, in drawing order.
     pub paths: Vec<(Polyline, ShapeRef)>,
     /// Whether each path is cut round a hole.
     pub holes: Vec<bool>,
-    /// The operation cuts open paths from their last vertex (#242).
+    /// The operation cuts open paths from their last vertex.
     pub reversed_open: bool,
     /// The tool's diameter, mm.
     pub diameter_mm: f64,
@@ -1406,7 +1405,7 @@ fn op_tabs_unnamed(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError
         .transpose()?;
     let mut ignored = Vec::new();
     let (shapes, open_paths, regions) = target_geometry(project, op, &mut ignored)?;
-    // Tabs are laid on the part's paths (#284), whatever the last pass.
+    // Tabs are laid on the part's paths, whatever the last pass.
     let centres = centre_paths(
         op,
         tool,
@@ -1417,7 +1416,7 @@ fn op_tabs_unnamed(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError
         None,
         &mut ignored,
     )?;
-    // #285: tabs a request lays count from the start point.
+    // Tabs a request lays count from the start point.
     let (centres, _) = start::seat(project, op, centres)?;
     let holes: Vec<bool> = centres.iter().map(|c| c.hole).collect();
     let paths: Vec<(Polyline, &ShapeRef)> =
@@ -1441,7 +1440,7 @@ fn op_tabs_unnamed(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError
     })
 }
 
-/// #192, #199: the band between two lines of one region, its outline
+/// The band between two lines of one region, its outline
 /// and its islands, must be at least as wide as the tool.
 ///
 /// - **Inside**, the band is waste and the material beyond every line is
@@ -1455,10 +1454,10 @@ fn op_tabs_unnamed(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError
 ///   closer than the diameter to another line of `region` cuts through
 ///   the band together with that line's cut: the part loses material it
 ///   keeps. `contour` is also measured against itself
-///   ([`check_self_band`], #221; `tolerance_mm` is the project's flatten
+///   ([`check_self_band`]; `tolerance_mm` is the project's flatten
 ///   tolerance, where it meets itself). A region's outline whose inset by
 ///   `r` is empty bounds a part the cut removes whole, however short its
-///   outline: [`CamError::PartNarrowerThanTool`] (#223). Its holes need no
+///   outline: [`CamError::PartNarrowerThanTool`]. Its holes need no
 ///   such check: one within `d` of the outline is refused above.
 /// - **Outside** needs no check: there the outline's path runs outside
 ///   the region and every hole's inside its hole, so each is at least `r`
@@ -1470,7 +1469,7 @@ fn op_tabs_unnamed(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError
 /// [`Warning::ToolpathsOverlap`]; under Inside never closer than `r`
 /// once this check passes.
 ///
-/// With a last pass `stock_to_leave_mm` (#284, more than 0), `centres` are the
+/// With a last pass `stock_to_leave_mm` (more than 0), `centres` are the
 /// stock paths, `r + a` from `contour`, and Inside each must keep
 /// `r + a` from every other line, so it cuts neither that line's skin nor
 /// the part: the band must be `D + 2a` wide, or
@@ -1493,7 +1492,7 @@ pub(super) fn check_band(
     let reach_mm = match side {
         Side::Inside => tool.diameter_mm / 2.0 + stock_to_leave_mm,
         Side::OnLine => tool.diameter_mm,
-        // Left and Right cut no closed outline (#207).
+        // Left and Right cut no closed outline.
         Side::Outside | Side::Left | Side::Right => return Ok(()),
     };
     let others = region_shapes(region, shapes)?;
@@ -1531,7 +1530,7 @@ pub(super) fn check_band(
     if side != Side::OnLine {
         return Ok(());
     }
-    // #223: a part nowhere as wide as the bit is removed whole, however
+    // A part nowhere as wide as the bit is removed whole, however
     // short its outline (the self-band check below compares only
     // stretches `√2·d` apart along it, and a small circle has none).
     if contour == region.outer() && inset_is_empty(contour, tool.diameter_mm / 2.0) {
@@ -1547,7 +1546,7 @@ pub(super) fn check_band(
 }
 
 /// Whether the part lies between points `p` and `q` of `line`, a line of
-/// `region` (#221): the point midway lies in the region's material, a
+/// `region`: the point midway lies in the region's material, a
 /// quarter of their gap or more from `line`. Across a notch or a hole's
 /// neck it lies in the waste; between two points along one edge, as
 /// either side of a notch's mouth, it lies on the line.
@@ -1567,7 +1566,7 @@ fn material_between(region: &Region, line: &Polyline, p: Point, q: Point) -> boo
 /// spiral with tight turns, or an outline with a narrow neck does:
 /// [`CamError::BandNarrowerThanTool`] naming `shape` twice. Neighbouring
 /// stretches are not compared, so a smooth curve and a corner of 90° or
-/// more pass. A corner sharper than 90° is where two lines meet (#210):
+/// more pass. A corner sharper than 90° is where two lines meet:
 /// its arms are set aside within `√2·d` of its tip, so a V of 45° or more
 /// passes and a sharper one is refused. So are stretches near where the
 /// line touches or crosses itself. `counts` takes the closest points of a
@@ -1633,7 +1632,7 @@ fn drop_duplicate_paths(
 /// is worth making.
 const SQUARE_END_MM: f64 = 1e-4;
 
-/// #342: every piece of an open path's Left or Right offset `pieces`, by
+/// Every piece of an open path's Left or Right offset `pieces`, by
 /// `left_mm` (positive to the left, the radius, or the radius plus
 /// `stock_to_leave_mm` for the passes before the last), must end square on the
 /// normals through `path`'s end vertices (A8, "Ends"). The offset of the
@@ -1706,7 +1705,7 @@ fn check_open_ends(
     Ok(())
 }
 
-/// #207: the band rule for a Left or Right Profile. The side its cutter
+/// The band rule for a Left or Right Profile. The side its cutter
 /// runs on is waste and the other side is the part, so the bit must not
 /// cross another line of the operation, nor reach the material a line
 /// keeps beside it. Each path of `centres` (the open paths `open` offset
@@ -1715,16 +1714,16 @@ fn check_open_ends(
 /// offset by the radius to its other side, so the strip one radius wide
 /// beside it is never cut. The strip is closed at each end by the normal
 /// through the end vertex, a radius long and cut short at the first line
-/// it meets ([`strip_ends`], #342), so a cut that reaches past an end
+/// it meets ([`strip_ends`]), so a cut that reaches past an end
 /// into the strip is refused too, as S9 refuses it. A path is held to its own kept edge too, which
 /// catches a spiral or hairpin whose cut reaches what the line keeps
 /// further along; it keeps its own line by construction
 /// ([`offset_open`]). Lines that meet are not set aside, unlike On line's
-/// #210: a square end that runs onto the next line of a part drawn as
+/// A square end that runs onto the next line of a part drawn as
 /// separate lines cuts into it. [`CamError::CutsIntoKeptSide`], the
 /// shapes in drawing order.
 ///
-/// With a last pass `stock_to_leave_mm` (#311, more than 0), `centres` are the
+/// With a last pass `stock_to_leave_mm` (more than 0), `centres` are the
 /// stock paths, `r + a` from their lines, and each must keep `r + a`
 /// from every other line and every kept edge, so it takes neither another
 /// line's skin, which that line's last pass is to cut, nor any of the
@@ -1789,14 +1788,14 @@ fn check_kept_sides(
 
 /// How far from a point where two lines of one region meet their On line
 /// cuts may come closer than the tool's diameter, as a multiple of the
-/// diameter (#210): √2, so two straight lines that meet at 45° or more
+/// diameter: √2, so two straight lines that meet at 45° or more
 /// pass, and a line that meets another and then runs alongside it does
 /// not. S9 (`dc-gcode`'s material check) holds programs to the same rule.
 pub(crate) const MEETING_REACH_DIAMETERS: f64 = std::f64::consts::SQRT_2;
 
 /// #210: #199's On line band check for the open paths an On line Profile
 /// cuts. An open path that a region's material holds
-/// ([`region_holds_path`], #206) is compared with every line of that
+/// ([`region_holds_path`]) is compared with every line of that
 /// region, its outline and its holes, and with every later open path the
 /// same region holds. Where it comes closer than the tool's diameter `d`
 /// (less [`EPS_MM`]) to one, the two cuts together cut through the part
@@ -1868,7 +1867,7 @@ fn check_open_bands(
                 diameter_mm,
             });
         }
-        // #221: and with itself. The region holds all of it, so the part
+        // And with itself. The region holds all of it, so the part
         // lies on both sides of every stretch.
         check_self_band(&op.id, shape, path, tool, tolerance_mm, |_, _| true)?;
     }
@@ -1879,7 +1878,7 @@ fn check_open_bands(
 /// a straight plunge to `start` (into the lap's start Z, which a tab span
 /// over the path start raises above `z_mm`), then the lap. The descent
 /// starts at safe Z on the first pass and after it at the previous pass Z
-/// or the lap's start Z, whichever is higher (#337: on a tab, never below
+/// or the lap's start Z, whichever is higher (on a tab, never below
 /// its height).
 /// It frees material on the final pass when that reaches the stock bottom.
 #[allow(
@@ -1907,7 +1906,7 @@ fn contour_block(
     // The lap starts where the descent ends: on a tab, the tab's height.
     let entry_z_mm = descent.last().map_or(z_mm, |m| m.to.z);
     let exit = lap.moves.last().map_or(start, |m| m.to.xy());
-    // #337: a lap that starts on a tab starts at the tab's height. The
+    // A lap that starts on a tab starts at the tab's height. The
     // pass before left the tab there, and a lap that also started on it
     // ended there, so the descent never goes below that height at the
     // start: it would plunge into the tab. The lap comes down off the tab
@@ -1960,17 +1959,17 @@ struct PassCtx<'a> {
     tabs: Option<&'a Tabs>,
     pass_z: &'a [f64],
     /// The step-down in effect, the operation's or else the tool's, mm
-    /// (#348: no plunge goes deeper into uncut material).
+    /// (no plunge goes deeper into uncut material).
     step_down_mm: f64,
     safe_z_mm: f64,
-    /// Where a descent starts with no pass above it (#214).
+    /// Where a descent starts with no pass above it.
     start_z_mm: f64,
-    /// The stock top, mm (#356).
+    /// The stock top, mm.
     top_z_mm: f64,
     rates: LapRates,
     tolerance_mm: f64,
     /// The operation's regions: the lines no cut may come nearer than the
-    /// bit's radius (#339 review: the last pass's step).
+    /// bit's radius (the last pass's step).
     regions: &'a [Region],
 }
 
@@ -1997,7 +1996,7 @@ impl PassPath<'_> {
 /// entry, and whether it is led in; `None` for a path with no vertices.
 /// `previous` is the entry the path's pass before cut (see
 /// [`PathEntry::descend`]). A lap that starts on a tab comes down onto it,
-/// never into it (#337).
+/// never into it.
 fn pass_block(
     ctx: &PassCtx<'_>,
     p: &PassPath<'_>,
@@ -2070,7 +2069,7 @@ fn pass_block(
         };
         if on_tab {
             // The start sits under a tab span: the lap starts on the tab,
-            // and the block comes down onto it, never into it (#337); only
+            // and the block comes down onto it, never into it; only
             // the first pass that reaches the tab top there plunges, warned.
             if block.descent_from_z_mm - lap_start_z_mm > EPS_MM {
                 entry_warnings.record(
@@ -2080,7 +2079,7 @@ fn pass_block(
             }
             *previous = Some(CutEntry::new(false, EntryKind::Plunge));
         } else {
-            // #214: the first pass's ramp or helix starts just above the
+            // The first pass's ramp or helix starts just above the
             // stock, not at safe Z.
             let from_z_mm = if pass == 0 {
                 ctx.start_z_mm
@@ -2118,15 +2117,15 @@ struct Entered {
     /// The last pass's lead-in was left off: its staging point lies too far
     /// from the twin's kerf to step to.
     lead_dropped: bool,
-    /// #335: the tightest inside arc whose feed is held at
+    /// The tightest inside arc whose feed is held at
     /// `EdgeFeed::floor_fraction`, where the edge moves faster than the feed.
     tight_mm: Option<f64>,
-    /// #350: the tightest bend of straight cuts whose edge moves more
+    /// The tightest bend of straight cuts whose edge moves more
     /// than `last_pass::FLATTENED_EDGE_RATIO_MAX` times the feed.
     bend: Option<last_pass::FlattenedBend>,
 }
 
-/// #339: the block of a part path's last pass, entered from its stock to leave
+/// The block of a part path's last pass, entered from its stock to leave
 /// twin's kerf (`last_pass::enter_from_twin`). The tool descends as one
 /// more pass of the twin would, at the twin's start where the pass before
 /// ended, by the operation's entry: a plunge, a helix rejoining the twin's
@@ -2200,10 +2199,10 @@ fn last_pass_block(
             bend: None,
         });
     };
-    // #335: its lap runs round inside arcs at the feed its edge needs.
+    // Its lap runs round inside arcs at the feed its edge needs.
     let (tight_mm, bend) = own_edge_feeds(ctx, paths, &mut own_block, own_led)?;
     let radius_mm = own.tool.diameter_mm / 2.0;
-    // #348: its lap comes off a rect tab taller than the step-down in
+    // Its lap comes off a rect tab taller than the step-down in
     // stages, each a step-down at most, running a radius along the lap
     // between them.
     tab_descent::stage_tab_descents(
@@ -2214,7 +2213,7 @@ fn last_pass_block(
         ctx.rates.plunge_mm_min,
     )?;
     let slack_mm = ctx.tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
-    // #339 review: the step is held to what it sweeps: the parts, not
+    // The step is held to what it sweeps: the parts, not
     // the entries' waste domain or tab keep-outs, and the tabs'
     // material, which it runs above.
     // The step comes no nearer any line of the operation than the bit's
@@ -2292,10 +2291,10 @@ fn last_pass_block(
     }
 }
 
-/// #335: lowers the feed of the last pass's lap, and its overcut, round
+/// Lowers the feed of the last pass's lap, and its overcut, round
 /// inside arcs (`last_pass::EdgeFeed`), so its cutting edge moves at the
 /// feed there; its lead arcs, which take up and leave the cut, keep the
-/// feed. Returns the tightest arc held at the floor, if any, and (#350)
+/// feed. Returns the tightest arc held at the floor, if any, and
 /// the tightest bend of straight cuts whose edge moves too fast
 /// (`last_pass::EdgeFeed::flattened_bend`), whose feed it leaves alone.
 /// [`CamError::Internal`] when the lap is not a run of the block's cuts,
@@ -2340,7 +2339,7 @@ fn own_edge_feeds(
         .cuts
         .get_mut(begin..end)
         .ok_or_else(|| CamError::internal("a last pass's lap is not a run of its block's cuts"))?;
-    // #350: its straight cuts keep the feed; a tight bend of them warns.
+    // Its straight cuts keep the feed; a tight bend of them warns.
     let bend = match (start, lap.split_first()) {
         (Some(start), _) => edge.flattened_bend(lap, start),
         (None, Some((first, rest))) => edge.flattened_bend(rest, first.to),
@@ -2371,16 +2370,16 @@ struct LeadSetup<'a, 'b> {
     tolerance_mm: f64,
     any_above_tabs: bool,
     any_below_tabs: bool,
-    /// The paths whose start is set (#285): a lead arrives there or not
+    /// The paths whose start is set: a lead arrives there or not
     /// at all.
     fixed: &'a [bool],
-    /// Each stock to leave twin's part path (#284), by index; `None` for a part
+    /// Each stock to leave twin's part path, by index; `None` for a part
     /// path. One per path.
     part_of: &'a [Option<usize>],
 }
 
 /// Each path's lead, in order, or `None` where none fits (or On line).
-/// A path with an explicit start (#285) is led in only at its start,
+/// A path with an explicit start is led in only at its start,
 /// with the radius and sweep ladders as elsewhere.
 /// A lead that fits the domain less the tabs fits the whole domain, since
 /// one holds the other, so it is planned there first and then serves
@@ -2407,7 +2406,7 @@ fn plan_leads(
             i,
             "a Profile path does not say whether its start is set",
         )?;
-        // #339: a stock to leave twin is led in beside where its part path's
+        // A stock to leave twin is led in beside where its part path's
         // lead arrives, so the last pass, which enters from the twin, finds
         // its lead's staging point beside the twin's. A part path comes
         // before its twin, so its lead is planned; it may have none.
@@ -2492,7 +2491,7 @@ fn plan_leads(
     Ok(out)
 }
 
-/// #339: a lead-in onto the closed `path` arriving at its point nearest
+/// A lead-in onto the closed `path` arriving at its point nearest
 /// `at` ([`lead::plan_lead_in_at_start`] on the path re-seamed there), its
 /// arrival measured from `path`'s own start; `None` when none fits there.
 fn lead_in_beside(
@@ -2670,16 +2669,16 @@ pub(crate) fn contour_contains(contour: &Contour, p: Point) -> bool {
 /// ([`cut_outlines`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Hold {
-    /// Cut with no tab, so cut through the stock it comes loose (#109).
+    /// Cut with no tab, so cut through the stock it comes loose.
     Free,
-    /// Cut with tabs, so cut through the stock only they hold it (#269).
+    /// Cut with tabs, so cut through the stock only they hold it.
     Tabs,
 }
 
 /// Every closed target outline that the Profile `op` cuts, in drawing
 /// order, with how its tabs leave it: [`Hold::Free`] for those it cuts
-/// with no tab (#109), such as its holes when it places no tab on them,
-/// and [`Hold::Tabs`] for those with a tab on some path (#105). A shape
+/// with no tab, such as its holes when it places no tab on them,
+/// and [`Hold::Tabs`] for those with a tab on some path. A shape
 /// the tool does not fit is not cut, so it is left out. `None` when `op`
 /// cuts no tab at all, and when its toolpath cannot be generated:
 /// [`crate::order::check`] only warns.
@@ -2769,7 +2768,7 @@ pub(crate) fn resolve_targets(
 }
 
 /// [`resolve_targets`], with the open paths placed into `open` instead
-/// when it is given (#175: an On line Profile cuts them). An open path
+/// when it is given (an On line Profile cuts them). An open path
 /// with no length has nothing to cut and is skipped with
 /// [`Warning::OpenPathSkipped`] ([`OpenPathReason::NoLength`]).
 fn resolve_shapes(

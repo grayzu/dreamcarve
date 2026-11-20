@@ -12,9 +12,9 @@
 //! Bore ([`generate_bore`], format 18) and Engrave ([`generate_engrave`]),
 //! and entries, leads and corner relief. Phase 3 adds V-Carve
 //! ([`generate_vcarve`], format 20), whose result is a list of
-//! [`ToolRun`]s, and Photo V-Carve ([`generate_photo`], format 27, #646),
+//! [`ToolRun`]s, and Photo V-Carve ([`generate_photo`], format 27),
 //! a picture carved as V-bit grooves ([`photo`]).
-//! Tabs are placed on the project's outlines ([`placed_tabs`], #105,
+//! Tabs are placed on the project's outlines ([`placed_tabs`],
 //! ADR-0005), and every Profile that cuts a tab's outline rises over it.
 //!
 //! Toolpaths use the project's absolute frame: Y-up, Z-up, millimetres

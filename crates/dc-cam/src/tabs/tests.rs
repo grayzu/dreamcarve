@@ -300,7 +300,7 @@ fn count_four_spaces_evenly() {
     }
 }
 
-/// #710: a count is shared among the pieces of one outline by length,
+/// A count is shared among the pieces of one outline by length,
 /// the largest remainders rounded up, so the shares add up to it; the
 /// earlier piece takes the odd tab where two are the same length.
 #[test]
@@ -320,7 +320,7 @@ fn shares_split_a_count_by_length() {
     }
 }
 
-/// #710: no piece is asked for more than it holds while another has
+/// No piece is asked for more than it holds while another has
 /// room, so the whole count is placed whenever the pieces can hold it.
 /// When they cannot, the tabs left over are asked of them by length,
 /// for each piece to cut down with its coverage warning.
@@ -340,7 +340,7 @@ fn shares_keep_to_what_each_piece_holds() {
     assert!(shares(3, &[], &[]).is_empty());
 }
 
-/// #710: a request shared among the pieces of one outline. A piece
+/// A request shared among the pieces of one outline. A piece
 /// holds as many tabs as cover at most half of it, the test `fit`
 /// cuts a count down by: with the 8 mm tab and a 6 mm bit a tab keeps
 /// 14 mm raised, so 56 mm holds two and 55.9 mm one.
@@ -435,7 +435,7 @@ fn span_is_width_plus_diameter() {
 
     // Four tabs would all but cover it (port of "four tabs cover a
     // circle"): they cover most of the path, so only the two that fit
-    // in half of it are cut, and that warns (#109).
+    // in half of it are cut, and that warns.
     let (p, op) = small(4);
     let (tp, warnings) = generate(&p, &op);
     assert_eq!(
@@ -638,7 +638,7 @@ fn overlapping_tabs_merge_and_warn() {
     assert_no_vertical_step_in_final_pass(&tp);
 
     // Four tabs wide enough to cover the whole path would merge into
-    // one; only the one that fits in half of it is cut (#109), so
+    // one; only the one that fits in half of it is cut, so
     // nothing overlaps.
     let mut spec = four_rect_tabs();
     spec.width_mm = 80.0;
@@ -750,8 +750,8 @@ fn tabs_covering_most_of_contour_warn() {
     assert_approx_eq!(*path_length_mm, path_mm, TOL);
     assert_approx_eq!(*tab_span_mm, span_mm, TOL);
     assert_approx_eq!(*tab_total_mm, 4.0 * span_mm, TOL);
-    // One 14.35 mm tab covers at most half of 54.6 mm, so one is cut
-    // (#109); four tabs fit in half only if each is at most
+    // One 14.35 mm tab covers at most half of 54.6 mm, so one is cut;
+    // four tabs fit in half only if each is at most
     // 27.3 / 4 − 6.35 = 0.475 mm wide.
     assert_eq!(*cut_count, 1);
     assert!(*max_width_mm <= path_mm / 2.0 / 4.0 - DIAMETER_MM);
@@ -832,7 +832,7 @@ fn coverage_warning_text_names_the_tab_width() {
     assert!(!text.contains("tab(s) of 6.17 mm each"), "{text}");
 }
 
-/// #109: a hole's slug is waste, so by default only the part's
+/// A hole's slug is waste, so by default only the part's
 /// outline gets tabs: the 40 mm hole of the 60 mm square is cut free
 /// all the way round on its last pass, while the square rises over
 /// its four tabs. Nothing warns.
@@ -853,7 +853,7 @@ fn holes_get_no_tabs_by_default() {
     assert!(laps[1].iter().all(|m| m.at_z(0.0) || m.at_z(TAB_Z_MM)));
 }
 
-/// #109: with `on_holes` the hole is held too, by the same four tabs
+/// With `on_holes` the hole is held too, by the same four tabs
 /// as its part, as every outline was before version 9 (a 134.6 mm
 /// hole path; four 14.35 mm spans cover 43% of it, so all are cut).
 #[test]
@@ -885,7 +885,7 @@ fn cover_of(warnings: &[Warning]) -> (usize, usize, String) {
     (*tab_count, *cut_count, cover[0].to_string())
 }
 
-/// #109: an outline too short for its tabs gets the most that keep
+/// An outline too short for its tabs gets the most that keep
 /// them to half of its tool path (the coverage threshold), and the
 /// coverage warning names the shape and says how many are cut.
 /// `count` tabs are re-spaced evenly; of `at_distances`, the first in
@@ -959,7 +959,7 @@ fn too_short_outline_gets_fewer_tabs_and_warns() {
     assert_eq!(runs(&laps[1], |m| m.at_z(TAB_Z_MM)).len(), 4);
 }
 
-/// #109: a part that asked for tabs keeps at least one, however short
+/// A part that asked for tabs keeps at least one, however short
 /// its outline: cut free, a small part can be thrown by the bit,
 /// which is worse than one held by a tab that covers most of it. A
 /// 12 mm circle cut inside has a 17.7 mm path, and one 14.35 mm span
@@ -1191,7 +1191,7 @@ fn smooth_tab_bridge_is_triangle() {
     // On the coaster's arcs: four tabs, each the same triangle centred
     // on its distance, each lifted over width + diameter, every move
     // along the path at the feed rate or its plunge-limited scale
-    // (S10, #157), with no vertical step.
+    // (S10), with no vertical step.
     let (p, op) = coaster(Some(tab_spec(
         TabPlacement::Count { count: 4 },
         TabShape::Smooth,
@@ -1234,7 +1234,7 @@ fn plunge_limited(m: &XyMove) -> f64 {
     FEED_MM_MIN.min(PLUNGE_MM_MIN * length_mm / drop_mm)
 }
 
-/// S10 (#157): a smooth tab's down slope descends no faster than the
+/// S10: a smooth tab's down slope descends no faster than the
 /// plunge rate. The bar's 3 mm tab over a 4 mm ramp (half the 8 mm
 /// width) would fall at 1000 × 3/5 = 600 mm/min at the cutting feed,
 /// twice the 300 plunge, so its feed is scaled to 300 × 5/3 = 500; the
@@ -1409,7 +1409,7 @@ fn on_corner(warnings: &[Warning]) -> Vec<(String, f64)> {
         .collect()
 }
 
-/// Acceptance 47 (#285): a 50 mm square rotated 45°, cut outside with
+/// Acceptance 47: a 50 mm square rotated 45°, cut outside with
 /// four evenly spaced rect tabs, its cut starting nearest the origin
 /// (mid-side, so each tab is centred 27.5 mm along, in the middle of
 /// the arc round the next corner). Without `avoid_corners` the tabs sit
@@ -1465,7 +1465,7 @@ fn rotated_square_tabs_leave_corners() {
     }
 }
 
-/// #285: a circle turns `D / R` per bit diameter, under 30° for a
+/// A circle turns `D / R` per bit diameter, under 30° for a
 /// radius above 1.91 D, so the coaster's tabs never move: its
 /// toolpath is the same with `avoid_corners` on and off, with no
 /// `tab_on_corner`. A circle whose path radius is 1.5 D turns 38° per
@@ -1498,7 +1498,7 @@ fn circle_tabs_never_move() {
     assert_eq!(raised_runs(&final_lap(&tp)).len(), 1);
 }
 
-/// #285: a tab on a corner moves at most half the gap to each of its
+/// A tab on a corner moves at most half the gap to each of its
 /// neighbours. On the line, a 50 mm square's path turns 90° at each
 /// corner; a 2 mm tab's stretch, 8.35 mm with the 6.35 mm bit, is off
 /// the corner at 50 mm once its centre is 7.35 mm or more away. A tab
@@ -1552,7 +1552,7 @@ fn tab_never_moves_past_half_gap() {
     }
 }
 
-/// #285: a tab on a corner with nowhere to go, its neighbours too
+/// A tab on a corner with nowhere to go, its neighbours too
 /// close both ways, stays where it is with `tab_on_corner` naming the
 /// outline and its distance along the path, and is cut at its full
 /// width and height. The #109 floor holds too: an 8 mm square cut
@@ -1606,7 +1606,7 @@ fn blocked_tab_warns_tab_on_corner() {
     assert_approx_eq!(raised[0].length_mm, TAB_WIDTH_MM + DIAMETER_MM, TOL);
 }
 
-/// #285: on an open path a tab never moves past an end. A line 50 mm
+/// On an open path a tab never moves past an end. A line 50 mm
 /// along, then 6 mm up, cut on the line: a 2 mm tab at 53 mm is on the
 /// corner at 50. Off it ahead would be 57.35 mm, past the 56 mm end,
 /// so it goes back to 42.65 mm, whichever end the cut starts at.

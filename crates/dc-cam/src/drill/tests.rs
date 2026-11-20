@@ -297,7 +297,7 @@ fn dwell_adds_dwell_move_at_bottom() {
 /// Port of `camOperationSmoke.test.ts` "drilling peck: multiple plunges
 /// with full retracts", with acceptance 23's numbers: 12 mm in 4 mm
 /// pecks from the retract plane 1 mm above the hole top is four
-/// plunges (to 9, 5, 1 and 0; #153), each but the last retracting to
+/// plunges (to 9, 5, 1 and 0), each but the last retracting to
 /// the retract plane and re-entering 0.5 mm above the depth reached.
 #[test]
 fn peck_full_retracts_above_hole_top() {
@@ -384,7 +384,7 @@ fn last_peck_is_shallower_never_deeper() {
     assert_xs(&zs, &[7.0, 2.0, 0.0]);
 }
 
-/// #153: peck levels count from the retract plane `R`, as a
+/// Peck levels count from the retract plane `R`, as a
 /// controller's `G83`/`G73` does (RS274/NGC 3.5.16; LinuxCNC `G83`):
 /// `z_k = max(bottom, R − k·peck)`. With `R` 1 mm above the 12 mm
 /// stock (Z 13) and 4 mm pecks the plunges end at 9, 5, 1 and 0; the
@@ -456,7 +456,7 @@ fn peck_increments_count_from_retract_plane() {
     assert!(warnings.is_empty(), "{warnings:?}");
 }
 
-/// #153: measuring from `R` never makes a peck cut deeper into the
+/// Measuring from `R` never makes a peck cut deeper into the
 /// material than the peck depth. `R` is at or above the stock top, so
 /// the first plunge ends at or above `top − peck`, and every plunge
 /// removes at most one peck below the depth already drilled (or the
@@ -1220,7 +1220,7 @@ fn countersink_is_a_centre_plunge_and_retract() {
 
 /// Port of "no V-bit assigned: a drill bit produces no countersink":
 /// the depth follows a V-bit's angle, so any other cutter is refused
-/// and nothing is cut. So is a tapered ball nose (#677), for good.
+/// and nothing is cut. So is a tapered ball nose, for good.
 #[test]
 fn countersink_needs_a_v_bit() {
     let tapered = dc_project::test_support::tool_tbn_ultra().cutter;

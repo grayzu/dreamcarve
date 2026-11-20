@@ -32,7 +32,7 @@ use dc_project::MachiningOrder;
 
 /// Two nearest-first candidates whose distances differ by no more than
 /// this, mm, are equally near, and the one first in drawing order is
-/// taken (#215). It is the finest step a post-processor writes in mm
+/// taken. It is the finest step a post-processor writes in mm
 /// (0.001), so candidates closer than it cannot be told apart in a
 /// program, and it is more than the noise an `f32` import adds to a
 /// distance between points within about 2 m of the origin (`2⁻²⁴`
@@ -40,7 +40,7 @@ use dc_project::MachiningOrder;
 /// order.
 pub(crate) const NEAREST_TIE_MM: f64 = 1e-3;
 
-/// Nearest first (#215): of `candidates`, each with its distance in mm,
+/// Nearest first: of `candidates`, each with its distance in mm,
 /// the first in the order given whose distance is within
 /// [`NEAREST_TIE_MM`] of the nearest one's. So a candidate is taken
 /// before an earlier one only when it is nearer by more than the
@@ -55,7 +55,7 @@ pub(crate) fn nearest_of<T>(candidates: impl IntoIterator<Item = (T, f64)>) -> O
 
 /// All of `candidates` nearest first, each next one chosen by
 /// [`nearest_of`]'s rule from those left: so distances within
-/// [`NEAREST_TIE_MM`] keep the order given (#392: a raster Pocket's
+/// [`NEAREST_TIE_MM`] keep the order given (a raster Pocket's
 /// stay-down links, where the lines one step-over above and below are a
 /// tie that float noise in the scan lines' Y used to settle).
 pub(crate) fn nearest_first_order<T>(candidates: Vec<(T, f64)>) -> Vec<T> {
@@ -96,13 +96,13 @@ pub struct SequenceInput<'a> {
     /// Absolute safe Z, mm: every rapid that moves in XY between blocks of
     /// one instance (passes, holes, notches) runs here.
     pub safe_z_mm: f64,
-    /// Absolute clearance Z, mm (#283; design addendum A7): a rapid that
+    /// Absolute clearance Z, mm (design addendum A7): a rapid that
     /// moves in XY between blocks of different instances runs here. The
     /// project's `heights.clearance_mm` above the stock top, or
     /// `safe_z_mm` when that is unset; never below `safe_z_mm`.
     pub clearance_z_mm: f64,
     /// The stock top, mm: a rapid straight down to a descent may stop
-    /// [`ENTRY_CLEARANCE_MM`] above it anywhere (S2, #214).
+    /// [`ENTRY_CLEARANCE_MM`] above it anywhere (S2).
     pub stock_top_mm: f64,
     /// The tool's diameter, mm.
     pub tool_diameter_mm: f64,
@@ -117,7 +117,7 @@ pub struct SequenceInput<'a> {
     /// The operation's moves already written before these blocks (a
     /// Pocket's main path before its relief pass), empty otherwise: a
     /// rapid straight down may stop [`ENTRY_CLEARANCE_MM`] above the
-    /// floors they cut, as above the toolpath's own (S2, #227).
+    /// floors they cut, as above the toolpath's own (S2).
     pub cut_before: &'a [Move],
     /// Photo V-Carve only (format 27, `docs/specs/phase-3/design.md`,
     /// "Photo V-Carve", step 4): `Some(z_mm)` joins each block to the
@@ -126,7 +126,7 @@ pub struct SequenceInput<'a> {
     /// move across at it at the feed rate, and the next block's descent
     /// (its straight plunge at the plunge rate) from there, never a
     /// retract to safe Z. The caller vouches that the Z is in the air
-    /// over every block (security review L1). `None` for every other
+    /// over every block. `None` for every other
     /// generator, whose output it leaves as it was. It is not the
     /// stay-down link through cleared area that [`sequence`](fn@sequence)
     /// writes between two Pocket blocks, nor a raster Pocket's stay-down
@@ -159,7 +159,7 @@ impl SequenceInput<'_> {
 }
 
 /// The clearance Z, mm, absolute, for [`SequenceInput::clearance_z_mm`]
-/// (#283; design addendum A7): the project's `heights.clearance_mm` above
+/// (design addendum A7): the project's `heights.clearance_mm` above
 /// the stock top at `thickness_mm`, or `safe_z_mm` when it is unset. Never
 /// below `safe_z_mm`: validation refuses a clearance below an enabled
 /// operation's safe Z, and a link between parts is never lower than one
@@ -182,7 +182,7 @@ const LINK_SAMPLE_STEP_MM: f64 = 0.5;
 /// `input.blocks` (spec steps 1–3): every unit (one shape at one pass) is
 /// a run of consecutive indices in generator order, except that the
 /// blocks that free material come last in it, so nothing of a shape is cut
-/// after its freeing pass (#189); units are walked by
+/// after its freeing pass; units are walked by
 /// `input.order` with containment precedence and nearest neighbour, ties by
 /// drawing order. [`sequence`] emits exactly this order.
 ///
@@ -202,19 +202,19 @@ pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
 /// link is nothing when `b` is the next pass of `a`'s shape and its descent
 /// starts where `a` ended; a stay-down `Linear` at feed when both blocks
 /// have `cleared` areas at one Z and the link is no longer than the
-/// flatten tolerance (#213), or the straight link lies inside their union
+/// flatten tolerance, or the straight link lies inside their union
 /// and is at most `tool_diameter_mm + stepover_mm` long, which runs to
 /// `b`'s entry and skips `b`'s descent (the tool is already at `b`'s entry
 /// Z in cleared material); otherwise a rapid up to safe Z, a rapid in XY,
 /// and the descent, or, between blocks of different instances, the same at
-/// the clearance Z (#283). A block's empty descent is a straight plunge at
-/// the plunge rate to its entry Z, never its pass Z (security review H1);
+/// the clearance Z. A block's empty descent is a straight plunge at
+/// the plunge rate to its entry Z, never its pass Z;
 /// its own descent moves are written as given, from `descent_from_z_mm`: below safe Z the tool
 /// gets there by a rapid straight down that stops in the air (S2 as
 /// changed in #214) and a plunge for the rest. Zero-length moves are never
 /// written. The first block is reached by a rapid at safe Z; the last is
 /// followed by a rapid up to safe Z.
-/// With [`SequenceInput::groove_link_z_mm`] set (a Photo V-Carve, #646),
+/// With [`SequenceInput::groove_link_z_mm`] set (a Photo V-Carve),
 /// consecutive blocks of one shape and group are joined instead by a
 /// groove link: a rise at feed to that Z, a move across there at feed,
 /// and the next block's plunge.
@@ -333,7 +333,7 @@ impl Shapes {
                     .copied()
                     .filter(|(_, b)| b.pass == pass)
                     .collect();
-                // #189: nothing of a shape is cut after its freeing pass,
+                // Nothing of a shape is cut after its freeing pass,
                 // so the unit's freeing blocks go last (stable: generator
                 // order otherwise), after a Profile's relief notches.
                 blocks.sort_by_key(|(_, b)| b.frees);
@@ -499,7 +499,7 @@ impl Shapes {
 
 /// Spec step 1: cuts and descent at or above the pass Z; a plunging block
 /// starts at its entry; the entry Z at or above the pass Z, and the first
-/// cut starting at the entry at the entry Z (security review H1).
+/// cut starting at the entry at the entry Z.
 fn validate_block(block: &CutBlock) -> Result<(), CamError> {
     let lowest = block
         .cuts
@@ -556,7 +556,7 @@ enum Link {
     None,
     /// The next block, of the same shape, opens with a straight plunge
     /// where the tool is, in the column the previous block cut at least
-    /// that deep (#240): the plunge goes from where the tool is.
+    /// that deep: the plunge goes from where the tool is.
     InColumn,
     /// A straight cut at feed through cleared material at the current Z.
     StayDown,
@@ -622,7 +622,7 @@ impl<'a> Emitter<'a, '_> {
                     return;
                 }
                 Link::Retract => {
-                    // #283: between parts at the clearance height, between
+                    // Between parts at the clearance height, between
                     // passes and holes of one part at safe Z.
                     let link_z = if previous.shape.instance == block.shape.instance {
                         safe_z
@@ -672,7 +672,7 @@ impl<'a> Emitter<'a, '_> {
         {
             let length_mm = current.xy().distance_to(b.entry);
             let limit_mm = self.input.tool_diameter_mm + self.input.stepover_mm;
-            // #213: a link no longer than the flattening tolerance is a
+            // A link no longer than the flattening tolerance is a
             // stay-down: its end lies on the cleared area as drawn, if not
             // on its flattened chords (a raster line's end, clipped on
             // those chords, and the wall ring's start on the arc).
@@ -697,7 +697,7 @@ impl<'a> Emitter<'a, '_> {
     /// plunge rate.
     fn descend(&mut self, block: &CutBlock) {
         if block.descent.is_empty() {
-            // #227: a straight plunge is reached by the same rapid down.
+            // A straight plunge is reached by the same rapid down.
             // H1: it ends where cutting begins, not at the block's deepest.
             let entry = Point3::new(block.entry.x, block.entry.y, block.entry_z_mm);
             self.rapid_down(entry);
@@ -706,7 +706,7 @@ impl<'a> Emitter<'a, '_> {
         }
         let at = block.descent_from;
         let start = Point3::new(at.x, at.y, block.descent_from_z_mm);
-        // #227: a descent that opens with a straight plunge at its start
+        // A descent that opens with a straight plunge at its start
         // (onto a tab, or a corner-relief notch) is reached by the rapid
         // down as far as the plunge goes.
         let plunge_to = block
@@ -761,7 +761,7 @@ impl<'a> Emitter<'a, '_> {
     /// ([`highest_cut_near`]): the safety pass finds that nearest point on
     /// the cut as written, whose rounded ends and `at` move it along the
     /// cut by up to a few units in the last place, and on a V-bit's steep
-    /// descent its Z with it (#464).
+    /// descent its Z with it.
     fn rapid_floor_mm(&self, at: Point) -> f64 {
         let above_stock = self.input.stock_top_mm + ENTRY_CLEARANCE_MM;
         let lowest = |moves: &[Move]| highest_cut_near(moves, at, CLEARED_POINT_TOLERANCE_MM);
@@ -797,7 +797,7 @@ impl<'a> Emitter<'a, '_> {
     }
 }
 
-/// Link rule 1 for a block of the same shape (#240): true when `b`'s
+/// Link rule 1 for a block of the same shape: true when `b`'s
 /// descent opens with a straight plunge at `descent_from` (an empty
 /// descent, or a first move straight up or down there) and `a`'s cuts
 /// passed through `descent_from` (within [`CLEARED_POINT_TOLERANCE_MM`]) at
@@ -849,7 +849,7 @@ pub(crate) fn lowest_cut_through(moves: &[Move], at: Point, tolerance_mm: f64) -
 /// [`lowest_cut_through`], except that a straight move's Z is its highest
 /// within `tolerance_mm` along it of where it comes nearest `at`: the
 /// floor a rapid down to `at` stops [`ENTRY_CLEARANCE_MM`] above, robust
-/// to the numbers being rounded as written (#464: a rapid stopped 1 mm
+/// to the numbers being rounded as written (a rapid stopped 1 mm
 /// over the nearest point of a 15° V-bit's descent falling 4.4 mm per mm,
 /// and once rounded to three places that point was 0.002 mm higher, so
 /// S2 refused the rapid). A level cut's Z is the same.
@@ -926,7 +926,7 @@ fn distance_3d(a: Point3, b: Point3) -> f64 {
 /// between the points where it touches the boundary is inside, and so is
 /// every sample point along it (at most [`LINK_SAMPLE_STEP_MM`] apart).
 ///
-/// The stretches (#232): a link that crosses no edge properly can still
+/// The stretches: a link that crosses no edge properly can still
 /// leave the piece where it touches the boundary, at a vertex or at its
 /// own ends. Between two touches it is wholly inside or wholly outside
 /// the flattened boundary, so its middle tells which. A link from one
