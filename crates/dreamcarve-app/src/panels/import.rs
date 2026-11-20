@@ -51,8 +51,19 @@ const FOOTER_PX: f32 = theme::CONTROL_PX;
 const PREVIEW_PX: f32 = 160.0;
 /// The space left round the drawing in the thumbnail, px.
 const PREVIEW_MARGIN_PX: f64 = 12.0;
-/// How far a flattened arc may stray in the thumbnail, px.
-const PREVIEW_FLATTEN_PX: f64 = 0.5;
+/// How far a flattened arc may stray in the thumbnail, in the display's
+/// own pixels: a tenth of one, under what a 1-px anti-aliased line shows,
+/// so a circle reads as a circle and not as a polygon.
+const PREVIEW_FLATTEN_DEVICE_PX: f64 = 0.1;
+
+/// The tolerance the preview flattens arcs to, mm, drawn at `px_per_mm`
+/// points to the millimetre on a display of `pixels_per_point`: the
+/// preview's own pixel, so a drawing fitted small is not flattened finer
+/// than it shows, and one on a 2× display is not left at half its
+/// sharpness.
+fn preview_tolerance_mm(px_per_mm: f64, pixels_per_point: f32) -> f64 {
+    PREVIEW_FLATTEN_DEVICE_PX / (px_per_mm * f64::from(pixels_per_point)).max(f64::MIN_POSITIVE)
+}
 /// The tallest the layer list grows before it scrolls, px.
 const LAYERS_MAX_PX: f32 = 168.0;
 
@@ -505,7 +516,7 @@ fn preview(ui: &mut Ui, model: &DrawingImport) {
         let s = camera.to_screen(p);
         rect.min + egui::vec2(s.x_px as f32, s.y_px as f32)
     };
-    let tolerance_mm = PREVIEW_FLATTEN_PX / px_per_mm;
+    let tolerance_mm = preview_tolerance_mm(px_per_mm, ui.pixels_per_point());
     for outline in &outlines {
         let flat = outline.with_arcs_flattened(tolerance_mm);
         let points: Vec<egui::Pos2> = flat
@@ -592,4 +603,56 @@ fn wrapped(ui: &mut Ui, text: &str, style: TextStyle, colour: egui::Color32) {
             .wrap()
             .selectable(false),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Row D5, defect 4: the coaster's circle in the preview is a circle.
+    /// Fitted to the 160-px thumbnail it is 136 points across, and the
+    /// preview flattened it to within half a point: 26 chords of 16
+    /// points, a polygon. Flattened at the preview's own pixel no chord
+    /// leaves the arc by more than a tenth of a device pixel, at 1× and
+    /// at 2×, and a drawing fitted smaller is flattened no finer than it
+    /// shows.
+    #[test]
+    fn preview_flattens_a_circle_to_a_tenth_of_a_device_pixel() {
+        let radius_mm = 45.0;
+        let circle = dc_geometry::Polyline::circle(Point::new(0.0, 0.0), radius_mm);
+        // The thumbnail's room for the drawing, in points.
+        let across_pt = f64::from(PREVIEW_PX) - 2.0 * PREVIEW_MARGIN_PX;
+        let mut chords = Vec::new();
+        for (px_per_mm, scale) in [
+            (across_pt / (2.0 * radius_mm), 1.0_f32),
+            (across_pt / (2.0 * radius_mm), 2.0),
+            (0.2 * across_pt / (2.0 * radius_mm), 2.0),
+        ] {
+            let flat = circle.with_arcs_flattened(preview_tolerance_mm(px_per_mm, scale));
+            let points: Vec<Point> = flat.vertices().iter().map(|v| v.point()).collect();
+            let device_px_per_mm = px_per_mm * f64::from(scale);
+            let mut worst_px: f64 = 0.0;
+            for (n, a) in points.iter().enumerate() {
+                let b = points[(n + 1) % points.len()];
+                let middle = Point::new(f64::midpoint(a.x, b.x), f64::midpoint(a.y, b.y));
+                let off_mm = radius_mm - middle.x.hypot(middle.y);
+                worst_px = worst_px.max(off_mm * device_px_per_mm);
+            }
+            assert!(
+                worst_px <= PREVIEW_FLATTEN_DEVICE_PX + 1e-9,
+                "{px_per_mm} pt/mm at {scale}×: a chord is {worst_px} device px off the arc"
+            );
+            chords.push(points.len());
+        }
+        assert!(
+            chords[0] >= 56,
+            "136 points across at 1×: {} chords",
+            chords[0]
+        );
+        assert!(chords[1] > chords[0], "finer on a 2× display: {chords:?}");
+        assert!(
+            chords[2] < chords[0],
+            "coarser when fitted small: {chords:?}"
+        );
+    }
 }
