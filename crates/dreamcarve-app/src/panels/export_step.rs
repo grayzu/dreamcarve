@@ -56,10 +56,16 @@ const BLOCKING_PADDING_PX: f32 = 12.0;
 /// the card.
 pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
+    // The foot, pinned: *Export G-code* and what blocks it, always in
+    // view however far the settings above it scroll.
+    let full = ui.available_rect_before_wrap();
+    let foot_px = panels::export::foot_height(ui, state, full.width()).min(full.height() / 2.0);
+    let foot = Rect::from_min_max(egui::pos2(full.left(), full.bottom() - foot_px), full.max);
     crate::widgets::scroll::show(
         ui,
         egui::ScrollArea::vertical()
             .id_salt("export_step")
+            .max_height(full.height() - foot_px)
             .auto_shrink(false),
         crate::widgets::scroll::Surface::Panel,
         |ui| {
@@ -77,19 +83,22 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         ui.add_space(BLOCK_GAP_PX);
                         row::line(ui, true, failure);
                     }
+                    // What was written, until the project changes; the
+                    // result itself is a sheet (capability 77a).
+                    if let Some(done) = state.export.done() {
+                        ui.add_space(BLOCK_GAP_PX);
+                        panels::export::exported(ui, strings, done, out);
+                    }
                     blocking(ui, state, out);
                     ui.add_space(BLOCK_GAP_PX);
                     panels::project::output(ui, state, out);
                     ui.add_space(BLOCK_GAP_PX - 4.0);
-                    match state.export.done() {
-                        Some(done) => {
-                            panels::result::show(ui, strings, &done.result, done.instructions, out);
-                        }
-                        None => panels::export::plan(ui, state, out),
-                    }
+                    panels::export::plan(ui, state, out);
                 });
         },
     );
+    panels::export::foot(ui, state, foot, out);
+    ui.allocate_rect(foot, Sense::hover());
 }
 
 /// The readiness card: the counts, the estimate and the Z range.

@@ -87,7 +87,6 @@ fn every_field() -> Vec<(String, StrKey, StrKey)> {
         ),
         (StrKey::ExportDestination, StrKey::ExportDestinationHelp),
         (StrKey::ExportStem, StrKey::ExportStemHelp),
-        (StrKey::ExportSplit, StrKey::ExportSplitHelp),
         (StrKey::ExportBoards, StrKey::ExportBoardsHelp),
     ] {
         all.push((format!("{label:?}"), label, help));

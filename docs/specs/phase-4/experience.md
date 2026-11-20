@@ -99,11 +99,9 @@ what to press next.
   2 of 5…*, or *Stopped*; *Stop* and *Regenerate all* stay in the status
   bar); and the one primary button, a 34-px accent pill. It reads
   *Continue* with `arrow-right` after the label and opens the next step
-  that is not complete; on the Export step it reads *Export G-code* with
-  `download` and writes the programs the step plans, asking for a folder
-  first when none is chosen; it is disabled (a sunken pill) with the
-  reason as its tooltip while an error blocks export or the programs are
-  still being built.
+  that is not complete. On the Export step the header has no primary
+  button: the step's *Export G-code* is at the foot of its panel
+  (section 7, "Export foot").
 - **Rail.** A 64-px card at the left, full height. Five step buttons
   from the top, 4 px apart, each 56 × 52 with a 10-px radius: a 24-px
   icon over an 11-px label (Design `shapes`, Stock `box`, Tools `drill`,
@@ -799,22 +797,37 @@ Controls:
   Every length and rate in the sheet follows it, the table's columns
   and the editing pane among them; the project behind the sheet keeps
   its own units.
-- **Export result.** On the Export step, in the plan's place: a card
-  inside the step's card (`surface.raised`, 10-px radius, a hairline,
-  16-px padding). Status is one 15-px SemiBold line with `circle-check`
-  in status.success and a secondary *Done* at its right, the CLI's
-  lines under it in 12-px text.secondary; Files is a table of 30-px
+- **Export foot.** The foot of the Export step's panel, pinned under
+  its scrolling content: a hairline, then one row 8 px under it and
+  16 px above the card's edge. At the right the step's one primary
+  button, *Export G-code* with `download`, a 34-px accent pill, which
+  writes the programs the step plans, asking for a folder first when
+  none is chosen. At its left, in 12-px text, what it will do (*Ready
+  to write 2 programs.*, text.secondary) or, while it is disabled (a
+  sunken pill), why, with `circle-x` in status.error text (*1 error
+  blocks export*; *Waiting for the toolpaths…*); the whole reason is
+  the button's tooltip. A field's help line (above, "Help affordance")
+  shows under it.
+- **Export result.** A sheet, 560 px wide (functional 77a). Status is
+  one 15-px SemiBold line with `circle-check` in status.success, the
+  CLI's lines under it in 12-px text.secondary; then, scrolling when
+  they are long: Files, a table of 30-px
   striped rows under a 24-px header row (number, file name in JetBrains
   Mono, tool, time right-aligned, the columns one width for every row),
   then the totals; then *Folder* and the folder as a 12-px mono line
   cut at its start with a `copy` icon button, over *Show in folder* and
-  *Save setup sheet…*, both secondary. Under the card, *Run
-  instructions* is a closed disclosure whose steps are numbered 13-px
+  *Save setup sheet…*, both secondary; and *Run
+  instructions*, a closed disclosure whose steps are numbered 13-px
   lines, each numbered once (the report's own number is taken off the
   line), and whose controller notes are callouts (`surface.stripe`
-  fill, 10-px radius, `info` glyph in text.secondary). A failure is one
+  fill, 10-px radius, `info` glyph in text.secondary). The footer holds
+  *Done*, the sheet's primary pill, at the right. The sheet takes its
+  height from its content, up to the window less 48 px above and below,
+  at once when *Run instructions* opens. Closed, the step shows
+  `circle-check` and *2 programs written to …* under its readiness
+  card, with a secondary *Show result*. A failure is one
   line in status.error with `circle-x` under the readiness card, and
-  the plan stays.
+  no sheet.
 - **Scrolling lists.** A list that goes on past the edge of its area
   fades its last 20 px into the surface under it: at the bottom while
   there is more below, at the top once it is scrolled. A row the edge
@@ -1352,8 +1365,9 @@ follows.
 13. In a narrower window the Inspector lies over the Viewport, with a
     hairline and the one shadow.
 14. The primary button reads *Continue* with an arrow off the Export
-    step, and *Export G-code* with `download` on it, disabled while an
-    error blocks export.
+    step. On it the header has none, and *Export G-code* with `download`
+    is at the foot of the step's panel, disabled while an error blocks
+    export, with the reason beside it.
 15. One accent button is in a view (`redesign.md`, principle 3).
 
 ### The steps

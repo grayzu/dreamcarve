@@ -680,3 +680,202 @@ fn a_tool_field_shows_the_warning_located_at_it() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The smoke test's item 8 (capabilities 62 and 77): how several tools
+/// are written is one control, **Programs** on the Export step, with two
+/// plainly named choices. It is the project's own setting: choosing *One
+/// program for all tools* writes `tool_change_mode`, one undo step, and
+/// there is no "as the project says", no "this export only" and no second
+/// row for it in the Post-processor group. No label names a G-code word.
+#[test]
+fn programs_is_one_control_that_sets_the_project() {
+    let (mut h, dir, _dialogs) = plaque("programs-control");
+    common::settle(&mut h);
+    go_to(&mut h, "Export");
+    common::settle(&mut h);
+    let mode = |h: &Harness<'_, Shell>| h.state().app().project().post_processor.tool_change_mode;
+    assert_eq!(mode(&h), dc_project::ToolChangeMode::SeparatePrograms);
+    assert_eq!(
+        h.query_all_by_role_and_label(Role::ComboBox, "Programs")
+            .count(),
+        1
+    );
+    let shown = h
+        .get_by_role_and_label(Role::ComboBox, "Programs")
+        .value()
+        .unwrap_or_default();
+    assert_eq!(shown, "One program per tool");
+    for gone in ["As the project says", "this export only", "M6"] {
+        assert!(h.query_by_label_contains(gone).is_none(), "no `{gone}`");
+    }
+
+    let steps = undo_steps(&h);
+    h.get_by_role_and_label(Role::ComboBox, "Programs").click();
+    h.run();
+    for choice in ["One program per tool", "One program for all tools"] {
+        assert!(
+            h.query_all_by_label(choice).next().is_some(),
+            "{choice} is a choice"
+        );
+    }
+    assert!(h.query_by_label_contains("M6").is_none(), "no G-code word");
+    h.query_all_by_label("One program for all tools")
+        .last()
+        .expect("the choice")
+        .click();
+    h.run();
+    assert_eq!(
+        mode(&h),
+        dc_project::ToolChangeMode::M6,
+        "the project's setting"
+    );
+    assert_eq!(undo_steps(&h), steps + 1, "one undo step");
+    assert!(
+        h.state().app().is_dirty(),
+        "a project change, to save or not"
+    );
+    command_key(&h, egui::Key::Z);
+    h.run();
+    assert_eq!(mode(&h), dc_project::ToolChangeMode::SeparatePrograms);
+
+    // The Post-processor group has no row for it.
+    h.get_by_role_and_label(Role::Button, "Post-processor")
+        .click();
+    h.run();
+    assert!(
+        h.query_by_role_and_label(Role::ComboBox, "Tool change")
+            .is_none()
+    );
+    assert_eq!(
+        h.query_all_by_role_and_label(Role::ComboBox, "Programs")
+            .count(),
+        1,
+        "one place only"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The smoke test's items 9 and 10 (capabilities 77 and 77a): **Export
+/// G-code** is at the foot of the Export step's panel, pinned under its
+/// scrolling settings, and the header shows no primary button on that
+/// step. While something blocks the export the button is off, with the
+/// reason beside it. A successful export shows its result as a sheet;
+/// *Done* closes it, and the step then says what was written and opens
+/// the result again.
+#[test]
+fn export_button_is_at_the_foot_of_the_step_and_the_result_is_a_sheet() {
+    let (mut h, dir, _dialogs) = plaque("export-foot");
+    common::settle(&mut h);
+    // Another step: the header's primary is Continue.
+    go_to(&mut h, "Stock");
+    let header_bottom = h.state().layout().viewport.top();
+    let continue_button = h.get_by_role_and_label(Role::Button, "Continue").rect();
+    assert!(continue_button.bottom() <= header_bottom);
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Export G-code")
+            .is_none()
+    );
+
+    // ⌘E opens the Export step; its button is in the panel, at its foot.
+    command_key(&h, egui::Key::E);
+    h.run();
+    common::settle(&mut h);
+    assert_eq!(h.state().step(), dc_app::steps::Step::Export);
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Continue")
+            .is_none(),
+        "no primary button in the header on the Export step"
+    );
+    let foot = |h: &Harness<'_, Shell>| {
+        let panel = h.state().layout().step_panel.expect("the step panel");
+        let button = h
+            .get_by_role_and_label(Role::Button, "Export G-code")
+            .rect();
+        assert!(panel.contains_rect(button), "{button:?} in {panel:?}");
+        assert!(
+            button.bottom() > panel.bottom() - 28.0,
+            "at the foot: {button:?} in {panel:?}"
+        );
+        button
+    };
+    let at = foot(&h);
+    let ready = h.get_by_label("Ready to write 2 programs.").rect();
+    assert!(
+        ready.right() <= at.left() && ready.center().y > at.top() - 8.0,
+        "what it will write is beside it"
+    );
+    // Every group open: the settings scroll, the button stays.
+    for group in ["Post-processor", "Heights", "Tolerances"] {
+        h.get_by_role_and_label(Role::Button, group).click();
+        h.run();
+    }
+    assert_eq!(foot(&h), at, "pinned");
+    assert!(
+        !h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled()
+    );
+
+    // The export: a sheet with what was written.
+    h.get_by_role_and_label(Role::Button, "Export G-code")
+        .click();
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    for part in [
+        "2 programs written",
+        "Show in folder",
+        "Save setup sheet…",
+        "Copy path",
+        "Run instructions",
+        "Done",
+    ] {
+        assert!(sheet.query_by_label(part).is_some(), "the sheet has {part}");
+    }
+    assert!(dir.join("plaque-1-T2.nc").is_file() && dir.join("plaque-2-T1.nc").is_file());
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none(), "Done closes it");
+    assert!(
+        h.query_by_label_contains("2 programs written to").is_some(),
+        "the step says what was written"
+    );
+    assert!(
+        h.query_by_label("Exported. Nothing has changed since.")
+            .is_some()
+    );
+    h.get_by_role_and_label(Role::Button, "Show result").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_some(), "the result again");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none());
+
+    // Blocked: the button is off, and the reason is beside it.
+    let project = h.state().app().project();
+    let used = project.operations[0].tool().clone();
+    let mut tool = project.tools.iter().find(|t| t.id == used).unwrap().clone();
+    tool.feed_mm_min = None;
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateTool(tool))
+        .unwrap();
+    h.run();
+    common::settle(&mut h);
+    let button = foot(&h);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled()
+    );
+    let beside = h
+        .query_all_by_label("1 error blocks export")
+        .map(|node| node.rect())
+        .find(|rect| rect.center().y > button.top() - 8.0)
+        .expect("the reason is beside the button");
+    assert!(beside.right() <= button.left());
+    assert!(
+        h.query_by_label("Show result").is_none(),
+        "the result goes when the project changes"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

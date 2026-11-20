@@ -3,19 +3,19 @@
 
 //! The export result (functional spec, capability 77a; mock-up
 //! `13-export-result.svg`; `experience.md`, section 7, "Export result"):
-//! what the Export step shows in the plan's place once the programs are
-//! written. A card inside the step's card holds **Status**, one 15-px
-//! SemiBold line with `circle-check`, *Done* at its right (which brings
-//! the plan back) and the CLI's own lines under it; **Files**, a table
-//! of 30-px rows (number, file name in the monospace face, tool, time
-//! right-aligned) grouped by board with an Inlay, and the totals; and the
-//! **Folder**, one mono line cut at its start, with a `copy` button, over
-//! *Show in folder* and *Save setup sheet…*. Under the card, **Run
-//! instructions**, a disclosure closed whenever the result shows, whose
-//! steps are numbered lines, whose controller notes are callouts, and
-//! which ends with each program's extents, estimate and pauses and each
-//! operation's line, as `export` prints them. Every line of the CLI's
-//! report is in exactly one part
+//! a sheet over the window once the programs are written. Its header is
+//! **Status**, one 15-px SemiBold line with `circle-check` and the CLI's
+//! own lines under it. Its body scrolls: **Files**, a table of 30-px rows
+//! (number, file name in the monospace face, tool, time right-aligned)
+//! grouped by board with an Inlay, and the totals; the **Folder**, one
+//! mono line cut at its start, with a `copy` button, over *Show in
+//! folder* and *Save setup sheet…*; and **Run instructions**, a
+//! disclosure closed whenever the sheet opens, whose steps are numbered
+//! lines, whose controller notes are callouts, and which ends with each
+//! program's extents, estimate and pauses and each operation's line, as
+//! `export` prints them. Its footer holds **Done**, which closes the
+//! sheet; the Export step keeps one line about the export and *Show
+//! result*. Every line of the CLI's report is in exactly one part
 //! (`dc_app::export::ExportResult::parts`).
 
 use dc_app::export::ExportResult;
@@ -26,7 +26,6 @@ use crate::panels::export::Request;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
-use crate::widgets::card;
 use crate::widgets::icon::Icon;
 use crate::widgets::row;
 use crate::widgets::section::section;
@@ -35,72 +34,109 @@ use crate::widgets::section::section;
 const ROW_PX: f32 = 30.0;
 /// The Files table's header row, px.
 const HEADER_ROW_PX: f32 = 24.0;
-/// The result card's padding, px.
-const PADDING_PX: i8 = 16;
 /// The number column, px.
 const NUMBER_PX: f32 = 16.0;
 /// The gap between the result's parts, px.
 const PART_GAP_PX: f32 = 12.0;
 
-/// Shows `result`; `instructions` is whether *Run instructions* is open.
-pub(crate) fn show(
-    ui: &mut Ui,
+/// The sheet's width, px.
+const WIDTH_PX: f32 = 560.0;
+/// The sheet's padding, px.
+const SHEET_PADDING_PX: f32 = 24.0;
+/// A footer button's height, px.
+const FOOTER_PX: f32 = theme::CONTROL_PX;
+
+/// Shows `result` as a sheet over the window; `instructions` is whether
+/// *Run instructions* is open. *Done*, Escape or a click on the scrim
+/// closes it.
+pub(crate) fn sheet(
+    ctx: &egui::Context,
     strings: &Strings,
     result: &ExportResult,
     instructions: bool,
     out: &mut Vec<Action>,
 ) {
-    let palette = Palette::current(ui);
-    ui.spacing_mut().item_spacing = egui::vec2(theme::GAP_PX, 4.0);
-    card::inner(palette)
-        .inner_margin(PADDING_PX)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            status(ui, strings, result, out);
-            ui.add_space(PART_GAP_PX - 4.0);
-            files(ui, strings, result);
-            ui.add_space(PART_GAP_PX - 4.0);
-            folder(ui, strings, result, out);
+    let style = ctx.global_style();
+    let palette = if style.visuals.dark_mode {
+        &theme::DARK
+    } else {
+        &theme::LIGHT
+    };
+    let screen = ctx.content_rect().size();
+    let width = WIDTH_PX.min(screen.x - 48.0);
+    let response = egui::Modal::new(egui::Id::unique("export_result"))
+        .backdrop_color(palette.scrim)
+        .frame(theme::sheet(palette))
+        .show(ctx, |ui| {
+            ui.set_width(width - 2.0 * SHEET_PADDING_PX);
+            // As tall as the window allows, whatever the sheet's last
+            // size was: its room is then the same every frame, and it
+            // takes its new height at once when a part opens.
+            ui.set_max_height(screen.y - 96.0);
+            ui.spacing_mut().item_spacing = egui::vec2(theme::GAP_PX, 4.0);
+            status(ui, result);
+            ui.add_space(PART_GAP_PX);
+            // What the header and the footer leave, so a long list of
+            // programs scrolls inside the sheet.
+            let room = (ui.available_height() - FOOTER_PX - 16.0 - 4.0).max(160.0);
+            crate::widgets::scroll::show(
+                ui,
+                egui::ScrollArea::vertical()
+                    .id_salt("export_result")
+                    .max_height(room)
+                    .auto_shrink([false, true]),
+                crate::widgets::scroll::Surface::Raised,
+                |ui| {
+                    files(ui, strings, result);
+                    ui.add_space(PART_GAP_PX - 4.0);
+                    folder(ui, strings, result, out);
+                    ui.add_space(PART_GAP_PX - 4.0);
+                    let toggled = section(
+                        ui,
+                        egui::Id::unique("export.result.instructions"),
+                        strings.get(StrKey::ExportResultInstructions),
+                        instructions,
+                        None,
+                        |ui| run_instructions(ui, result),
+                    );
+                    if toggled {
+                        out.push(Action::Export(Request::ToggleInstructions));
+                    }
+                },
+            );
+            ui.add_space(16.0);
+            let mut done = false;
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), FOOTER_PX),
+                Layout::right_to_left(Align::Center),
+                |ui| {
+                    let spec =
+                        ButtonSpec::new(Kind::Primary, strings.get(StrKey::ExportResultDone))
+                            .height(FOOTER_PX)
+                            .tooltip(strings.get(StrKey::ExportResultDoneHelp));
+                    done = button(ui, spec).clicked();
+                },
+            );
+            done
         });
-    let toggled = section(
-        ui,
-        egui::Id::unique("export.result.instructions"),
-        strings.get(StrKey::ExportResultInstructions),
-        instructions,
-        None,
-        |ui| run_instructions(ui, result),
-    );
-    if toggled {
-        out.push(Action::Export(Request::ToggleInstructions));
+    if response.inner || response.should_close() {
+        out.push(Action::Export(Request::Done));
     }
 }
 
-/// The status: the glyph, the headline and *Done*, then the CLI's lines.
-fn status(ui: &mut Ui, strings: &Strings, result: &ExportResult, out: &mut Vec<Action>) {
+/// The status: the glyph and the headline, then the CLI's lines.
+fn status(ui: &mut Ui, result: &ExportResult) {
     let palette = Palette::current(ui);
     let colours = palette.status_success;
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), theme::CONTROL_PX),
-        Layout::right_to_left(Align::Center),
-        |ui| {
-            // Secondary: the header's *Export G-code* is the view's one
-            // primary button.
-            let done = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::ExportResultDone))
-                .tooltip(strings.get(StrKey::ExportResultDoneHelp));
-            if button(ui, done).clicked() {
-                out.push(Action::Export(Request::Done));
-            }
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                glyph(ui, Icon::CircleCheck, colours.stroke);
-                text(
-                    ui,
-                    &result.status.headline,
-                    TextStyle::Heading,
-                    palette.text_primary,
-                );
-            });
-        },
-    );
+    ui.horizontal(|ui| {
+        glyph(ui, Icon::CircleCheck, colours.stroke);
+        text(
+            ui,
+            &result.status.headline,
+            TextStyle::Heading,
+            palette.text_primary,
+        );
+    });
     for line in &result.status.lines {
         wrapped(ui, line, TextStyle::Small, palette.text_secondary);
     }

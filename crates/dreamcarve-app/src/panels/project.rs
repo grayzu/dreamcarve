@@ -637,12 +637,9 @@ fn post(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Action>)
         Field::DecimalsMm,
         Field::DecimalsInch,
     ];
-    let choices = [
-        Choice::Post,
-        Choice::SpindleControl,
-        Choice::ToolChangeMode,
-        Choice::CannedCycles,
-    ];
+    // How several tools are written is the Export step's Programs
+    // control ([`programs`]), the one place for it.
+    let choices = [Choice::Post, Choice::SpindleControl, Choice::CannedCycles];
     let toggled = group(
         ui,
         cx,
@@ -675,7 +672,6 @@ fn post(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Action>)
                 }
             });
             field_row(ui, cx, Field::SpindleDwell, true, None, out);
-            tool_change(ui, cx, out);
             field_row(ui, cx, Field::DecimalsMm, true, None, out);
             field_row(ui, cx, Field::DecimalsInch, true, None, out);
             canned_cycles(ui, cx, out);
@@ -747,31 +743,53 @@ fn controller(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Ac
     }
 }
 
-/// One program per tool, or one with `M6` where the definition has it.
-fn tool_change(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
+/// **Programs** (capability 77): how a project that cuts with several
+/// tools is written, *One program per tool* or *One program for all
+/// tools*. It is the project's own setting (`tool_change_mode`), set
+/// here and nowhere else, an undoable change the user saves or not; the
+/// app has no override for one export. *One program for all tools* is
+/// listed on every controller and is off, with validation's reason as
+/// its tooltip, where the post-processor has no tool-change stop.
+pub(crate) fn programs(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let cx = &cx(state);
+    let name = cx.strings.get(Choice::ToolChangeMode.label());
+    let offered = project::tool_change_modes(cx.project);
+    let refusal = match project::offers(cx.project).m6 {
+        Offer::Refused { reason } => Some(reason),
+        Offer::Offered => None,
+    };
+    let label_of = |mode: ToolChangeMode| {
+        cx.strings.get(match mode {
+            ToolChangeMode::SeparatePrograms => StrKey::ProjectPostSeparate,
+            ToolChangeMode::M6 => StrKey::ProjectPostM6,
+        })
+    };
+    let current = cx.project.post_processor.tool_change_mode;
     choice_row(ui, cx, Choice::ToolChangeMode, |ui| {
-        let options: Vec<(ToolChangeMode, String)> = project::tool_change_modes(cx.project)
-            .into_iter()
-            .map(|mode| {
-                let key = match mode {
-                    ToolChangeMode::SeparatePrograms => StrKey::ProjectPostSeparate,
-                    ToolChangeMode::M6 => StrKey::ProjectPostM6,
-                };
-                (mode, cx.strings.get(key).to_owned())
+        let mut picked = None;
+        let width = ui.available_width();
+        let combo = egui::ComboBox::from_id_salt("export.programs")
+            .icon(crate::widgets::icon::combo_chevron)
+            .truncate()
+            .selected_text(label_of(current))
+            .width(width)
+            .show_ui(ui, |ui| {
+                for mode in [ToolChangeMode::SeparatePrograms, ToolChangeMode::M6] {
+                    let response = ui.add_enabled(
+                        offered.contains(&mode),
+                        egui::Button::selectable(mode == current, label_of(mode)),
+                    );
+                    if let (false, Some(reason)) = (offered.contains(&mode), &refusal) {
+                        let _ = response.on_disabled_hover_text(reason);
+                    } else if response.clicked() {
+                        picked = Some(mode);
+                    }
+                }
             })
-            .collect();
-        let current = cx.project.post_processor.tool_change_mode;
-        let (picked, response) = dropdown(
-            ui,
-            "project.post.tool_change",
-            cx.strings.get(Choice::ToolChangeMode.label()),
-            current,
-            &options,
-        );
-        if let Offer::Refused { reason } = project::offers(cx.project).m6 {
-            response.on_hover_text(reason);
-        }
-        if let Some(mode) = picked {
+            .response
+            .accessible_name(name);
+        let _ = crate::widgets::help::control(ui, combo, name);
+        if let Some(mode) = picked.filter(|mode| *mode != current) {
             out.extend(project::set_tool_change_mode(cx.project, mode).map(Action::run));
         }
     });

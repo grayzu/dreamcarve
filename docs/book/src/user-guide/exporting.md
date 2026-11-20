@@ -64,10 +64,12 @@ there.
 ## The Export step
 
 **Export** is the last step in the rail. **File ▸ Export G-code…** and
-Ctrl E (⌘E on macOS) open it too. On this step the header's green button
-reads **Export G-code**.
+Ctrl E (⌘E on macOS) open it too. The step's green button, **Export
+G-code**, is at the foot of its panel. It stays there however far the
+settings above it scroll, and the line beside it says what it will
+write, or why it cannot yet.
 
-![The plaque's Export step, ready: "No problems", an estimated time of 3 min 39 s and a Z range of −12..15 mm; the Post-processor, Heights and Tolerances groups; Programs, "As the project says: one program per tool"; Program Details with the two programs; the destination and the file name](../quick-start/figures/app/18-plaque-export.png)
+![The plaque's Export step, ready: "No problems", an estimated time of 3 min 39 s and a Z range of −12..15 mm; the Post-processor, Heights and Tolerances groups; Programs, "One program per tool"; Program Details with the two programs; the destination and the file name; and at the foot "Ready to write 2 programs." beside Export G-code](../quick-start/figures/app/18-plaque-export.png)
 
 ### Is it ready
 
@@ -82,9 +84,9 @@ know how your machine speeds up and slows down, so the real job takes a
 little longer.
 
 While an error blocks export, the step lists it, and **Export G-code** is
-off, with the reason in its tooltip:
+off, with the reason beside it:
 
-![The Export step blocked: "1 error blocks export" in a red card with a Show button, and under it the finding, that the 1/8 end mill's feed is not set](figures/app/export-blocked.png)
+![The Export step blocked: "1 error blocks export" in a red card with a Show button, and under it the finding, that the 1/8 end mill's feed is not set; at the foot, "1 error blocks export" beside a greyed Export G-code](figures/app/export-blocked.png)
 
 Click the finding to go and fix it. **Show** opens the Warnings drawer.
 Warnings are not listed here; the counts at the top include them. Read
@@ -95,13 +97,12 @@ them before you export.
 Three groups hold the settings that shape the program. Each is closed
 until you open it, with its values on its header.
 
-![The Post-processor group open: Controller grblHAL v4 (latest), File extension nc, Spindle control Automatic, Spin-up dwell 3 s, Tool change One program per tool, Decimals for mm and inch, and Canned drill cycles, not offered on grblHAL](figures/app/export-post-processor.png)
+![The Post-processor group open: Controller grblHAL v4 (latest), File extension nc, Spindle control Automatic, Spin-up dwell 3 s, Decimals for mm and inch, and Canned drill cycles, not offered on grblHAL](figures/app/export-post-processor.png)
 
 - **Post-processor**: the **Controller** your machine runs, and how the
   program is written for it: the file extension, whether the program
-  switches the spindle or pauses for you to switch a router, how long to
-  wait for the spindle to reach speed, and whether each tool gets its own
-  program. A setting a controller does not have is not offered, with the
+  switches the spindle or pauses for you to switch a router, and how long
+  to wait for the spindle to reach speed. A setting a controller does not have is not offered, with the
   reason. Switching controller keeps the settings the new one can use and
   says which it reset. [Post-processors](post-processors.md) explains
   every setting and each controller.
@@ -116,21 +117,25 @@ takes a change back.
 
 ### The programs
 
-A job that uses one tool is one program. With more than one tool, the
-project says how they are split, and the **Programs** menu shows it:
+A job that uses one tool is one program. With more than one tool,
+**Programs** says how they are written:
 
-- **As the project says**: one program per tool, or one program with
-  tool changes, whichever the Post-processor group's **Tool change** is
-  set to.
-- **One program per tool, this export only**.
-- **One program with M6 tool changes, this export only**, on a
-  controller that has `M6`.
+- **One program per tool**: a file for each tool, to run one after
+  another. You fit each bit and set its Z zero before you start its
+  program.
+- **One program for all tools**: one file, which stops at each tool
+  change for you to fit the next bit and set Z zero. It is off, with the
+  reason in its tooltip, on a controller whose post-processor cannot
+  stop for a tool change
+  ([Projects with more than one tool](post-processors.md#projects-with-more-than-one-tool)).
 
-The last two change this export and are not saved.
+This is a setting of the project, the one place it is set: it is saved
+with the project, and Undo takes a change back.
 
 A project with an Inlay has a tick for each board, **Female board** and
 **Male board**. Untick one to export the other alone, which is how you
-cut the plug again after a test fit. The ticks are not saved either.
+cut the plug again after a test fit. The ticks are for this export and
+are not saved.
 
 **Program Details** lists each program the export will write, in the
 order to run them: its file name, its tool, its operations, its time and
@@ -155,9 +160,9 @@ Click **Export G-code**. The app writes every program, or none: if one
 cannot be written, nothing is. It never writes over the project file, and
 exporting never changes the project.
 
-The step then shows what was written:
+A sheet then shows what was written:
 
-![The Export step after exporting the coaster: "1 program written" with a Done button, the file coaster.nc with its tool and time, the folder with Show in folder and Save setup sheet, and the Run instructions](../quick-start/figures/app/14-export-result.png)
+![The result of exporting the coaster, a sheet over the window: "1 program written", the file coaster.nc with its tool and time, the folder with Show in folder and Save setup sheet, the Run instructions, and Done](../quick-start/figures/app/14-export-result.png)
 
 - **The files**, in the order to run them, with each one's tool and
   time, and the **folder**, with a button to copy its path and **Show in
@@ -165,11 +170,16 @@ The step then shows what was written:
 - **Run instructions**: for each program, what to do before you start
   it, its extents and its time; then notes about your controller, such as
   what the program does and does not do with tool length offsets.
-- **Done** brings the plan back, to export again or somewhere else.
+- **Done** closes the sheet. So do Escape and a click outside it.
 
-The result stays until you click **Done** or change the project. Once
-the project changes, the files on disk are no longer what it would
-write, and the rail's check on **Export** goes: export again.
+The Export step then says what was written, *2 programs written to …*,
+and **Show result** opens the sheet again. Both stay until you change
+the project. Once the project changes, the files on disk are no longer
+what it would write, and the rail's check on **Export** goes: export
+again.
+
+If nothing could be written, no sheet opens: the step says why, under
+the card at its top.
 
 ### The setup sheet
 

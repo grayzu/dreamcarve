@@ -34,14 +34,19 @@ A project made in the app starts with grblHAL, as `init` starts one.
 | **File extension** | The extension of the program files, without the dot | `file_extension` |
 | **Spindle control** | **Automatic**: the program starts and stops the spindle. **Manual**: it pauses for you to switch a router on and off ([Manual spindle control](#manual-spindle-control)) | `spindle_control` |
 | **Spin-up dwell** | Seconds to wait after the spindle starts, so that it reaches speed before it cuts | `spindle_on_dwell_s` |
-| **Tool change** | **One program per tool**, or **One program with M6**, on a controller that has `M6` ([Projects with more than one tool](#projects-with-more-than-one-tool)) | `tool_change_mode` |
 | **Decimals, mm** and **Decimals, inch** | Decimal places the program writes | `decimal_places` |
 | **Canned drill cycles** | Write Drill operations as the controller's drilling cycles ([Canned cycles](#canned-cycles)) | `use_canned_cycles` |
 
 A setting the chosen controller does not have is not offered. On
 grblHAL, **Canned drill cycles** reads *Not offered: grblHAL has no
-canned cycles.* On every controller but grblHAL, **Tool change** lists
-**One program per tool** only.
+canned cycles.*
+
+One setting of the post-processor is not in this group. **Programs**,
+further down the Export step, is `tool_change_mode`: **One program per
+tool**, or **One program for all tools**, which stops with `M6` at each
+tool change
+([Projects with more than one tool](#projects-with-more-than-one-tool)).
+On every controller but grblHAL, **One program for all tools** is off.
 
 These are settings of the project. They are saved with it, and each
 change is one step for Undo.

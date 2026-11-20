@@ -1395,7 +1395,8 @@ impl Shell {
         let sheet_open = self.sheet.is_some()
             || self.library.is_some()
             || self.import.is_some()
-            || self.picture.is_some();
+            || self.picture.is_some()
+            || self.export.result_sheet().is_some();
         focus::begin(ctx, sheet_open);
         if self.app.target_editing().is_some() {
             // Target editing has two keys, Enter for Done and Escape for
@@ -1776,12 +1777,12 @@ impl Shell {
     fn export_request(&mut self, request: panels::export::Request) {
         use panels::export::Request;
         match request {
-            Request::Done => self.export.dismiss(),
+            Request::Done => self.export.show_result(false),
+            Request::ShowResult => self.export.show_result(true),
             Request::ChooseFolder => {
                 self.choose_export_folder();
             }
             Request::SetStem(stem) => self.export.set_stem(stem),
-            Request::SetSplit(split) => self.export.set_split(split),
             Request::SetBoards(boards) => self.export.set_boards(boards),
             Request::ToggleInstructions => self.export.toggle_instructions(),
             Request::Export => {
@@ -2273,6 +2274,15 @@ impl eframe::App for Shell {
                 self.app.strings(),
                 self.app.project().display_units,
                 sheet,
+                &mut actions,
+            );
+        } else if let Some(done) = self.export.result_sheet() {
+            // What an export wrote (capability 77a).
+            panels::result::sheet(
+                &ctx,
+                self.app.strings(),
+                &done.result,
+                done.instructions,
                 &mut actions,
             );
         }

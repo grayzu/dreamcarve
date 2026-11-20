@@ -97,10 +97,11 @@ folder are app preferences, kept outside the project.
       name, with a dot before it while there are unsaved changes. At its
       right Undo and Redo, the generation state while toolpaths
       regenerate (71), and the window's one primary button. It reads
-      **Continue** and opens the next step that is not complete; on the
-      Export step it reads **Export G-code** and is the export command
-      (77), disabled with the reason in its tooltip while an error blocks
-      export or the programs are still being built.
+      **Continue** and opens the next step that is not complete. On the
+      Export step the header shows no primary button: the step's own
+      **Export G-code** is at the foot of its panel (77), where the
+      export is set up (maintainer's smoke test, 2026-11-20: in the
+      header's corner it was not found).
     - The **rail** at the left: the five **steps** of the work in their
       fixed order, **Design**, **Stock**, **Tools**, **Operations**,
       **Export**, each a button with a mark of its state (below). Nothing
@@ -459,10 +460,10 @@ folder are app preferences, kept outside the project.
     the user's settings the new one can use, as `export --post` does
     (capability 27), and says which were reset. The settings below it are
     the project's post-processor settings (capability 2): file extension,
-    spindle control (automatic or manual), spin-up dwell, tool-change mode
-    (one program per tool, or one program with `M6`: offered only on a
-    post-processor with `M6`), decimal places for mm and inch, and canned
-    cycles (offered only where the definition has them). Nothing about the
+    spindle control (automatic or manual), spin-up dwell, decimal places
+    for mm and inch, and canned cycles (offered only where the definition
+    has them). The tool-change mode is not a row of this group: it is the
+    step's **Programs** control (77), the one place it is set. Nothing about the
     dialect itself is editable: the project names a bundled definition
     (ADR-0004).
 
@@ -1060,8 +1061,15 @@ folder are app preferences, kept outside the project.
 77. **Export** (`11-export-dialog.svg`; trimmed by the review,
     2026-11-10; made a step by `redesign.md`, slice D4). Export is the
     Export step, not a sheet: File ▸ Export G-code… and Ctrl E open the
-    step, and the header's **Export G-code** (50) is the command. Under
-    the readiness card (50) the step shows, top to bottom:
+    step, and **Export G-code**, the step's one primary button, is the
+    command. The button is at the **foot of the step's panel**, pinned:
+    the settings above it scroll and it stays in view. Beside it the foot
+    says what it will do, *Ready to write 2 programs.*, or, while the
+    export is blocked, why: *1 error blocks export* (the findings are
+    listed above), or that the toolpaths or the programs are still being
+    worked out; the button is then disabled, with the whole reason as
+    its tooltip. Under the readiness card (50) the step shows, top to
+    bottom:
     - **What blocks export**, while an error does: a card in the error
       colour that counts them (*1 error blocks export*), with *Show*
       opening the drawer at them, and under it each finding, its message
@@ -1075,12 +1083,21 @@ folder are app preferences, kept outside the project.
       holding a finding shows its count, and a finding's row opens it.
       Switching the post-processor is the step's switch (62), an undoable
       project change the user saves or not.
-    - **Programs**, where the enabled operations cut with two tools or
-      more: the program split, *as the project says* (the setting's value
-      shown) or overridden for this export to one program per tool or one
-      program with tool changes (`--programs-per-tool`, `--one-program`;
-      the override is not saved, and *one program* is refused on a post
-      without `M6` with the CLI's message). With an Inlay, a tick per
+    - **Programs**: how a project that cuts with several tools is
+      written, one control with two plainly named choices, **One program
+      per tool** and **One program for all tools** (maintainer's smoke
+      test, 2026-11-20: the step offered *As the project says* and two
+      *this export only* overrides beside a *Tool change* row in the
+      Post-processor group, three choices in two places for a two-way
+      decision). It is the project's own setting (`tool_change_mode`,
+      capability 2): choosing one is an undoable project change the user
+      saves or not, and there is no override for one export in the app
+      (the CLI keeps `--programs-per-tool` and `--one-program`). *One
+      program for all tools* is listed on every controller and disabled,
+      with validation's reason as its tooltip, where the post-processor
+      has no tool-change stop. No label or choice names a G-code word;
+      the help says what the program does: it stops at each tool change
+      for you to fit the next bit and set Z zero. With an Inlay, a tick per
       board, **Female board** and **Male board**: unticking one exports
       the other alone for this export (`--board`), not saved, which is
       how the male is re-cut after a fit adjustment.
@@ -1108,12 +1125,13 @@ folder are app preferences, kept outside the project.
     nothing when the dialog is cancelled. When nothing could be written
     the step says why (*Nothing was written: …*) under the readiness
     card. Export never changes the project file.
-77a. **Export result** (`13-export-result.svg`; review 2026-11-10). The
-    result takes the plan's place on the step (the programs and the
-    destination), in three parts:
-    - **Status**: a success glyph and *2 programs written*, with **Done**
-      beside it, which brings the plan back, to export again or somewhere
-      else.
+77a. **Export result** (`13-export-result.svg`; review 2026-11-10; a
+    sheet since the maintainer's smoke test, 2026-11-20, where the result
+    in the plan's place was taken for part of the settings). The result
+    is a **sheet** over the window, in three parts, with **Done** in its
+    footer:
+    - **Status**: a success glyph and *2 programs written*, with the
+      CLI's lines under it.
     - **Files**: one row per program in run order, number, file name in
       the monospace face, tool, estimated time; then the **folder** they
       were written to, with *Copy path*, *Show in folder* and **Save
@@ -1124,10 +1142,15 @@ folder are app preferences, kept outside the project.
       `G43.1` and `G51` lines), each a separate callout, then the extents
       and Z range.
 
-    The result stays until *Done*, or until the project changes, since it
-    is then no longer what the project would write. The CLI's report text
-    is not shown as one block; every fact in it is in one of the three
-    parts.
+    *Done*, Escape or a click outside closes the sheet. The Export step,
+    whose plan never left it, then says so in one line under its
+    readiness card, *2 programs written to …*, beside its summary
+    *Exported. Nothing has changed since.*, with **Show result**, which
+    opens the sheet again. The result is kept until the project changes,
+    since it is then no longer what the project would write. A failed
+    export opens no sheet: the step says why under its readiness card
+    (77). The CLI's report text is not shown as one block; every fact in
+    it is in one of the three parts.
 77b. **Setup sheet** (`13-export-result.svg`; maintainer decision
     2026-11-10). *Save setup sheet…* writes one self-contained HTML file,
     default `<stem>-setup.html` beside the programs, that the user opens
@@ -1391,8 +1414,12 @@ byte-identical output with the program's header date pinned (`--date`).
     lacking a feed shows the error on the Export step, where a click on
     it opens the tool, and a disabled *Export G-code*; a project with
     only warnings exports, and the status bar counts them.
-85. **Override not saved** (77). Exporting with *one program* overridden
-    leaves `tool_change_mode` unchanged in the file.
+85. **Programs is the project's setting** (77). The Export step has one
+    **Programs** control and the Post-processor group no *Tool change*
+    row; choosing *One program for all tools* writes `tool_change_mode`
+    as one undo step, and undo puts it back. (Was *Override not saved*:
+    the app no longer has an override; the CLI's flags leave the file
+    unchanged, as before.)
 86. **Undo and redo** (52). Twenty mixed edits (move, field, reorder, add,
     delete, import, place tabs) undo in reverse order to the opening
     state and redo to the final state, each with the labelled name; a new
@@ -1444,8 +1471,9 @@ slices carry them.
     Coaster on Stock with its error marked, and the plaque on Export
     with the four steps before it complete; the step picked stays through
     an edit. *Continue* opens the next step that is not complete; on
-    Export the primary button is *Export G-code*, which writes the
-    programs and is disabled once a tool an operation uses has no feed. With nothing selected there is no
+    Export the header has no primary button and the step's own *Export
+    G-code*, at the foot of its panel, writes the programs and is
+    disabled once a tool an operation uses has no feed. With nothing selected there is no
     Inspector; with a shape selected on Design it shows the Properties
     and the Arrange group, and its close button deselects. At 1280 × 768
     the four regions sit side by side at no less than their minimum
@@ -1519,10 +1547,10 @@ slices carry them.
     are opened; with an error it shows the one blocking line over the
     finding and a disabled *Export G-code*. A project never saved asks
     for a folder first, and writes nothing when the dialog is cancelled.
-    After an export the result, in the plan's place, shows the status,
+    After an export the result, a sheet, shows the status,
     the files in run order and the folder; *Run instructions* is closed
-    and holds the CLI's step-before lines and notes; *Done* brings the
-    plan back. *Save setup
+    and holds the CLI's step-before lines and notes; *Done* closes the
+    sheet, and the step's *Show result* opens it again. *Save setup
     sheet…* writes an HTML file with no `<script>`, no `http` reference and
     no `<img>`, whose programs, tools, step-before lines, extents and
     estimates equal the export's, deterministic with the date pinned.
