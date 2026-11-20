@@ -220,9 +220,11 @@ pub(crate) fn drawer(
         grab(ui, tall, tallest);
         header(ui, state, counts, out);
         let palette = Palette::current(ui);
-        egui::ScrollArea::vertical()
-            .auto_shrink(false)
-            .show(ui, |ui| {
+        crate::widgets::scroll::show(
+            ui,
+            egui::ScrollArea::vertical().auto_shrink(false),
+            crate::widgets::scroll::Surface::Panel,
+            |ui| {
                 if groups.is_empty() {
                     ui.add_space(24.0);
                     ui.vertical_centered(|ui| {
@@ -248,7 +250,8 @@ pub(crate) fn drawer(
                     }
                 }
                 ui.add_space(INSET_PX);
-            });
+            },
+        );
     });
     rect
 }

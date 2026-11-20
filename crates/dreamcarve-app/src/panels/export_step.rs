@@ -56,10 +56,13 @@ const BLOCKING_PADDING_PX: f32 = 12.0;
 /// the card.
 pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
-    egui::ScrollArea::vertical()
-        .id_salt("export_step")
-        .auto_shrink(false)
-        .show(ui, |ui| {
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("export_step")
+            .auto_shrink(false),
+        crate::widgets::scroll::Surface::Panel,
+        |ui| {
             egui::Frame::NONE
                 .inner_margin(egui::Margin {
                     left: MARGIN_PX,
@@ -85,7 +88,8 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         None => panels::export::plan(ui, state, out),
                     }
                 });
-        });
+        },
+    );
 }
 
 /// The readiness card: the counts, the estimate and the Z range.

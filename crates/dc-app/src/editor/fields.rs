@@ -445,6 +445,24 @@ impl Row {
             && !self.key.starts_with("male_board.")
     }
 
+    /// Whether its control is indented among `siblings`, the rows drawn
+    /// with it (its group's, or its clearing pass's): [`Row::indented`],
+    /// and the feature or variant it is nested in is one of them. A row
+    /// whose parent is drawn in another group (a Pocket's raster angle,
+    /// whose strategy is chosen in Setup; a tab's width, whose request is
+    /// in Setup) stands at its group's own margin: indented under a
+    /// neighbour it does not belong to (*Corner relief*), it would read
+    /// as that neighbour's.
+    #[must_use]
+    pub fn indented_among<'r>(&self, siblings: impl IntoIterator<Item = &'r Self>) -> bool {
+        self.indented()
+            && siblings.into_iter().any(|other| {
+                self.key
+                    .strip_prefix(other.key)
+                    .is_some_and(|rest| rest.starts_with('.'))
+            })
+    }
+
     /// The row, its value worded in a summary as `template` says.
     #[must_use]
     pub const fn summarised(self, template: StrKey) -> Self {

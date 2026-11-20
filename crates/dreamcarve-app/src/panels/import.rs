@@ -168,10 +168,13 @@ fn body(
     // short; the header and footer stay.
     let footer_h = FOOTER_PX + 16.0;
     let room = (ui.available_height() - footer_h).max(120.0);
-    egui::ScrollArea::vertical()
-        .max_height(room)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .max_height(room)
+            .auto_shrink([false, true]),
+        crate::widgets::scroll::Surface::Raised,
+        |ui| {
             if sheet.model.format() == DrawingFormat::Dxf {
                 options(ui, strings, project.display_units, sheet);
                 ui.add_space(12.0);
@@ -181,7 +184,8 @@ fn body(
             heading(ui, strings.get(StrKey::AppImportPreview));
             preview(ui, &sheet.model);
             notes(ui, strings, &sheet.model);
-        });
+        },
+    );
     ui.add_space(16.0);
     footer(ui, strings, &sheet.model, out);
 }
@@ -456,11 +460,14 @@ fn layers(ui: &mut Ui, strings: &Strings, model: &mut DrawingImport) {
             (layer.name.clone(), label, shapes > 0)
         })
         .collect();
-    egui::ScrollArea::vertical()
-        .id_salt("import_layers")
-        .max_height(LAYERS_MAX_PX)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("import_layers")
+            .max_height(LAYERS_MAX_PX)
+            .auto_shrink([false, true]),
+        crate::widgets::scroll::Surface::Raised,
+        |ui| {
             for (name, label, readable) in rows {
                 let mut ticked = readable && model.is_ticked(&name);
                 let response = ui
@@ -472,7 +479,8 @@ fn layers(ui: &mut Ui, strings: &Strings, model: &mut DrawingImport) {
                     model.set_layer(&name, ticked);
                 }
             }
-        });
+        },
+    );
 }
 
 /// The preview: the drawing alone, as drawn, fitted to the thumbnail

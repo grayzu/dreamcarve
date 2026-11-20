@@ -839,6 +839,10 @@ pub fn style(palette: &Palette) -> Style {
     spacing.scroll = ScrollStyle {
         bar_width: 6.0,
         floating: true,
+        // The bar lies over the list's edge and takes no room of its own:
+        // a list that starts to scroll does not get 6 px narrower, so a
+        // field is one width whether or not its panel scrolls.
+        floating_allocated_width: 0.0,
         dormant_background_opacity: 0.0,
         active_background_opacity: 0.4,
         interact_background_opacity: 0.6,

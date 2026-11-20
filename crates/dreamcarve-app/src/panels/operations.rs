@@ -250,10 +250,13 @@ fn rows(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let rows = operations::rows(state.app);
     let dragging: Option<OperationId> = ui.data(|d| d.get_temp(dragging_id()));
-    egui::ScrollArea::vertical()
-        .id_salt("operations_list")
-        .auto_shrink(false)
-        .show(ui, |ui| {
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("operations_list")
+            .auto_shrink(false),
+        crate::widgets::scroll::Surface::Panel,
+        |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut rects: Vec<Rect> = Vec::with_capacity(rows.len());
             for row in &rows {
@@ -295,7 +298,8 @@ fn rows(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 let to = if slot > from { slot - 1 } else { slot };
                 out.extend(operations::reorder(state.app.project(), &id, to).map(Action::run));
             }
-        });
+        },
+    );
 }
 
 /// The row being dragged, raised and following the cursor at 96 % alpha.

@@ -3779,6 +3779,57 @@ mod summary {
         }
     }
 
+    /// A row is indented under the feature or variant it is nested in
+    /// only where that row is drawn with it. A Pocket's raster angle is
+    /// its Strategy group's first row, its strategy chosen in Setup, and
+    /// a Profile's tab width is under *Corner relief*, its request in
+    /// Setup: neither is indented, where each was drawn as if it were its
+    /// neighbour's. A ramp's angle under *Entry* and a lead's radius under
+    /// *Lead* still are.
+    #[test]
+    fn a_row_is_indented_only_under_a_parent_drawn_with_it() {
+        let plaque = common::plaque();
+        let by_name = |name: &str| {
+            plaque
+                .operations
+                .iter()
+                .find(|op| op.name() == name)
+                .unwrap_or_else(|| panic!("the plaque's {name}"))
+        };
+        let indented = |op: &Operation, group: Group| -> Vec<(&'static str, bool)> {
+            let rows = fields::groups(op)
+                .into_iter()
+                .find(|(g, _)| *g == group)
+                .map(|(_, rows)| rows)
+                .unwrap_or_default();
+            rows.iter()
+                .map(|row| (row.key, row.indented_among(rows.iter().copied())))
+                .collect()
+        };
+        let strategy = indented(by_name("Panel"), Group::Strategy);
+        assert_eq!(
+            strategy.first(),
+            Some(&("strategy.raster.angle_deg", false)),
+            "{strategy:?}"
+        );
+        assert!(
+            strategy.iter().all(|(_, indented)| !indented),
+            "{strategy:?}"
+        );
+        let corners = indented(by_name("Cut out"), Group::CornersAndTabs);
+        assert!(corners.len() > 3, "{corners:?}");
+        assert!(corners.iter().all(|(_, indented)| !indented), "{corners:?}");
+        let entry = indented(by_name("Cut out"), Group::EntryAndLeads);
+        for (key, want) in [
+            ("entry", false),
+            ("entry.ramp.angle_deg", true),
+            ("lead", false),
+            ("lead.radius_mm", true),
+        ] {
+            assert!(entry.contains(&(key, want)), "{key}: {entry:?}");
+        }
+    }
+
     /// Functional 66: every group but Setup starts closed; a group holding
     /// a located warning opens by itself, and only it: the Pocket's
     /// `relief_corner_too_tight` is Corners and tabs'.

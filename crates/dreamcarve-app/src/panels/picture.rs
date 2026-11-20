@@ -172,17 +172,21 @@ fn body(ui: &mut Ui, strings: &Strings, units: Units, sheet: &mut Sheet, out: &m
     // short; the header and footer stay.
     let footer_h = FOOTER_PX + 16.0;
     let room = (ui.available_height() - footer_h).max(120.0);
-    egui::ScrollArea::vertical()
-        .max_height(room)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .max_height(room)
+            .auto_shrink([false, true]),
+        crate::widgets::scroll::Surface::Raised,
+        |ui| {
             heading(ui, strings.get(StrKey::AppImportPreview));
             preview(ui, sheet);
             ui.add_space(12.0);
             heading(ui, strings.get(StrKey::AppPictureSize));
             size(ui, strings, units, sheet);
             notes(ui, strings, &sheet.model);
-        });
+        },
+    );
     ui.add_space(16.0);
     footer(ui, strings, &sheet.model, out);
 }

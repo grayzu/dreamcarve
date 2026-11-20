@@ -514,10 +514,14 @@ fn body(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 
 /// `body` in a scroll area that fills what is left of the card.
 fn scrolled(ui: &mut Ui, salt: &str, body: impl FnOnce(&mut Ui)) {
-    egui::ScrollArea::vertical()
-        .id_salt(salt)
-        .auto_shrink(false)
-        .show(ui, body);
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(salt)
+            .auto_shrink(false),
+        crate::widgets::scroll::Surface::Panel,
+        body,
+    );
 }
 
 /// An Inspector header (the operation editor's has its own): `title` at

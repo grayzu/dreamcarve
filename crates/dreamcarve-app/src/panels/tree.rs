@@ -289,9 +289,11 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let project = app.project();
     // The marked operation's targets, as the Viewport marks them.
     let tree = Tree::build(project).with_targets(app.scene().targets());
-    egui::ScrollArea::vertical()
-        .auto_shrink(false)
-        .show(ui, |ui| {
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical().auto_shrink(false),
+        crate::widgets::scroll::Surface::Panel,
+        |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             // The tree scrolls to the first selected row when the
             // selection changes (`experience.md`, section 8).
@@ -384,7 +386,8 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     }
                 }
             }
-        });
+        },
+    );
 }
 
 /// What a row's rename field did this frame.

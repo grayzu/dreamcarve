@@ -175,16 +175,20 @@ pub(crate) fn list(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             ui.add_space(8.0 - gap);
             // The list takes what the buttons under it leave.
             let room = (ui.available_height() - theme::GAP_PX - theme::CONTROL_PX).max(ROW_PX);
-            egui::ScrollArea::vertical()
-                .id_salt("tools_list")
-                .max_height(room)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
+            crate::widgets::scroll::show(
+                ui,
+                egui::ScrollArea::vertical()
+                    .id_salt("tools_list")
+                    .max_height(room)
+                    .auto_shrink([false, true]),
+                crate::widgets::scroll::Surface::Panel,
+                |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for tool in &project.tools {
                         list_row(ui, state, tool, current == Some(&tool.id));
                     }
-                });
+                },
+            );
             ui.add_space(8.0 - gap);
             list_actions(ui, strings, project, current, out);
         }
@@ -214,11 +218,14 @@ pub(crate) fn editor_card(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, out:
     let strings = state.app.strings();
     let units = state.app.project().display_units;
     header(ui, tool);
-    egui::ScrollArea::vertical()
-        .id_salt("tool_editor")
-        .auto_shrink(false)
-        .max_height((ui.available_height() - FOOTER_PX).max(0.0))
-        .show(ui, |ui| {
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("tool_editor")
+            .auto_shrink(false)
+            .max_height((ui.available_height() - FOOTER_PX).max(0.0)),
+        crate::widgets::scroll::Surface::Panel,
+        |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(MARGIN_PX);
                 ui.vertical(|ui| {
@@ -226,7 +233,8 @@ pub(crate) fn editor_card(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, out:
                     editor(ui, strings, units, tool, out);
                 });
             });
-        });
+        },
+    );
     footer(ui, strings, tool, out);
 }
 

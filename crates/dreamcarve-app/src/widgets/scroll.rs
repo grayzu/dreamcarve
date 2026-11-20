@@ -13,13 +13,41 @@
 
 use eframe::egui::{self, Color32, Rect, Ui, scroll_area::ScrollAreaOutput};
 
-use crate::shell::theme;
+use crate::shell::theme::{self, Palette};
 
 /// The fade's height, px.
 pub(crate) const FADE_PX: f32 = 20.0;
 /// How far a list must run past an edge before that edge fades, px: a
 /// rounding error is not *more below*.
 const SLACK_PX: f32 = 1.0;
+
+/// The surface a list scrolls on, which its fades run into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Surface {
+    /// A card: `surface.panel`.
+    Panel,
+    /// A sheet or a popover: `surface.raised`.
+    Raised,
+}
+
+/// Shows `body` in `area` and fades the edges it goes on past, into
+/// `surface`: every scrolling list of the app is shown through this (or,
+/// where its area's result is read first, through [`fade`]).
+pub(crate) fn show<R>(
+    ui: &mut Ui,
+    area: egui::ScrollArea,
+    surface: Surface,
+    body: impl FnOnce(&mut Ui) -> R,
+) -> ScrollAreaOutput<R> {
+    let output = area.show(ui, body);
+    let palette = Palette::current(ui);
+    let colour = match surface {
+        Surface::Panel => palette.surface_panel,
+        Surface::Raised => palette.surface_raised,
+    };
+    fade(ui, &output, colour);
+    output
+}
 
 /// Which edges of a scrolled list fade: `(top, bottom)`, for a list
 /// `content_px` high scrolled `offset_px` down in a `viewport_px` window.

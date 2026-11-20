@@ -177,10 +177,13 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
     header(ui, &cx, index, selected, out);
     let kind = Kind::of(op);
     let opening = opens_now(ui, op, &cx.located);
-    egui::ScrollArea::vertical()
-        .id_salt(("operation_editor", op.id().as_str()))
-        .auto_shrink(false)
-        .show(ui, |ui| {
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("operation_editor", op.id().as_str()))
+            .auto_shrink(false),
+        crate::widgets::scroll::Surface::Panel,
+        |ui| {
             egui::Frame::NONE
                 .inner_margin(egui::Margin {
                     left: MARGIN_PX,
@@ -218,7 +221,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
                             },
                             |ui| {
                                 for row in &rows {
-                                    render(ui, &cx, row, out);
+                                    render(ui, &cx, row, &rows, out);
                                 }
                             },
                         );
@@ -227,7 +230,8 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
                         }
                     }
                 });
-        });
+        },
+    );
 }
 
 /// The groups of `op` to open this frame: those holding a located error
@@ -439,10 +443,18 @@ pub(super) fn commit(
     }
 }
 
-/// One row: its renderer, then the message under it (the refusal of what
-/// was typed, else the file's located message).
-fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
+/// One row among `siblings`, its group's rows: its renderer, then the
+/// message under it (the refusal of what was typed, else the file's
+/// located message).
+fn render(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    row: &'static Row,
+    siblings: &[&'static Row],
+    out: &mut Vec<Action>,
+) {
     let slot = Slot::of(row);
+    let indent = row.indented_among(siblings.iter().copied());
     let refused_id = control_id(cx.op, slot.key()).with("refused");
     let refused: Option<String> = ui.data(|d| d.get_temp(refused_id));
     let status = cx.located.status(row);
@@ -464,6 +476,7 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
     });
     let response = ui
         .horizontal(|ui| {
+            nest(ui, indent);
             control(
                 ui,
                 cx,
@@ -548,9 +561,16 @@ const fn typed_kind(kind: FieldKind) -> bool {
     )
 }
 
-/// The control of `slot`, by its kind, indented under its feature or
-/// variant when its key is nested: what a row of the operation and a row
-/// of a clearing pass both draw. `offered` is what a tool picker lists;
+/// The room a row drawn under its feature or variant starts with, when
+/// `indent` (`Row::indented_among`: its parent is drawn with it).
+pub(super) fn nest(ui: &mut Ui, indent: bool) {
+    if indent {
+        ui.add_space(NESTED_PX);
+    }
+}
+
+/// The control of `slot`, by its kind: what a row of the operation and a
+/// row of a clearing pass both draw, after [`nest`]. `offered` is what a tool picker lists;
 /// `required`, the file's message while a typed field is an unset
 /// required value.
 #[allow(
@@ -568,11 +588,6 @@ pub(super) fn control(
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let id = control_id(cx.op, slot.key());
-    // A derived value stands where the value it replaces would; a male
-    // board's sizes are their group's own (`Row::indented`).
-    if slot.row.indented() {
-        ui.add_space(NESTED_PX);
-    }
     match slot.row.kind {
         FieldKind::Length
         | FieldKind::Rate

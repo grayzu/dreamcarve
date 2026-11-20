@@ -23,7 +23,7 @@ use dc_app::editor::{Row, clearing};
 use dc_job::Tier;
 use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
 
-use crate::panels::editor::{Cx, commit, control, control_id, tool_note};
+use crate::panels::editor::{Cx, commit, control, control_id, nest, tool_note};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
@@ -163,11 +163,16 @@ fn card(
                     }
                 });
             });
-            for slot in clearing::rows(cx.op, list, index) {
+            let slots = clearing::rows(cx.op, list, index);
+            for slot in &slots {
                 let refused_id = control_id(cx.op, slot.key()).with("refused");
                 let refused: Option<String> = ui.data(|d| d.get_temp(refused_id));
                 let tier = refused.as_ref().map(|_| Tier::Error);
-                ui.horizontal(|ui| control(ui, cx, &slot, &tools, tier, None, false, out));
+                let indent = slot.row.indented_among(slots.iter().map(|s| s.row));
+                ui.horizontal(|ui| {
+                    nest(ui, indent);
+                    control(ui, cx, slot, &tools, tier, None, false, out)
+                });
                 if matches!(slot.row.kind, dc_app::editor::FieldKind::ToolPicker) {
                     tool_note(ui, cx, &slot);
                 }

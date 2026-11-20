@@ -5,7 +5,8 @@
 //! "Disclosure section header"; section 12, `section_header`): a 32-px
 //! full-width header with no band, 13-px SemiBold, the chevron left, and,
 //! while the section is closed, the glyph and count of the located
-//! messages inside it at the right end so nothing hides. An open section
+//! messages inside it at the right end so nothing hides. An open section,
+//! and a block that never closes,
 //! leaves 20 px under its body before what follows. Whether it is open is a
 //! preference (`gui.toml`'s `sections`), passed in and reported back, not
 //! held here; egui's `CollapsingState` only animates the body. An
@@ -105,7 +106,8 @@ pub(crate) fn section_with(
             palette.surface_hover,
         );
     }
-    let mut title_x = rect.left() + 8.0;
+    // A block with no chevron starts where its rows' labels do.
+    let mut title_x = rect.left();
     if collapses {
         let chevron = if open {
             Icon::ChevronDown
@@ -178,10 +180,10 @@ pub(crate) fn section_with(
     let gap = theme::SECTION_GAP_PX - ui.spacing().item_spacing.y;
     state.show_body_unindented(ui, |ui| {
         body(ui);
-        // The gap between sections in a card, under an open one.
-        if collapses {
-            ui.add_space(gap);
-        }
+        // The gap between sections in a card, under an open one: under
+        // the block that never closes too, which sets it off from the
+        // headers after it.
+        ui.add_space(gap);
     });
     collapses && response.clicked()
 }

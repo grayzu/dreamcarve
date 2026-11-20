@@ -120,10 +120,13 @@ fn cx<'a>(state: &'a FrameState<'_>) -> Cx<'a> {
 /// fills the card.
 pub(crate) fn stock_step(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let cx = cx(state);
-    egui::ScrollArea::vertical()
-        .id_salt("stock_step")
-        .auto_shrink(false)
-        .show(ui, |ui| {
+    crate::widgets::scroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("stock_step")
+            .auto_shrink(false),
+        crate::widgets::scroll::Surface::Panel,
+        |ui| {
             egui::Frame::NONE
                 .inner_margin(egui::Margin {
                     left: MARGIN_PX,
@@ -137,7 +140,8 @@ pub(crate) fn stock_step(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Acti
                     stock(ui, &cx, out);
                     origin(ui, &cx, out);
                 });
-        });
+        },
+    );
 }
 
 /// The Export step's output settings: the Post-processor, Heights and
