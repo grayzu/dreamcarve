@@ -1463,15 +1463,6 @@ const INLAY: &[Row] = &[
         StrKey::EditorFieldPlugDepth,
         StrKey::EditorFieldPlugDepthHelp,
     ),
-    // Required for the male to export (capability 66b), so in Setup; the
-    // board's width and height stay in Male board (mock-up 06).
-    row(
-        Group::Setup,
-        "male_board.thickness_mm",
-        FieldKind::Length,
-        StrKey::EditorFieldMaleThickness,
-        StrKey::EditorFieldMaleThicknessHelp,
-    ),
     // The drawn edge stands before the margin and the rounding it
     // replaces (phase 3's capability 49f).
     row(
@@ -1502,6 +1493,18 @@ const INLAY: &[Row] = &[
         FieldKind::InlayDerived,
         StrKey::EditorFieldInlayDerived,
         StrKey::EditorFieldInlayDerivedHelp,
+    ),
+    // The board's own thickness, first in its group: required for the
+    // male to export (capability 66b), so while it is unset the group
+    // opens by itself and its closed header carries the warning
+    // (capability 66). It stood in Setup until the maintainer's smoke
+    // test, where it read as the stock's.
+    row(
+        Group::MaleBoard,
+        "male_board.thickness_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldMaleThickness,
+        StrKey::EditorFieldMaleThicknessHelp,
     ),
     stock_row(
         Group::MaleBoard,

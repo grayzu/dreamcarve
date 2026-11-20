@@ -37,11 +37,10 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
 use dc_app::export::{Boards, ExportResult, Options, Ready};
-use dc_app::project::{self as project_model, Offer};
+use dc_app::project as project_model;
 use dc_app::status::counted;
 use dc_app::{App, SnapshotId, StrKey, Strings};
 use dc_job::{EstimateConfig, ProgramSplit, Tier};
-use dc_project::ToolChangeMode;
 use dreamcarve_shell::{StagedFile, commit_all};
 use eframe::egui::{self, Align, Id, Layout, Sense, TextStyle, Ui};
 
@@ -65,8 +64,11 @@ const NUMBER_PX: f32 = 12.0;
 /// What the Export step asks the shell for.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Request {
-    /// The result's *Done*: back to the plan.
+    /// The result sheet's *Done*: the sheet closes, and the step keeps
+    /// its one line about the export.
     Done,
+    /// *Show result*: the result's sheet again.
+    ShowResult,
     /// Pick the destination folder.
     ChooseFolder,
     /// Write the files, asking for a folder first when none is chosen
@@ -80,8 +82,6 @@ pub(crate) enum Request {
     Copied,
     /// The file name, typed.
     SetStem(String),
-    /// The program split for this export.
-    SetSplit(ProgramSplit),
     /// The boards ticked for this export.
     SetBoards(Boards),
     /// The result's *Run instructions*, opened or closed.
@@ -105,6 +105,18 @@ pub(crate) struct Done {
     setup: SetupSheet,
     /// Whether *Run instructions* is open: closed when the result shows.
     pub instructions: bool,
+    /// Whether the result's sheet shows: from the export until *Done*,
+    /// and again from *Show result*.
+    pub open: bool,
+    /// How many programs were written, for the step's line.
+    pub count: usize,
+}
+
+impl Done {
+    /// The folder the programs went to.
+    pub(crate) fn dir(&self) -> &Path {
+        &self.dir
+    }
 }
 
 /// The setup sheet of the last export (capability 77b): the page, and
@@ -131,7 +143,6 @@ pub(crate) struct Export {
     stem: String,
     /// The project file the folder and the name were taken from.
     source: Option<PathBuf>,
-    split: ProgramSplit,
     boards: Boards,
     /// The date the programs are headed with: today's.
     date: String,
@@ -150,7 +161,6 @@ impl std::fmt::Debug for Export {
         f.debug_struct("Export")
             .field("dir", &self.dir)
             .field("stem", &self.stem)
-            .field("split", &self.split)
             .field("planning", &self.planning.is_some())
             .finish_non_exhaustive()
     }
@@ -183,7 +193,6 @@ impl Export {
             dir_chosen: false,
             stem: default_stem(app),
             source: app.source().map(Path::to_path_buf),
-            split: ProgramSplit::ProjectDefault,
             boards: Boards::default(),
             date,
             estimate,
@@ -211,7 +220,9 @@ impl Export {
 
     fn options(&self) -> Options {
         Options {
-            split: self.split,
+            // As the project says: the step's Programs control sets the
+            // project's own setting, and the app has no override.
+            split: ProgramSplit::ProjectDefault,
             boards: self.boards,
             date: self.date.clone(),
             estimate: self.estimate,
@@ -312,25 +323,30 @@ impl Export {
         self.failure = None;
     }
 
-    /// The program split for this export.
-    pub(crate) fn set_split(&mut self, split: ProgramSplit) {
-        self.split = split;
-    }
-
     /// The boards ticked for this export.
     pub(crate) fn set_boards(&mut self, boards: Boards) {
         self.boards = boards;
     }
 
-    /// The result of the last export, while it shows.
+    /// The result of the last export, until the project changes.
     pub(crate) fn done(&self) -> Option<&Done> {
         self.done.as_ref()
     }
 
-    /// Lets the result go: the plan shows again.
-    pub(crate) fn dismiss(&mut self) {
-        self.done = None;
-        self.failure = None;
+    /// The result whose sheet shows, while it does.
+    pub(crate) fn result_sheet(&self) -> Option<&Done> {
+        self.done.as_ref().filter(|done| done.open)
+    }
+
+    /// Closes the result's sheet (*Done*), or opens it again (*Show
+    /// result*). The result itself stays until the project changes.
+    pub(crate) fn show_result(&mut self, open: bool) {
+        if let Some(done) = &mut self.done {
+            done.open = open;
+            if open {
+                done.instructions = false;
+            }
+        }
     }
 
     /// Opens or closes the result's *Run instructions*.
@@ -427,6 +443,8 @@ pub(crate) fn export(state: &mut Export, app: &mut App) -> Option<String> {
                 result,
                 setup,
                 instructions: false,
+                open: true,
+                count,
             });
             Some(message)
         }
@@ -513,9 +531,9 @@ pub(crate) fn plan(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let export = state.export;
     let busy = export.busy(app);
     ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
-    if dc_app::export::several_tools(app.project()) {
-        split(ui, app, export, out);
-    }
+    // How several tools are written: the project's own setting, here
+    // and nowhere else (capability 77).
+    crate::panels::project::programs(ui, state, out);
     if dc_job::summary::by_board(app.project()) {
         boards(ui, strings, export, out);
     }
@@ -531,6 +549,152 @@ pub(crate) fn plan(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         .filter(|r| !r.programs.is_empty())
         .map(|r| r.names(export.stem.trim()).join(", "));
     destination(ui, strings, export, names.as_deref(), out);
+}
+
+/// How tall the step's foot is, px, in a panel `width` px wide: the
+/// button's row, or the reason beside it when that takes more lines.
+pub(crate) fn foot_height(ui: &Ui, state: &FrameState<'_>, width: f32) -> f32 {
+    let said = said_beside(state);
+    let room = (width - 2.0 * FOOT_MARGIN_PX - BUTTON_ROOM_PX).max(60.0);
+    let galley = ui.painter().layout(
+        said.0,
+        TextStyle::Small.resolve(ui.style()),
+        Palette::current(ui).text_secondary,
+        room,
+    );
+    theme::GAP_PX + galley.size().y.max(theme::HEADER_PRIMARY_PX) + FOOT_MARGIN_PX
+}
+
+/// The foot's side margin, px: the card's padding.
+const FOOT_MARGIN_PX: f32 = theme::CARD_PADDING_PX;
+/// The room the foot keeps for *Export G-code* and the gap before it, px.
+const BUTTON_ROOM_PX: f32 = 168.0;
+
+/// What the foot says beside its button, and whether it is why the
+/// button is off: the refusal, else how many programs are ready.
+fn said_beside(state: &FrameState<'_>) -> (String, bool) {
+    let app = state.app;
+    let strings = app.strings();
+    // What blocks the export, in a few words: the findings themselves
+    // are listed above, and the whole reason is the button's tooltip.
+    let blocking = dc_app::warnings::blocking(app).len();
+    if blocking > 0 {
+        return (
+            counted(
+                strings,
+                blocking,
+                StrKey::ExportBlockedOne,
+                StrKey::ExportBlockedMany,
+            ),
+            true,
+        );
+    }
+    if let Some(refusal) = state.export.refusal(app) {
+        return (refusal, true);
+    }
+    let ready = state.export.current(app).map_or(0, |r| r.programs.len());
+    (
+        strings.fmt(StrKey::ExportReady, &[("count", &ready.to_string())]),
+        false,
+    )
+}
+
+/// The Export step's foot, pinned under its scrolling content
+/// (capability 77): **Export G-code**, the step's one primary button, at
+/// the right, and beside it why it is off while something blocks the
+/// export (the error, or what is still being worked out), else how many
+/// programs it will write. The button asks for a folder first when none
+/// is chosen.
+pub(crate) fn foot(ui: &mut Ui, state: &FrameState<'_>, rect: egui::Rect, out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
+    let strings = state.app.strings();
+    let (said, blocked) = said_beside(state);
+    ui.painter().hline(
+        (rect.left() + FOOT_MARGIN_PX)..=(rect.right() - FOOT_MARGIN_PX),
+        rect.top() + 0.5,
+        egui::Stroke::new(1.0, palette.border_default),
+    );
+    let inner = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + FOOT_MARGIN_PX, rect.top() + theme::GAP_PX),
+        egui::pos2(
+            rect.right() - FOOT_MARGIN_PX,
+            rect.bottom() - FOOT_MARGIN_PX,
+        ),
+    );
+    let mut row = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("export.foot")
+            .max_rect(inner)
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    let mut export = ButtonSpec::new(Kind::Primary, strings.get(StrKey::HeaderExport))
+        .icon(crate::widgets::icon::Icon::Download, theme::ICON_LARGE_PX)
+        .height(theme::HEADER_PRIMARY_PX)
+        .enabled(!blocked);
+    let refusal = state.export.refusal(state.app);
+    if let Some(refusal) = &refusal {
+        export = export.tooltip(refusal);
+    }
+    if button(&mut row, export).clicked() {
+        out.push(Action::Export(Request::Export));
+    }
+    row.add_space(theme::GAP_PX);
+    row.with_layout(Layout::left_to_right(Align::Center), |ui| {
+        let colour = if blocked {
+            palette.status_error.text
+        } else {
+            palette.text_secondary
+        };
+        if blocked {
+            let glyph = crate::widgets::icon::Icon::CircleX.galley(ui, 12.0, colour);
+            let (at, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
+            ui.painter().galley(at.min, glyph, colour);
+        }
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(&said)
+                    .text_style(TextStyle::Small)
+                    .color(colour),
+            )
+            .wrap()
+            .selectable(false),
+        );
+    });
+}
+
+/// The step's line once the programs are written (capability 77a), under
+/// its readiness card: `circle-check` and *2 programs written.*, with
+/// *Show result* at the row's right, which opens the result's sheet
+/// again. It stays until the project changes.
+pub(crate) fn exported(ui: &mut Ui, strings: &Strings, done: &Done, out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
+    let line = strings.fmt(
+        StrKey::ExportExported,
+        &[("count", &done.count.to_string())],
+    );
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), theme::CONTROL_PX),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            let show = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::ExportShowResult))
+                .tooltip(strings.get(StrKey::ExportShowResultHelp));
+            if button(ui, show).clicked() {
+                out.push(Action::Export(Request::ShowResult));
+            }
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                let glyph = crate::widgets::icon::Icon::CircleCheck.galley(
+                    ui,
+                    theme::ICON_SMALL_PX,
+                    palette.status_success.stroke,
+                );
+                let (at, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
+                ui.painter()
+                    .galley(at.min, glyph, palette.status_success.stroke);
+                text(ui, &line, TextStyle::Body, palette.text_primary)
+                    .on_hover_text(done.dir().display().to_string());
+            });
+        },
+    );
 }
 
 /// *Program Details*: the disclosure and, while it is closed, how many
@@ -655,59 +819,6 @@ fn destination(
     } else if let Some(names) = names {
         row::hint(ui, &strings.fmt(StrKey::ExportNames, &[("names", names)]));
     }
-}
-
-/// The program split: as the project says, or overridden for this export.
-fn split(ui: &mut Ui, app: &App, export: &Export, out: &mut Vec<Action>) {
-    let strings = app.strings();
-    let project = app.project();
-    let mode = match project.post_processor.tool_change_mode {
-        ToolChangeMode::SeparatePrograms => strings.get(StrKey::ExportModeSeparate),
-        ToolChangeMode::M6 => strings.get(StrKey::ExportModeM6),
-    };
-    let as_project = strings.fmt(StrKey::ExportSplitProject, &[("mode", mode)]);
-    let label_of = |split: ProgramSplit| match split {
-        ProgramSplit::ProjectDefault => as_project.clone(),
-        ProgramSplit::ProgramPerTool => strings.get(StrKey::ExportSplitPerTool).to_owned(),
-        ProgramSplit::OneProgram => strings.get(StrKey::ExportSplitM6).to_owned(),
-    };
-    let m6 = project_model::offers(project).m6;
-    // The choices are sentences, so the list takes the row's whole width,
-    // under its label.
-    let label = row::caption(
-        ui,
-        strings.get(StrKey::ExportSplit),
-        strings.get(StrKey::ExportSplitHelp),
-    );
-    egui::ComboBox::from_id_salt("export.split")
-        .icon(crate::widgets::icon::combo_chevron)
-        .truncate()
-        .selected_text(label_of(export.split))
-        .width(ui.available_width())
-        .show_ui(ui, |ui| {
-            for choice in [
-                ProgramSplit::ProjectDefault,
-                ProgramSplit::ProgramPerTool,
-                ProgramSplit::OneProgram,
-            ] {
-                let refused = match (&m6, choice) {
-                    (Offer::Refused { reason }, ProgramSplit::OneProgram) => Some(reason),
-                    _ => None,
-                };
-                let response = ui.add_enabled(
-                    refused.is_none(),
-                    egui::Button::selectable(export.split == choice, label_of(choice)),
-                );
-                if let Some(reason) = refused {
-                    let _ = response.on_disabled_hover_text(reason);
-                } else if response.clicked() && export.split != choice {
-                    out.push(Action::Export(Request::SetSplit(choice)));
-                }
-            }
-        })
-        .response
-        .labelled_by(label.id);
-    ui.add_space(4.0);
 }
 
 /// A tick per board, with an Inlay (#498): this export only.

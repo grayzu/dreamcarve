@@ -317,6 +317,12 @@ fn close(ui: &Ui, router: &Router) {
     }
 }
 
+/// The region being drawn, between its [`mark`] and the next; `None`
+/// before the first, after the last ([`mark_end`]) and so in a sheet.
+pub(crate) fn drawing(ctx: &Context) -> Option<Region> {
+    load(ctx).drawing
+}
+
 /// Whether this frame's Escape left a focused widget, so it asks for
 /// nothing more (the field it left restores its value).
 pub(crate) fn escape_left_widget(ctx: &Context) -> bool {

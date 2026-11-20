@@ -347,7 +347,9 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, colour: usize, selected: bool, out: &mut Vec
                 s.store(ui.ctx(), field_id);
             }
         }
-        if edit.lost_focus() && !fresh {
+        // Left by any means, the name is written (capability 52).
+        let left = edit.lost_focus() || crate::widgets::unit_field::left_with_focus(ui);
+        if left && !fresh {
             ui.data_mut(|d| d.remove::<(String, bool)>(field_id));
             // The Viewport takes the Escape key before the editor draws,
             // and the focus router says when it left a field.
@@ -502,6 +504,13 @@ fn render(
     // of which is the seat line when a tapered ball nose cuts it; an
     // alert in red with its glyph. The derived row has no field, so its
     // lines, which are sentences, take the row's whole width.
+    // A stepover's distance between passes, from what its field shows.
+    let live: Option<String> = ui.data(|d| d.get_temp(control_id(cx.op, slot.key()).with("live")));
+    if let Some(note) =
+        live.and_then(|typed| editor::step_over_note(cx.project, cx.strings, cx.op, row, &typed))
+    {
+        row::hint(ui, &note);
+    }
     let whole_width = matches!(row.kind, FieldKind::InlayDerived);
     for note in editor::notes(cx.project, cx.strings, cx.op, &slot) {
         if whole_width {
@@ -572,6 +581,35 @@ pub(super) fn nest(ui: &mut Ui, indent: bool) {
     reason = "one renderer's inputs, each read by some kind of row"
 )]
 pub(super) fn control(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    slot: &Slot<'_>,
+    offered: &[&Tool],
+    tier: Option<Tier>,
+    required: Option<&str>,
+    focused: bool,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    let id = control_id(cx.op, slot.key());
+    // A row another replaces (an Inlay's Band margin under a drawn
+    // boundary) is disabled, and says why where its field would be.
+    if let Some(why) = editor::replaced(cx.op, slot.row) {
+        label(ui, cx, slot);
+        return Some(replaced(ui, cx, slot, id, why, tier));
+    }
+    let response = control_of(ui, cx, slot, offered, tier, required, focused, out);
+    // A control that is not a text field takes the help its label
+    // offered here: its tooltip, and the panel's help line while it has
+    // the keyboard. A text field took it as it drew.
+    response.map(|r| crate::widgets::help::control(ui, r, cx.strings.get(slot.row.label)))
+}
+
+/// [`control`]'s control, before its help.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one renderer's inputs, each read by some kind of row"
+)]
+fn control_of(
     ui: &mut Ui,
     cx: &Cx<'_>,
     slot: &Slot<'_>,
@@ -694,6 +732,9 @@ fn typed(
             )
         },
     );
+    // What the field shows now, for a note that follows the typing (a
+    // stepover's distance between passes), which the row draws under it.
+    ui.data_mut(|d| d.insert_temp(id.with("live"), output.text.clone()));
     let refused_id = id.with("refused");
     if let Some(text) = output.committed {
         commit(
@@ -707,6 +748,42 @@ fn typed(
         commit(ui, refused_id, slot.reset(cx.op), out);
     }
     Some(output.response)
+}
+
+/// A row that is not in use (`editor::replaced`; capability 68a): a
+/// disabled field with the reason in its place (*Set by the boundary*)
+/// and the whole of it as the tooltip. It writes nothing. A value a
+/// hand-edited file still holds shows greyed, with validation's message
+/// under the row as for any other.
+fn replaced(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    slot: &Slot<'_>,
+    id: Id,
+    why: editor::Replaced,
+    tier: Option<Tier>,
+) -> egui::Response {
+    let value = slot.value_text(cx.project, cx.op);
+    unit_field(
+        ui,
+        UnitField {
+            enabled: false,
+            disabled_reason: Some(cx.strings.get(why.help)),
+            placeholder: cx.strings.get(why.note),
+            tier,
+            ..UnitField::new(
+                id,
+                cx.strings.get(slot.row.label),
+                &value,
+                if value.is_empty() {
+                    ""
+                } else {
+                    editor::unit_suffix(slot.row, cx.project.display_units)
+                },
+            )
+        },
+    )
+    .response
 }
 
 /// A derived value (S18; slice 12, #541): a read-only field showing
@@ -800,14 +877,17 @@ fn choice(
     let refused_id = id.with("refused");
     let mut picked = None;
     let response = if fits {
-        picked = segmented(
-            ui,
-            id,
-            &labels,
-            current.unwrap_or(labels.len()),
-            ui.available_width(),
-        );
-        None
+        let shown = ui.scope(|ui| {
+            segmented(
+                ui,
+                id,
+                &labels,
+                current.unwrap_or(labels.len()),
+                ui.available_width(),
+            )
+        });
+        picked = shown.inner;
+        Some(shown.response)
     } else {
         let selected = current
             .and_then(|i| labels.get(i))
@@ -848,6 +928,9 @@ fn checkbox(
     let mut on = slot.checked(cx.op);
     let response = check_box(ui, slot.key(), &mut on, cx.strings.get(row.label));
     let help = cx.strings.get(row.help);
+    if response.has_focus() {
+        let _ = crate::widgets::help::focused(ui, cx.strings.get(row.label), help);
+    }
     let response = response.on_hover_ui(|ui| {
         ui.label(egui::RichText::new(help).text_style(TextStyle::Body));
         ui.label(
@@ -1086,7 +1169,9 @@ fn boundary_picker(
         commit(
             ui,
             id.with("refused"),
-            editor::set_boundary(cx.op, row, &shapes),
+            // The boundary, and the margin and the rounding it replaces
+            // cleared with it: one undo step.
+            editor::choose_boundary(cx.op, row, &shapes),
             out,
         );
     }

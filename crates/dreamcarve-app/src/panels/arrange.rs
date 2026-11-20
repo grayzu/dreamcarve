@@ -143,7 +143,8 @@ fn rotate_popover(
         ui.set_width(POPOVER_PX - 2.0 * f32::from(POPOVER_MARGIN_PX));
         let name = strings.get(StrKey::ArrangeAngle);
         let typed: String = ui.data(|d| d.get_temp(angle_id())).unwrap_or_default();
-        let (label, output) = row(ui, name, |ui| {
+        let help = strings.get(StrKey::ArrangeAngleHelp);
+        let (label, output) = row(ui, name, help, |ui| {
             unit_field(
                 ui,
                 UnitField {
@@ -154,7 +155,6 @@ fn rotate_popover(
         });
         let entered = output.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let _ = output.response.labelled_by(label.id);
-        let _ = label.on_hover_text(strings.get(StrKey::ArrangeAngleHelp));
         let mut text = typed;
         if let Some(committed) = output.committed {
             ui.data_mut(|d| d.insert_temp(angle_id(), committed.clone()));

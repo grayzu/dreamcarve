@@ -2326,7 +2326,6 @@ fn inlay_both_boards() {
                     "depth_mm",
                     "glue_gap_mm",
                     "plug_depth_mm",
-                    "male_board.thickness_mm",
                 ]
             ),
             (
@@ -2339,9 +2338,16 @@ fn inlay_both_boards() {
                     "male_board",
                 ]
             ),
+            // The board's thickness is the board's, first in its group
+            // (the smoke test's item 5): it was a Setup row, where it
+            // read as the stock's.
             (
                 Group::MaleBoard,
-                vec!["male_board.width_mm", "male_board.height_mm",]
+                vec![
+                    "male_board.thickness_mm",
+                    "male_board.width_mm",
+                    "male_board.height_mm",
+                ]
             ),
             (Group::Strategy, vec!["step_over_fraction", "clearing"]),
             (
@@ -2459,10 +2465,32 @@ fn inlay_both_boards() {
         warning[0].field.as_deref(),
         Some("operations[op1].male_board.thickness_mm")
     );
-    let under = editor::Located::of(h.warnings(), &unset)
+    let located = editor::Located::of(h.warnings(), &unset);
+    let under = located
         .status(row_of(&unset, "male_board.thickness_mm"))
         .expect("a message under the thickness");
     assert_eq!(under.message, warning[0].message);
+    // The thickness is in the Male board group, which is closed until
+    // opened: unset, the group opens by itself and its closed header
+    // carries the warning, so the value the male needs is never out of
+    // sight (capability 66).
+    assert_eq!(
+        row_of(&unset, "male_board.thickness_mm").group,
+        Group::MaleBoard
+    );
+    assert!(
+        editor::summary::opened(&unset, &located).contains(&Group::MaleBoard),
+        "the Male board group opens for its unset thickness"
+    );
+    assert!(matches!(
+        located.group(Group::MaleBoard),
+        Some((Tier::Warning, 1))
+    ));
+    assert!(
+        !editor::summary::opened(&inlay, &editor::Located::of(&[], &inlay))
+            .contains(&Group::MaleBoard),
+        "and stays as the user left it once the thickness is set"
+    );
     let scene = h.app.scene();
     let board = scene.male_board().expect("the board is drawn");
     assert!(board.shapes.is_empty(), "the male board is empty");
@@ -2623,6 +2651,122 @@ fn inlay_both_boards() {
         ["set the inlay depth, glue gap and plug depth to see the male's planes"]
     );
     assert!(!alert);
+}
+
+/// The smoke test's item 4 (capability 68a): with a boundary chosen, the
+/// Band margin and the Outline rounding it replaces are not in use, and
+/// the editor says why in their place. Validation is the authority: with
+/// a boundary each of the two "does nothing" (`inlay_margin_ignored`),
+/// and neither is needed. The Boundary row's choice in the window
+/// ([`editor::choose_boundary`]) therefore writes the boundary and clears
+/// both, one undo step named for the boundary, so no value the engine
+/// ignores stays in the file; choosing *None* puts the rows back in use,
+/// empty. A hand-edited file that has a boundary and a margin still shows
+/// the margin's value and validation's warning under it. The closed
+/// group's summary names the boundary and not the margin.
+#[test]
+fn inlay_boundary_replaces_the_margin_and_the_rounding() {
+    let strings = Strings::english();
+    let mut h = inlay_fixture();
+    let inlay = op_of(&h, "op1");
+    let frame = dc_project::InstanceId::new("i3");
+    let boundary = row_of(&inlay, "boundary");
+    let steps = |h: &dc_app::test_support::Harness| h.app.history().undo_labels().count();
+
+    // No boundary: every row is in use.
+    for row in fields::rows(&inlay) {
+        assert_eq!(editor::replaced(&inlay, row), None, "{}", row.key);
+    }
+    assert!(summary_of(&h, Group::Depth).starts_with("Band margin 8 mm"));
+
+    // Chosen in the window: the boundary, and the two it replaces
+    // cleared, as one step.
+    let before = steps(&h);
+    let label = run_edit(
+        &mut h,
+        editor::choose_boundary(&inlay, boundary, std::slice::from_ref(&frame)),
+    );
+    assert_eq!(label, "Set boundary of “DC”");
+    assert_eq!(steps(&h), before + 1, "one undo step");
+    let drawn = op_of(&h, "op1");
+    let Operation::Inlay(record) = &drawn else {
+        panic!("op1 is an Inlay");
+    };
+    assert_eq!(record.boundary, std::slice::from_ref(&frame));
+    assert_eq!(record.margin_mm, None, "the margin is not written");
+    assert_eq!(record.outline_rounding_mm, None);
+    for key in ["margin_mm", "outline_rounding_mm"] {
+        let why = editor::replaced(&drawn, row_of(&drawn, key))
+            .unwrap_or_else(|| panic!("{key} is replaced"));
+        assert_eq!(strings.get(why.note), "Set by the boundary");
+        assert!(strings.get(why.help).contains("boundary"), "{key}");
+    }
+    for key in ["boundary", "depth_mm", "through_cut_allowance_mm"] {
+        assert_eq!(editor::replaced(&drawn, row_of(&drawn, key)), None, "{key}");
+    }
+    h.generate();
+    assert!(
+        coded(&h, "inlay_margin_ignored").is_empty(),
+        "nothing the engine ignores is left: {:?}",
+        h.warnings()
+    );
+    assert!(
+        !h.warnings().iter().any(|f| f.tier == Tier::Error),
+        "and the male needs no margin: {:?}",
+        h.warnings()
+    );
+    let depth = summary_of(&h, Group::Depth);
+    assert!(depth.starts_with("Boundary frame"), "{depth}");
+    assert!(!depth.to_lowercase().contains("margin"), "{depth}");
+    assert!(!depth.to_lowercase().contains("rounding"), "{depth}");
+    assert_eq!(
+        editor::choose_boundary(&drawn, boundary, std::slice::from_ref(&frame)).unwrap(),
+        None,
+        "choosing it again is no step"
+    );
+
+    // A hand-edited file with both: the value shows, the row is still not
+    // in use, validation says so, and the summary leaves it out.
+    let by_hand = fields::set(&drawn, "margin_mm", Value::from(8.0)).unwrap();
+    let mut hand = h.clone();
+    hand.run(Command::UpdateOperation(by_hand.clone())).unwrap();
+    hand.generate();
+    assert!(editor::replaced(&by_hand, row_of(&by_hand, "margin_mm")).is_some());
+    assert_eq!(coded(&hand, "inlay_margin_ignored").len(), 1);
+    assert!(
+        !summary_of(&hand, Group::Depth)
+            .to_lowercase()
+            .contains("margin")
+    );
+    // Choosing the boundary again in the window clears it.
+    let again = editor::choose_boundary(&by_hand, boundary, std::slice::from_ref(&frame))
+        .unwrap()
+        .expect("a change: the margin goes");
+    hand.run(again).unwrap();
+    assert_eq!(op_of(&hand, "op1"), drawn);
+
+    // None: the margin is the band's again, and it is asked for.
+    let label = run_edit(&mut h, editor::choose_boundary(&drawn, boundary, &[]));
+    assert_eq!(label, "Set boundary of “DC”");
+    let none = op_of(&h, "op1");
+    assert!(editor::boundary(&none).is_empty());
+    for key in ["margin_mm", "outline_rounding_mm"] {
+        assert_eq!(editor::replaced(&none, row_of(&none, key)), None, "{key}");
+    }
+    h.generate();
+    assert!(
+        h.warnings()
+            .iter()
+            .any(|f| f.field.as_deref() == Some("operations[op1].margin_mm")),
+        "the margin is needed again: {:?}",
+        h.warnings()
+    );
+    // No other kind has a row a boundary replaces.
+    for op in &common::plaque().operations {
+        for row in fields::rows(op) {
+            assert_eq!(editor::replaced(op, row), None);
+        }
+    }
 }
 
 /// Capability 68 for an Inlay's drawn boundary (phase 3's capability 49f,
@@ -3852,7 +3996,6 @@ mod fields {
                 "depth_mm",
                 "glue_gap_mm",
                 "plug_depth_mm",
-                "male_board.thickness_mm",
             ],
             // The Picture in the targets' place (the record's `image`),
             // the V-bit, the maximum depth (slice 15, #544).

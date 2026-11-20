@@ -48,7 +48,9 @@ use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::icon::Icon;
 use crate::widgets::row::{surface, surface_rect};
-use crate::widgets::unit_field::{Required, UnitField, field as unit_field, row, validation_line};
+use crate::widgets::unit_field::{
+    Required, UnitField, field as unit_field, quiet_line, row, status_line, validation_line,
+};
 
 /// A list row's height, px (section 3).
 const ROW_PX: f32 = theme::LIST_ROW_PX;
@@ -232,6 +234,7 @@ pub(crate) fn list(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 pub(crate) fn editor_card(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, out: &mut Vec<Action>) {
     let strings = state.app.strings();
     let units = state.app.project().display_units;
+    let findings = tools::field_status(state.app.project(), state.app.warnings(), tool);
     header(ui, tool);
     crate::widgets::scroll::show(
         ui,
@@ -245,7 +248,7 @@ pub(crate) fn editor_card(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, out:
                 ui.add_space(MARGIN_PX);
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width() - MARGIN_PX);
-                    editor(ui, strings, units, tool, out);
+                    editor(ui, strings, units, tool, &findings, out);
                 });
             });
         },
@@ -501,7 +504,14 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
 
 /// The selected project tool's fields (its footer is [`footer`]): the
 /// shared rows of [`tool_fields`], each change one command.
-fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut Vec<Action>) {
+fn editor(
+    ui: &mut Ui,
+    strings: &Strings,
+    units: Units,
+    tool: &Tool,
+    findings: &[(ToolField, dc_app::project::FieldStatus<'_>)],
+    out: &mut Vec<Action>,
+) {
     let held = pending_v_bit(ui).as_ref() == Some(&tool.id)
         && !matches!(tool.cutter, ToolKind::VBit { .. });
     let focus_name = ui.data(|d| d.get_temp::<ToolId>(focus_name_id())).as_ref() == Some(&tool.id);
@@ -525,6 +535,7 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
             focus_name,
             focus,
             marked: None,
+            findings,
         },
     );
     if focus_name {
@@ -564,6 +575,11 @@ pub(crate) struct ToolFields<'a> {
     /// A field marked with why its last change did not take, shown under
     /// it in the error state (a library write that failed, 64a).
     pub marked: Option<(ToolField, &'a str)>,
+    /// The findings located at the tool's fields (`tools::field_status`),
+    /// each shown under its field in its tier's colour, as an operation's
+    /// are under its rows. A library tool has none: validation is the
+    /// project's.
+    pub findings: &'a [(ToolField, dc_app::project::FieldStatus<'a>)],
 }
 
 /// A change the rows made this frame.
@@ -611,6 +627,7 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
         focus_name,
         focus,
         marked,
+        findings,
     } = *spec;
     let mut result = FieldsOutput::default();
     let angle_required = strings.get(StrKey::AppToolsAngleRequired);
@@ -651,21 +668,38 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
                 message,
             });
         let error = line.or(row_spec.required.as_deref());
+        // What validation says of the field (a plunge above the feed, a
+        // stepover far too small), under it, when nothing above speaks.
+        let found = findings
+            .iter()
+            .find(|(f, _)| *f == field)
+            .map(|(_, status)| *status)
+            .filter(|_| error.is_none());
         if focus == Some(field) {
             ui.memory_mut(|m| m.request_focus(id));
         }
-        let (label, output) = row(ui, name, |ui| {
+        let (label, output) = row(ui, name, strings.get(row_spec.help), |ui| {
             let output = unit_field(
                 ui,
                 UnitField {
                     placeholder: hint,
-                    tier: error.map(|_| dc_job::Tier::Error),
+                    tier: error
+                        .map(|_| dc_job::Tier::Error)
+                        .or(found.map(|status| status.tier)),
                     required,
                     ..UnitField::new(id, name, value, row_spec.unit)
                 },
             );
             if let (Some(message), None) = (error, required) {
                 validation_line(ui, message);
+            } else if let Some(status) = found {
+                status_line(ui, status.tier, status.message);
+            }
+            // A stepover's distance between passes, from what is typed.
+            if field == ToolField::StepOver
+                && let Some(note) = tools::step_over_note(strings, tool, &output.text, units)
+            {
+                quiet_line(ui, &note);
             }
             output
         });
@@ -676,9 +710,6 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
         let left = response.lost_focus();
         if field == ToolField::Name && focus_name {
             focus_with_text_selected(ui, id, value);
-        }
-        if required.is_none() {
-            response.on_hover_text(field.file_name());
         }
         if holding {
             // The held switch: a typed angle makes it, one undo step; the
@@ -743,8 +774,9 @@ fn kind_row(
         KindChoice::of(&tool.cutter)
     };
     let mut chosen = current;
-    let (label, combo) = row(ui, strings.get(StrKey::AppToolsKind), |ui| {
-        egui::ComboBox::from_id_salt(salt.with("kind"))
+    let name = strings.get(StrKey::AppToolsKind);
+    let (label, combo) = row(ui, name, strings.get(StrKey::AppToolsKindHelp), |ui| {
+        let combo = egui::ComboBox::from_id_salt(salt.with("kind"))
             .icon(crate::widgets::icon::combo_chevron)
             .width(ui.available_width())
             .height(KIND_MENU_PX)
@@ -754,7 +786,8 @@ fn kind_row(
                     ui.selectable_value(&mut chosen, choice, kind_label(strings, choice));
                 }
             })
-            .response
+            .response;
+        crate::widgets::help::control(ui, combo, name)
     });
     combo.labelled_by(label.id);
     if chosen != current {

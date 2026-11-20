@@ -187,7 +187,25 @@ fn body(
         },
     );
     ui.add_space(16.0);
-    footer(ui, strings, &sheet.model, out);
+    footer(ui, strings, &sheet.model, out); // The help of the field being typed in, at the sheet's foot.
+    let foot_px = crate::widgets::help::foot_height(
+        ui,
+        crate::widgets::help::Scope::Sheet,
+        ui.available_width() + 2.0 * f32::from(MARGIN_PX),
+    );
+    crate::widgets::help::settle(ui, crate::widgets::help::Scope::Sheet);
+    if foot_px > 0.0 {
+        ui.add_space(8.0);
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), foot_px),
+            egui::Sense::hover(),
+        );
+        crate::widgets::help::foot(
+            ui,
+            crate::widgets::help::Scope::Sheet,
+            rect.expand2(egui::vec2(f32::from(MARGIN_PX), 0.0)),
+        );
+    }
 }
 
 /// The 32-px header: the title and `x`.

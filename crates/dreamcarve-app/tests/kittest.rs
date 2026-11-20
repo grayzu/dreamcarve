@@ -1763,11 +1763,12 @@ fn origin_crosshair_and_park_mark_move_on_the_viewport() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Acceptance 70's offers, in the window (capability 62): on the Export
-/// step's Post-processor group, for each of the six bundled
-/// post-processors in turn, *Tool change* lists *One program with M6*
-/// exactly where the definition's tool change has `M6` (grblHAL, and not
-/// GRBL), and *Canned drill cycles* is a checkbox exactly where the
+/// Acceptance 70's offers, in the window (capabilities 62 and 77): on
+/// the Export step, for each of the six bundled post-processors in turn,
+/// *Programs* offers *One program for all tools* exactly where the
+/// definition's tool change has `M6` (grblHAL, and not GRBL), and lists
+/// it disabled elsewhere; the Post-processor group has no row for it;
+/// and *Canned drill cycles* is a checkbox exactly where the
 /// definition has canned cycles, which is LinuxCNC and Mach3; elsewhere
 /// its place holds the line that says the controller has none. The
 /// post-processor is switched by the Controller dropdown's own command.
@@ -1815,18 +1816,38 @@ fn export_step_offers_m6_and_canned_cycles_where_the_post_processor_has_them() {
             with_canned.push(id);
         }
 
-        h.get_by_role_and_label(Role::ComboBox, "Tool change")
+        assert!(
+            h.query_by_role_and_label(Role::ComboBox, "Tool change")
+                .is_none(),
+            "{id}: one place only, and no G-code word for it"
+        );
+        assert_eq!(
+            h.query_all_by_role_and_label(Role::ComboBox, "Programs")
+                .count(),
+            1,
+            "{id}: the one Programs control"
+        );
+        h.get_by_role_and_label(Role::ComboBox, "Programs")
             .scroll_to_me();
         h.run();
-        h.get_by_role_and_label(Role::ComboBox, "Tool change")
-            .click();
+        h.get_by_role_and_label(Role::ComboBox, "Programs").click();
         h.run();
         assert!(
             h.query_by_label("One program per tool").is_some(),
             "{id}: the list is open"
         );
-        let m6 = h.query_by_label("One program with M6").is_some();
-        assert_eq!(m6, post.tool_change.has_m6(), "{id}: one program with M6");
+        assert!(
+            h.query_by_label_contains("M6").is_none(),
+            "{id}: no M6 in a label"
+        );
+        let m6 = h
+            .query_all_by_label("One program for all tools")
+            .any(|choice| !choice.accesskit_node().is_disabled());
+        assert_eq!(
+            m6,
+            post.tool_change.has_m6(),
+            "{id}: one program for all tools"
+        );
         if m6 {
             with_m6.push(id);
         }
@@ -3041,6 +3062,19 @@ fn in_export_step(h: &Harness<'_, dreamcarve_app::Shell>, label: &str) -> usize 
         .count()
 }
 
+/// The nodes labelled exactly `label` in the export result's sheet; none
+/// while it is closed.
+fn in_result_sheet(h: &Harness<'_, dreamcarve_app::Shell>, label: &str) -> usize {
+    h.query_by_role(Role::Dialog)
+        .map_or(0, |sheet| sheet.query_all_by_label(label).count())
+}
+
+/// The nodes whose label contains `text` in the export result's sheet.
+fn in_result_sheet_containing(h: &Harness<'_, dreamcarve_app::Shell>, text: &str) -> usize {
+    h.query_by_role(Role::Dialog)
+        .map_or(0, |sheet| sheet.query_all_by_label_contains(text).count())
+}
+
 /// The nodes whose label contains `text` in the Export step's panel.
 fn in_export_step_containing(h: &Harness<'_, dreamcarve_app::Shell>, text: &str) -> usize {
     let panel = export_panel(h);
@@ -3232,15 +3266,15 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
         let written = std::fs::read_to_string(dir.join(name)).expect("program written");
         assert!(written == *text, "{name} is the plan's program");
     }
-    assert!(in_export_step(&h, "Show in folder") > 0);
+    assert!(in_result_sheet(&h, "Show in folder") > 0);
     assert!(
-        in_export_step_containing(&h, &names[0]) > 0,
+        in_result_sheet_containing(&h, &names[0]) > 0,
         "the result names the files"
     );
     assert_eq!(
         in_export_step(&h, "Program Details"),
-        0,
-        "the result takes the plan's place"
+        1,
+        "the result is a sheet: the plan stays under it"
     );
     assert_eq!(
         std::fs::read(&plaque).unwrap(),
@@ -3255,8 +3289,18 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     );
     h.get_by_label("Done").click();
     h.run();
-    assert_eq!(in_export_step(&h, "Show in folder"), 0, "Done lets it go");
-    assert_eq!(in_export_step(&h, "Program Details"), 1, "the plan is back");
+    assert_eq!(in_result_sheet(&h, "Show in folder"), 0, "Done closes it");
+    assert!(h.query_by_role(Role::Dialog).is_none());
+    assert_eq!(
+        in_export_step(&h, "Program Details"),
+        1,
+        "the plan is there"
+    );
+    assert_eq!(
+        in_export_step(&h, "Show result"),
+        1,
+        "and the step can open the result again"
+    );
 
     // A tool without a feed: the CLI's error, and Export disabled.
     // The first operation's tool: the plaque has one tool it never uses.
@@ -3280,7 +3324,7 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     // finding under the line, as the drawer does (redesign slice D4).
     assert_eq!(
         in_export_step(&h, "1 error blocks export"),
-        1,
+        2,
         "the blocking line"
     );
     assert_eq!(
@@ -3388,8 +3432,8 @@ fn export_asks_for_a_folder_when_none_is_chosen() {
         let written = std::fs::read_to_string(out.join(name)).expect("program written");
         assert!(written == *text, "{name} is the plan's program");
     }
-    assert_eq!(in_export_step(&h, "2 programs written"), 1, "the result");
-    assert_eq!(in_export_step(&h, &out.display().to_string()), 1);
+    assert_eq!(in_result_sheet(&h, "2 programs written"), 1, "the result");
+    assert_eq!(in_result_sheet(&h, &out.display().to_string()), 1);
 
     // Choose… asks the same dialog, and the plan shows the folder picked.
     h.get_by_label("Done").click();
@@ -3562,13 +3606,14 @@ fn program_details_start_closed() {
 }
 
 /// Capabilities 77a and 77b, acceptance 102 (#625): after *Export
-/// G-code* the result is in the plan's place: `2 programs written`, the
+/// G-code* the result is a sheet over the window: `2 programs written`, the
 /// files in run order and the folder with *Show in folder*, and *Run
 /// instructions* closed, whose steps and notes show once it is opened.
 /// *Save setup sheet…* asks where, suggesting `plaque-setup.html` beside
 /// the programs, and writes the page the plan renders; nothing else is
-/// written and the project is unchanged. *Done* brings the plan back, and
-/// the setup sheet can still be saved from the File menu.
+/// written and the project is unchanged. *Done* closes the sheet, the
+/// step's *Show result* opens it again, and the setup sheet can still be
+/// saved from the File menu.
 #[test]
 fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     use eframe::egui::accesskit::Toggled;
@@ -3598,22 +3643,22 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
 
     let strings = dc_app::Strings::english();
     let result = ready.result(&names, &dir, &strings);
-    assert_eq!(in_export_step(&h, "2 programs written"), 1, "Status");
+    assert_eq!(in_result_sheet(&h, "2 programs written"), 1, "Status");
     for name in &names {
-        assert_eq!(in_export_step(&h, name), 1, "Files lists {name}");
+        assert_eq!(in_result_sheet(&h, name), 1, "Files lists {name}");
     }
     assert_eq!(
-        in_export_step(&h, &dir.display().to_string()),
+        in_result_sheet(&h, &dir.display().to_string()),
         1,
         "the folder"
     );
-    assert_eq!(in_export_step(&h, "Show in folder"), 1);
-    assert_eq!(in_export_step(&h, "Copy path"), 1);
+    assert_eq!(in_result_sheet(&h, "Show in folder"), 1);
+    assert_eq!(in_result_sheet(&h, "Copy path"), 1);
     let header = h.get_by_label("Run instructions");
     assert_eq!(header.accesskit_node().toggled(), Some(Toggled::False));
     let first_step = &result.instructions.steps[0].before;
     assert_eq!(
-        in_export_step(&h, first_step),
+        in_result_sheet(&h, first_step),
         0,
         "the steps are hidden while closed"
     );
@@ -3629,12 +3674,12 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
             .strip_prefix(&number)
             .expect("the report numbers the plaque's two programs")
             .trim_start();
-        assert_eq!(in_export_step(&h, line), 1, "{line}");
-        assert_eq!(in_export_step(&h, &number), 1, "numbered {number}");
-        assert_eq!(in_export_step(&h, &step.before), 0, "{}", step.before);
+        assert_eq!(in_result_sheet(&h, line), 1, "{line}");
+        assert_eq!(in_result_sheet(&h, &number), 1, "numbered {number}");
+        assert_eq!(in_result_sheet(&h, &step.before), 0, "{}", step.before);
     }
     for note in &result.instructions.notes {
-        assert_eq!(in_export_step(&h, note), 1, "the note {note}");
+        assert_eq!(in_result_sheet(&h, note), 1, "the note {note}");
     }
 
     // Save setup sheet…: the dialog suggests the page beside the programs.
@@ -3669,11 +3714,38 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     h.get_by_label("Done").click();
     h.run();
     assert_eq!(
-        in_export_step(&h, "2 programs written"),
+        in_result_sheet(&h, "2 programs written"),
         0,
-        "Done lets the result go"
+        "Done closes the sheet"
     );
-    assert_eq!(in_export_step(&h, "Program Details"), 1, "the plan is back");
+    assert_eq!(
+        in_export_step(&h, "Program Details"),
+        1,
+        "the plan is there"
+    );
+    // The step says what was written, and opens the result again.
+    assert_eq!(
+        in_export_step_containing(&h, "2 programs written."),
+        1,
+        "the step's line"
+    );
+    h.get_by_role_and_label(Role::Button, "Show result").click();
+    h.run();
+    assert_eq!(
+        in_result_sheet(&h, "2 programs written"),
+        1,
+        "the sheet again"
+    );
+    assert_eq!(
+        h.get_by_label("Run instructions")
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::False),
+        "with its instructions closed"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none(), "Escape closes it");
     h.get_by_label("File").click();
     h.run();
     assert!(
@@ -4791,19 +4863,19 @@ fn inlay_editor_shows_the_male_board() {
     );
     open_operation(&mut h, "DC");
     // The derived line and the margin are Depth's, closed until opened;
-    // the values and the board thickness are Setup's (#618).
+    // the values are Setup's (#618); the board's thickness is the Male
+    // board group's, first in it (the smoke test's item 5).
     assert!(
         h.query_by_role_and_label(Role::TextInput, "Band margin")
             .is_none()
     );
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Board thickness")
+            .is_none(),
+        "the thickness is not a Setup row"
+    );
     open_group(&mut h, "Depth");
-    for label in [
-        "Inlay depth",
-        "Glue gap",
-        "Plug depth",
-        "Band margin",
-        "Board thickness",
-    ] {
+    for label in ["Inlay depth", "Glue gap", "Plug depth", "Band margin"] {
         assert!(
             h.query_by_role_and_label(Role::TextInput, label).is_some(),
             "{label} is shown"
@@ -4813,6 +4885,22 @@ fn inlay_editor_shows_the_male_board() {
         h.query_by_label("male start plane 3 mm · band floor 5 mm below the board top")
             .is_some(),
         "the derived line"
+    );
+    open_group(&mut h, "Male board");
+    let top = |h: &Harness<'_, dreamcarve_app::Shell>, label: &str| {
+        h.get_by_role_and_label(Role::TextInput, label).rect().top()
+    };
+    assert!(
+        top(&h, "Board thickness") < top(&h, "Board width")
+            && top(&h, "Board width") < top(&h, "Board height"),
+        "Board thickness is the group's first row"
+    );
+    assert!(
+        top(&h, "Board thickness")
+            > h.query_all_by_role_and_label(Role::Button, "Male board")
+                .map(|n| n.rect().top())
+                .fold(f32::MIN, f32::max),
+        "under the Male board header"
     );
     assert!(
         h.query_by_label("base under the band 7 mm (at least 6 mm)")
@@ -4936,10 +5024,22 @@ fn inlay_boundary_is_picked_in_the_editor_and_the_male_band_follows_it() {
     );
 
     settle_generation(&mut h, "the drawn boundary");
+    // The margin and the rounding the boundary replaces are cleared with
+    // the choice, so validation has nothing to say of them, and their
+    // rows are disabled (the smoke test's item 4).
     assert!(
         h.query_by_label_contains("so margin_mm does nothing")
-            .is_some(),
-        "validation's line is under the margin the boundary replaces"
+            .is_none(),
+        "no value the engine ignores is left in the file"
+    );
+    let dc_project::Operation::Inlay(drawn) = operation_of(&h, "op1") else {
+        panic!("op1 is an Inlay");
+    };
+    assert_eq!((drawn.margin_mm, drawn.outline_rounding_mm), (None, None));
+    assert!(
+        h.get_by_role_and_label(Role::TextInput, "Band margin")
+            .accesskit_node()
+            .is_disabled()
     );
     let app = h.state().app();
     let board = app.scene().male_board().expect("a male board");
@@ -7144,11 +7244,14 @@ fn continue_goes_to_the_next_step_and_export_is_the_primary_on_export() {
     assert!(!export.accesskit_node().is_disabled());
     export.click();
     h.run();
-    assert!(h.query_by_role(Role::Dialog).is_none(), "no sheet opens");
-    assert!(
-        h.query_by_label("2 programs written").is_some(),
-        "Export G-code writes the programs"
+    assert_eq!(
+        in_result_sheet(&h, "2 programs written"),
+        1,
+        "Export G-code writes the programs and shows the result's sheet"
     );
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none(), "Done closes it");
     assert_eq!(h.state().step_states().of(Step::Export), State::Complete);
     assert!(
         h.query_by_label("Exported. Nothing has changed since.")

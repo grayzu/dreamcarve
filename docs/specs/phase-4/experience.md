@@ -99,11 +99,9 @@ what to press next.
   2 of 5…*, or *Stopped*; *Stop* and *Regenerate all* stay in the status
   bar); and the one primary button, a 34-px accent pill. It reads
   *Continue* with `arrow-right` after the label and opens the next step
-  that is not complete; on the Export step it reads *Export G-code* with
-  `download` and writes the programs the step plans, asking for a folder
-  first when none is chosen; it is disabled (a sunken pill) with the
-  reason as its tooltip while an error blocks export or the programs are
-  still being built.
+  that is not complete. On the Export step the header has no primary
+  button: the step's *Export G-code* is at the foot of its panel
+  (section 7, "Export foot").
 - **Rail.** A 64-px card at the left, full height. Five step buttons
   from the top, 4 px apart, each 56 × 52 with a 10-px radius: a 24-px
   icon over an 11-px label (Design `shapes`, Stock `box`, Tools `drill`,
@@ -320,7 +318,8 @@ is a control's height, so the rows stay aligned (*Through-cut
 allowance*, *Tool-change machine Z*). The field fills the rest;
 the unit occupies the last 28 px inside the field. Tool-Library sheet
 1100 × 640 default (its table's ten columns, a type's name whole among
-them, leave the name 120 px), min 800 × 520, its right (editing) pane
+them, leave the name 120 px), resized by the user between 920 × 480
+and the window less 24 px all round, its right (editing) pane
 320 wide;
 Import drawing and Add picture sheets 560 wide; unsaved-changes sheet
 420 wide; the Export step's panel 440 wide; the start screen's content
@@ -619,8 +618,9 @@ Controls:
   in tabular figures, the unit right-aligned in text.secondary inside the
   outline. Typing `0.5 in` in a mm project converts on leave and the field
   shows `12.7 mm`; the unit never changes with the input. Validation on
-  leave (Tab, Enter, click elsewhere); Escape reverts. One undo step per
-  leave.
+  leave, by any means (Tab, Shift+Tab, Enter, a click anywhere in the
+  window, a command's key, the window losing the focus: functional 52);
+  only Escape reverts. One undo step per leave.
 - **Tool-derived placeholder.** When the file holds `null`, the field is
   empty and shows `tool's: 3 mm` in text.disabled; the unit suffix stays.
   A `rotate-ccw` quiet icon button (16 px) appears inside the field's
@@ -754,12 +754,23 @@ Controls:
   (`inlay_male_board_unset`'s message, not its code). The code appears in
   the Warnings drawer, not here. One message per field; errors win over
   warnings.
-- **Help affordance.** The wireframes' "?" circle is replaced: hovering a
-  field's *label* for 500 ms shows the chapter's one-sentence definition as
-  a tooltip, with the `.dcv` field name in JetBrains Mono on a second line;
-  the label's underline (1 px dotted, text.disabled) appears on hover to
-  say it has help. `circle-help` is kept only in sheet headers as a link to
-  the chapter.
+- **Help affordance.** The wireframes' "?" circle is replaced. Every
+  field of the app has help: what it does, its unit, the values it takes
+  (validation's own limits) and what leaving it empty means. It shows in
+  two places. Hovering a field's *label* for 500 ms shows it as a
+  tooltip, with the `.dcv` field name in JetBrains Mono on a second
+  line; the label's underline (1 px dotted, text.disabled) appears on
+  hover to say it has help; hovering the *field* shows the same help (a
+  required field's tooltip is the file's message, with the help as a
+  second tooltip under it). And while a field has the keyboard, its help
+  is the **help line** at the foot of the panel that holds it, the step
+  panel's, the Inspector's or a sheet's: a hairline, then `info` 16 px
+  in text.secondary, the field's label in 13-px Medium and the help in
+  12-px text.secondary, wrapped to the panel, 10 px above and below. The
+  line is pinned: the panel's content scrolls above it, and it takes its
+  room only while a field of that panel is focused, so a panel with no
+  field in use loses nothing. `circle-help` is kept only in sheet
+  headers as a link to the chapter.
 - **Rail button.** 56 × 52, a 10-px radius: a 24-px icon over an 11-px
   label, the state mark at the icon's top right (section 2, "Rail").
   The current step's is filled with `accent.soft`, icon and label in
@@ -768,7 +779,12 @@ Controls:
   trailing `x` clear when non-empty; filters as typed, 150 ms debounce.
 - **Table rows (Tool Library, export programs, Warnings).** 34 px, striped
   with `surface.stripe` on 8-px-radius surfaces, header row text.secondary
-  12 px with `border.default` under it, columns resizable, numbers
+  12 px with `border.default` under it, the Tool Library's columns
+  resizable (a hairline divider at the left edge of every column but
+  the name, `accent` and 2 px under the pointer, with the column-resize
+  cursor: dragging it sets the width of the column at its right, down
+  to the column's minimum, and the name takes the slack, never under
+  120 px; the widths are kept in `gui.toml`), numbers
   right-aligned
   tabular, the tick column 32 px. "Already in project" rows show a `check`
   in text.secondary and the row in text.secondary. A Warnings row is
@@ -781,22 +797,37 @@ Controls:
   Every length and rate in the sheet follows it, the table's columns
   and the editing pane among them; the project behind the sheet keeps
   its own units.
-- **Export result.** On the Export step, in the plan's place: a card
-  inside the step's card (`surface.raised`, 10-px radius, a hairline,
-  16-px padding). Status is one 15-px SemiBold line with `circle-check`
-  in status.success and a secondary *Done* at its right, the CLI's
-  lines under it in 12-px text.secondary; Files is a table of 30-px
+- **Export foot.** The foot of the Export step's panel, pinned under
+  its scrolling content: a hairline, then one row 8 px under it and
+  16 px above the card's edge. At the right the step's one primary
+  button, *Export G-code* with `download`, a 34-px accent pill, which
+  writes the programs the step plans, asking for a folder first when
+  none is chosen. At its left, in 12-px text, what it will do (*Ready
+  to write 2 programs.*, text.secondary) or, while it is disabled (a
+  sunken pill), why, with `circle-x` in status.error text (*1 error
+  blocks export*; *Waiting for the toolpaths…*); the whole reason is
+  the button's tooltip. A field's help line (above, "Help affordance")
+  shows under it.
+- **Export result.** A sheet, 560 px wide (functional 77a). Status is
+  one 15-px SemiBold line with `circle-check` in status.success, the
+  CLI's lines under it in 12-px text.secondary; then, scrolling when
+  they are long: Files, a table of 30-px
   striped rows under a 24-px header row (number, file name in JetBrains
   Mono, tool, time right-aligned, the columns one width for every row),
   then the totals; then *Folder* and the folder as a 12-px mono line
   cut at its start with a `copy` icon button, over *Show in folder* and
-  *Save setup sheet…*, both secondary. Under the card, *Run
-  instructions* is a closed disclosure whose steps are numbered 13-px
+  *Save setup sheet…*, both secondary; and *Run
+  instructions*, a closed disclosure whose steps are numbered 13-px
   lines, each numbered once (the report's own number is taken off the
   line), and whose controller notes are callouts (`surface.stripe`
-  fill, 10-px radius, `info` glyph in text.secondary). A failure is one
+  fill, 10-px radius, `info` glyph in text.secondary). The footer holds
+  *Done*, the sheet's primary pill, at the right. The sheet takes its
+  height from its content, up to the window less 48 px above and below,
+  at once when *Run instructions* opens. Closed, the step shows
+  `circle-check` and *2 programs written.* under its readiness
+  card, with a secondary *Show result* at the row's right. A failure is one
   line in status.error with `circle-x` under the readiness card, and
-  the plan stays.
+  no sheet.
 - **Scrolling lists.** A list that goes on past the edge of its area
   fades its last 20 px into the surface under it: at the bottom while
   there is more below, at the top once it is scrolled. A row the edge
@@ -926,7 +957,14 @@ Controls:
   validation as the panels, and a footer with the one primary action, a
   pill, on the right and secondary actions on the left. A file's path
   in a sheet is one mono line cut at its start, since its name is at
-  its end; the whole path is its tooltip. Never a second sheet above a
+  its end; the whole path is its tooltip. A sheet that holds a table
+  (the Tool Library, with its import review) resizes: an 8-px strip
+  along each edge and an 18-px grip of three short strokes at its bottom
+  right corner take the drag, with the resize cursor; the sheet stays
+  centred, so the edge follows the pointer and the opposite edge moves
+  the other way; the size is kept in `gui.toml`. A sheet that asks one
+  question (unsaved changes) or holds one form (Import drawing, Add
+  picture) keeps its fixed size. Never a second sheet above a
   sheet: the tool picker from an editor is a popover, the import review
   replaces the Tool Library's panes in place with a *Back*, and so does
   *Delete*'s question, with *Cancel*. Export is not a sheet: it is the
@@ -1327,8 +1365,9 @@ follows.
 13. In a narrower window the Inspector lies over the Viewport, with a
     hairline and the one shadow.
 14. The primary button reads *Continue* with an arrow off the Export
-    step, and *Export G-code* with `download` on it, disabled while an
-    error blocks export.
+    step. On it the header has none, and *Export G-code* with `download`
+    is at the foot of the step's panel, disabled while an error blocks
+    export, with the reason beside it.
 15. One accent button is in a view (`redesign.md`, principle 3).
 
 ### The steps

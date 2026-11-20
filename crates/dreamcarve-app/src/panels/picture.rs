@@ -188,7 +188,25 @@ fn body(ui: &mut Ui, strings: &Strings, units: Units, sheet: &mut Sheet, out: &m
         },
     );
     ui.add_space(16.0);
-    footer(ui, strings, &sheet.model, out);
+    footer(ui, strings, &sheet.model, out); // The help of the field being typed in, at the sheet's foot.
+    let foot_px = crate::widgets::help::foot_height(
+        ui,
+        crate::widgets::help::Scope::Sheet,
+        ui.available_width() + 2.0 * f32::from(MARGIN_PX),
+    );
+    crate::widgets::help::settle(ui, crate::widgets::help::Scope::Sheet);
+    if foot_px > 0.0 {
+        ui.add_space(8.0);
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), foot_px),
+            egui::Sense::hover(),
+        );
+        crate::widgets::help::foot(
+            ui,
+            crate::widgets::help::Scope::Sheet,
+            rect.expand2(egui::vec2(f32::from(MARGIN_PX), 0.0)),
+        );
+    }
 }
 
 /// The 32-px header: the title and `x`.
@@ -320,9 +338,17 @@ fn size(ui: &mut Ui, strings: &Strings, units: Units, sheet: &mut Sheet) {
         .into_iter()
         .zip(&mut middles)
     {
-        let (key, name) = match side {
-            PictureSide::Width => (StrKey::AppPictureWidth, "width"),
-            PictureSide::Height => (StrKey::AppPictureHeight, "height"),
+        let (key, help, name) = match side {
+            PictureSide::Width => (
+                StrKey::AppPictureWidth,
+                StrKey::AppPictureWidthHelp,
+                "width",
+            ),
+            PictureSide::Height => (
+                StrKey::AppPictureHeight,
+                StrKey::AppPictureHeightHelp,
+                "height",
+            ),
         };
         // The footprint's side once there is one; else what was typed in
         // this field, so a refused size stays in view.
@@ -347,7 +373,7 @@ fn size(ui: &mut Ui, strings: &Strings, units: Units, sheet: &mut Sheet) {
             .filter(|(at, _)| *at == side)
             .map(|(_, reason)| reason.clone());
         let label = strings.get(key);
-        let (label_response, output) = field_row(ui, label, |ui| {
+        let (label_response, output) = field_row(ui, label, strings.get(help), |ui| {
             ui.set_max_width((ui.available_width() - LINK_COLUMN_PX).max(0.0));
             let output = unit_field(
                 ui,

@@ -1115,6 +1115,94 @@ pub fn boundary(op: &Operation) -> &[InstanceId] {
     }
 }
 
+/// The note beside a Pocket's Stepover row while its field holds `typed`
+/// (the smoke test's item 7): the distance between passes that percentage
+/// of its tool's diameter comes to, in the project's units
+/// ([`crate::tools::step_over_note`]); with the field empty, the tool's
+/// own stepover, which the Pocket then takes. `None` for any other row,
+/// and for a carve's floor stepover, which is a share of the cut's width
+/// on the floor and not of the diameter.
+#[must_use]
+pub fn step_over_note(
+    project: &Project,
+    strings: &Strings,
+    op: &Operation,
+    row: &Row,
+    typed: &str,
+) -> Option<String> {
+    if !matches!(op, Operation::Pocket(_)) || row.tool_default != Some(ToolDefault::StepOver) {
+        return None;
+    }
+    let tool = project.tools.iter().find(|t| t.id == *op.tool())?;
+    let units = project.display_units;
+    if typed.trim().is_empty() {
+        let fraction = tool.step_over_fraction?;
+        return crate::tools::between_passes(strings, fraction * tool.diameter_mm, units);
+    }
+    crate::tools::step_over_note(strings, tool, typed, units)
+}
+
+/// Why a row is not in use, and what its place says (capability 68a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Replaced {
+    /// What stands in the field's place (*Set by the boundary*).
+    pub note: StrKey,
+    /// The whole reason, for the tooltip and the help line.
+    pub help: StrKey,
+}
+
+/// The rows of an Inlay's record a drawn boundary replaces: the engine
+/// reads neither while `boundary` lists a shape (validation's
+/// `inlay_margin_ignored`: "the boundary replaces both margin_mm and
+/// outline_rounding_mm").
+const REPLACED_BY_BOUNDARY: [&str; 2] = ["margin_mm", "outline_rounding_mm"];
+
+/// Why `row` of `op` is not in use, when it is not: an Inlay's Band
+/// margin and Outline rounding while its Boundary is a shape, since the
+/// boundary then draws the band's edge and the engine ignores both. The
+/// editor disables such a row and says why in the field's place; `None`
+/// for every row that is in use.
+#[must_use]
+pub fn replaced(op: &Operation, row: &Row) -> Option<Replaced> {
+    let Operation::Inlay(inlay) = op else {
+        return None;
+    };
+    (inlay.has_boundary() && REPLACED_BY_BOUNDARY.contains(&row.key)).then_some(Replaced {
+        note: StrKey::EditorBoundaryReplaces,
+        help: StrKey::EditorBoundaryReplacesHelp,
+    })
+}
+
+/// The Boundary row's choice as the window makes it: [`set_boundary`],
+/// and, when `shapes` is not empty, the margin and the rounding the
+/// boundary replaces cleared to `null` in the same command, so the file
+/// holds no value the engine ignores and the two rows have nothing to
+/// warn about while they are disabled ([`replaced`]). One undo step,
+/// named for the boundary; `None` when the record is that already.
+/// Choosing none leaves the margin as it is, which is unset after a
+/// boundary: validation then asks for it.
+///
+/// # Errors
+///
+/// [`CommandError::FieldRefused`] as [`set_boundary`] gives it.
+pub fn choose_boundary(
+    op: &Operation,
+    row: &Row,
+    shapes: &[InstanceId],
+) -> Result<Option<Command>, CommandError> {
+    let mut next = match set_boundary(op, row, shapes)? {
+        Some(Command::UpdateOperation(next)) => next,
+        Some(other) => return Ok(Some(other)),
+        None => op.clone(),
+    };
+    if !shapes.is_empty() {
+        for key in REPLACED_BY_BOUNDARY {
+            next = fields::set(&next, key, Value::Null)?;
+        }
+    }
+    Ok((next != *op).then_some(Command::UpdateOperation(next)))
+}
+
 /// `selected` narrowed to the shapes Inlay `op`'s Boundary row offers
 /// ([`offered_boundaries`]), in the selection's order: what the row's
 /// *Selected shapes* writes, for a band drawn by several shapes.

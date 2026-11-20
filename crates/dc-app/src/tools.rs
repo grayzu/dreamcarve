@@ -123,6 +123,50 @@ impl ToolField {
         }
     }
 
+    /// Every field a tool of any type has, in the editor's order of a
+    /// tapered ball nose and then a V-bit's own.
+    pub const ALL: [Self; 15] = [
+        Self::Name,
+        Self::Angle,
+        Self::TipDiameter,
+        Self::Taper,
+        Self::FluteLength,
+        Self::Diameter,
+        Self::Flutes,
+        Self::Feed,
+        Self::Plunge,
+        Self::Rpm,
+        Self::StepDown,
+        Self::StepOver,
+        Self::Number,
+        Self::Vendor,
+        Self::ProductId,
+    ];
+
+    /// The field's help: what it is, its unit, the values it takes and
+    /// what leaving it empty means. Its label and the field show it on
+    /// hover, and the panel's help line while it is typed in.
+    #[must_use]
+    pub const fn help(self) -> StrKey {
+        match self {
+            Self::Name => StrKey::AppToolsNameHelp,
+            Self::Diameter => StrKey::AppToolsDiameterHelp,
+            Self::Angle => StrKey::AppToolsAngleHelp,
+            Self::TipDiameter => StrKey::AppToolsTipDiameterHelp,
+            Self::Taper => StrKey::AppToolsTaperHelp,
+            Self::FluteLength => StrKey::AppToolsFluteLengthHelp,
+            Self::Flutes => StrKey::AppToolsFlutesHelp,
+            Self::Feed => StrKey::AppToolsFeedHelp,
+            Self::Plunge => StrKey::AppToolsPlungeHelp,
+            Self::Rpm => StrKey::AppToolsRpmHelp,
+            Self::StepDown => StrKey::AppToolsStepDownHelp,
+            Self::StepOver => StrKey::AppToolsStepOverHelp,
+            Self::Number => StrKey::AppToolsToolNumberHelp,
+            Self::Vendor => StrKey::AppToolsVendorHelp,
+            Self::ProductId => StrKey::AppToolsProductIdHelp,
+        }
+    }
+
     /// The field [`Tool::unset_values`] names `file_name`, when it is one
     /// a tool may still need: a tapered ball nose's values and the rates.
     fn of_unset(file_name: &str) -> Option<Self> {
@@ -346,6 +390,8 @@ pub struct FieldRow {
     pub field: ToolField,
     /// Its label.
     pub label: StrKey,
+    /// Its help ([`ToolField::help`]).
+    pub help: StrKey,
     /// What the field shows, without its unit: empty for `null`.
     pub text: String,
     /// The unit drawn after the value ([`field_unit`]).
@@ -374,6 +420,7 @@ pub fn rows_for(tool: &Tool, choice: KindChoice, units: Units) -> Vec<FieldRow> 
         .map(|field| FieldRow {
             field,
             label: field.label(),
+            help: field.help(),
             text: field_text(tool, field, units),
             unit: field_unit(field, units),
             required: unset
@@ -581,6 +628,97 @@ pub fn set_field(
         ToolField::ProductId => next.product_id = words(text),
     }
     Ok(next)
+}
+
+/// Decimal places a distance between passes shows, and one in the last
+/// of them: a thousandth of a millimetre, a tenth of a thou.
+const fn pass_decimals(units: Units) -> (usize, f64) {
+    match units {
+        Units::Mm => (3, 0.001),
+        Units::Inch => (4, 0.0001),
+    }
+}
+
+/// `distance_mm` between passes as a stepover's note says it in `units`
+/// (`0.508 mm between passes`); a distance too small for the figures
+/// shown is said as less than their last place, never as 0. `None` for a
+/// distance that is not above 0.
+#[must_use]
+pub fn between_passes(strings: &Strings, distance_mm: f64, units: Units) -> Option<String> {
+    if !(distance_mm.is_finite() && distance_mm > 0.0) {
+        return None;
+    }
+    let (decimals, least) = pass_decimals(units);
+    let shown = trimmed(units::to_display(distance_mm, units), decimals);
+    let unit = units::suffix(units);
+    Some(if shown == "0" {
+        strings.fmt(
+            StrKey::AppToolsStepOverNoteTiny,
+            &[("distance", &trimmed(least, decimals)), ("unit", unit)],
+        )
+    } else {
+        strings.fmt(
+            StrKey::AppToolsStepOverNote,
+            &[("distance", &shown), ("unit", unit)],
+        )
+    })
+}
+
+/// The note beside `tool`'s Stepover field while it holds `typed` (the
+/// smoke test's item 7): the distance between passes that percentage of
+/// the tool's diameter comes to, in `units`. `0.08 %` of a 6.35 mm bit
+/// reads `0.005 mm between passes`, where `8 %` reads `0.508 mm`. `None`
+/// while the field is empty or holds no percentage.
+#[must_use]
+pub fn step_over_note(strings: &Strings, tool: &Tool, typed: &str, units: Units) -> Option<String> {
+    if typed.trim().is_empty() {
+        return None;
+    }
+    let fraction = set_field(tool, ToolField::StepOver, typed, units)
+        .ok()?
+        .step_over_fraction?;
+    between_passes(strings, fraction * tool.diameter_mm, units)
+}
+
+/// The findings located at `tool`'s own fields, each with the field it is
+/// under, errors before warnings before hints, one a field: what the tool
+/// editor shows under that field, as the operation editor shows a located
+/// finding under its row. A value the tool still needs is left out: its
+/// field says *Required*, and the file's message is its tooltip (66b).
+#[must_use]
+pub fn field_status<'a>(
+    project: &Project,
+    findings: &'a [Finding],
+    tool: &Tool,
+) -> Vec<(ToolField, crate::project::FieldStatus<'a>)> {
+    let unset = unset_values(tool);
+    let mut found: Vec<(ToolField, crate::project::FieldStatus<'a>)> = Vec::new();
+    for tier in [
+        dc_job::Tier::Error,
+        dc_job::Tier::Warning,
+        dc_job::Tier::Hint,
+    ] {
+        for finding in findings.iter().filter(|f| f.tier == tier) {
+            let Some(path) = finding.field.as_deref() else {
+                continue;
+            };
+            let Some((id, Some(field))) = located(project, path) else {
+                continue;
+            };
+            let needed = unset.iter().any(|(name, _)| *name == field.file_name());
+            if id != tool.id || needed || found.iter().any(|(f, _)| *f == field) {
+                continue;
+            }
+            found.push((
+                field,
+                crate::project::FieldStatus {
+                    tier,
+                    message: &finding.message,
+                },
+            ));
+        }
+    }
+    found
 }
 
 /// The rates export needs that `tool` lacks, each with the file's message

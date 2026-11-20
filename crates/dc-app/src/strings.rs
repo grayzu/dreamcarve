@@ -184,7 +184,10 @@ mod tests {
                 let second = words.get(i + 2).copied().unwrap_or_default();
                 // The second word counts only as part of the first's
                 // phrase: not past a separator or a punctuation mark.
-                let phrase_goes_on = first.chars().all(char::is_alphabetic) && first != "tool";
+                // A preposition ends it too: `1 mm between passes` counts
+                // millimetres, not passes.
+                let phrase_goes_on =
+                    first.chars().all(char::is_alphabetic) && first != "tool" && first != "between";
                 if plural(first) || (phrase_goes_on && plural(second)) {
                     wrong.push(format!("{}: {text}", key.key()));
                 }

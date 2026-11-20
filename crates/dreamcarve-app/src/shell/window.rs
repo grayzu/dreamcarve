@@ -1395,7 +1395,8 @@ impl Shell {
         let sheet_open = self.sheet.is_some()
             || self.library.is_some()
             || self.import.is_some()
-            || self.picture.is_some();
+            || self.picture.is_some()
+            || self.export.result_sheet().is_some();
         focus::begin(ctx, sheet_open);
         if self.app.target_editing().is_some() {
             // Target editing has two keys, Enter for Done and Escape for
@@ -1414,7 +1415,14 @@ impl Shell {
                 }
             }
         } else if !sheet_open {
-            actions.extend(shortcuts(ctx, &self.app));
+            let keyed = shortcuts(ctx, &self.app);
+            if !keyed.is_empty() {
+                // A command's key leaves the field being typed in, which
+                // writes its text first (capability 52): Save saves it,
+                // and a step's key does not lose it with the panel.
+                crate::widgets::unit_field::flush(ctx);
+            }
+            actions.extend(keyed);
             actions.extend(viewport::keys(ctx, &self.app));
         }
     }
@@ -1769,12 +1777,12 @@ impl Shell {
     fn export_request(&mut self, request: panels::export::Request) {
         use panels::export::Request;
         match request {
-            Request::Done => self.export.dismiss(),
+            Request::Done => self.export.show_result(false),
+            Request::ShowResult => self.export.show_result(true),
             Request::ChooseFolder => {
                 self.choose_export_folder();
             }
             Request::SetStem(stem) => self.export.set_stem(stem),
-            Request::SetSplit(split) => self.export.set_split(split),
             Request::SetBoards(boards) => self.export.set_boards(boards),
             Request::ToggleInstructions => self.export.toggle_instructions(),
             Request::Export => {
@@ -1914,8 +1922,8 @@ impl Shell {
 
 /// The part of `gui.toml`'s record only the user's own choices change:
 /// the appearance, what the Viewport draws and how it colours it, the
-/// last tab size, the Tool Library's units and where each project
-/// exports. The rest (the recent files, the window's place, the panels
+/// last tab size, the Tool Library's units, where each project exports
+/// and the sizes dragged. The rest (the recent files, the window's place, the panels
 /// and the sections) the app also changes by itself.
 fn user_set(file: &GuiPrefs) -> impl PartialEq + '_ {
     (
@@ -1925,6 +1933,7 @@ fn user_set(file: &GuiPrefs) -> impl PartialEq + '_ {
         file.tab,
         file.library_units,
         &file.export_dirs,
+        &file.sizes,
     )
 }
 
@@ -2129,6 +2138,8 @@ impl eframe::App for Shell {
         self.disarm_hidden_picks(&ctx);
         let mut actions = Vec::new();
         self.read_input(&ctx, &mut actions);
+        // The keys' actions come first in the list.
+        let keyed = actions.len();
         // The export's plan is built while its step shows, off this
         // thread; look again soon while it is on its way.
         if self.step == Step::Export
@@ -2265,6 +2276,15 @@ impl eframe::App for Shell {
                 sheet,
                 &mut actions,
             );
+        } else if let Some(done) = self.export.result_sheet() {
+            // What an export wrote (capability 77a).
+            panels::result::sheet(
+                &ctx,
+                self.app.strings(),
+                &done.result,
+                done.instructions,
+                &mut actions,
+            );
         }
         self.focus = focus::finish(ui, regions);
 
@@ -2297,6 +2317,12 @@ impl eframe::App for Shell {
         // In target editing only the mode's own actions run, whatever a
         // panel or a key raised (capability 67).
         let editing_targets = self.app.target_editing().is_some();
+        // A field a command's key made write its text is written before
+        // the command runs: Undo then takes the typed value back, and
+        // Save saves it.
+        if crate::widgets::unit_field::flushed(&ctx) {
+            actions.rotate_left(keyed);
+        }
         for action in actions {
             if !editing_targets || action.in_target_editing() {
                 self.run(&ctx, action);

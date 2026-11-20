@@ -267,6 +267,137 @@ impl Column {
     pub const fn numeric(self) -> bool {
         !matches!(self, Self::Name | Self::Kind | Self::Product)
     }
+
+    /// The column's name in the preferences' `sizes`, where its width is
+    /// kept once the user has dragged it (`library.column.type`).
+    #[must_use]
+    pub const fn size_key(self) -> &'static str {
+        match self {
+            Self::Name => "library.column.name",
+            Self::Kind => "library.column.type",
+            Self::Diameter => "library.column.diameter",
+            Self::Tip => "library.column.tip",
+            Self::Angle => "library.column.angle",
+            Self::Flutes => "library.column.flutes",
+            Self::Feed => "library.column.feed",
+            Self::Plunge => "library.column.plunge",
+            Self::Rpm => "library.column.rpm",
+            Self::Product => "library.column.product",
+        }
+    }
+
+    /// The column's width until the user drags it, px; 0 for the name,
+    /// which takes what the others leave. The Type column holds *Tapered
+    /// ball nose* whole, the Ø and Tip columns a diameter to four
+    /// decimals (`0.0625` in), and the Angle column a taper to two with
+    /// its label (`5.63°/side`); the product cell ends with the "in
+    /// project" mark.
+    #[must_use]
+    pub const fn default_width_px(self) -> f64 {
+        match self {
+            Self::Name => 0.0,
+            Self::Kind => 124.0,
+            Self::Diameter | Self::Tip => 54.0,
+            Self::Angle => 76.0,
+            Self::Flutes => 42.0,
+            Self::Feed => 46.0,
+            Self::Plunge => 48.0,
+            Self::Rpm => 50.0,
+            Self::Product => 64.0,
+        }
+    }
+
+    /// The narrowest the column goes, px: room for its heading, or three
+    /// figures.
+    #[must_use]
+    pub const fn min_width_px(self) -> f64 {
+        match self {
+            Self::Name => NAME_MIN_PX,
+            Self::Kind | Self::Product => 48.0,
+            Self::Angle | Self::Plunge => 44.0,
+            _ => 36.0,
+        }
+    }
+}
+
+/// The narrowest the name column goes, px.
+pub const NAME_MIN_PX: f64 = 120.0;
+
+/// The width of each of the table's columns, in [`Column::ALL`]'s order,
+/// in a table `room_px` wide after its tick column: each column's kept
+/// width from `sizes` (the preferences'), else its default, never under
+/// its minimum; the name takes what is left. Where the kept widths leave
+/// the name less than [`NAME_MIN_PX`], the other columns give up what
+/// they have above their minimums, each in proportion, so the row still
+/// fills the table.
+#[must_use]
+pub fn column_widths(
+    sizes: &std::collections::BTreeMap<String, f64>,
+    room_px: f64,
+) -> [f64; Column::ALL.len()] {
+    let mut widths = Column::ALL.map(|column| {
+        if column == Column::Name {
+            return 0.0;
+        }
+        sizes
+            .get(column.size_key())
+            .copied()
+            .filter(|px| px.is_finite())
+            .unwrap_or_else(|| column.default_width_px())
+            .max(column.min_width_px())
+    });
+    let fixed: f64 = widths.iter().sum();
+    let short = NAME_MIN_PX - (room_px - fixed);
+    if short > 0.0 {
+        let spare: f64 = Column::ALL
+            .iter()
+            .zip(&widths)
+            .skip(1)
+            .map(|(column, width)| width - column.min_width_px())
+            .sum();
+        let share = if spare > 0.0 {
+            (short / spare).min(1.0)
+        } else {
+            0.0
+        };
+        for (column, width) in Column::ALL.iter().zip(widths.iter_mut()).skip(1) {
+            *width -= (*width - column.min_width_px()) * share;
+        }
+    }
+    let fixed: f64 = widths.iter().sum();
+    if let Some(name) = widths.first_mut() {
+        *name = (room_px - fixed).max(NAME_MIN_PX);
+    }
+    widths
+}
+
+/// Keeps `width_px` as `column`'s width in `sizes`, held between the
+/// column's minimum and what leaves the name its own in a table
+/// `room_px` wide. The name has no width of its own: it takes the slack.
+pub fn set_column_width(
+    sizes: &mut std::collections::BTreeMap<String, f64>,
+    column: Column,
+    width_px: f64,
+    room_px: f64,
+) {
+    if column == Column::Name || !width_px.is_finite() {
+        return;
+    }
+    let widths = column_widths(sizes, room_px);
+    let (Some(name), Some(now)) = (
+        widths.first(),
+        Column::ALL
+            .iter()
+            .position(|c| *c == column)
+            .and_then(|at| widths.get(at)),
+    ) else {
+        return;
+    };
+    let most = (now + (name - NAME_MIN_PX)).max(column.min_width_px());
+    sizes.insert(
+        column.size_key().to_owned(),
+        width_px.clamp(column.min_width_px(), most),
+    );
 }
 
 /// What one cell of a tool's table row holds.

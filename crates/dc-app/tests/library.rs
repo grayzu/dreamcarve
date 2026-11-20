@@ -1118,3 +1118,75 @@ fn the_type_filter_has_a_tapered_ball_nose_entry() {
         assert!(!KindFilter::TaperedBallNose.matches(&kind), "{kind:?}");
     }
 }
+
+/// The library table's columns resize (the smoke test's item 2): each
+/// column but the name has a width of its own, the name takes what is
+/// left of the table, and a width is kept by the column's key in the
+/// preferences' `sizes`. A divider sets the width of the column at its
+/// right, since the columns stand against the table's right edge; a
+/// column never goes under its minimum, and never takes the name under
+/// its own.
+#[test]
+fn library_columns_resize_and_the_name_takes_the_slack() {
+    use dc_app::library::{Column, NAME_MIN_PX, column_widths, set_column_width};
+    use std::collections::BTreeMap;
+
+    let mut sizes = BTreeMap::new();
+    let room = 800.0;
+    let widths = column_widths(&sizes, room);
+    assert_eq!(widths.len(), Column::ALL.len());
+    for (column, width) in Column::ALL.into_iter().zip(widths).skip(1) {
+        assert_eq!(
+            width,
+            column.default_width_px(),
+            "{column:?} starts at its default"
+        );
+        assert!(column.min_width_px() <= width, "{column:?}");
+    }
+    assert!(
+        (widths.iter().sum::<f64>() - room).abs() < 1e-9,
+        "the row is filled"
+    );
+    let name = widths[0];
+    assert!(name >= NAME_MIN_PX);
+
+    // Type made 40 px wider: the name gives it up.
+    set_column_width(
+        &mut sizes,
+        Column::Kind,
+        Column::Kind.default_width_px() + 40.0,
+        room,
+    );
+    let wider = column_widths(&sizes, room);
+    assert_eq!(wider[1], Column::Kind.default_width_px() + 40.0);
+    assert!((wider[0] - (name - 40.0)).abs() < 1e-9);
+    assert_eq!(wider[2..], widths[2..], "the others keep theirs");
+    assert_eq!(
+        sizes.get("library.column.type"),
+        Some(&(Column::Kind.default_width_px() + 40.0)),
+        "kept by the column's key"
+    );
+
+    // Never under its minimum, and never so wide the name is cut short.
+    set_column_width(&mut sizes, Column::Feed, 1.0, room);
+    assert_eq!(column_widths(&sizes, room)[6], Column::Feed.min_width_px());
+    set_column_width(&mut sizes, Column::Product, 5000.0, room);
+    let squeezed = column_widths(&sizes, room);
+    assert!(
+        (squeezed[0] - NAME_MIN_PX).abs() < 1e-9,
+        "the name keeps its minimum"
+    );
+    assert!((squeezed.iter().sum::<f64>() - room).abs() < 1e-9);
+
+    // A table too narrow for what is kept squeezes the columns, never
+    // the name under its minimum, and no column under its own.
+    let narrow = column_widths(&sizes, 520.0);
+    assert!(narrow[0] >= NAME_MIN_PX - 1e-9);
+    for (column, width) in Column::ALL.into_iter().zip(narrow).skip(1) {
+        assert!(width >= column.min_width_px() - 1e-9, "{column:?}: {width}");
+    }
+    // The name has no width of its own to set.
+    let before = sizes.clone();
+    set_column_width(&mut sizes, Column::Name, 300.0, room);
+    assert_eq!(sizes, before);
+}

@@ -40,6 +40,7 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::card::{card, floating};
+use crate::widgets::help::{self, Scope};
 use crate::widgets::icon::Icon;
 
 /// A card's content margin, px.
@@ -186,7 +187,9 @@ pub(crate) fn step_panel(
         );
     let card_rect = resizable(ui, panel, |ui| {
         let rect = ui.available_rect_before_wrap();
-        card(ui, |ui| step(ui, state, out));
+        card(ui, |ui| {
+            help::with_foot(ui, Scope::Step, |ui| step(ui, state, out))
+        });
         rect
     })
     .inner;
@@ -406,7 +409,9 @@ pub(crate) fn inspector(
         );
     let card_rect = resizable(ui, panel, |ui| {
         let rect = ui.available_rect_before_wrap();
-        card(ui, |ui| body(ui, state, out));
+        card(ui, |ui| {
+            help::with_foot(ui, Scope::Inspector, |ui| body(ui, state, out))
+        });
         rect
     })
     .inner;
@@ -450,7 +455,9 @@ pub(crate) fn inspector_over(
                 Sense::click_and_drag(),
             );
             let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
-            floating(&mut child, |ui| body(ui, state, out));
+            floating(&mut child, |ui| {
+                help::with_foot(ui, Scope::Inspector, |ui| body(ui, state, out));
+            });
             ui.allocate_rect(rect, Sense::hover());
         });
     rect

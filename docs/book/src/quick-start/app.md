@@ -272,10 +272,11 @@ Save the project first: **File ▸ Save** (Ctrl S, or ⌘S on macOS), as
 `coaster` in the folder that holds the drawing. The header now shows the
 project's name.
 
-Click **Continue**. Every other step is complete, so it opens **Export**,
-and the green button now reads **Export G-code**:
+Click **Continue**. Every other step is complete, so it opens **Export**.
+The green button is now at the foot of the step's panel, and reads
+**Export G-code**:
 
-![The Export step: No problems, an estimated time of 46 s and a Z range of −12..5 mm, the Post-processor, Heights and Tolerances groups, Program Details listing coaster.nc for T1 1/4 end mill, and the destination folder and file name](figures/app/13-export.png)
+![The Export step: No problems, an estimated time of 46 s and a Z range of −12..5 mm, the Post-processor, Heights and Tolerances groups, Programs "One program per tool", Program Details, the destination folder and file name, and at the foot "Ready to write 1 program." beside the green Export G-code button](figures/app/13-export.png)
 
 From the top, the step shows:
 
@@ -287,6 +288,8 @@ From the top, the step shows:
   write, with its tool, its operations and what to do before you run it.
 - **Destination** and **File name**: the programs go beside the project
   file unless you choose another folder.
+- At the foot, **Export G-code**, and beside it what it will write, or
+  why it cannot yet.
 
 The **estimated time** is how long the cutting and the spindle's spin-up
 wait take at the feed rates you set. It leaves out the rapids, because
@@ -296,9 +299,9 @@ rapid rate in the
 include them. The real job takes a little longer: the machine also speeds
 up and slows down.
 
-Click **Export G-code**. The step shows what was written:
+Click **Export G-code**. A sheet shows what was written:
 
-![The Export step after exporting: "1 program written", coaster.nc for T1 1/4 end mill at 46 s, the folder with Show in folder and Save setup sheet, and the Run instructions open at "Before you start: fit T1 1/4 end mill and set work zero with it"](figures/app/14-export-result.png)
+![The export's result, a sheet over the window: "1 program written", coaster.nc for T1 1/4 end mill at 46 s, the folder with Show in folder and Save setup sheet, the Run instructions open at "Before you start: fit T1 1/4 end mill and set work zero with it", and Done](figures/app/14-export-result.png)
 
 `coaster.nc` is the G-code program. **Run instructions** says what to do
 before you start it: fit the bit and set work zero with it. The program
@@ -306,7 +309,8 @@ does not stop for its first bit. The notes under it are for senders that
 store a tool length offset or scale an axis; if you set Z zero by
 touching the bit to the stock, as this chapter does, you can ignore them.
 **Save setup sheet…** writes the same facts as a page you can print and
-take to the machine.
+take to the machine. **Done** closes the sheet; **Show result** on the
+step opens it again.
 
 Export writes every program or none, and never changes the project.
 
@@ -496,13 +500,13 @@ the **Layers** key:
 The **Export** step now has something new: two programs, one for each
 tool.
 
-![The plaque's Export step: an estimated time of 3 min 39 s, "As the project says: one program per tool", Program Details with plaque-1-T2.nc and plaque-2-T1.nc and what to do before each, and "Writes plaque-1-T2.nc, plaque-2-T1.nc"](figures/app/18-plaque-export.png)
+![The plaque's Export step: an estimated time of 3 min 39 s, Programs "One program per tool", Program Details with plaque-1-T2.nc and plaque-2-T1.nc and what to do before each, "Writes plaque-1-T2.nc, plaque-2-T1.nc", and Export G-code at the foot](figures/app/18-plaque-export.png)
 
 The 3.175 mm bit runs first, because the operations that use it come
 first in the list. **Program Details** says what to do between the two:
-fit the second bit and set Z zero with it, leaving X and Y alone. The
-**Programs** menu can write one program with tool changes instead, on a
-controller that has them.
+fit the second bit and set Z zero with it, leaving X and Y alone.
+**Programs** can be set to **One program for all tools** instead, on a
+controller that can stop for a tool change.
 
 These are the programs of the plaque quick start, to the byte. Go to
 [Read the programs](plaque.md#8-read-the-programs) and
@@ -584,14 +588,16 @@ reason as the sign's tools.
 
 The stock is the **female board**, the one that gets the pocket.
 **Board thickness** is the **male board**'s, the one the plug is cut
-from; measure each board and type its own. Do not select `frame`: it is
+from, so it is the first row of the editor's **Male board** group, which
+is open while the thickness is not set; measure each board and type its
+own. Do not select `frame`: it is
 there only to size the stock.
 
 One Inlay cuts both boards from one set of numbers, with one bit, so the
 two halves cannot disagree. The Viewport draws the male board beside the
 stock, mirrored, as it will lie on the machine:
 
-![The DC Inlay in the Inspector: Inlay depth 4, Glue gap 1, Plug depth 2, Board thickness 12 with "base under the band 7 mm (at least 6 mm)"; the Viewport shows the stock with the letters DC and, at its right, the Male board with the mirrored plug and its cut-out](figures/app/20-inlay.png)
+![The DC Inlay in the Inspector: Inlay depth 4, Glue gap 1, Plug depth 2, and the closed groups, Male board among them with "Board thickness 12 mm" on its header; the Viewport shows the stock with the letters DC and, at its right, the Male board with the mirrored plug and its cut-out](figures/app/20-inlay.png)
 
 The two warnings and the hint are among the ones the inlay quick start's
 [Check the project](inlay.md#7-check-the-project) lists and explains.

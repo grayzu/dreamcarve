@@ -449,3 +449,18 @@ pub fn drag(
     });
     harness.run();
 }
+
+/// Draws frames until generation, the worker and any export plan are
+/// done, so nothing asks for another frame while a test drags or looks.
+pub fn settle(harness: &mut Harness<'_, Shell>) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    while harness.state().app().generation().busy()
+        || harness.state().worker_busy()
+        || harness.state().export_planning()
+    {
+        assert!(std::time::Instant::now() < deadline, "the window settles");
+        harness.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    harness.run();
+}

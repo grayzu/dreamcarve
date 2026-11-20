@@ -68,7 +68,7 @@ the Operations step
 cuts both boards, so there is no side to choose and nothing to keep in
 step between two files.
 
-![The inlay pair's DC Inlay in the Inspector: Targets 2 shapes, Tool 1/4 60 degree V-bit with "one bit for both boards · cone height 5.49 mm" under it, Inlay depth 4 mm, Glue gap 1 mm, Plug depth 2 mm, Board thickness 12 mm with "base under the band 7 mm (at least 6 mm)"; the Male board group open with Board width "same as stock: 110" and Board height "same as stock: 80"; and the closed groups Depth, Strategy, Cut-out "1/8 end mill, holding tabs", Order and Heights "Safe Z 10 mm"; on the Viewport the stock with the letters DC and, at its right, the Male board with the mirrored plug](figures/app/op-inlay.png)
+![The inlay pair's DC Inlay in the Inspector: Targets 2 shapes, Tool 1/4 60 degree V-bit with "one bit for both boards · cone height 5.49 mm" under it, Inlay depth 4 mm, Glue gap 1 mm and Plug depth 2 mm; the closed Depth group; the Male board group open with Board thickness 12 mm and "base under the band 7 mm (at least 6 mm)" under it, Board width "same as stock: 110" and Board height "same as stock: 80"; and the closed groups Strategy, Cut-out "1/8 end mill, holding tabs", Order and Heights "Safe Z 10 mm"; on the Viewport the stock with the letters DC and, at its right, the Male board with the mirrored plug](figures/app/op-inlay.png)
 
 The editor's rows, and the field of the project file each one sets:
 
@@ -79,12 +79,13 @@ The editor's rows, and the field of the project file each one sets:
 | | **Inlay depth** | `depth_mm` ([The four values](#the-four-values)) |
 | | **Glue gap** | `glue_gap_mm` |
 | | **Plug depth** | `plug_depth_mm` |
-| | **Board thickness**, with the base left under the band beneath it | `male_board.thickness_mm` ([The male board](#the-male-board)) |
-| **Depth** | **Band margin** | `margin_mm` |
-| | **Outline rounding**, a switch and a radius | `outline_rounding_mm`; off is `null` ([The band's outer edge](#the-bands-outer-edge)) |
+| **Depth** | **Boundary**, a list of shapes | `boundary`; **None** is `[]` ([The boundary](#the-boundary)) |
+| | **Band margin** | `margin_mm`. Off while a **Boundary** is chosen |
+| | **Outline rounding**, a switch and a radius | `outline_rounding_mm`; off is `null` ([The band's outer edge](#the-bands-outer-edge)). Off while a **Boundary** is chosen |
 | | **Through-cut allowance** | `through_cut_allowance_mm` |
 | | **Derived**: lines you read, not rows you set | The male's start plane and band floor, and how deep the bit's flank engages |
-| **Male board** | **Board width**, **Board height** | `male_board.width_mm`, `height_mm`. Empty is `null`, the same as the stock |
+| **Male board** | **Board thickness**, with the base left under the band beneath it | `male_board.thickness_mm` ([The male board](#the-male-board)) |
+| | **Board width**, **Board height** | `male_board.width_mm`, `height_mm`. Empty is `null`, the same as the stock |
 | **Strategy** | **Floor stepover**, a percentage | `step_over_fraction` |
 | | **Clearing passes**, a list | `clearing` ([Clearing passes](#clearing-passes)) |
 | **Cut-out** | **Cut-out**, a switch | `cut_out`; off is `null` ([Cutting the plug free](#cutting-the-plug-free)) |
@@ -95,7 +96,11 @@ The editor's rows, and the field of the project file each one sets:
 | **Heights** | **Safe Z** | `safe_z_mm` |
 
 The four values and the male board's thickness say **Required** until
-you type them. Until the board thickness is set only the female is cut,
+you type them. **Board thickness** is the male board's own, so it is the
+first row of the **Male board** group, not a Setup row: the stock's
+thickness is the female board's, on the Stock step. The group is closed
+until you open it, except while the thickness is not set: then it opens
+by itself. Until the board thickness is set only the female is cut,
 with the warning `inlay_male_board_unset`.
 
 A drawn boundary ([The boundary](#the-boundary)) is the **Boundary** row
@@ -105,6 +110,11 @@ are all closed and that is not one of the Inlay's targets. When several
 shapes draw the band together, select them and choose **Selected shapes
 (N)**. The male board draws the boundary's edge dashed. It is `boundary`
 in the project file.
+
+A boundary replaces the band margin and the outline rounding, so
+choosing a shape empties both in the same step, and their rows turn off
+and say **Set by the boundary**. Choose **None** to use them again: the
+**Band margin** is then empty and says **Required**.
 
 **The two boards.** The Viewport draws the **male board** to the right
 of the stock, with the design mirrored and the male's toolpaths, as the

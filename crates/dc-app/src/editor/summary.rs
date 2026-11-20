@@ -75,6 +75,11 @@ pub fn group(project: &Project, strings: &Strings, op: &Operation, group: Group)
             }
             continue;
         }
+        // A row another replaces (a margin under a drawn boundary) is
+        // not in use: the summary says what is.
+        if super::replaced(op, row).is_some() {
+            continue;
+        }
         if let Some(phrase) = cx.phrase(row, &rows) {
             phrases.push(phrase);
         }

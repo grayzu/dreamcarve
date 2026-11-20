@@ -108,6 +108,7 @@ closes. You never need to edit it. This is what it holds:
 | `[export_dirs]` | The folder each project was last exported to |
 | `[tab]` | The size and shape of the last tab you set, which the Tab tool gives a new tab |
 | `library_units` | The Tool Library sheet's **mm** or **in** |
+| `[sizes]` | The size you dragged the Tool Library sheet to, and the widths of its columns |
 
 A file after a short session looks like this:
 

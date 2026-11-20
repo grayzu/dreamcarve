@@ -186,25 +186,14 @@ fn generation(ui: &mut Ui, state: &FrameState<'_>) {
     );
 }
 
-/// The primary button: *Continue* to the next step that is not complete,
-/// or on the Export step *Export G-code*, the export command.
+/// The primary button: *Continue* to the next step that is not complete.
+/// The Export step has none here: *Export G-code* is at the foot of its
+/// panel (`panels::export::foot`).
 fn primary(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
+    // The Export step's own button is at the foot of its panel, where
+    // the export is set up (capability 77): the header shows none there.
     if state.step == Step::Export {
-        // Disabled while it cannot run, saying why: an error that blocks
-        // export, as the CLI refuses it (S20; an unset thickness, #536),
-        // or the toolpaths or the programs still on their way.
-        let refusal = state.export.refusal(state.app);
-        let mut export = ButtonSpec::new(Kind::Primary, strings.get(StrKey::HeaderExport))
-            .icon(Icon::Download, theme::ICON_LARGE_PX)
-            .height(theme::HEADER_PRIMARY_PX)
-            .enabled(refusal.is_none());
-        if let Some(refusal) = &refusal {
-            export = export.tooltip(refusal);
-        }
-        if button(ui, export).clicked() {
-            out.push(Action::Export(crate::panels::export::Request::Export));
-        }
         return;
     }
     let next = steps::next(&state.states, state.step);

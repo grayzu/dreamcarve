@@ -9,8 +9,9 @@
 //! inside the outline, which is `border.default` at rest, `border.strong`
 //! under the pointer and `focus.ring` while typing. The text the user
 //! types lives in egui's memory while the field has focus; it commits on
-//! leaving the field (Tab, Enter, a click elsewhere) and Escape restores
-//! the value, so an edit is one undo step. The outline takes the
+//! leaving the field by any means (Tab, Enter, a click anywhere, the
+//! window losing the focus, a command's key) and Escape restores the
+//! value, so an edit is one undo step. The outline takes the
 //! validation tier's colour; the message under the field is the caller's
 //! ([`validation_line`] in a field column, [`crate::widgets::row::message`]
 //! beside a label). A tool-derived field shows the tool's value as grey
@@ -44,6 +45,9 @@ const UNIT_PX: f32 = 28.0;
 const RESET_PX: f32 = 24.0;
 /// Inner padding, px.
 const PADDING_PX: f32 = 10.0;
+/// What is kept in view under a field as it takes the
+/// keyboard, px: a line of note under it.
+const REVEAL_PX: f32 = 24.0;
 
 /// A field to draw.
 #[derive(Debug, Clone, Copy)]
@@ -109,26 +113,105 @@ pub(crate) struct FieldOutput {
     pub response: Response,
     /// The typed text, once, when the user leaves a field they changed.
     pub committed: Option<String>,
+    /// What the field shows this frame: the project's value, or what is
+    /// being typed over it. A note that follows the typing reads it (a
+    /// stepover's distance between passes).
+    pub text: String,
     /// Whether ⟲ was clicked.
     pub reset: bool,
+}
+
+/// What is being typed into a field: the text, the project's value it
+/// started from, and the frame it was last drawn in.
+#[derive(Debug, Clone)]
+struct Draft {
+    typed: String,
+    seed: String,
+    frame_nr: u64,
+}
+
+/// Where the frame a flush was asked in is kept.
+fn flush_id() -> Id {
+    Id::unique("dc.unit_field.flush")
+}
+
+/// Where the frame a flush wrote a field in is kept.
+fn flushed_id() -> Id {
+    Id::unique("dc.unit_field.flushed")
+}
+
+/// Asks the field being typed in to write its text this frame, keeping
+/// the focus: a command's key was pressed (Save, Undo, a step's key), and
+/// the command acts on the project as the user sees it, with the typed
+/// value in it. Called before the panels draw.
+pub(crate) fn flush(ctx: &egui::Context) {
+    let frame_nr = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(flush_id(), frame_nr));
+}
+
+/// Whether [`flush`] was called this frame.
+fn flush_asked(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<u64>(flush_id())) == Some(ctx.cumulative_frame_nr())
+}
+
+/// Whether a field wrote its text this frame because [`flush`] asked: the
+/// window then runs the field's command before the key's.
+pub(crate) fn flushed(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<u64>(flushed_id())) == Some(ctx.cumulative_frame_nr())
+}
+
+/// Whether the window lost the focus this frame, or is without it.
+fn window_left(ui: &Ui) -> bool {
+    ui.input(|i| {
+        !i.focused
+            || i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::WindowFocused(false)))
+    })
+}
+
+/// Whether a text field of another kind (a name edited in place) is left
+/// this frame though the focus is still in it: the window lost the focus,
+/// or a command's key asked the fields to write ([`flush`]), which is
+/// then noted for the window ([`flushed`]).
+pub(crate) fn left_with_focus(ui: &Ui) -> bool {
+    if flush_asked(ui.ctx()) {
+        let frame_nr = ui.ctx().cumulative_frame_nr();
+        ui.data_mut(|d| d.insert_temp(flushed_id(), frame_nr));
+        return true;
+    }
+    window_left(ui)
 }
 
 /// Draws `spec` across the available width.
 pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     let palette = Palette::current(ui);
+    // The help the field's label offered: its tooltip here, and the
+    // panel's help line while it is typed in.
+    let help = crate::widgets::help::take(ui, spec.name);
     let (rect, frame_response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEIGHT_PX), Sense::hover());
     let buffer_id = spec.id.with("typed");
-    let had_focus = ui.memory(|m| m.has_focus(spec.id));
-    // What is typed, and the value it started from. While nothing has
-    // been typed over that value the field follows the project: a field
-    // tabbed into as its neighbour commits (W, then H, which follows W)
-    // shows the new value, and leaving it writes nothing back.
-    let buffer = had_focus
-        .then(|| ui.data(|d| d.get_temp::<(String, String)>(buffer_id)))
-        .flatten();
-    let (mut text, seed) = match buffer {
-        Some((typed, seed)) if typed != seed || seed == spec.value => (typed, seed),
+    let frame_nr = ui.ctx().cumulative_frame_nr();
+    // What is typed, and the value it started from: the draft, kept from
+    // the first frame the field has the focus until it is left. It is
+    // read whoever has the focus now, because the focus may already have
+    // gone when the field draws: a click on a field drawn before this one
+    // gives that one the focus first, and Shift+Tab and an assistive tool
+    // move it between frames. A draft that is not from the last frame
+    // belongs to a field that went unseen, and is dropped, not written
+    // late.
+    let draft = ui
+        .data(|d| d.get_temp::<Draft>(buffer_id))
+        .filter(|draft| draft.frame_nr + 1 >= frame_nr);
+    // While nothing has been typed over the value the draft started from
+    // the field follows the project: a field tabbed into as its neighbour
+    // commits (W, then H, which follows W) shows the new value, and
+    // leaving it writes nothing back.
+    let (mut text, seed) = match &draft {
+        Some(draft) if draft.typed != draft.seed || draft.seed == spec.value => {
+            (draft.typed.clone(), draft.seed.clone())
+        }
         _ => (spec.value.to_owned(), spec.value.to_owned()),
     };
 
@@ -194,15 +277,36 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     // The focus is the text's; the ring goes round the field's frame.
     crate::shell::focus::outline(ui.ctx(), spec.id, rect, theme::CONTROL_RADIUS_PX);
 
-    let escaped = ui.input(|i| i.key_pressed(Key::Escape));
+    // Leaving the field by any means writes what was typed (functional
+    // 52): Tab, a click anywhere, another widget taking the focus, the
+    // window losing it, and a command's key, which may take the field's
+    // panel away with the focus still in it ([`flush`]). Escape is the
+    // one way out that restores the value; the Viewport reads that key
+    // before a panel draws, so the focus router is asked too.
+    let escaped = ui.input(|i| i.key_pressed(Key::Escape))
+        || crate::shell::focus::escape_left_widget(ui.ctx());
+    let window_left = window_left(ui);
+    let flushed = flush_asked(ui.ctx());
     let mut committed = None;
-    if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(buffer_id, (text.clone(), seed)));
-    }
-    if response.lost_focus() {
-        ui.data_mut(|d| d.remove::<(String, String)>(buffer_id));
+    let shown = text.clone();
+    if response.has_focus() && !window_left && !flushed {
+        ui.data_mut(|d| {
+            d.insert_temp(
+                buffer_id,
+                Draft {
+                    typed: text.clone(),
+                    seed,
+                    frame_nr,
+                },
+            );
+        });
+    } else if draft.is_some() {
+        ui.data_mut(|d| d.remove::<Draft>(buffer_id));
         if !escaped && text != spec.value {
             committed = Some(text);
+            if flushed {
+                ui.data_mut(|d| d.insert_temp(flushed_id(), frame_nr));
+            }
         }
     }
 
@@ -278,20 +382,52 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
             );
         }
     }
+    // The help line takes its room at the panel's foot in the frame
+    // after the field takes the keyboard: the field, and a line of note
+    // under it, are then brought clear of it.
+    let reveal_id = spec.id.with("reveal");
+    if ui.data(|d| d.get_temp::<bool>(reveal_id)).is_some() {
+        ui.data_mut(|d| d.remove::<bool>(reveal_id));
+        // Only when the line would hide it: a field in view stays put.
+        let kept = rect.with_max_y(rect.bottom() + REVEAL_PX);
+        if kept.bottom() > ui.clip_rect().bottom() || kept.top() < ui.clip_rect().top() {
+            ui.scroll_to_rect(kept, None);
+        }
+    }
+    if let Some(help) = &help
+        && ui.memory(|m| m.has_focus(spec.id))
+        && crate::widgets::help::focused(ui, spec.name, help)
+    {
+        ui.data_mut(|d| d.insert_temp(reveal_id, true));
+    }
     let response = match (spec.enabled, spec.disabled_reason, spec.required) {
         (false, Some(reason), _) => {
             frame_response.on_hover_text(reason);
             response.on_disabled_hover_text(reason)
         }
+        // What the file says of the unset value, then what the field is,
+        // each a tooltip of its own.
         (true, _, Some(required)) => {
             frame_response.on_hover_text(required.message);
-            response.on_hover_text(required.message)
+            let response = response.on_hover_text(required.message);
+            match help {
+                Some(help) => response.on_hover_text(help),
+                None => response,
+            }
         }
+        (true, _, None) => match help {
+            Some(help) => {
+                frame_response.on_hover_text(&help);
+                response.on_hover_text(help)
+            }
+            None => response,
+        },
         _ => response,
     };
     FieldOutput {
         response,
         committed,
+        text: shown,
         reset,
     }
 }
@@ -299,19 +435,30 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
 /// The 12-px message under a field in its column, in the error state:
 /// `circle-x`, then the file's message verbatim, wrapped to the field.
 pub fn validation_line(ui: &mut Ui, message: &str) {
+    status_line(ui, Tier::Error, message);
+}
+
+/// The 12-px message under a field in its column, in `tier`'s state: its
+/// glyph (`circle-x`, `triangle-alert` or `info`), then the file's
+/// message verbatim in the tier's text colour, wrapped to the field.
+pub fn status_line(ui: &mut Ui, tier: Tier, message: &str) {
     let palette = Palette::current(ui);
+    let (icon, colour) = match tier {
+        Tier::Error => (Icon::CircleX, palette.status_error.text),
+        Tier::Warning => (Icon::TriangleAlert, palette.status_warning.text),
+        Tier::Hint => (Icon::Info, palette.status_info.text),
+    };
     ui.add_space(4.0);
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let glyph = Icon::CircleX.galley(ui, 12.0, palette.status_error.text);
+        let glyph = icon.galley(ui, 12.0, colour);
         let (rect, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
-        ui.painter()
-            .galley(rect.min, glyph, palette.status_error.text);
+        ui.painter().galley(rect.min, glyph, colour);
         ui.add(
             egui::Label::new(
                 egui::RichText::new(message)
                     .text_style(TextStyle::Small)
-                    .color(palette.status_error.text),
+                    .color(colour),
             )
             .wrap()
             .selectable(false),
@@ -320,11 +467,35 @@ pub fn validation_line(ui: &mut Ui, message: &str) {
     ui.add_space(4.0);
 }
 
+/// A quiet 12-px note under a field in its column, in text.secondary with
+/// no glyph: what the value comes to (a stepover's distance between
+/// passes). It is not a finding, and does not look like one.
+pub fn quiet_line(ui: &mut Ui, text: &str) {
+    let palette = Palette::current(ui);
+    ui.add_space(2.0);
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(text)
+                .text_style(TextStyle::Small)
+                .color(palette.text_secondary),
+        )
+        .wrap()
+        .selectable(false),
+    );
+    ui.add_space(2.0);
+}
+
 /// An editor row: the label in its 112-px column, then `field` at the
-/// rest of the width. The label names the field for assistive tools.
-pub fn row<R>(ui: &mut Ui, label: &str, field: impl FnOnce(&mut Ui) -> R) -> (Response, R) {
+/// rest of the width. The label names the field for assistive tools, and
+/// shows `help` on hover; the field drawn under the same name takes it.
+pub fn row<R>(
+    ui: &mut Ui,
+    label: &str,
+    help: &str,
+    field: impl FnOnce(&mut Ui) -> R,
+) -> (Response, R) {
     ui.horizontal_top(|ui| {
-        let label_response = crate::widgets::row::label_slot(ui, label, false);
+        let label_response = crate::widgets::row::label(ui, label, help, None);
         let inner = ui.vertical(|ui| field(ui)).inner;
         (label_response, inner)
     })

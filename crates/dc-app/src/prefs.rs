@@ -42,6 +42,72 @@ pub struct Prefs {
     /// shows, never what the library file stores (millimetres). `None`
     /// until chosen, and then the open project's units.
     pub library_units: Option<Units>,
+    /// The sizes the user has dragged things to, in logical pixels, by
+    /// name: a sheet that resizes (`library.width`, `library.height`) and
+    /// the Tool Library table's columns (`library.column.type`). A name
+    /// that is missing is the default.
+    pub sizes: BTreeMap<String, f64>,
+}
+
+/// What a sheet keeps clear of the window's edges on each axis, px: 24
+/// either side.
+pub const SHEET_GAP_PX: f64 = 48.0;
+
+/// A sheet the user can resize: its name in [`Prefs::sizes`], and its
+/// default and smallest sizes, px (width, height).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SheetSize {
+    /// Its name: `<key>.width` and `<key>.height` hold its size.
+    pub key: &'static str,
+    /// The size it opens at until it is dragged.
+    pub default_px: (f64, f64),
+    /// The smallest it goes.
+    pub min_px: (f64, f64),
+}
+
+impl SheetSize {
+    /// `size` held between the minimum and what a window of `window_px`
+    /// leaves round the sheet; in a window smaller than the minimum, what
+    /// the window leaves.
+    fn held(self, size: (f64, f64), window_px: (f64, f64)) -> (f64, f64) {
+        let hold = |value: f64, min: f64, window: f64| {
+            let most = (window - SHEET_GAP_PX).max(0.0);
+            value.max(min).min(most)
+        };
+        (
+            hold(size.0, self.min_px.0, window_px.0),
+            hold(size.1, self.min_px.1, window_px.1),
+        )
+    }
+
+    /// The sheet's size in a window of `window_px`: the one kept in
+    /// `prefs`, else the default, held inside the window.
+    #[must_use]
+    pub fn of(self, prefs: &Prefs, window_px: (f64, f64)) -> (f64, f64) {
+        let kept = |axis: &str, default: f64| {
+            prefs
+                .sizes
+                .get(&format!("{}.{axis}", self.key))
+                .copied()
+                .filter(|px| px.is_finite())
+                .unwrap_or(default)
+        };
+        self.held(
+            (
+                kept("width", self.default_px.0),
+                kept("height", self.default_px.1),
+            ),
+            window_px,
+        )
+    }
+
+    /// Keeps `size` as the sheet's in `prefs`, held as [`SheetSize::of`]
+    /// holds it.
+    pub fn set(self, prefs: &mut Prefs, size: (f64, f64), window_px: (f64, f64)) {
+        let (width, height) = self.held(size, window_px);
+        prefs.sizes.insert(format!("{}.width", self.key), width);
+        prefs.sizes.insert(format!("{}.height", self.key), height);
+    }
 }
 
 /// A placed tab's width, height and shape, as the Tab tool adds it.

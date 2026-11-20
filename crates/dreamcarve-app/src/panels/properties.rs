@@ -118,7 +118,7 @@ fn field_row(
     let read_only = properties::read_only(placement);
     let id = Id::unique(("placement_field", name));
     let name = strings.get(key);
-    let (label, output) = row(ui, name, |ui| {
+    let (label, output) = row(ui, name, strings.get(field.help()), |ui| {
         ui.set_max_width((ui.available_width() - LINK_GAP_PX - LINK_COLUMN_PX).max(0.0));
         unit_field(
             ui,
@@ -332,7 +332,7 @@ fn picture_field_row(
     };
     let id = Id::unique(("picture_field", name));
     let name = strings.get(key);
-    let (label, output) = row(ui, name, |ui| {
+    let (label, output) = row(ui, name, strings.get(field.picture_help()), |ui| {
         ui.set_max_width((ui.available_width() - LINK_GAP_PX - LINK_COLUMN_PX).max(0.0));
         unit_field(
             ui,
@@ -362,11 +362,11 @@ fn picture_field_row(
 /// `value`; what was typed, when `editable` and left changed.
 fn picture_text_row(
     ui: &mut Ui,
-    (label, name): (&str, &str),
+    (label, name, help): (&str, &str, &str),
     value: &str,
     editable: bool,
 ) -> Option<String> {
-    let (label_response, output) = row(ui, label, |ui| {
+    let (label_response, output) = row(ui, label, help, |ui| {
         ui.set_max_width((ui.available_width() - LINK_GAP_PX - LINK_COLUMN_PX).max(0.0));
         unit_field(
             ui,
@@ -400,7 +400,8 @@ pub(crate) fn pictures(
         .show(ui, |ui| {
             if let (Some(name), [id]) = (&shown.name, ids) {
                 let label = strings.get(StrKey::PlacementPictureName);
-                if let Some(typed) = picture_text_row(ui, (label, "name"), name, true)
+                let help = strings.get(StrKey::PlacementPictureNameHelp);
+                if let Some(typed) = picture_text_row(ui, (label, "name", help), name, true)
                     && let Some(command) = dc_app::tree::rename_bitmap(project, id, &typed)
                 {
                     out.push(Action::run(command));
@@ -419,13 +420,17 @@ pub(crate) fn pictures(
             );
             if let Some(pixels) = pictures::pixels_text(strings, &shown) {
                 let label = strings.get(pictures::PIXELS_LABEL);
-                picture_text_row(ui, (label, "pixels"), &pixels, false);
+                let help = strings.get(StrKey::PlacementPicturePixelsHelp);
+                picture_text_row(ui, (label, "pixels", help), &pixels, false);
             }
             // The lock: a switch, and what it stops while it is on.
             let locked = shown.placement.locked == Some(true);
             let lock_label = strings.get(StrKey::PlacementPictureLocked);
-            let (label_response, switched) =
-                row(ui, lock_label, |ui| toggle(ui, locked, lock_label));
+            let lock_help = strings.get(StrKey::PlacementPictureLockedHelp);
+            let (label_response, switched) = row(ui, lock_label, lock_help, |ui| {
+                let switch = toggle(ui, locked, lock_label);
+                crate::widgets::help::control(ui, switch, lock_label)
+            });
             let switched = switched.labelled_by(label_response.id);
             if switched.clicked()
                 && let Some(command) = dc_app::tree::toggle_bitmap_locked(project, ids)
@@ -518,7 +523,7 @@ fn tab_length_row(
     ui: &mut Ui,
     state: &FrameState<'_>,
     ids: &[TabId],
-    (key, name): (StrKey, &str),
+    (key, help, name): (StrKey, StrKey, &str),
     value_mm: Option<f64>,
     edit: fn(f64) -> TabEdit,
     out: &mut Vec<Action>,
@@ -527,7 +532,7 @@ fn tab_length_row(
     let units = state.app.project().display_units;
     let value = value_mm.map_or_else(String::new, |v| units::field_text(v, units));
     let label = strings.get(key);
-    let (label_response, output) = row(ui, label, |ui| {
+    let (label_response, output) = row(ui, label, strings.get(help), |ui| {
         unit_field(
             ui,
             UnitField {
@@ -573,7 +578,11 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
                 ui,
                 state,
                 ids,
-                (StrKey::PlacementTabWidth, "width"),
+                (
+                    StrKey::PlacementTabWidth,
+                    StrKey::PlacementTabWidthHelp,
+                    "width",
+                ),
                 values.width_mm,
                 TabEdit::Width,
                 out,
@@ -582,7 +591,11 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
                 ui,
                 state,
                 ids,
-                (StrKey::PlacementTabHeight, "height"),
+                (
+                    StrKey::PlacementTabHeight,
+                    StrKey::PlacementTabHeightHelp,
+                    "height",
+                ),
                 values.height_mm,
                 TabEdit::Height,
                 out,
@@ -596,14 +609,20 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
                 .shape
                 .and_then(|s| shapes.iter().position(|(shape, _)| *shape == s))
                 .unwrap_or(labels.len());
-            let (_, picked) = row(ui, strings.get(StrKey::PlacementTabShape), |ui| {
-                segmented(
-                    ui,
-                    Id::unique("tab_field_shape"),
-                    &labels,
-                    current,
-                    ui.available_width(),
-                )
+            let shape_label = strings.get(StrKey::PlacementTabShape);
+            let shape_help = strings.get(StrKey::PlacementTabShapeHelp);
+            let (_, picked) = row(ui, shape_label, shape_help, |ui| {
+                let shown = ui.scope(|ui| {
+                    segmented(
+                        ui,
+                        Id::unique("tab_field_shape"),
+                        &labels,
+                        current,
+                        ui.available_width(),
+                    )
+                });
+                let _ = crate::widgets::help::control(ui, shown.response, shape_label);
+                shown.inner
             });
             if let Some((shape, _)) = picked.and_then(|i| shapes.get(i)) {
                 push_tab_edit(state, ids, TabEdit::Shape(*shape), out);
@@ -623,7 +642,8 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
                     units::summary_text(at.y, units)
                 );
                 let name = strings.get(StrKey::PlacementTabPosition);
-                let (label_response, output) = row(ui, name, |ui| {
+                let help = strings.get(StrKey::PlacementTabPositionHelp);
+                let (label_response, output) = row(ui, name, help, |ui| {
                     unit_field(
                         ui,
                         UnitField {

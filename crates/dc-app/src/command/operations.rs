@@ -144,6 +144,12 @@ pub(super) fn changed_field(before: &Project, edited: &Operation) -> Option<Stri
         .map(|(key, _)| key)
         .collect();
     changed.extend(new.keys().filter(|key| !old.contains_key(*key)));
+    // An Inlay's boundary chosen in the window clears the margin and the
+    // rounding it replaces with it (`editor::choose_boundary`): the step
+    // is the boundary's.
+    if changed.iter().any(|key| *key == "boundary") {
+        changed.retain(|key| *key != "margin_mm" && *key != "outline_rounding_mm");
+    }
     match changed.as_slice() {
         [key] if *key != "kind" => Some(field_words(key)),
         _ => None,

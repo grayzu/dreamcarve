@@ -13,7 +13,7 @@ select and edit things. For a first job from start to finish, do
 
 | Part | Where | What it holds |
 | --- | --- | --- |
-| **Header** | Across the top | The menus, the project's name (with a dot before it while there are unsaved changes), **Undo** and **Redo**, and the one green button: **Continue**, or **Export G-code** on the Export step |
+| **Header** | Across the top | The menus, the project's name (with a dot before it while there are unsaved changes), **Undo** and **Redo**, and the one green button, **Continue**. The Export step's green button, **Export G-code**, is at the foot of its panel |
 | **Rail** | Left edge | The five **steps** of a job, then **Warnings**, **Appearance** and **Help** |
 | **Step panel** | Beside the rail | What the current step holds: the drawing's shapes, the stock, the tools, the operations, or the export |
 | **Viewport** | The middle | The stock from above, with the shapes, the pictures, the tabs and the toolpaths. Its controls float over it |
@@ -71,9 +71,10 @@ dot, and the tool's row has one too:
 
 ![The rail and the Tools step with a tool that lacks its feed: Design, Stock and Operations have checks, Tools and Export have red dots, and the 1/8 end mill's row has a red dot at its right](figures/app/app-rail-marks.png)
 
-**Continue** opens the next step that is not complete. On the Export step
-the button reads **Export G-code** and writes the programs; it is off,
-with the reason in its tooltip, while an error blocks export. Opening a
+**Continue** opens the next step that is not complete. The Export step
+has no **Continue**: its own green button, **Export G-code**, is at the
+foot of its panel and writes the programs; it is off, with the reason
+beside it, while an error blocks export. Opening a
 project opens its first step that is not complete, so a finished project
 opens on Export.
 
@@ -113,8 +114,14 @@ is, a tab with a click on its mark.
 ## Editing
 
 The app has no OK or Cancel buttons. A field applies its value when you
-leave it, with Enter, Tab or a click elsewhere; Escape leaves it and
-keeps the old value.
+leave it, however you leave it: Enter, Tab, a click anywhere else in the
+window, a menu, another step, or switching to another program. Only
+Escape leaves it and keeps the old value.
+
+Every field has help. Hold the pointer on a field or on its label to
+read what it does, its unit, the values it takes and what leaving it
+empty means. While you type in a field, the same help is on a line at
+the foot of the panel the field is in.
 
 Every change to the project is one step for **Undo**, and the **Edit**
 menu names the step it would take back: *Undo Move “square”*, *Undo Set

@@ -34,14 +34,19 @@ A project made in the app starts with grblHAL, as `init` starts one.
 | **File extension** | The extension of the program files, without the dot | `file_extension` |
 | **Spindle control** | **Automatic**: the program starts and stops the spindle. **Manual**: it pauses for you to switch a router on and off ([Manual spindle control](#manual-spindle-control)) | `spindle_control` |
 | **Spin-up dwell** | Seconds to wait after the spindle starts, so that it reaches speed before it cuts | `spindle_on_dwell_s` |
-| **Tool change** | **One program per tool**, or **One program with M6**, on a controller that has `M6` ([Projects with more than one tool](#projects-with-more-than-one-tool)) | `tool_change_mode` |
 | **Decimals, mm** and **Decimals, inch** | Decimal places the program writes | `decimal_places` |
 | **Canned drill cycles** | Write Drill operations as the controller's drilling cycles ([Canned cycles](#canned-cycles)) | `use_canned_cycles` |
 
 A setting the chosen controller does not have is not offered. On
 grblHAL, **Canned drill cycles** reads *Not offered: grblHAL has no
-canned cycles.* On every controller but grblHAL, **Tool change** lists
-**One program per tool** only.
+canned cycles.*
+
+One setting of the post-processor is not in this group. **Programs**,
+further down the Export step, is `tool_change_mode`: **One program per
+tool**, or **One program for all tools**, which stops with `M6` at each
+tool change
+([Projects with more than one tool](#projects-with-more-than-one-tool)).
+On every controller but grblHAL, **One program for all tools** is off.
 
 These are settings of the project. They are saved with it, and each
 change is one step for Undo.
@@ -58,11 +63,11 @@ version. Your settings are kept by the rule `export --post` follows
 - unless the new controller cannot use it. Then it is reset, and a line
   under **Controller** says so, in the words `export --post` prints.
 
-![The Post-processor group after switching a project that used one program with M6 from grblHAL to LinuxCNC: Controller LinuxCNC v2 (latest), under it in amber "Reset tool_change_mode "m6" → "separate_programs": post-processor linuxcnc has no M6 tool change.", File extension ngc, Spindle control Automatic, Spin-up dwell 3 s, Tool change One program per tool, Decimals 3 and 4, and a Canned drill cycles tick box](figures/app/post-processor-switched.png)
+![The Export step after switching a project set to One program for all tools from grblHAL to LinuxCNC: in the Post-processor group, Controller LinuxCNC v2 (latest), under it in amber "Reset tool_change_mode "m6" → "separate_programs": post-processor linuxcnc has no M6 tool change.", File extension ngc, Spindle control Automatic, Spin-up dwell 3 s, Decimals 3 and 4, and a Canned drill cycles tick box; under the groups, Programs is back at One program per tool](figures/app/post-processor-switched.png)
 
 Here the file extension went from `nc` to LinuxCNC's `ngc`, because `nc`
-was grblHAL's default, and the tool change mode was reset, because
-LinuxCNC's definition has no `M6`. **Canned drill cycles** is now a tick
+was grblHAL's default, and **Programs** was reset to **One program per
+tool**, because LinuxCNC's definition has no `M6`. **Canned drill cycles** is now a tick
 box, since LinuxCNC has them.
 
 The switch is one step for Undo, which puts back the old controller with
@@ -421,8 +426,9 @@ not saved: to change the project, edit `tool_change_mode`.
 ## One program with M6
 
 On grblHAL you can export a multi-tool project as one program with `M6`
-tool changes, if your sender stops there (see [Senders](#senders)). Set,
-in `post_processor`:
+tool changes, if your sender stops there (see [Senders](#senders)). In
+the app, set **Programs** on the Export step to **One program for all
+tools**. In the project file it is, in `post_processor`:
 
 ```json
 "tool_change_mode": "m6",

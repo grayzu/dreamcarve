@@ -97,10 +97,11 @@ folder are app preferences, kept outside the project.
       name, with a dot before it while there are unsaved changes. At its
       right Undo and Redo, the generation state while toolpaths
       regenerate (71), and the window's one primary button. It reads
-      **Continue** and opens the next step that is not complete; on the
-      Export step it reads **Export G-code** and is the export command
-      (77), disabled with the reason in its tooltip while an error blocks
-      export or the programs are still being built.
+      **Continue** and opens the next step that is not complete. On the
+      Export step the header shows no primary button: the step's own
+      **Export G-code** is at the foot of its panel (77), where the
+      export is set up (maintainer's smoke test, 2026-11-20: in the
+      header's corner it was not found).
     - The **rail** at the left: the five **steps** of the work in their
       fixed order, **Design**, **Stock**, **Tools**, **Operations**,
       **Export**, each a button with a mark of its state (below). Nothing
@@ -274,7 +275,13 @@ folder are app preferences, kept outside the project.
     in curly quotes), *Reorder
     operations*, *Import plaque.dxf*, *Place 4 tabs*. The menu shows the
     name of the step it would undo. Typing in a field is one step when the
-    field is left, not one per keystroke; dragging is one step when the
+    field is left, not one per keystroke. Leaving a field by any means
+    writes what was typed: Tab or Shift+Tab, Enter, a click anywhere in
+    the window (another field, a label, the Viewport, a menu, another
+    step), a command's key (Save then saves the typed value, and a step's
+    key does not lose it), and the window losing the focus. Escape is the
+    one way out that discards it. Text the field refuses stays out of the
+    project and the field shows why. Dragging is one step when the
     mouse is released. Selection, zoom, pan, panel sizes and toolpath
     visibility are not project changes and are not undone. An instance's
     `visible` and `locked` flags are project data (they are saved) and are
@@ -453,10 +460,10 @@ folder are app preferences, kept outside the project.
     the user's settings the new one can use, as `export --post` does
     (capability 27), and says which were reset. The settings below it are
     the project's post-processor settings (capability 2): file extension,
-    spindle control (automatic or manual), spin-up dwell, tool-change mode
-    (one program per tool, or one program with `M6`: offered only on a
-    post-processor with `M6`), decimal places for mm and inch, and canned
-    cycles (offered only where the definition has them). Nothing about the
+    spindle control (automatic or manual), spin-up dwell, decimal places
+    for mm and inch, and canned cycles (offered only where the definition
+    has them). The tool-change mode is not a row of this group: it is the
+    step's **Programs** control (77), the one place it is set. Nothing about the
     dialect itself is editable: the project names a bundled definition
     (ADR-0004).
 
@@ -482,7 +489,17 @@ folder are app preferences, kept outside the project.
     tapered ball nose with tip diameter, taper per side and flute length;
     its diameter is the cutting diameter),
     diameter, flutes, feed, plunge rate, RPM, step-down, stepover, tool
-    number, vendor and product id. A type's own fields follow the type:
+    number, vendor and product id. A **stepover** is a percentage of the
+    diameter, and `0.08 %` typed for 8 % is 0.005 mm between passes
+    (maintainer's smoke test, 2026-11-20: an 85-minute job that should
+    have taken 20), so under every stepover percentage that is a share of
+    a bit's diameter (here, in the library's pane, 64a, and a Pocket's
+    own, 68) a quiet line says the distance it comes to in the units
+    shown, *0.508 mm between passes*, from what is typed, as
+    it is typed; an empty Pocket stepover says its tool's. A finding
+    validation locates at one of the tool's fields (a plunge rate above
+    the feed, a stepover far too small) shows under that field in its
+    tier's colour, as an operation's does under its row (66). A type's own fields follow the type:
     a V-bit's *Angle*; a tapered ball nose's *Tip diameter*, *Taper per
     side* and *Flute length*. *Diameter* keeps its label for every type.
     Choosing *Tapered ball nose* writes the cutter with none of its three
@@ -532,7 +549,14 @@ folder are app preferences, kept outside the project.
     angle it holds, a V-bit's included (`90°`) or a tapered ball nose's
     per side (`6.7°/side`). A value the tool still needs (a rate, a
     tapered ball nose's tip or taper) is a red dash in its cell, never a
-    value. Rows already in the
+    value. The columns resize: every column but the name has a divider
+    at its left edge, and dragging it sets that column's width, down to
+    a minimum that keeps its heading; the name takes what the others
+    leave, so narrowing a column gives a long name more room. The sheet
+    itself resizes by its edges and by the grip at its bottom right
+    corner, between 920 × 480 and the window's size less a margin, and
+    stays centred. The column widths and the sheet's size are kept for
+    the session and in `gui.toml` (`sizes`). Rows already in the
     project are marked. The right pane edits the selected tool in place
     (64a). The header holds the library's **display units**, a `mm` /
     `in` segmented control separate from the project's (53): an app
@@ -652,8 +676,17 @@ folder are app preferences, kept outside the project.
     them. Every field shows its
     unit, validates on leave, shows the file's validation message under
     itself (or, for an unset required value, the required-field look,
-    66b), and shows a short help line (the chapter's one-sentence
-    definition) on hover of its label. A field whose file value is `null`
+    66b), and has help. **Help is universal** (maintainer's smoke test,
+    2026-11-20): every field of the app, here and on the Stock, Tools and
+    Export steps, in the Properties, the Tool Library and the sheets,
+    says what it does, its unit, the values it takes and what leaving it
+    empty means, with the limits validation enforces (a feed is above 0
+    and at most 20000 mm/min, a stepover above 0 and at most 100 %). It
+    shows as a tooltip on the field's label and on the field, and, while
+    the field has the keyboard, on one line at the foot of the panel
+    that holds the field (`experience.md`, "Help affordance"). A test
+    walks every field table for its help, and a second holds the limits
+    the help names to the validator's. A field whose file value is `null`
     and whose default comes from the tool (step-down, stepover, pitch)
     shows that default as grey placeholder text, `tool's: 3 mm`, and clears
     back to it with its ⟲ button. Warnings and errors that `check` locates
@@ -675,7 +708,7 @@ folder are app preferences, kept outside the project.
     | Bore | Depth |
     | Engrave | Depth |
     | V-Carve | Flat depth (off, or the depth), Clearing passes (the list of 70) |
-    | Inlay | Inlay depth, Glue gap, Plug depth, Male board thickness |
+    | Inlay | Inlay depth, Glue gap, Plug depth (the male board's thickness is the first row of its Male board group, 68a) |
     | Photo V-Carve | (Targets is the Picture) Max depth |
 
     A Setup field keeps its file name, label, unit, help and validation;
@@ -747,7 +780,7 @@ folder are app preferences, kept outside the project.
     | Bore | Depth: `depth_mm`, `pitch_mm` (tool's step-down), `stock_to_leave_mm`, `through_cut_allowance_mm`. Strategy: `direction`. Heights: `safe_z_mm`. |
     | Engrave | Depth: `depth_mm`, `step_down_mm` (tool's), `through_cut_allowance_mm`. Strategy: `alternate_direction`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | V-Carve | Depth: `flat_depth_mm` (off for `null`), `start_depth_mm`, `start_plane_cleared_externally`, `through_cut_allowance_mm`. Strategy: `strategy` (Medial; Offset with `step_over_mm` and `direction`), `step_over_fraction`, `clearing` (70). Order: `machining_order`. Heights: `safe_z_mm`. |
-    | Inlay (format 26; one file since #498) | Depth, one set for both boards (68a): `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `boundary` (none, or the closed shapes that draw the male band's edge; phase 3's 49f), `margin_mm`, `outline_rounding_mm` (off for `null`), `through_cut_allowance_mm`. Male board: `male_board.width_mm` and `height_mm` (the stock's for `null`), `male_board.thickness_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out: off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
+    | Inlay (format 26; one file since #498) | Depth, one set for both boards (68a): `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `boundary` (none, or the closed shapes that draw the male band's edge; phase 3's 49f), `margin_mm`, `outline_rounding_mm` (off for `null`), `through_cut_allowance_mm`. Male board: `male_board.thickness_mm` first, then `male_board.width_mm` and `height_mm` (the stock's for `null`). Clearing: `clearing` (70), `step_over_fraction`. Cut-out: off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | Photo V-Carve | Targets: `image`. Depth: `max_depth_mm`, `start_depth_mm`, `start_plane_cleared_externally`, `invert`, `through_cut_allowance_mm`. Strategy: `strategy` (Raster, Hatch), `line_angle_deg`, `line_spacing_fraction` (as a percentage), `sample_mm`. Heights: `safe_z_mm`, `stepover_retract_mm`. |
 
     Photo V-Carve lands with phase 3.5 (format v27); its editor is a slice
@@ -776,10 +809,17 @@ folder are app preferences, kept outside the project.
     stock's and whose thickness is its own. There is no side to choose.
     The editor shows the Inlay's values once: inlay depth, glue gap, plug
     depth, margin, outline rounding, through-cut allowance; then the
-    **Male board** group: width and height (placeholder *same as stock*),
-    thickness (required for the male to export; it sits in Setup (66a)
-    and shows the required-field look (66b) until it is set, with
-    `inlay_male_board_unset` in the drawer), and the derived base under the band,
+    **Male board** group: thickness first, then width and height
+    (placeholder *same as stock*). The thickness is required for the male
+    to export and shows the required-field look (66b) until it is set,
+    with `inlay_male_board_unset` in the drawer. It is a row of this
+    group and not of Setup (maintainer's smoke test, 2026-11-20: among
+    the Setup rows it read as the stock's thickness, which is the female
+    board's). The group is closed until opened like any other, and the
+    existing rule keeps the value in sight: while the thickness is unset
+    the group holds a located warning, so it opens by itself and its
+    closed header carries the glyph and count (66). Under the thickness
+    is the derived base under the band,
     red below 6 mm (`inlay_plug_base_thin`). Under Depth a read-only line
     shows what the bench needs to see: the male's start plane, its band
     floor, and the flank's engagement against the V-bit's cone height, red
@@ -797,9 +837,20 @@ folder are app preferences, kept outside the project.
     not one of the Inlay's own targets. Choosing a shape makes it the
     boundary, one undo step; with two or more such shapes selected on the
     drawing the dropdown also offers *Selected shapes*, for a band drawn
-    by several. The row writes `boundary` and nothing else: a margin or a
-    rounding still set shows `inlay_margin_ignored` under itself until
-    the user clears it, as a hand-edited file does, and the boundary's
+    by several. With a boundary the engine reads neither the margin nor
+    the rounding (validation's `inlay_margin_ignored`: each "does
+    nothing"), so choosing a shape writes `boundary` and clears
+    `margin_mm` and `outline_rounding_mm` to `null` in the same undo
+    step, *Set boundary of "DC"*, and while a boundary is chosen the
+    **Band margin** and **Outline rounding** rows are disabled: each
+    shows *Set by the boundary* where its value would be, with the
+    reason as its tooltip, and writes nothing. Choosing *None* enables
+    them again, the margin empty and required (the male needs one once
+    it has no boundary). A hand-edited file that has a boundary and a
+    margin shows the margin's value greyed in its disabled row with
+    `inlay_margin_ignored` under it; choosing the boundary again clears
+    it. The closed Depth group's summary names the boundary and leaves
+    out the margin and the rounding. The boundary's
     own errors (`inlay_boundary_crosses_design` and the rest) show under
     the row. A shape that is deleted leaves the list. The Viewport draws
     the boundary dashed on the male board, mirrored with the design, as
@@ -1010,8 +1061,15 @@ folder are app preferences, kept outside the project.
 77. **Export** (`11-export-dialog.svg`; trimmed by the review,
     2026-11-10; made a step by `redesign.md`, slice D4). Export is the
     Export step, not a sheet: File ▸ Export G-code… and Ctrl E open the
-    step, and the header's **Export G-code** (50) is the command. Under
-    the readiness card (50) the step shows, top to bottom:
+    step, and **Export G-code**, the step's one primary button, is the
+    command. The button is at the **foot of the step's panel**, pinned:
+    the settings above it scroll and it stays in view. Beside it the foot
+    says what it will do, *Ready to write 2 programs.*, or, while the
+    export is blocked, why: *1 error blocks export* (the findings are
+    listed above), or that the toolpaths or the programs are still being
+    worked out; the button is then disabled, with the whole reason as
+    its tooltip. Under the readiness card (50) the step shows, top to
+    bottom:
     - **What blocks export**, while an error does: a card in the error
       colour that counts them (*1 error blocks export*), with *Show*
       opening the drawer at them, and under it each finding, its message
@@ -1025,12 +1083,21 @@ folder are app preferences, kept outside the project.
       holding a finding shows its count, and a finding's row opens it.
       Switching the post-processor is the step's switch (62), an undoable
       project change the user saves or not.
-    - **Programs**, where the enabled operations cut with two tools or
-      more: the program split, *as the project says* (the setting's value
-      shown) or overridden for this export to one program per tool or one
-      program with tool changes (`--programs-per-tool`, `--one-program`;
-      the override is not saved, and *one program* is refused on a post
-      without `M6` with the CLI's message). With an Inlay, a tick per
+    - **Programs**: how a project that cuts with several tools is
+      written, one control with two plainly named choices, **One program
+      per tool** and **One program for all tools** (maintainer's smoke
+      test, 2026-11-20: the step offered *As the project says* and two
+      *this export only* overrides beside a *Tool change* row in the
+      Post-processor group, three choices in two places for a two-way
+      decision). It is the project's own setting (`tool_change_mode`,
+      capability 2): choosing one is an undoable project change the user
+      saves or not, and there is no override for one export in the app
+      (the CLI keeps `--programs-per-tool` and `--one-program`). *One
+      program for all tools* is listed on every controller and disabled,
+      with validation's reason as its tooltip, where the post-processor
+      has no tool-change stop. No label or choice names a G-code word;
+      the help says what the program does: it stops at each tool change
+      for you to fit the next bit and set Z zero. With an Inlay, a tick per
       board, **Female board** and **Male board**: unticking one exports
       the other alone for this export (`--board`), not saved, which is
       how the male is re-cut after a fit adjustment.
@@ -1058,12 +1125,13 @@ folder are app preferences, kept outside the project.
     nothing when the dialog is cancelled. When nothing could be written
     the step says why (*Nothing was written: …*) under the readiness
     card. Export never changes the project file.
-77a. **Export result** (`13-export-result.svg`; review 2026-11-10). The
-    result takes the plan's place on the step (the programs and the
-    destination), in three parts:
-    - **Status**: a success glyph and *2 programs written*, with **Done**
-      beside it, which brings the plan back, to export again or somewhere
-      else.
+77a. **Export result** (`13-export-result.svg`; review 2026-11-10; a
+    sheet since the maintainer's smoke test, 2026-11-20, where the result
+    in the plan's place was taken for part of the settings). The result
+    is a **sheet** over the window, in three parts, with **Done** in its
+    footer:
+    - **Status**: a success glyph and *2 programs written*, with the
+      CLI's lines under it.
     - **Files**: one row per program in run order, number, file name in
       the monospace face, tool, estimated time; then the **folder** they
       were written to, with *Copy path*, *Show in folder* and **Save
@@ -1074,10 +1142,15 @@ folder are app preferences, kept outside the project.
       `G43.1` and `G51` lines), each a separate callout, then the extents
       and Z range.
 
-    The result stays until *Done*, or until the project changes, since it
-    is then no longer what the project would write. The CLI's report text
-    is not shown as one block; every fact in it is in one of the three
-    parts.
+    *Done*, Escape or a click outside closes the sheet. The Export step,
+    whose plan never left it, then says so in one line under its
+    readiness card, *2 programs written.*, beside its summary
+    *Exported. Nothing has changed since.*, with **Show result**, which
+    opens the sheet again. The result is kept until the project changes,
+    since it is then no longer what the project would write. A failed
+    export opens no sheet: the step says why under its readiness card
+    (77). The CLI's report text is not shown as one block; every fact in
+    it is in one of the three parts.
 77b. **Setup sheet** (`13-export-result.svg`; maintainer decision
     2026-11-10). *Save setup sheet…* writes one self-contained HTML file,
     default `<stem>-setup.html` beside the programs, that the user opens
@@ -1341,8 +1414,12 @@ byte-identical output with the program's header date pinned (`--date`).
     lacking a feed shows the error on the Export step, where a click on
     it opens the tool, and a disabled *Export G-code*; a project with
     only warnings exports, and the status bar counts them.
-85. **Override not saved** (77). Exporting with *one program* overridden
-    leaves `tool_change_mode` unchanged in the file.
+85. **Programs is the project's setting** (77). The Export step has one
+    **Programs** control and the Post-processor group no *Tool change*
+    row; choosing *One program for all tools* writes `tool_change_mode`
+    as one undo step, and undo puts it back. (Was *Override not saved*:
+    the app no longer has an override; the CLI's flags leave the file
+    unchanged, as before.)
 86. **Undo and redo** (52). Twenty mixed edits (move, field, reorder, add,
     delete, import, place tabs) undo in reverse order to the opening
     state and redo to the final state, each with the labelled name; a new
@@ -1394,8 +1471,9 @@ slices carry them.
     Coaster on Stock with its error marked, and the plaque on Export
     with the four steps before it complete; the step picked stays through
     an edit. *Continue* opens the next step that is not complete; on
-    Export the primary button is *Export G-code*, which writes the
-    programs and is disabled once a tool an operation uses has no feed. With nothing selected there is no
+    Export the header has no primary button and the step's own *Export
+    G-code*, at the foot of its panel, writes the programs and is
+    disabled once a tool an operation uses has no feed. With nothing selected there is no
     Inspector; with a shape selected on Design it shows the Properties
     and the Arrange group, and its close button deselects. At 1280 × 768
     the four regions sit side by side at no less than their minimum
@@ -1469,10 +1547,10 @@ slices carry them.
     are opened; with an error it shows the one blocking line over the
     finding and a disabled *Export G-code*. A project never saved asks
     for a folder first, and writes nothing when the dialog is cancelled.
-    After an export the result, in the plan's place, shows the status,
+    After an export the result, a sheet, shows the status,
     the files in run order and the folder; *Run instructions* is closed
-    and holds the CLI's step-before lines and notes; *Done* brings the
-    plan back. *Save setup
+    and holds the CLI's step-before lines and notes; *Done* closes the
+    sheet, and the step's *Show result* opens it again. *Save setup
     sheet…* writes an HTML file with no `<script>`, no `http` reference and
     no `<img>`, whose programs, tools, step-before lines, extents and
     estimates equal the export's, deterministic with the date pinned.

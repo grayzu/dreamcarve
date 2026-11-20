@@ -48,6 +48,7 @@
 use std::collections::BTreeSet;
 
 use dc_app::library::{self as model, Cell, Column, Filter, KindFilter, LibraryEdit};
+use dc_app::prefs::SheetSize;
 use dc_app::tools::{self, KindChoice, ToolField};
 use dc_app::{App, Command, StrKey, Strings};
 use dc_library::import::{Incoming, Outcome, Review, ReviewItem, Status};
@@ -62,14 +63,36 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, Dialogs};
 use crate::widgets::button::{ButtonSpec, Kind, button, focus_ring_round, text};
 use crate::widgets::checkbox::paint_box;
+use crate::widgets::help::{self, Scope};
 use crate::widgets::icon::Icon;
 use crate::widgets::scroll;
 use crate::widgets::segmented::segmented;
 
-/// The sheet's default size, px (`experience.md`, section 3): wide enough
-/// for the table's ten columns, a type's name whole among them, to leave
-/// the name 120 px beside the editing pane.
-const SIZE: egui::Vec2 = egui::vec2(1100.0, 640.0);
+/// The sheet's size among the preferences' `sizes` (capability 64): the
+/// user drags it by its edges or its corner grip. Its default, px
+/// (`experience.md`, section 3), is wide enough for the table's ten
+/// columns, a type's name whole among them, to leave the name 120 px
+/// beside the editing pane; the smallest it is dragged to holds the
+/// columns at their minimums beside the pane, and six rows.
+const SHEET: SheetSize = SheetSize {
+    key: "library",
+    default_px: (1100.0, 640.0),
+    min_px: (920.0, 480.0),
+};
+
+/// `value` px as egui's `f32`. Sizes are a few thousand pixels at most,
+/// far inside `f32`'s exact range.
+#[allow(clippy::cast_possible_truncation, reason = "pixel sizes, exact in f32")]
+fn px(value: f64) -> f32 {
+    value as f32
+}
+
+/// The sheet's size in a window of `screen`, px: the one the user dragged
+/// it to, else the default, held between its minimum and the window.
+fn sheet_size(app: &App, screen: egui::Vec2) -> egui::Vec2 {
+    let (width, height) = SHEET.of(app.prefs(), (f64::from(screen.x), f64::from(screen.y)));
+    egui::vec2(px(width), px(height))
+}
 /// Its margin, px.
 const MARGIN_PX: i8 = 24;
 /// The editing pane's width, px (section 3).
@@ -159,6 +182,11 @@ pub(crate) enum Request {
     Set(LibraryToolId, Box<Tool>, ToolField),
     /// The library's display units.
     Units(Units),
+    /// The sheet dragged to this size, px, in a window of the second.
+    Resize(egui::Vec2, egui::Vec2),
+    /// A table column dragged to this width, px, in a table whose
+    /// columns share the room given.
+    ColumnWidth(Column, f32, f32),
 }
 
 impl Sheet {
@@ -282,16 +310,37 @@ pub(crate) fn show(
         &theme::LIGHT
     };
     let screen = ctx.content_rect().size();
-    let size = egui::vec2(SIZE.x.min(screen.x - 48.0), SIZE.y.min(screen.y - 48.0));
+    let size = sheet_size(app, screen);
     let frame = theme::sheet(palette);
     let response = egui::Modal::new(Id::unique("tool_library"))
         .backdrop_color(palette.scrim)
         .frame(frame)
         .show(ctx, |ui| {
-            let inner = size - egui::vec2(2.0, 2.0) * f32::from(MARGIN_PX);
+            let margin = egui::vec2(1.0, 1.0) * f32::from(MARGIN_PX);
+            let inner = size - 2.0 * margin;
+            // The sheet's frame, round its content: its edges and its
+            // corner grip resize it (capability 64).
+            let outer = Rect::from_min_size(ui.cursor().min - margin, size);
             ui.set_min_size(inner);
             ui.set_max_size(inner);
-            body(ui, inner.y, app, project_name, sheet, out);
+            // The help of the field being typed in, at the sheet's foot.
+            let foot_px = help::foot_height(ui, Scope::Sheet, size.x);
+            body(ui, inner.y - foot_px, app, project_name, sheet, out);
+            help::settle(ui, Scope::Sheet);
+            if foot_px > 0.0 {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(inner.x, foot_px), Sense::hover());
+                help::foot(ui, Scope::Sheet, rect.expand2(egui::vec2(margin.x, 0.0)));
+            }
+            let grip = app.strings().get(StrKey::AppLibraryResize);
+            if let Some(asked) = crate::widgets::sheet::resize_handles(
+                ui,
+                Id::unique("tool_library.resize"),
+                outer,
+                grip,
+            ) {
+                out.push(Action::Library(Request::Resize(asked, screen)));
+            }
         });
     if response.should_close() {
         if sheet.confirm_remove {
@@ -469,7 +518,7 @@ fn panes(ui: &mut Ui, app: &App, sheet: &mut Sheet, out: &mut Vec<Action>) {
                 } else {
                     toolbar(ui, app.strings(), sheet, out);
                     ui.add_space(8.0);
-                    table(ui, app, units, &groups, sheet);
+                    table(ui, app, units, &groups, sheet, out);
                 }
             },
         );
@@ -536,7 +585,9 @@ fn toolbar(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet, out: &mut Vec<Acti
         let search_w = (ui.available_width() - 160.0).clamp(160.0, 320.0);
         search_field(ui, strings, &mut sheet.filter.search, search_w);
         ui.add_space(8.0);
-        egui::ComboBox::from_id_salt("library_kind")
+        let filter = strings.get(StrKey::AppToolsKind);
+        help::offer(ui, filter, strings.get(StrKey::AppLibraryFilterTip));
+        let combo = egui::ComboBox::from_id_salt("library_kind")
             .icon(crate::widgets::icon::combo_chevron)
             .width(ui.available_width().min(170.0))
             .height(crate::panels::tools::KIND_MENU_PX)
@@ -547,7 +598,8 @@ fn toolbar(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet, out: &mut Vec<Acti
                 }
             })
             .response
-            .on_hover_text(strings.get(StrKey::AppToolsKind));
+            .accessible_name(filter);
+        let _ = help::control(ui, combo, filter);
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -607,7 +659,9 @@ fn search_field(ui: &mut Ui, strings: &Strings, search: &mut String, width: f32)
             .desired_width(edit_rect.width()),
     );
     // Named for assistive tools by what it searches, as its hint says.
-    let response = response.accessible_name(strings.get(StrKey::AppLibrarySearch));
+    let name = strings.get(StrKey::AppLibrarySearch);
+    help::offer(ui, name, strings.get(StrKey::AppLibrarySearchTip));
+    let response = help::control(ui, response.accessible_name(name), name);
     // The focus ring goes round the field's frame, not its text.
     focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
     let stroke = if response.has_focus() {
@@ -640,50 +694,85 @@ fn search_field(ui: &mut Ui, strings: &Strings, search: &mut String, width: f32)
     }
 }
 
-/// The width of the table's `column` after the tick, px; 0 is the rest,
-/// which the name takes. The columns are the model's (`Column::ALL`;
-/// capability 64): vendor is the group, not a column. The Type column
-/// holds *Tapered ball nose* whole, the Ø and Tip columns a diameter to
-/// four decimals (`0.0625` in), and the Angle column a taper to two with
-/// its label (`5.63°/side`); the product cell ends with the "in project"
-/// mark.
-const fn column_width(column: Column) -> f32 {
-    match column {
-        Column::Name => 0.0,
-        Column::Kind => 124.0,
-        Column::Diameter => 54.0,
-        Column::Tip => 54.0,
-        Column::Angle => 76.0,
-        Column::Flutes => 42.0,
-        Column::Feed => 46.0,
-        Column::Plunge => 48.0,
-        Column::Rpm => 50.0,
-        Column::Product => 64.0,
-    }
-}
 /// The "in project" mark's width at the product cell's right end, px.
 const MARK_PX: f32 = 18.0;
 /// What a cell shows for a value its tool still needs (mock-up 04): a
 /// dash, in the error colour.
 const UNSET_MARK: &str = "—";
+/// How wide the strip that takes a drag on a column's divider is, px.
+const DIVIDER_PX: f32 = 9.0;
+
+/// The widths the user dragged the columns to, by column
+/// (`Prefs::sizes`).
+type Sizes = std::collections::BTreeMap<String, f64>;
 
 /// Each column's rect across `row` after the tick, in `Column::ALL`'s
-/// order.
-fn column_rects(row: Rect) -> Vec<Rect> {
-    let fixed: f32 = Column::ALL.into_iter().map(column_width).sum();
+/// order, at the widths kept in `sizes` (`model::column_widths`): each
+/// column its own, the name what is left.
+fn column_rects(row: Rect, sizes: &Sizes) -> Vec<Rect> {
     let mut x = row.left() + TICK_PX;
-    let rest = (row.width() - TICK_PX - fixed).max(80.0);
-    Column::ALL
+    model::column_widths(sizes, f64::from(row.width() - TICK_PX))
         .into_iter()
-        .map(|column| {
-            let fixed = column_width(column);
-            let width = if fixed > 0.0 { fixed } else { rest };
+        .map(|width| {
+            let width = px(width);
             let rect =
                 Rect::from_min_size(egui::pos2(x, row.top()), egui::vec2(width, row.height()));
             x += width;
             rect
         })
         .collect()
+}
+
+/// The dividers of the header row `head`, whose columns are `rects`: one
+/// at the left edge of every column but the name, a hairline that takes
+/// the accent under the pointer. The columns stand against the table's
+/// right edge and the name takes the slack, so a divider dragged sets
+/// the width of the column at its right, and the columns at its left
+/// follow it. A drag asks for the width through `out`.
+fn column_dividers(ui: &Ui, strings: &Strings, head: Rect, rects: &[Rect], out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
+    let room = head.width() - TICK_PX;
+    for (column, rect) in Column::ALL.into_iter().zip(rects).skip(1) {
+        let x = rect.left();
+        let strip = Rect::from_center_size(
+            egui::pos2(x, head.center().y),
+            egui::vec2(DIVIDER_PX, head.height()),
+        );
+        let id = Id::unique(("library_divider", column.size_key()));
+        let response = ui.interact(strip, id, Sense::drag());
+        let name = strings.fmt(
+            StrKey::AppLibraryColumnResize,
+            &[("column", strings.get(column.heading()))],
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Splitter, true, &name));
+        let live = response.hovered() || response.dragged();
+        if live {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
+        }
+        // The width when the drag began and where the pointer was: the
+        // divider then follows the pointer, however far past a limit it
+        // went and came back.
+        let start_id = id.with("start");
+        if response.drag_started()
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            ui.data_mut(|d| d.insert_temp(start_id, (rect.width(), pointer.x)));
+        }
+        if response.dragged()
+            && let Some(pointer) = response.interact_pointer_pos()
+            && let Some((width, from)) = ui.data(|d| d.get_temp::<(f32, f32)>(start_id))
+        {
+            let asked = width - (pointer.x - from);
+            out.push(Action::Library(Request::ColumnWidth(column, asked, room)));
+        }
+        let (stroke, inset) = if live {
+            (Stroke::new(2.0, palette.accent), 4.0)
+        } else {
+            (Stroke::new(1.0, palette.border_default), 8.0)
+        };
+        ui.painter()
+            .vline(x, (head.top() + inset)..=(head.bottom() - inset), stroke);
+    }
 }
 
 /// Where a scrolled table's rows' width is kept between frames.
@@ -743,13 +832,16 @@ fn table(
     units: Units,
     groups: &[model::VendorGroup<'_, '_>],
     sheet: &mut Sheet,
+    out: &mut Vec<Action>,
 ) {
     let strings = app.strings();
+    let sizes = &app.prefs().sizes;
     let palette = Palette::current(ui);
     let (head, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
     let over_rows = header_over_rows(ui, "library", head);
-    for (column, rect) in Column::ALL.into_iter().zip(column_rects(over_rows)) {
+    let head_rects = column_rects(over_rows, sizes);
+    for (column, rect) in Column::ALL.into_iter().zip(head_rects.iter().copied()) {
         let heading = strings.get(column.heading());
         cell(
             ui,
@@ -767,6 +859,8 @@ fn table(
         )
         .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ColumnHeader, true, heading));
     }
+    // Over the headings, so a divider takes the drag.
+    column_dividers(ui, strings, over_rows, &head_rects, out);
     ui.painter().hline(
         head.x_range(),
         head.bottom() - 0.5,
@@ -799,7 +893,7 @@ fn table(
                     continue;
                 }
                 for (n, state) in group.rows.iter().enumerate() {
-                    table_row(ui, strings, units, n, state, sheet);
+                    table_row(ui, strings, units, sizes, n, state, sheet);
                 }
             }
             ui.available_width()
@@ -927,6 +1021,7 @@ fn table_row(
     ui: &mut Ui,
     strings: &Strings,
     units: Units,
+    sizes: &Sizes,
     n: usize,
     state: &model::EntryState<'_>,
     sheet: &mut Sheet,
@@ -989,7 +1084,7 @@ fn table_row(
         palette.text_primary
     };
     let unset = palette.status_error.text;
-    let mut rects = column_rects(rect);
+    let mut rects = column_rects(rect, sizes);
     // The product cell gives its right end to the "in project" mark.
     if state.in_project
         && let Some(product) = rects.last_mut()
@@ -1123,6 +1218,7 @@ fn editing_pane(
                     focus_name,
                     focus: None,
                     marked,
+                    findings: &[],
                 },
             )
         });
@@ -1711,6 +1807,23 @@ pub(crate) fn perform(
             app.prefs_mut().library_units = Some(units);
             return None;
         }
+        Request::Resize(size, screen) => {
+            SHEET.set(
+                app.prefs_mut(),
+                (f64::from(size.x), f64::from(size.y)),
+                (f64::from(screen.x), f64::from(screen.y)),
+            );
+            return None;
+        }
+        Request::ColumnWidth(column, width_px, room_px) => {
+            model::set_column_width(
+                &mut app.prefs_mut().sizes,
+                column,
+                f64::from(width_px),
+                f64::from(room_px),
+            );
+            return None;
+        }
         Request::Import => import(sheet, app.strings(), config, dialogs),
         Request::ImportReviewed => import_reviewed(sheet, app.strings(), config),
         Request::Export => export(sheet, app.strings(), dialogs),
@@ -2125,16 +2238,29 @@ mod tests {
     /// and the columns end inside the row. The name alone takes the rest.
     #[test]
     fn columns_fit_the_default_sheet() {
-        let left = SIZE.x - 48.0 - PANE_PX - GAP_PX;
+        let left = px(SHEET.default_px.0) - 48.0 - PANE_PX - GAP_PX;
         let row = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(left, ROW_PX));
-        let rects = column_rects(row);
+        let rects = column_rects(row, &Sizes::new());
         assert_eq!(rects.len(), Column::ALL.len());
         assert!(rects[0].width() >= 120.0, "{:?}", rects[0]);
+        // And at the smallest the sheet is dragged to, with every column
+        // at its default: the name keeps its minimum, the others give up
+        // what they can.
+        let least = px(SHEET.min_px.0) - 48.0 - PANE_PX - GAP_PX;
+        let narrow = column_rects(
+            Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(least, ROW_PX)),
+            &Sizes::new(),
+        );
+        assert!(narrow[0].width() >= 119.99, "{:?}", narrow[0]);
+        assert!(
+            narrow.last().map_or(0.0, |r| r.right()) <= least + 0.01,
+            "the columns end inside the narrowest table"
+        );
         let end = rects.last().map_or(0.0, |r| r.right());
         assert!(end <= row.right() + 0.01, "{end} past {}", row.right());
         let rest: Vec<Column> = Column::ALL
             .into_iter()
-            .filter(|c| column_width(*c) <= 0.0)
+            .filter(|c| c.default_width_px() <= 0.0)
             .collect();
         assert_eq!(rest, [Column::Name]);
     }
@@ -2143,7 +2269,10 @@ mod tests {
     /// least 160 px left for the name.
     #[test]
     fn review_columns_fit_the_default_sheet() {
-        let row = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(SIZE.x - 48.0, ROW_PX));
+        let row = Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(px(SHEET.default_px.0) - 48.0, ROW_PX),
+        );
         let rects = review_rects(row);
         assert_eq!(rects.len(), REVIEW_COLUMNS.len() + 1);
         assert!(rects[0].width() >= 160.0, "{:?}", rects[0]);
