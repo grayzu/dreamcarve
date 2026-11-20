@@ -3,8 +3,9 @@
 A project can hold pictures as well as drawings. A picture placed on the
 stock is a **bitmap**. DreamCarve carves a bitmap with a [Photo
 V-Carve](photo-v-carve.md); nothing else uses one. This chapter is about
-getting a picture into a project: choosing and preparing it, `init` and
-`dreamcarve image`, and how a picture is stored in the project file.
+getting a picture into a project: choosing and preparing it, the app's
+**Add picture**, the command line's `init` and `dreamcarve image`, and
+how a picture is stored in the project file.
 
 To cut the outline of a picture instead, a logo or a silhouette as a
 shape to profile, pocket or inlay, trace it into a drawing first:
@@ -46,6 +47,94 @@ Before you add it, in any image editor:
    is near black and the lightest near white.
 4. **Scale it down** to 4 to 8 pixels per millimetre of the size you will
    carve it, and save it as PNG or JPEG.
+
+## In the app
+
+The app does what `init` and `dreamcarve image add` do, from two buttons.
+[Importing drawings and pictures](importing.md) covers the import itself;
+this section is the short form, and what you can do with a picture once
+it is in the project.
+
+| To | Use | What you get |
+| --- | --- | --- |
+| Start a project round a picture | **New from picture…** on the start screen, or **File ▸ New Project from Picture…** | A stock 10 mm bigger than the picture on every side, a 60° V-bit and a [Photo V-Carve](photo-v-carve.md#in-the-app) of the picture, with their required values still to set |
+| Put a picture in the open project | **Add picture** on the Design step, **File ▸ Add Picture to Project…**, or drop the file on the window | The picture at the stock's bottom-left corner, selected. The stock, the tools and the operations are left alone |
+
+### The sheet
+
+Either way the app shows the picture and asks how big it is to be:
+
+![The Add picture to project sheet on landscape.png: "PNG · 480 × 320 px", a preview of the picture in grey, Width 60 mm and Height 40 mm joined by a link, the note "the picture is in colour; it was converted to grayscale by luminance", and the button Add picture](figures/app/picture-add-sheet.png)
+
+Type the **Width** or the **Height**, in the project's units. The other
+side follows the picture's pixels: 40 high makes this 480 × 320 pixel
+picture 60 wide. A picture is never stretched. The button, **Add
+picture** or **Create project**, is off until one side is typed.
+
+The **Preview** is the picture as it will be carved, in shades of grey.
+
+### The grayscale note
+
+A picture in colour is converted to grey as it is read, and the sheet
+says so under the size. After the import the same sentence is in the
+Warnings drawer, with its code:
+
+![The plaque after the picture was added: "landscape" under Pictures in the list, the picture at the stock's bottom-left corner with a handle at each corner, its Properties in the Inspector, and the Warnings drawer open at "Warnings · 1 note": "landscape.png: image_colour_converted: the picture is in colour; it was converted to grayscale by luminance (0.299 R + 0.587 G + 0.114 B)"](figures/app/picture-added.png)
+
+It is a **note**, not a warning: it is not counted in the status bar,
+which still says *No problems*, and it stops nothing. It is there
+because a colour that looks strong can turn into a dull grey. Look at
+the preview, and raise the contrast in an image editor if the picture
+comes out flat ([Choosing a picture](#choosing-a-picture)).
+
+### Selecting a picture
+
+Click the picture's row under **Pictures** on the Design step. On the
+Viewport, a click inside the picture selects it only where nothing else
+takes the click: a tab, a toolpath, or a closed shape, which is selected
+by a click anywhere inside it. In a project that has shapes over the
+picture, as the plaque above has, use the row.
+
+Pictures are selected on their own, never together with shapes.
+
+### A picture's Properties
+
+| Row | What it is |
+| --- | --- |
+| **Name** | The picture's name, from the file's. A Photo V-Carve's **Picture** row lists pictures by it |
+| **X**, **Y** | The bottom-left corner of the picture's footprint, from the stock's bottom-left corner |
+| **W**, **H** | The footprint's width and height. The link beside them is always closed: type one and the other follows |
+| **Pixels** | The picture's size in pixels. It cannot be changed |
+| **Locked** | On, the picture cannot be moved or resized |
+| **Carved by** | The Photo V-Carves that carve this picture |
+
+### Moving and resizing
+
+- **Move** it by dragging it, by typing **X** or **Y**, or with the arrow
+  keys: 1 mm, 10 mm with Shift, 0.1 mm with Alt (⌥ on macOS).
+- **Resize** it by typing **W** or **H**, or by dragging a corner handle.
+  It keeps its proportions and its centre stays where it is: typing 90
+  into W makes the 60 × 40 mm picture 90 × 60 mm, 15 mm bigger on each
+  side.
+
+A picture has no rotate handle and no Arrange buttons: it cannot be
+turned or flipped. Turn it in an image editor before you add it.
+
+A locked picture refuses a move with `picture “landscape” is locked` in
+the status bar. Rename, hide, lock and delete a picture as you would a
+shape ([Placing shapes](placing-shapes.md#hiding-and-locking)).
+
+Each move or resize is one step for Undo, and the Photo V-Carve that
+carves the picture is worked out again over its new footprint.
+
+**Deleting** a picture does not delete the Photo V-Carve that carved it.
+That operation's **Picture** row then reads `b1 · not in the project`,
+and it is an error that stops export until you choose another picture or
+delete the operation:
+
+```text
+error: operation `op6` carves bitmap `b1`, which does not exist
+```
 
 ## Starting a project from a picture
 

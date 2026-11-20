@@ -51,7 +51,7 @@ use common::{QueuedDialogs, go_to, open_operation, options};
 use eframe::egui;
 use eframe::egui::accesskit::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable as _;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 
 type H = Harness<'static, dreamcarve_app::Shell>;
 
@@ -235,6 +235,14 @@ fn field(h: &H, label: &str) -> String {
     h.get_by_role_and_label(Role::TextInput, label)
         .value()
         .unwrap_or_default()
+}
+
+/// Whether the last frame painted text containing `needle`: the
+/// Viewport's legend and captions are painted, not controls.
+fn painted(h: &H, needle: &str) -> bool {
+    h.output().shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text().contains(needle))
+    })
 }
 
 /// The step **Undo** would take back, as the Edit menu names it.
@@ -1048,6 +1056,231 @@ fn placing_shapes_screenshots() {
         (0, 1),
         "Undo puts the square back among the Square recess's targets"
     );
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
+
+/// The pictures chapters, "Images"
+/// (`docs/book/src/user-guide/images.md`, "In the app") and "Photo
+/// V-Carve operation" (`photo-v-carve.md`, "In the app"), on a landscape
+/// drawn here so no photograph needs committing. First a picture added
+/// to the plaque: the sheet, the note about its colour, and every way
+/// the chapter gives of moving and resizing it. Then a project made
+/// round the picture and carved: the three required values, the editor,
+/// and the grooves by depth.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn pictures_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-pictures", &dialogs) else {
+        return;
+    };
+    let picture = common::write_colour_png(&dir, "landscape.png", &common::landscape(480, 320));
+
+    // Add picture: the sheet's button is off until a side is typed, and
+    // the other side follows the pixels (480 × 320).
+    go_to(&mut h, "Design");
+    dialogs.answer(&picture);
+    click_button(&mut h, "Add picture");
+    common::settle_picture(&mut h);
+    let add = h
+        .get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::Button, "Add picture");
+    assert!(add.accesskit_node().is_disabled(), "no size typed yet");
+    type_in_sheet(&mut h, "Height", "40");
+    let width = h
+        .get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::TextInput, "Width")
+        .value();
+    assert_eq!(width.as_deref(), Some("60"));
+    shoot(&mut h, &out, "picture-add-sheet", Crop::Sheet);
+    click_in_sheet(&mut h, "Add picture");
+    settle(&mut h);
+
+    // It lands at the stock's bottom-left corner, selected, as one step,
+    // and the conversion to grayscale is a note in the Warnings drawer.
+    let size = |h: &H| ["X", "Y", "W", "H"].map(|label| field(h, label));
+    assert_eq!(size(&h), ["0", "0", "60", "40"]);
+    assert_eq!(field(&h, "Name"), "landscape");
+    assert_eq!(field(&h, "Pixels"), "480 × 320 px");
+    assert_eq!(undo_label(&h), "Import landscape.png");
+    assert!(
+        h.query_by_label("No Photo V-Carve carves the selection")
+            .is_some()
+    );
+    assert!(
+        h.query_by_label("Flip horizontal").is_none(),
+        "no Arrange group"
+    );
+    assert_eq!(
+        problems(&h),
+        [
+            "plaque.dcv: note: landscape.png: image_colour_converted: the picture is in colour; \
+          it was converted to grayscale by luminance (0.299 R + 0.587 G + 0.114 B)"
+        ]
+    );
+    h.get_by_label_contains("Warnings:").click();
+    h.run();
+    shoot(&mut h, &out, "picture-added", Crop::Window);
+    click(&mut h, "Close the Warnings drawer");
+
+    // Moving and resizing: X, the arrows, a drag, W, a corner handle.
+    type_in(&mut h, "X", "20");
+    assert_eq!(size(&h), ["20", "0", "60", "40"]);
+    assert_eq!(undo_label(&h), "Move “landscape”");
+    let inside = at_mm(&h, 45.0, 3.0);
+    common::click_at(&mut h, inside, egui::Modifiers::NONE);
+    h.key_press(egui::Key::ArrowUp);
+    h.run();
+    assert_eq!(size(&h), ["20", "1", "60", "40"]);
+    let (from, to) = (at_mm(&h, 45.0, 3.0), at_mm(&h, 55.0, 12.0));
+    drag_with(&mut h, from, to, egui::Modifiers::NONE);
+    assert_eq!(size(&h), ["30", "10", "60", "40"], "dragged 10 right, 9 up");
+    type_in(&mut h, "W", "90");
+    assert_eq!(size(&h), ["15", "0", "90", "60"], "about its centre");
+    assert_eq!(undo_label(&h), "Resize “landscape”");
+    let (from, to) = (at_mm(&h, 105.0, 60.0), at_mm(&h, 90.0, 50.0));
+    drag_with(&mut h, from, to, egui::Modifiers::NONE);
+    assert_eq!(size(&h), ["30", "10", "60", "40"], "a corner, 15 mm in");
+
+    // Locked, it stays; deleted, it is gone.
+    h.get_by_role_and_label(Role::Switch, "Locked").click();
+    h.run();
+    assert_eq!(undo_label(&h), "Lock “landscape”");
+    h.key_press(egui::Key::ArrowUp);
+    h.run();
+    assert!(h.query_by_label("picture “landscape” is locked").is_some());
+    assert_eq!(size(&h), ["30", "10", "60", "40"]);
+    h.key_press(egui::Key::L);
+    h.run();
+    assert_eq!(undo_label(&h), "Unlock “landscape”");
+
+    // Add ▸ Photo V-Carve carves the selected picture. The plaque has no
+    // V-bit, so the new operation has no tool yet.
+    go_to(&mut h, "Operations");
+    click_button(&mut h, "Add");
+    h.get_by_role_and_label(Role::MenuItem, "Photo V-Carve")
+        .click();
+    h.run();
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Add “Photo V-Carve 1”");
+    let picture_row = h.get_by_role_and_label(Role::ComboBox, "Picture").value();
+    assert_eq!(picture_row.as_deref(), Some("landscape"));
+    let no_tool = "error: operation `op6` uses tool ``, which does not exist";
+    assert!(problems(&h).iter().any(|line| line == no_tool));
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "landscape").click();
+    h.run();
+    assert!(h.query_by_label("Carved by: Photo V-Carve 1").is_some());
+    h.key_press(egui::Key::Delete);
+    h.run();
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Delete “landscape”");
+    assert!(h.state().app().project().bitmaps.is_empty());
+    let no_picture = "error: operation `op6` carves bitmap `b1`, which does not exist";
+    assert!(
+        problems(&h).iter().any(|line| line == no_picture),
+        "the Photo V-Carve that lost its picture says so"
+    );
+    open_operation(&mut h, "Photo V-Carve 1");
+    let picture_row = h.get_by_role_and_label(Role::ComboBox, "Picture").value();
+    assert_eq!(picture_row.as_deref(), Some("b1 · not in the project"));
+    drop(h);
+
+    // A project round the picture.
+    let dir = dir.with_file_name("carve");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = window(&dir, None, &dialogs).unwrap();
+    dialogs.answer(&picture);
+    click_button(&mut h, "New from picture…");
+    common::settle_picture(&mut h);
+    type_in_sheet(&mut h, "Width", "120");
+    click_in_sheet(&mut h, "Create project");
+    settle(&mut h);
+    // It opens on Stock, with one Photo V-Carve of the picture and a
+    // 60° V-bit for it, and four values still to set.
+    assert_eq!(h.state().step(), dc_app::steps::Step::Stock);
+    let errors: Vec<String> = problems(&h)
+        .into_iter()
+        .filter(|line| line.starts_with("error"))
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            "error: stock.thickness_mm is not set (mm)",
+            "error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`",
+            "error: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`",
+            "error: tools[t1].rpm is not set (RPM) for tool `Set me`",
+            "error: operations[op1].max_depth_mm is not set (mm) for operation `Photo V-Carve`",
+        ]
+    );
+    let tool = &h.state().app().project().tools[0];
+    assert_eq!(
+        (tool.diameter_mm.to_string().as_str(), &tool.cutter),
+        (
+            "6.35",
+            &dc_project::ToolKind::VBit {
+                included_angle_deg: 60.0
+            }
+        )
+    );
+
+    // The chapter's example values: the thickness, the V-bit's rates,
+    // the max depth.
+    type_in(&mut h, "Thickness", "12");
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "Set me").click();
+    h.run();
+    for (label, value) in [("Feed", "1000"), ("Plunge", "300"), ("RPM", "18000")] {
+        type_in(&mut h, label, value);
+    }
+    open_operation(&mut h, "Photo V-Carve");
+    for group in ["Depth", "Strategy"] {
+        open_group(&mut h, group);
+    }
+    shoot(&mut h, &out, "photo-required", Crop::Window);
+    type_in(&mut h, "Max depth", "1.5");
+    settle(&mut h);
+    assert!(
+        problems(&h).iter().all(|line| !line.starts_with("error")),
+        "nothing stops export: {:?}",
+        problems(&h)
+    );
+    assert!(
+        h.query_all_by_label("Photo V-Carve · 63 grooves 1.732 mm wide, to 1.500 mm")
+            .next()
+            .is_some(),
+        "the status bar's message is the carve's summary"
+    );
+    shoot(&mut h, &out, "photo-editor", Crop::Window);
+
+    // By depth: the grooves shade with their depth, and the legend's
+    // deepest value is this picture's darkest grey, not the max depth.
+    click(&mut h, "Close the Inspector");
+    click(&mut h, "By depth");
+    assert!(painted(&h, "1.27"), "the legend's deepest value");
+    shoot(&mut h, &out, "photo-by-depth", Crop::Window);
+
+    // Hatch adds the second set of grooves.
+    click(&mut h, "By operation");
+    open_operation(&mut h, "Photo V-Carve");
+    h.get_by_role_and_label(Role::RadioButton, "Hatch").click();
+    h.run();
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Set strategy of “Photo V-Carve”");
+    assert!(
+        painted(&h, "Est. 11 min") && !painted(&h, "Est. 5 min 46 s"),
+        "Hatch about doubles the estimate of 5 min 46 s"
+    );
+    assert!(
+        problems(&h).iter().any(|line| line.contains("138 grooves")),
+        "Hatch cuts a second set of grooves: {:?}",
+        problems(&h)
+    );
+    h.get_by_role_and_label(Role::CheckBox, "Invert").click();
+    h.run();
+    assert_eq!(undo_label(&h), "Set invert of “Photo V-Carve”");
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }

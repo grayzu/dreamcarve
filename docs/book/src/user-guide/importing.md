@@ -122,6 +122,6 @@ it. A Photo V-Carve reads the picture's footprint, so its grooves are
 worked out again whenever the picture moves or changes size. Deleting a
 picture leaves its Photo V-Carve without one, and the app says so.
 
-To carve the picture, see [Photo V-Carve](photo-v-carve.md); a project
+To carve the picture, see [Photo V-Carve](photo-v-carve.md#in-the-app); a project
 made with **New from picture…** already has the operation, waiting for
 its **Max depth**.
