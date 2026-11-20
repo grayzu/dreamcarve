@@ -229,6 +229,10 @@ theme_dark = "Dark"
 fit_stock = "Fit Stock to Shapes…"
 project_settings = "Project Settings…"
 tool_library = "Tool Library…"
+# Help (capability 79): the book's quick start for the app, its Keyboard
+# chapter and its front page, each opened in the browser, and About.
+quick_start = "Quick Start"
+keyboard_shortcuts = "Keyboard Shortcuts"
 user_guide = "User Guide"
 about = "About DreamCarve"
 

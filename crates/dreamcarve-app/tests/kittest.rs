@@ -7819,6 +7819,71 @@ fn open_menu(h: &mut Harness<'_, dreamcarve_app::Shell>, title: &str) {
     h.run();
 }
 
+/// Capability 79's last sentence: "Help ▸, and the rail's Help, open the
+/// book's quick start for the app, the Keyboard chapter, and About". The
+/// Help menu's rows are *Quick Start*, *Keyboard Shortcuts*, *User Guide*
+/// and *About DreamCarve*, in the header's menu and under the rail's Help
+/// alike; the first three ask the operating system to open the book's
+/// page (`quick-start/app.html`, `user-guide/keyboard.html`, its front
+/// page), and About says the version in the status bar.
+#[test]
+fn help_opens_the_quick_start_the_keyboard_chapter_and_about() {
+    let dir = scratch("help-menu");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    let book = "https://grayzu.github.io/dreamcarve/";
+    let rows = [
+        ("Quick Start", format!("{book}quick-start/app.html")),
+        (
+            "Keyboard Shortcuts",
+            format!("{book}user-guide/keyboard.html"),
+        ),
+        ("User Guide", book.to_owned()),
+    ];
+    for opener in ["Help", "Help and About"] {
+        for (row, url) in &rows {
+            h.get_by_label(opener).click();
+            h.run();
+            if opener == "Help" {
+                assert_menu(
+                    &h,
+                    "Help",
+                    &[
+                        "Quick Start",
+                        "Keyboard Shortcuts",
+                        "User Guide",
+                        "About DreamCarve",
+                    ],
+                );
+            }
+            h.get_by_label(row).click();
+            h.step();
+            let opened: Vec<String> = h
+                .output()
+                .platform_output
+                .commands
+                .iter()
+                .filter_map(|c| match c {
+                    egui::OutputCommand::OpenUrl(open) => Some(open.url.clone()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(opened, std::slice::from_ref(url), "{opener} ▸ {row}");
+            h.run();
+        }
+        h.get_by_label(opener).click();
+        h.run();
+        h.get_by_label("About DreamCarve").click();
+        h.run();
+        assert_eq!(
+            h.state().message(),
+            Some(concat!("DreamCarve ", env!("CARGO_PKG_VERSION"))),
+            "{opener} ▸ About says the version"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Slice 35 (#627), capability 79a and acceptance 103: the File menu's
 /// rows are 79a's list in its order, new-project and add-to-project
 /// apart (*Save Setup Sheet…* joins them only after an export). The View

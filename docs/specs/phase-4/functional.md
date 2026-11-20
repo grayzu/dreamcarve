@@ -42,7 +42,7 @@ the design spec's.
   stock 12 mm thick, pick the 6.35 mm end mill from their library (its
   feeds come with it), select the circle, add an **Outside Profile**, type
   the depth, ask for four tabs, and watch the blue toolpath and its tab
-  marks appear over the circle. The Warnings panel is empty. Export writes
+  marks appear over the circle. The Warnings drawer is empty. Export writes
   `coaster.nc`; the status bar says it will take 4 minutes. Sam saves the
   setup sheet beside it and prints it from the browser. Sam never sees a
   JSON file.
@@ -66,7 +66,7 @@ the design spec's.
   two letters, type the depth, glue gap, plug depth and margin, and the
   thickness of the plug board. The Viewport shows the female carve on the
   stock and, beside it, the male board with the design mirrored, the band
-  carved round it and the cut-out's tabs. The Warnings panel carries
+  carved round it and the cut-out's tabs. The Warnings drawer carries
   `inlay_male_mirrored` with the mirror line's X, as `check` does. Export
   lists the programs under *Female board* and *Male board*. After the fit
   test Alex changes the glue gap, unticks the female board in the export
@@ -142,7 +142,7 @@ folder are app preferences, kept outside the project.
 
     | Step | Complete when | Needs attention when |
     | --- | --- | --- |
-    | Design | The project has a shape or a picture | A finding is about a shape, or an importer's warning about a drawing is still in the Warnings panel |
+    | Design | The project has a shape or a picture | A finding is about a shape, or an importer's warning about a drawing is still in the Warnings drawer |
     | Stock | The thickness is set and every shape is on the stock | A stock or origin field has a problem, or a shape reaches past the stock |
     | Tools | The project has a tool | A finding is about a tool (one an enabled operation uses lacks a feed, plunge rate or RPM) |
     | Operations | An enabled operation exists | A finding is about an operation |
@@ -197,8 +197,8 @@ folder are app preferences, kept outside the project.
     wireframes in `mockups/` show the layout before the redesign and are
     kept for their labels and field names only; the visual design
     (palette, type, icons, spacing, control styling) is `experience.md`'s
-    and `redesign.md`'s. Acceptance test 92's screenshots are reviewed
-    against it, and the quick start's screenshots come from the shipped
+    and `redesign.md`'s. The visual review's pictures (acceptance 104) are
+    checked against it, and the quick start's screenshots come from the shipped
     build. Opening a project (Open, New, either New Project from, an
     example) selects its first step that is not complete, so an empty
     project opens on Design and a finished one on Export; after that the
@@ -212,8 +212,8 @@ folder are app preferences, kept outside the project.
     - **Counts**: errors, warnings and hints, each a glyph and a number,
       opening the Warnings drawer (76). *No problems* when all three are
       zero, and for a blank project (50).
-    - **Message**, the last status message (*Saved plaque*, *"square" is
-      locked*), or, while an operation is selected and nothing newer has
+    - **Message**, the last status message (*Saved plaque*, *shape
+      “square” is locked*), or, while an operation is selected and nothing newer has
       been said, that operation's carve summary in one line (76a);
       clicking it opens the drawer at that operation. It takes the room
       that is left.
@@ -247,7 +247,7 @@ folder are app preferences, kept outside the project.
     since the empty Operations and Tools lists say what to do next (79) and
     a tool with unset feeds is a trap the library picker avoids. *Open* reads any `.dcv` the CLI
     reads, migrates it, and lists migration notes and validation
-    warnings in the Warnings panel. *Save* and *Save As…* write through the
+    warnings in the Warnings drawer. *Save* and *Save As…* write through the
     same serializer as the CLI, so a project opened and saved unchanged is
     byte-identical. *Save As…* is the standard save-a-copy: it writes the
     project under a new name and the window then edits that file. *Recent*
@@ -261,7 +261,8 @@ folder are app preferences, kept outside the project.
     window, or passed on the command line, opens.
 52. **Undo and redo** (Edit menu, Ctrl/⌘ Z and Shift+Ctrl/⌘ Z) walk the
     snapshot history. Every change to the project is a named command and
-    one undo step: *Move "Oval"*, *Set depth of "Outside cut"*, *Reorder
+    one undo step: *Move “Oval”*, *Set depth of “Outside cut”* (the name
+    in curly quotes), *Reorder
     operations*, *Import plaque.dxf*, *Place 4 tabs*. The menu shows the
     name of the step it would undo. Typing in a field is one step when the
     field is left, not one per keystroke; dragging is one step when the
@@ -310,7 +311,7 @@ folder are app preferences, kept outside the project.
     a layer list to tick; nothing for SVG. Shapes are named as `init`
     names them (DXF layer names, SVG ids). Import warnings (entities not
     read, open paths skipped by nothing yet, duplicate shapes dropped)
-    appear in the Warnings panel after the import, once, under the import's
+    appear in the Warnings drawer after the import, once, under the import's
     name. One import is one undo step.
 56. **Add a picture to the project** (File ▸ *Add Picture to Project…*,
     the Design step's *Add picture*, or drop a `.png`, `.jpg`
@@ -392,7 +393,7 @@ folder are app preferences, kept outside the project.
     bounding-box centre). The **Arrange** menu holds the same commands
     with their shortcuts (54), *Rotate 90° anticlockwise*, *Rotate…* (the
     angle popover), and *Centre on stock* (61). Each is one undo step named for the selection
-    (*Rotate "square" 90°*). The group is disabled, with the reason in
+    (*Rotate “square” 90° clockwise*). The group is disabled, with the reason in
     its tooltip, when every selected instance is locked, and the Arrange
     menu's rows when nothing is selected; with some locked, the unlocked ones turn and the status bar
     names the rest. A picture cannot rotate or flip (56), so a selection
@@ -401,8 +402,9 @@ folder are app preferences, kept outside the project.
     Linked Copy) offset by 10 mm, named `<name> (2)`, sharing the
     definition, so phase 5's shape editing will edit both. *Delete* removes
     the instance from every operation's targets as well as from the tree;
-    when an operation is left with no targets the Warnings panel says so
-    (`operation_has_no_targets`, as validation reports it today), and the operation stays, disabled-looking
+    when an operation is left with no targets the Warnings drawer says so
+    (validation's `operation_has_no_targets`: an error, so its row is the
+    message without the code, as `check` prints an error), and the operation stays, disabled-looking
     but enabled, until the user fixes or deletes it. A definition no
     instance uses is dropped from the file on save. Placed tabs on a
     deleted instance go with it.
@@ -423,8 +425,9 @@ folder are app preferences, kept outside the project.
     moves the origin marker (the `0,0` crosshair and the axis lines
     through it) to the new point in the same frame; the shapes, the stock
     and the toolpaths stay where they are on screen, because the origin
-    moves the program's coordinates, not the part. The status bar's
-    coordinates count from the new point, and the Z-zero choice relabels
+    moves the program's coordinates, not the part. The Viewport's
+    read-out counts from the new point (the cursor is not in the status
+    bar, 50b), and the Z-zero choice relabels
     the depth legend (73). **Heights** (capability 33): clearance, tool-change machine Z (only
     offered when the post-processor documents `G53`, greyed with the reason
     otherwise), and park point, which can be typed or clicked on the
@@ -642,7 +645,7 @@ folder are app preferences, kept outside the project.
     shows that default as grey placeholder text, `tool's: 3 mm`, and clears
     back to it with its ⟲ button. Warnings and errors that `check` locates
     at a field (capability 25) are shown under that field as well as in the
-    Warnings panel. The editor never offers a setting the generator ignores
+    Warnings drawer. The editor never offers a setting the generator ignores
     for that kind, and never hides one it reads. The carve summary `check`
     prints for an operation (*check says…*) is not in the editor: it is a
     note in the Warnings drawer and the status bar (76a).
@@ -801,7 +804,7 @@ folder are app preferences, kept outside the project.
     Viewport as marks the tab's width across the toolpath and listed under
     Tabs in the Design Tree. A placed tab drags along its outline (it stays
     on the outline; its point is in definition space, so it follows its
-    instance), has width, height and shape in the Properties panel, and
+    instance), has width, height and shape in the Inspector's Properties, and
     deletes with Delete. The **Tab tool**, floating at the Viewport's top left, adds a tab where
     the user clicks an outline, with the last-used size. Every enabled
     Profile that cuts that outline rises over it; `tab_not_crossed`,
@@ -824,7 +827,7 @@ folder are app preferences, kept outside the project.
     operation regenerates its row shows a spinner and its old toolpath
     stays on the Viewport, faded; when it finishes the new toolpath
     replaces it. A generation error (a tool with no feed, a missing
-    thickness) marks the row red and lists in the Warnings panel; the
+    thickness) marks the row red and lists in the Warnings drawer; the
     operation draws nothing. The status bar shows *Generating 2 of 5…*
     while any operation is pending. There is no Generate button, because
     there is nothing to press: an edit is its own request. *Stop* cancels
@@ -926,14 +929,16 @@ folder are app preferences, kept outside the project.
     clears. Hidden instances cannot be selected; locked ones can be
     selected but not transformed. Hovering an instance shows its name in
     the status bar. The selection is one selection, shared by the Design
-    Tree, the Viewport and the Properties panel.
+    Tree, the Viewport and the Inspector's Properties.
 
 ### Checking and exporting
 
-76. **Warnings panel** (`10-warnings-panel.svg`). Always current: it is
+76. **Warnings drawer** (`10-warnings-panel.svg`). Always current: it is
     `check` on the project as it stands, run with every generation. Three
-    tiers as `check` prints them: **errors** (export refuses), **warnings**
-    and **hints**. Each row: the tier, the code (monospace, the chapter's
+    tiers: **errors** (export refuses), **warnings**
+    and **hints**. `check` prints an error as an `error:` line and both a
+    warning and a hint as a `warning:` line with its code; the drawer
+    tells a hint by its code. Each row: the tier, the code (monospace, the chapter's
     anchor), the message with the operation and shape named, and, where the
     code concerns a field, that field. Clicking a row selects the operation
     and scrolls to the field, or selects the shape; the row's code links to
@@ -1088,8 +1093,11 @@ folder are app preferences, kept outside the project.
     yet* with *New tool* and *Add from library…* as buttons; an empty
     Operations list says *Select shapes on the drawing, then Add an
     operation*. Help ▸, and the rail's Help, open the book's quick start
-    for the app, the Keyboard chapter, and About (version string as the
-    CLI prints it).
+    for the app (*Quick Start*), the Keyboard chapter (*Keyboard
+    Shortcuts*) and its front page (*User Guide*) in the browser, and
+    *About DreamCarve*, which says the version in the status bar. The
+    pages are the published book's, so until this phase's chapters are
+    published the first two are not there yet.
 79a. **Menus** (`14-menus-and-sheets.svg`; review 2026-11-10). **File**:
     New; New Project from Drawing…; New Project from Picture…; Open…;
     Open Recent ▸ | Save; Save As… | Add Drawing to Project…; Add Picture
@@ -1101,7 +1109,8 @@ folder are app preferences, kept outside the project.
     Selection, and **Appearance ▸** with three checked choices, *System*
     (following the OS), *Light* and *Dark* (the default), kept in
     `gui.toml`. **Project**: Project Settings…, Tool Library…, Fit Stock
-    to Shapes. **Help** (79). A choice of three is a submenu with a check,
+    to Shapes… (a submenu that takes the margin). **Help**: Quick
+    Start, Keyboard Shortcuts, User Guide, About DreamCarve (79). A choice of three is a submenu with a check,
     not a checkbox, since a checkbox cannot say "follow the system".
 80. **Strings.** Every user-visible string in the app comes from one
     string table keyed by id, so phase 8 can translate it; English is the
@@ -1157,9 +1166,11 @@ byte-identical output with the program's header date pinned (`--date`).
     post-processor, no tools, no operations (open question 1).
 64. **Import DXF** (55). Importing `fixtures/plaque.dxf` into an empty
     project adds the shapes `init` would, named by layer, selected, as one
-    undo step; a DXF with no `$INSUNITS` disables *Import* until units are
-    chosen, with the CLI's message; ticking one layer imports that layer
-    only; the unread-entity warning appears once in the Warnings panel.
+    undo step; a DXF with no `$INSUNITS` disables the *Add drawing to
+    project* sheet's *Add shapes* button until units are chosen, with the
+    importer's message (the CLI's, less its `--units` hint, which names a
+    flag the sheet does not have); ticking one layer imports that layer
+    only; the unread-entity warning appears once in the Warnings drawer.
 65. **Add a picture** (56). Importing `fixtures/photo/gradient.png` at
     width 100 adds the bitmap `image add --width 100` adds, at the origin,
     with the grayscale note for a colour file.
@@ -1167,19 +1178,25 @@ byte-identical output with the program's header date pinned (`--date`).
     typing X 10 and Y 5 changes the instance's transform by that
     translation and nothing else; the toolpath regenerates translated by
     the same vector (compared to the CLI's toolpath for the saved file);
-    rotation 90° and scale 50 % produce the transforms the CLI's
-    `locate` tests expect (rotation through the Arrange group's Rotate
-    popover, 58a); Flip horizontal and vertical flip about the
-    bounding-box centre; a
-    locked instance refuses each with a status-bar message. Each is one
-    undo step and undo restores the transform exactly.
+    rotation 90° and scale 50 % are the instance's transform followed by
+    that rotation or scale about the selection's bounding-box centre
+    (rotation through the Arrange group's Rotate popover, 58a); Flip
+    horizontal and vertical flip about the bounding-box centre. A locked
+    instance refuses a drag and a nudge with a status-bar message; a
+    typed value, Rotate and Flip cannot be asked of it at all, since its
+    fields are read-only and the Arrange group is disabled with the
+    reason in its tooltip (58, 58a). Each change is one undo step and
+    undo restores the transform exactly.
 67. **Linked copy** (59). Duplicate yields a second instance with the same
     definition id; the file holds one definition and two instances; moving
     one leaves the other.
-68. **Delete a target** (59). Deleting the plaque's panel instance removes
-    it from the Pocket's targets, leaves the Pocket with `operation_has_no_targets` in
-    the Warnings panel, and removes the panel's placed tabs; undo restores
-    all three.
+68. **Delete a target** (59). Deleting the plaque's `outline` removes it
+    from the Cut out Profile's targets, leaves the Profile with
+    validation's `operation_has_no_targets` error in the Warnings drawer
+    (the row is the error's message, as `check` prints an error, without
+    its code), and removes the outline's placed tabs; undo restores all
+    three. Deleting `square`, the one target of the Square recess Pocket,
+    leaves that Pocket with the same error.
 69. **Stock, origin, heights** (60, 61). Setting the stock, origin presets
     and custom origin, Z zero, and the three heights writes the fields
     `check` reads and the Viewport's crosshair and park mark move; the
@@ -1190,13 +1207,19 @@ byte-identical output with the program's header date pinned (`--date`).
 70. **Post-processor switch** (62). Changing grblHAL to LinuxCNC on a
     project with a customised dwell keeps the dwell and resets what
     `switch_post` resets (acceptance 39); *one program* is offered on
-    grblHAL and absent on GRBL; canned cycles is offered on LinuxCNC only.
+    grblHAL and absent on GRBL; canned cycles is offered where the
+    post-processor's definition has them, which of the six bundled ones is
+    LinuxCNC and Mach3 (`G81` and `G82` in both), and on none of generic,
+    GRBL, grblHAL and UCCNC.
 71. **Tools** (63, 64). Adding the 6.35 mm end mill from the library writes
-    the copy `tools add` writes; clearing its plunge rate marks the tool
-    red, lists the CLI's refusal in the Warnings panel and disables
-    *Export*; typing it back clears all three. *Delete* on a tool in use is
-    refused naming the operation. The library window's import of
-    `fixtures/fusion/sample.tools` shows the report `tools import` prints
+    the copy `tools add` writes; clearing a tool's plunge rate puts the
+    red dot on its row in the Tools step, lists the CLI's refusal in the
+    Warnings drawer and disables the header's *Export G-code*; typing it
+    back clears all three. *Delete* on a tool in use is disabled, its
+    tooltip naming the operations that use it, and the command behind it
+    is refused in the same words. The Tool Library sheet's import of
+    `fixtures/fusion/sample.tools` is a review in place (64b): its counts
+    and each tool's status are those of the report `tools import` prints
     (acceptance 35), and the library file equals the CLI's.
 72. **Add an operation** (65). With the coaster selected, *Add ▸ Profile*
     appends a Profile targeting it with `init`'s Profile defaults, the
@@ -1210,11 +1233,12 @@ byte-identical output with the program's header date pinned (`--date`).
     editor shows no control the table does not list and lists no control
     the editor lacks. Tool-derived placeholders show the tool's value and
     write `null`.
-74. **Reorder, enable, duplicate** (65). Dragging the plaque's Drill above
-    its Pocket reorders the file's list and the export's program order;
-    unticking an operation sets `enabled: false` and removes its toolpath
-    from the Viewport and its program from the export; *Duplicate* appends
-    a copy with the same targets and `(2)` in its name.
+74. **Reorder, enable, duplicate** (65). Dragging the plaque's Bore below
+    its Panel pocket reorders the file's list and the order of the
+    written programs; unticking an operation sets `enabled: false` in the
+    saved file and removes its toolpath from the Viewport and its cuts
+    from the written programs; *Duplicate* puts a copy below its original
+    (65), with the same targets and `(2)` in its name.
 75. **Clearing passes** (70). Adding two passes with a 6.35 mm and a
     3.175 mm end mill writes the `clearing` list in that order; dragging
     the smaller above the larger shows `clearing_not_descending` under the
@@ -1222,32 +1246,38 @@ byte-identical output with the program's header date pinned (`--date`).
 76. **Inlay, both boards** (68, 68a, 72, 77). The lettered inlay fixture
     (one file, #498) shows the Inlay's values once and a Male board group;
     with the male thickness cleared, `inlay_male_board_unset` sits under
-    the field, the male board on the Viewport is empty, and the export
-    dialog lists the female board only. With it set to 18 mm the male
-    board shows the design mirrored with the band, floor rings, cut-out
-    and tabs as `--preview` draws them, `inlay_male_mirrored` lists the
-    same X the CLI prints, the derived line shows the start plane, floor
-    and engagement the design spec computes (red when the engagement
-    exceeds the cone height), and the Export step lists both boards'
-    programs with the CLI's names. Unticking the female board exports the
-    male programs alone and leaves the file unchanged. Exporting both
-    gives the quick start's committed programs. With the fixture's frame
+    the field, the male board on the Viewport is empty, and the Export
+    step lists the female board's programs only. With it set again the
+    male board shows the design mirrored with the band, floor rings,
+    cut-out and tabs as `--preview` draws them (compared mark for mark at
+    the fixture's own 12 mm; at 18 mm, that the male is cut and drawn),
+    `inlay_male_mirrored` lists the same X the CLI prints, the derived
+    line shows the start plane, floor and engagement the design spec
+    computes (red when the engagement exceeds the cone height), and the
+    Export step lists both boards' programs with the CLI's names.
+    Unticking the female board exports the male programs alone and leaves
+    the file unchanged. Exporting both gives the programs `dreamcarve
+    export` writes for the fixture, which is the project the inlay quick
+    start builds (no program of the pair is committed). With the fixture's frame
     chosen in the Boundary row and the margin and rounding cleared, the
     project is the one the Inlay chapter's hand edit makes
     (`tests/fixtures/dc-boundary.dcv`), the male board shows the frame
     dashed with the male's cuts ending at it, and both boards' programs
     equal the CLI's for that project.
 77. **Photo V-Carve** (56, 68). The gradient fixture with a Photo V-Carve
-    at `init`'s defaults draws the grooves `--preview` draws; `check`'s
-    groove count appears in the operation's status. Runs once phase 3.5
-    has landed.
+    at `init`'s defaults, its maximum depth typed (`init` leaves it unset
+    and the app never fills it, S20), draws the grooves `--preview` draws;
+    `check`'s groove count is in the status bar's message cell while the
+    operation is selected, and in its note in the Warnings drawer (76a).
 78. **Tabs** (69). *Place tabs* on the coaster's Profile with a request of
     four writes the four placed tabs `tabs place --count 4` writes and
     clears the request; dragging one along the outline changes only its
     point and keeps it on the outline; deleting one leaves three; the Tab
     tool adds one at the clicked outline point; the exported program equals
     the CLI's for the saved file.
-79. **Preview equals the toolpath** (72). For each golden case, the set
+79. **Preview equals the toolpath** (72). For each golden case that
+    holds a DreamCarve project (a `dreamcarve.dcv`; the others hold
+    PureCutCNC's outputs alone), the set
     of moves the Viewport draws for an operation is the generator's
     toolpath for the saved file (same count, same endpoints to 1 µm), and
     the Viewport's SVG dump equals `--preview`'s file for that project.
@@ -1260,13 +1290,15 @@ byte-identical output with the program's header date pinned (`--date`).
 81. **View state is not project state** (73). Toggling every visibility
     control, panning, zooming and resizing panels leaves the file
     unchanged on save and adds nothing to the undo history.
-82. **Warnings panel equals `check`** (76). For each fixture under
+82. **Warnings drawer equals `check`** (76). For each fixture under
     `crates/dreamcarve/tests/fixtures/` with expected `check` output, the
-    panel lists the same codes, messages and operations in the same tier;
-    clicking a located row selects the operation and focuses the field;
+    drawer lists the same codes, messages and operations, an error as an
+    error and a warning as a warning; a hint, which `check` prints as a
+    `warning:` line, is the drawer's third tier, by its code. Clicking a
+    located row selects the operation and focuses the field;
     *Copy* yields `check`'s text.
-83. **Export equals the CLI** (77, S20). The coaster, plaque, sign and
-    inlay-pair projects exported from the app, with the date pinned, give
+83. **Export equals the CLI** (77, S20). The coaster, the plaque, the
+    sign and the inlay pair's project (one file since #498) exported from the app, with the date pinned, give
     files byte-identical to `dreamcarve export` on the saved file, for each
     of the six post-processors, with and without the program-split
     override; the Viewport's SVG dump equals `--preview`'s (79).
@@ -1283,8 +1315,11 @@ byte-identical output with the program's header date pinned (`--date`).
     leaving is one step.
 87. **The window never blocks** (71). On a project of 500 shapes with a
     Pocket and a V-Carve on all of them, the window answers input within
-    100 ms while generation runs, the rows show spinners, the stale
-    toolpaths show faded, and *Stop* ends generation within a second.
+    100 ms while generation runs (measured over the frames drawn
+    meanwhile, as the design spec's test plan reads it after #573: the
+    95th percentile within 100 ms and no frame over 250 ms), the rows
+    show spinners, the stale toolpaths show faded, and *Stop* ends
+    generation within a second.
 88. **Unsaved changes** (51). Closing a changed project shows the sheet
     with *Save*, *Don't Save* and *Cancel* and no other button; *Cancel*
     keeps it open and unchanged; *Don't Save* loses the changes; *Save*
@@ -1296,10 +1331,19 @@ byte-identical output with the program's header date pinned (`--date`).
     display and back.
 90. **Quick starts without the CLI** (exit). The coaster, the plaque, the
     sign and the inlay pair built in the app from their SVG or DXF by the
-    steps of the new quick start export programs byte-identical to the
-    quick starts' committed programs.
-91. **Keyed strings** (80). A source scan finds no user-visible string
-    literal outside the string table; every key in the table is used.
+    steps of the new quick start export the programs the command-line
+    quick starts make. The plaque's, the sign's and the pair's are
+    byte-identical to what `dreamcarve export` writes for the committed
+    project each of those quick starts builds, with the tools added in
+    the chapter's order. The coaster's is the committed
+    `coaster-grblhal.nc` but for two comment lines, the operation's name
+    and the tool's: the CLI's coaster keeps `init`'s placeholders
+    (`Profile`, `Set me`) and the app has no placeholder; renamed to
+    them, it is that program byte for byte.
+91. **Keyed strings** (80). A scan of the window's sources finds no
+    string literal a user could read outside the string table; every key
+    in the table is used. Error and refusal text is the CLI's and
+    `dc-app`'s `Display`, as 80 says of warnings, and is left to phase 8.
 92. **Three platforms** (50). The app launches, opens the plaque, renders
     one frame and exports it in CI on Windows, macOS and Linux (the design
     spec names the headless harness).
@@ -1374,8 +1418,10 @@ slices carry them.
     CLI refuses it.
 101. **Tool Library** (64, 64a, 64b). The library sheet groups the
     fixture library by vendor with *No vendor* last; editing a library
-    tool's feed writes `tools.json` at once, equal to the CLI's library
-    after the same change, and leaves the open project's copy and the undo
+    tool's feed writes `tools.json` at once, the file `dc_library::save`
+    gives for the library with that one value changed (the CLI has no
+    command that edits a library tool, so there is no CLI file to compare
+    with), and leaves the open project and the undo
     history unchanged; *Revert changes* restores it; switching the
     library's units to inches shows `0.25 in` for the 6.35 mm end mill and
     leaves the file and the project's units unchanged; importing
@@ -1402,11 +1448,26 @@ slices carry them.
     File menu's labels are those of 79a; View ▸ Appearance has System,
     Light and Dark with one checked; the unsaved-changes sheet's buttons
     are Save, Don't Save and Cancel.
-104. **Second visual review** (50a). The checklist of `experience.md`
-    section 13, with the review's additions, ticked against a new set of
-    screenshots of every panel, sheet and menu in both appearances at 1×
-    and 2×, each captioned with what it shows; maintainer sign-off on
-    #549.
+104. **Visual review of the redesigned window** (50a). The checklist of
+    `experience.md` section 13 (one item per rule of `redesign.md` and
+    of `experience.md`'s other sections, 100 in all), each item ticked
+    against a picture the app wrote, or the test that holds it where a
+    picture cannot, or marked *not met* with what is wrong. The pictures
+    are of every step, the Inspector on each kind of selection, the tool
+    editor, every menu, popover and sheet, the Viewport's floating
+    controls, the Export step ready, blocked and done, the window at its
+    minimum and narrower, the focus ring, and the operation editor on
+    each kind, in both appearances at 1× (section 13 asks for 1×; a 2×
+    set is not part of this review). The record is
+    `docs/specs/phase-4/review/final/README.md`, which says what each
+    group of scenes holds and names the picture or the test beside each
+    item; it stands in for the per-picture captions and the checklist
+    comment on #549 that the review of the old layout had (#549 and pull
+    request #666 are that earlier review, superseded by the redesign).
+    Done for the redesign on 2026-11-19: 94 items met and 6 not (4, 15,
+    34, 64, 65, 99), four of them places where the two specs ask for
+    different things. **Open:** the maintainer's decision on those six
+    and sign-off, recorded in that README.
 
 ## Safety requirements
 
@@ -1425,8 +1486,8 @@ are phase 3's. New in this phase:
   rate, RPM or depth with a number of its own: such fields are empty until
   the user or a library tool supplies them (principle 5). What the Viewport
   draws is the generator's toolpath for the current snapshot; while an
-  operation regenerates its old drawing is marked stale and the export
-  dialog waits for generation to finish. Checked by acceptance tests 71,
+  operation regenerates its old drawing is marked stale and the Export
+  step waits for generation to finish. Checked by acceptance tests 71,
   79, 83 and 84 and by a source rule in the design spec: the GUI crate
   depends on `dc-cam` and `dc-gcode` only through the same entry points the
   CLI uses.
@@ -1458,7 +1519,7 @@ program on the bench grblHAL to close the loop. Record below.
   (move, the Arrange group, linked copies, lock), **Stock, origin and
   heights**, **Toolpath preview** (colours, the toolpath view popover, the
   depth legend, extents, what the marks mean), **Checking and exporting**
-  (the Warnings panel and its notes, the Export step, the result and
+  (the Warnings drawer and its notes, the Export step, the result and
   the setup sheet), **Keyboard shortcuts**.
 - User guide, updated: Overview (no longer "a command line tool": the app
   first, the CLI as the same engine for scripts), every operation chapter
@@ -1482,7 +1543,8 @@ program on the bench grblHAL to close the loop. Record below.
 ## Exit criteria
 
 - [ ] Acceptance tests 62–103 green on Windows, macOS and Linux in CI,
-      and the second visual review (104) signed off on #549.
+      and the visual review of the redesigned window (104) signed off by
+      the maintainer in `review/final/README.md`.
 - [ ] S20's equality test (83) covers all six post-processors.
 - [ ] The coaster, plaque, sign and inlay pair reproduced in the app from
       their drawings, programs identical to the CLI's (90); the coaster cut
@@ -1538,8 +1600,10 @@ now has its content.
   positive Z of non-cutting moves (73a); the library's import becomes a
   review before writing, which is where *Replace* now lives (64b).
 
-The design spec's "Review redesign slices" carry this work, and the
-second set of screenshots (acceptance 104) closes #549.
+The design spec's "Review redesign slices" carry this work. Its second
+set of screenshots was to close #549; the window was then redesigned
+(`redesign.md`), and the review that closes this phase is the redesign's
+own (acceptance 104).
 
 ## Open questions
 

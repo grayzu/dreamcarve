@@ -117,8 +117,28 @@ const PLAQUE_DCV: &[u8] = include_bytes!("../../../../tests/fixtures/plaque.dcv"
 /// The sign the phase 3 quick start builds.
 const SIGN_DCV: &[u8] = include_bytes!("../../../../tests/fixtures/sign.dcv");
 
-/// The book, for Help ▸ User Guide.
-const USER_GUIDE_URL: &str = "https://grayzu.github.io/dreamcarve/";
+/// A page of the published book that Help opens (capability 79).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BookPage {
+    /// Help ▸ Quick Start: "From SVG to G-code in the app".
+    QuickStart,
+    /// Help ▸ Keyboard Shortcuts: the Keyboard chapter.
+    Keyboard,
+    /// Help ▸ User Guide: the book's front page.
+    Front,
+}
+
+impl BookPage {
+    /// Where the page is published: under the book's root, at the path
+    /// mdBook gives the chapter's source file.
+    pub(crate) const fn url(self) -> &'static str {
+        match self {
+            Self::QuickStart => "https://grayzu.github.io/dreamcarve/quick-start/app.html",
+            Self::Keyboard => "https://grayzu.github.io/dreamcarve/user-guide/keyboard.html",
+            Self::Front => "https://grayzu.github.io/dreamcarve/",
+        }
+    }
+}
 
 /// The smallest window that holds the rail, the step panel, the Viewport
 /// and the Inspector at their minimum widths (functional spec, capability
@@ -325,7 +345,8 @@ pub(crate) enum Action {
     /// The Inspector's close button: what it edits is no longer selected.
     CloseInspector,
     PruneRecent,
-    UserGuide,
+    /// Help's first three rows: a page of the book, in the browser.
+    OpenBook(BookPage),
     About,
     Answer(Answer),
     /// Project ▸ Project Settings…: the Stock step, where the project's
@@ -1415,7 +1436,7 @@ impl Shell {
             Action::PruneRecent => {
                 files::recent(self.app.prefs_mut());
             }
-            Action::UserGuide => ctx.open_url(egui::OpenUrl::new_tab(USER_GUIDE_URL)),
+            Action::OpenBook(page) => ctx.open_url(egui::OpenUrl::new_tab(page.url())),
             Action::About => {
                 self.message = Some(self.strings().fmt(
                     StrKey::AppMessageAbout,
