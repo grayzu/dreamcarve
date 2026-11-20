@@ -186,7 +186,7 @@ A warning or an error that is about one value is shown under that value,
 as above, in amber for a warning and red for an error. The group that
 holds it opens by itself, the editor's header and the operation's row
 carry the mark, and the same line is in the
-[Warnings drawer](warnings.md).
+[Warnings drawer](warnings.md#in-the-app).
 
 The app keeps a value that is out of range, so that you can see what you
 typed, and says what is allowed:

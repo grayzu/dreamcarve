@@ -2354,3 +2354,148 @@ fn tabs_screenshots() {
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }
+
+/// Clicks the Warnings drawer's row reading `line`: the one of that text
+/// that is not in the step panel.
+fn click_drawer_row(h: &mut H, line: &str) {
+    let panel = h.state().layout().step_panel;
+    h.query_all_by_label(line)
+        .find(|node| panel.is_none_or(|panel| !panel.contains_rect(node.rect())))
+        .unwrap_or_else(|| panic!("no drawer row `{line}`"))
+        .click();
+    h.run();
+}
+
+/// The drawer's row whose line of `check` contains `needle`.
+fn drawer_row(h: &H, needle: &str) -> dc_app::warnings::Row {
+    dc_app::warnings::panel(h.state().app())
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .find(|row| row.line.contains(needle))
+        .unwrap_or_else(|| panic!("no finding about `{needle}`"))
+}
+
+/// The chapter "Warnings" (`docs/book/src/user-guide/warnings.md`, "In
+/// the app"), on the plaque given one finding of each kind through the
+/// window: a feed deleted (an error), a plunge rate above its feed (a
+/// warning) and a tool nothing uses (a hint). The status bar's counts,
+/// the rail's marks, the drawer, a row clicked to go to its field, and
+/// *Copy*.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn warnings_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-warnings", &dialogs) else {
+        return;
+    };
+    assert!(problems(&h).is_empty());
+    assert!(painted(&h, "No problems"));
+
+    // An error: the 1/8 end mill's feed deleted. A warning: the 1/4 end
+    // mill plunging faster than it cuts. A hint: a tool nothing uses.
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "1/8 end mill")
+        .click();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "Feed").focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.key_press(egui::Key::Backspace);
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert!(required(&h, "Feed"), "the feed is unset again");
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
+    h.run();
+    type_in(&mut h, "Plunge", "5000");
+    click_button(&mut h, "New tool");
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    settle(&mut h);
+    assert_eq!(
+        problems(&h),
+        [
+            "error: tools[t2].feed_mm_min is not set (mm/min) for tool `1/8 end mill`",
+            "warning: plunge_above_feed: tool `1/4 end mill` (`t1`) plunges at 5000 mm/min, \
+             faster than it cuts (1500 mm/min); a plunge rate is usually well below the feed \
+             rate, so check the two are not swapped",
+            "warning: unused_tool: tool `t3` (`tool3`) is defined but not used by any enabled \
+             operation",
+        ]
+    );
+
+    // The status bar counts each kind, and the rail marks the steps that
+    // hold an error: Tools, and Export, which it blocks.
+    for count in ["1 error", "1 warning", "1 hint"] {
+        assert!(painted(&h, count), "the status bar says {count}");
+    }
+    use dc_app::steps::{Severity, State};
+    let states = h.state().step_states();
+    for (step, state) in [
+        (dc_app::steps::Step::Design, State::Complete),
+        (dc_app::steps::Step::Stock, State::Complete),
+        (
+            dc_app::steps::Step::Tools,
+            State::Attention(Severity::Error),
+        ),
+        (dc_app::steps::Step::Operations, State::Complete),
+        (
+            dc_app::steps::Step::Export,
+            State::Attention(Severity::Error),
+        ),
+    ] {
+        assert_eq!(states.of(step), state, "the rail's mark on {step:?}");
+    }
+
+    // The drawer, from the rail's button.
+    go_to(&mut h, "Operations");
+    h.get_by_label_contains("Warnings: 1 error").click();
+    h.run();
+    assert!(h.state().warnings_open());
+    assert!(painted(&h, "Warnings · 1 error · 1 warning · 1 hint"));
+    let link = drawer_row(&h, "plunge_above_feed").chapter_url();
+    assert_eq!(
+        link.as_deref(),
+        Some("https://grayzu.github.io/dreamcarve/user-guide/warnings.html#plunge_above_feed"),
+        "a row's code is a link to its entry in the chapter"
+    );
+    assert!(h.query_all_by_label("plunge_above_feed").next().is_some());
+    shoot(&mut h, &out, "warnings-drawer", Crop::Window);
+
+    // A row goes to what it is about: a tool's row to the Tools step,
+    // with the tool in the Inspector. The drawer stays open, and follows
+    // the project once the value is put right.
+    let row = drawer_row(&h, "plunge_above_feed");
+    assert_eq!(row.field.as_deref(), Some("tools[t1].plunge_mm_min"));
+    click_drawer_row(&mut h, &row.line);
+    assert_eq!(h.state().step(), dc_app::steps::Step::Tools);
+    assert_eq!(field(&h, "Name"), "1/4 end mill");
+    assert!(h.state().warnings_open(), "the drawer stays open");
+    shoot(&mut h, &out, "warnings-go-to", Crop::Window);
+    type_in(&mut h, "Plunge", "500");
+    settle(&mut h);
+    assert!(
+        !problems(&h).iter().any(|l| l.contains("plunge_above_feed")),
+        "and the drawer follows the project"
+    );
+
+    // Copy is `check`'s text, with its own count: a hint is a warning
+    // there.
+    click_button(&mut h, "Copy");
+    assert_eq!(
+        dc_app::warnings::copy_text(h.state().app()),
+        "error: tools[t2].feed_mm_min is not set (mm/min) for tool `1/8 end mill`\n\
+         warning: unused_tool: tool `t3` (`tool3`) is defined but not used by any enabled \
+         operation\n\
+         plaque.dcv: 1 error(s), 1 warning(s)\n"
+    );
+    click(&mut h, "Close the Warnings drawer");
+    assert!(!h.state().warnings_open());
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
