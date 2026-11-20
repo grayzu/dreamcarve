@@ -879,3 +879,171 @@ fn export_button_is_at_the_foot_of_the_step_and_the_result_is_a_sheet() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The smoke test's item 11, a check: the maintainer's hand-made tools
+/// read `IDC Woodcraft 1/4\" Fine Detail Tapered Ball Nose`, with a
+/// backslash before the quote. A name with a double quote typed into the
+/// app is kept and shown as typed, with no backslash, through every way
+/// a name travels: a tool's name, *Duplicate*, *Save to library* (the
+/// library file read back), the Tool Library's own name field and its
+/// table, *Add to project*, an operation's name and a shape's, the
+/// project saved and read again, and every label on screen along the
+/// way. So the app does not make that name: it is one that was typed, or
+/// pasted, with the backslash in it.
+#[test]
+fn a_quote_in_a_name_is_kept_and_shown_as_typed() {
+    const NAME: &str = "IDC 1/4\" Fine Detail";
+    let (mut h, dir, dialogs) = plaque("quote-in-name");
+    common::settle(&mut h);
+    let escaped = |h: &Harness<'_, Shell>| h.query_all_by_label_contains("\\\"").count();
+    let tool_names = |h: &Harness<'_, Shell>| -> Vec<String> {
+        let tools = &h.state().app().project().tools;
+        tools.iter().map(|t| t.name.clone()).collect()
+    };
+
+    // A tool's name, and its row in the list.
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
+    h.run();
+    type_into(&mut h, "Name", NAME);
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(tool_names(&h)[1], NAME);
+    assert!(h.query_by_role_and_label(Role::ListItem, NAME).is_some());
+    assert_eq!(escaped(&h), 0, "no label shows an escaped quote");
+
+    // Duplicate, then Save to library: the library file holds the name.
+    h.get_by_role_and_label(Role::Button, "Duplicate").click();
+    h.run();
+    assert_eq!(
+        tool_names(&h).last().map(String::as_str),
+        Some("IDC 1/4\" Fine Detail (2)")
+    );
+    h.get_by_role_and_label(Role::ListItem, NAME).click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Save to library")
+        .click();
+    h.run();
+    let library_file = dir.join("config").join("tools.json");
+    let library = dc_library::load(&std::fs::read(&library_file).unwrap()).unwrap();
+    assert_eq!(library.tools.len(), 1);
+    assert_eq!(library.tools[0].tool.name, NAME);
+    assert_eq!(escaped(&h), 0, "the status bar's message among them");
+
+    // The Tool Library: its table, its name field, and Add to project.
+    h.get_by_role_and_label(Role::Button, "Tool Library…")
+        .click();
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet
+            .query_by_role_and_label(Role::ListItem, NAME)
+            .is_some()
+    );
+    assert_eq!(
+        sheet
+            .get_by_role_and_label(Role::TextInput, "Name")
+            .value()
+            .as_deref(),
+        Some(NAME)
+    );
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::TextInput, "Name")
+        .focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text("3/8\" \"Whiteside\"".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let library = dc_library::load(&std::fs::read(&library_file).unwrap()).unwrap();
+    assert_eq!(library.tools[0].tool.name, "3/8\" \"Whiteside\"");
+    assert_eq!(escaped(&h), 0, "the library's table and pane");
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::CheckBox, "3/8\" \"Whiteside\"")
+        .click();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Add 1 tool to project")
+        .click();
+    h.run();
+    assert_eq!(
+        tool_names(&h).last().map(String::as_str),
+        Some("3/8\" \"Whiteside\"")
+    );
+    assert_eq!(escaped(&h), 0);
+
+    // An operation's name, in its header, its row and the undo label.
+    open_operation(&mut h, "Cut out");
+    h.get_by_role_and_label(Role::Button, "Cut out").click();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text("Cut \"out\"".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let op = h.state().app().project().operations[4].name().to_owned();
+    assert_eq!(op, "Cut \"out\"");
+    assert!(
+        h.query_by_role_and_label(Role::ListItem, "Cut \"out\"")
+            .is_some(),
+        "its row in the list"
+    );
+    // The next step names it in the Edit menu.
+    type_into(&mut h, "Depth", "9");
+    h.key_press(egui::Key::Tab);
+    h.run();
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Set depth of “Cut \"out\"”")
+    );
+    assert_eq!(escaped(&h), 0);
+
+    // A shape's name, in the Design Tree.
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "square").click();
+    h.run();
+    h.key_press(egui::Key::F2);
+    h.run();
+    h.event(egui::Event::Text("2\" square".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert!(
+        h.state()
+            .app()
+            .project()
+            .instances
+            .iter()
+            .any(|i| i.name == "2\" square")
+    );
+    assert!(
+        h.query_by_role_and_label(Role::TreeItem, "2\" square")
+            .is_some()
+    );
+    assert_eq!(
+        escaped(&h),
+        0,
+        "the tree, the Properties' title, the status bar"
+    );
+
+    // Saved and read again: the names are the ones typed.
+    let saved = dir.join("quoted.dcv");
+    dialogs.answer(&saved);
+    common::shift_command_key(&h, egui::Key::S);
+    h.run();
+    let read = dc_project::load(&std::fs::read(&saved).unwrap())
+        .unwrap()
+        .project;
+    assert_eq!(&read, h.state().app().project());
+    assert_eq!(read.tools[1].name, NAME);
+    // In the file a quote is JSON's `\"`, which is the only place a
+    // backslash stands before it.
+    let text = std::fs::read_to_string(&saved).unwrap();
+    assert!(text.contains("IDC 1/4\\\" Fine Detail"));
+    assert!(!text.contains("\\\\\""), "never a literal backslash");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
