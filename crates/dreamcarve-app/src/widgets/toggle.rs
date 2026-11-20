@@ -10,7 +10,7 @@
 use eframe::egui::{self, Response, Sense, Stroke, StrokeKind, Ui};
 
 use crate::shell::theme::{self, Palette};
-use crate::widgets::button::focus_ring_at;
+use crate::widgets::button::focus_ring_round;
 
 /// The switch's size, px.
 const SIZE: egui::Vec2 = egui::vec2(36.0, 20.0);
@@ -23,7 +23,9 @@ pub(crate) fn toggle(ui: &mut Ui, on: bool, name: &str) -> Response {
     // Centred in a control-high row.
     let (row, _) = ui.allocate_exact_size(egui::vec2(SIZE.x, theme::CONTROL_PX), Sense::hover());
     let rect = egui::Rect::from_center_size(row.center(), SIZE);
-    let response = ui.interact(rect, ui.scope_id().with(("toggle", name)), Sense::click());
+    // The switch is 20 px high; its hit area is the whole 32-px row it
+    // sits in (section 11, "Hit sizes").
+    let response = ui.interact(row, ui.scope_id().with(("toggle", name)), Sense::click());
     let enabled = ui.is_enabled();
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, enabled, on, name));
     let painter = ui.painter();
@@ -69,6 +71,6 @@ pub(crate) fn toggle(ui: &mut Ui, on: bool, name: &str) -> Response {
         rect.left() + radius
     };
     painter.circle_filled(egui::pos2(x, rect.center().y), knob_radius, knob);
-    focus_ring_at(ui, &response, radius);
+    focus_ring_round(ui, &response, rect, radius);
     response
 }

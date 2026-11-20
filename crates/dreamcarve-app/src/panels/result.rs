@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The export result (functional spec, capability 77a; mock-up
-//! `13-export-result.svg`; `experience.md`, section 15, "Export result"):
+//! `13-export-result.svg`; `experience.md`, section 7, "Export result"):
 //! what the Export step shows in the plan's place once the programs are
 //! written. A card inside the step's card holds **Status**, one 15-px
 //! SemiBold line with `circle-check`, *Done* at its right (which brings

@@ -17,7 +17,7 @@
 //! shader picks the colour: the row's, else the operation's, else, when
 //! the camera uniform says *By depth* and the segment cuts, the ramp
 //! texture's texel at its step; a stale segment draws at 35 % alpha
-//! (`experience.md`, section 13, item 18). Switching the colour mode so
+//! (`experience.md`, section 13, item 91). Switching the colour mode so
 //! writes only the camera.
 //!
 //! An operation's toolpath is one buffer, so its eye is one draw call. The

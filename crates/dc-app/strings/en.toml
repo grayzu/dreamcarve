@@ -710,6 +710,7 @@ reset = "Use the tool's value"
 # target-editing bar across the Viewport.
 targets_one = "{names}"
 targets_many = "{count} {count|shape|shapes} · {names}"
+targets_count = "{count} {count|shape|shapes}"
 targets_none = "No shapes"
 targets_edit = "Edit targets"
 targets_menu = "Target actions"

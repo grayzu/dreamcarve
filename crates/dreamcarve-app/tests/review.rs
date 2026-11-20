@@ -1217,6 +1217,38 @@ fn final_steps_and_inspectors(shots: &Shots) {
         shots.take(&mut h, scene);
     }
 
+    // A field that refused what was typed: the error outline and the
+    // message under it. Then a label under the pointer: its help and the
+    // `.dcv` field it writes, in a tooltip.
+    go_to(&mut h, "Stock");
+    h.get_by_role_and_label(Role::TextInput, "Width").focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text("wide".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    shots.take(&mut h, "b06-field-refused");
+    let label = h
+        .query_all_by_role_and_label(Role::Label, "Thickness")
+        .next()
+        .expect("the Thickness row's label")
+        .rect();
+    h.event(egui::Event::PointerMoved(
+        label.left_center() + egui::vec2(12.0, 0.0),
+    ));
+    for _ in 0..12 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+    shots.take_as_is(&mut h, "b07-label-tooltip");
+    park_pointer(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Width").focus();
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+
     go_to(&mut h, "Design");
     h.get_by_role_and_label(Role::TreeItem, "square").click();
     h.run();
@@ -1279,6 +1311,25 @@ fn final_steps_and_inspectors(shots: &Shots) {
         .select(dc_app::Selection::Tabs(tabs));
     h.run();
     shots.take(&mut h, "c06-inspector-several-tabs");
+    drop(h);
+
+    // An Inlay with its groups closed: each says what it holds, its
+    // Cut-out the tool and the tabs; and with no cut-out, *None*.
+    let mut h = window(&dir, Some(fixture("dc.dcv")), 1280.0, 800.0).unwrap();
+    open_operation(&mut h, "DC");
+    settle(&mut h);
+    shots.take(&mut h, "c08-inspector-inlay-groups-closed");
+    let mut without = h.state().app().project().operations[0].clone();
+    let dc_project::Operation::Inlay(inlay) = &mut without else {
+        panic!("the inlay pair's Inlay");
+    };
+    inlay.cut_out = None;
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateOperation(without))
+        .unwrap();
+    settle(&mut h);
+    shots.take(&mut h, "c09-inspector-inlay-no-cut-out");
     drop(h);
 
     // A picture.

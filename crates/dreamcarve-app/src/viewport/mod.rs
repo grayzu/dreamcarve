@@ -1385,7 +1385,7 @@ fn arrow_layer(
 }
 
 /// The selection's transform handles (`experience.md`, section 8,
-/// "Transform handles"; section 13, item 17): a 1-px accent box, four
+/// "Transform handles"; section 13, item 86): a 1-px accent box, four
 /// 8-px corner squares and an 8-px rotation circle on its stem above the
 /// top's centre, all in `shape.locked` grey when a shape is locked. While
 /// a drag is in progress they follow its preview.

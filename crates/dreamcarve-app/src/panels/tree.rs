@@ -50,6 +50,8 @@ const MARGIN_PX: f32 = theme::CARD_PADDING_PX;
 const ROW_PADDING_PX: f32 = 8.0;
 /// An icon's hit square, px.
 const ICON_BOX_PX: f32 = 20.0;
+/// The least a clickable glyph's hit area is, px square.
+const MIN_HIT_PX: f32 = 24.0;
 /// The bar on a target row's left edge, px (`experience.md`, section 7,
 /// "Design Tree row").
 const TARGET_BAR_PX: f32 = 3.0;
@@ -156,6 +158,9 @@ fn tipped_button(
     } else {
         Sense::hover()
     };
+    // The glyph's box is 20 px; its hit area is the 24 px the
+    // accessibility rule asks (section 11, "Hit sizes").
+    let rect = rect.expand((MIN_HIT_PX - rect.width()).max(0.0) / 2.0);
     let response = ui.interact(rect, id, sense);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
     let palette = Palette::current(ui);
@@ -512,7 +517,7 @@ fn shape_row(
         egui::pos2(rect.left() + 8.0 + ICON_BOX_PX / 2.0, rect.center().y),
         egui::vec2(ICON_BOX_PX, ICON_BOX_PX),
     );
-    let lock_rect = eye_rect.translate(egui::vec2(ICON_BOX_PX + 2.0, 0.0));
+    let lock_rect = eye_rect.translate(egui::vec2(ICON_BOX_PX + 4.0, 0.0));
     let (eye_icon, eye_name) = if row.visible {
         (Icon::Eye, strings.get(StrKey::TreeHide))
     } else {
@@ -890,7 +895,7 @@ fn bitmap_row(
         egui::pos2(rect.left() + 8.0 + ICON_BOX_PX / 2.0, rect.center().y),
         egui::vec2(ICON_BOX_PX, ICON_BOX_PX),
     );
-    let lock_rect = eye_rect.translate(egui::vec2(ICON_BOX_PX + 2.0, 0.0));
+    let lock_rect = eye_rect.translate(egui::vec2(ICON_BOX_PX + 4.0, 0.0));
     let (eye_icon, eye_name, eye_colour) = if row.visible {
         (
             Icon::Eye,

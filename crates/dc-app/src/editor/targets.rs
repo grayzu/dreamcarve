@@ -44,9 +44,14 @@ fn named(project: &Project, ids: &[InstanceId]) -> Vec<String> {
 /// Setup's Targets row (capability 67): one line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowSummary {
-    /// The count and the names, `2 shapes · pocket, island`; the shell
-    /// truncates it at the row's end.
+    /// The count and the names, `2 shapes · pocket, island`; one shape is
+    /// its name alone.
     pub text: String,
+    /// The count alone, `2 shapes`, which the row shows where the names
+    /// do not fit: a name cut to its first letter (`2 shapes · p…`) says
+    /// less than no name, and the tooltip has them all. One shape's is
+    /// its name, as [`RowSummary::text`].
+    pub short: String,
     /// Every name, for the row's tooltip.
     pub names: String,
     /// A target carries an error or a warning (an open path under a
@@ -74,6 +79,10 @@ pub fn row_summary(app: &App, op: &Operation) -> RowSummary {
             &[("count", &n.to_string()), ("names", &names)],
         ),
     };
+    let short = match ids.len() {
+        0 | 1 => text.clone(),
+        n => strings.fmt(StrKey::EditorTargetsCount, &[("count", &n.to_string())]),
+    };
     let warning = fields::rows(op)
         .into_iter()
         .find(|row| row.key == "targets")
@@ -81,6 +90,7 @@ pub fn row_summary(app: &App, op: &Operation) -> RowSummary {
         .is_some_and(|status| status.tier != Tier::Hint);
     RowSummary {
         text,
+        short,
         names,
         warning,
     }

@@ -204,7 +204,7 @@ fn units(ui: &mut Ui, state: &FrameState<'_>, label: &str, current: Units, out: 
 /// It is one of the right-hand cells, so its parts are added last first.
 fn generation(ui: &mut Ui, cell: &GenerationCell, palette: &Palette, out: &mut Vec<Action>) {
     if let Some(action) = &cell.action {
-        let spec = ButtonSpec::new(Kind::Quiet, &action.label).height(CELL_PX - 4.0);
+        let spec = ButtonSpec::new(Kind::Quiet, &action.label).height(CELL_PX);
         if button(ui, spec).clicked() {
             out.push(match action.action {
                 GenerationAction::Stop => Action::StopGeneration,

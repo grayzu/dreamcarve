@@ -41,7 +41,7 @@ pub(crate) const HEIGHT_PX: f32 = theme::CONTROL_PX;
 /// The unit's share of the field's right end, px (section 3).
 const UNIT_PX: f32 = 28.0;
 /// The reset button's square, px.
-const RESET_PX: f32 = 22.0;
+const RESET_PX: f32 = 24.0;
 /// Inner padding, px.
 const PADDING_PX: f32 = 10.0;
 

@@ -287,11 +287,13 @@ fn row_summary() {
         |harness: &Harness| targets::row_summary(&harness.app, &operation(harness, "op1"));
     let row = summary(&harness);
     assert_eq!(row.text, "2 shapes · pocket, island");
+    assert_eq!(row.short, "2 shapes", "where the names do not fit");
     assert_eq!(row.names, "pocket, island");
     assert!(!row.warning, "the plaque's Panel is clean");
 
     let recess = targets::row_summary(&harness.app, &operation(&harness, "op2"));
     assert_eq!(recess.text, "square", "one target reads as its name");
+    assert_eq!(recess.short, "square");
 
     // The draft, live.
     assert!(harness.app.edit_targets(&panel()));

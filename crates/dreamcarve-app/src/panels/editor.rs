@@ -1364,12 +1364,20 @@ fn targets_row(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>, out: &mut Vec<Action>)
         );
         right -= 6.0;
     }
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        summary.text.clone(),
-        TextStyle::Body.resolve(ui.style()),
-        colour,
-    );
-    job.wrap = egui::text::TextWrapping::truncate_at_width((right - left).max(0.0));
+    // The count and the names where they fit whole; else the count
+    // alone, and the names in the tooltip (`RowSummary::short`).
+    let font = TextStyle::Body.resolve(ui.style());
+    let room = (right - left).max(0.0);
+    let whole = ui
+        .painter()
+        .layout_no_wrap(summary.text.clone(), font.clone(), colour);
+    let shown = if whole.size().x <= room {
+        &summary.text
+    } else {
+        &summary.short
+    };
+    let mut job = egui::text::LayoutJob::simple_singleline(shown.clone(), font, colour);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
     let galley = ui.painter().layout_job(job);
     ui.painter().galley(
         egui::pos2(left, rect.center().y - galley.size().y / 2.0),

@@ -1707,7 +1707,7 @@ fn drop_of_svg_opens_the_import_sheet() {
             .is_disabled(),
         "Import is disabled until units are chosen"
     );
-    // No Cancel button (`experience.md`, section 13, item 9): the
+    // No Cancel button (`experience.md`, section 13, item 76): the
     // header's close button closes the sheet.
     assert!(
         h.get_by_role(Role::Dialog)
@@ -5879,7 +5879,7 @@ fn required_field_shows_required_not_a_message() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Functional 66 and experience checklist 31 (slice 26, #618): the carve
+/// Functional 66 and experience checklist 67 (slice 26, #618): the carve
 /// summary `check` prints is not in the editor (slice 28 makes it a note
 /// in the Warnings drawer). For every kind with a record, in the
 /// committed fixtures, once generation has settled, no node is labelled
@@ -8117,6 +8117,14 @@ fn focus_ring_goes_round_the_control_it_names() {
                 }
                 // The Viewport is a card.
                 Role::Canvas => same(control, *node) && close(ring.radius_px, 14.0),
+                // A switch: the 36 × 20 pill in the row that takes its
+                // clicks.
+                Role::Switch => {
+                    close(control.width(), 36.0)
+                        && close(control.height(), 20.0)
+                        && node.expand(0.6).contains_rect(control)
+                        && close(ring.radius_px, 10.0)
+                }
                 _ => same(control, *node),
             };
             // A ring's corner is never rounder than a pill's.
@@ -8125,6 +8133,16 @@ fn focus_ring_goes_round_the_control_it_names() {
                 wrong.push(format!(
                     "{step}: {role:?} {label:?} is {node:?}, ringed round {control:?} r {}",
                     ring.radius_px
+                ));
+            }
+            // `experience.md`, section 11, "Hit sizes": nothing a pointer
+            // aims at is under 24 × 24 px (a panel's resize handle is its
+            // 8-px gap, with slop either side).
+            let small = node.width() < 23.4 || node.height() < 23.4;
+            if small && !matches!(role, Role::Splitter) {
+                wrong.push(format!(
+                    "{step}: {role:?} {label:?} is {:?}, under 24 × 24",
+                    node.size()
                 ));
             }
         }

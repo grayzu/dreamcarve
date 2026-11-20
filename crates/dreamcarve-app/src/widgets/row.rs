@@ -11,7 +11,7 @@
 //! the inline validation message under the field: glyph then the file's
 //! message, 12 px, in the status's text colour ("Inline validation
 //! message"). Every state has an outline, a glyph and a message, never
-//! colour alone (section 13, item 7).
+//! colour alone (section 13, items 53 and 54).
 
 use dc_job::Tier;
 use eframe::egui::{self, Rect, Response, RichText, Sense, Stroke, TextStyle, Ui};

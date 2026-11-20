@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The theme module is the one place colours are written
-//! (`docs/specs/phase-4/experience.md`, sections 5, 12 and 13, item 1), and
+//! (`docs/specs/phase-4/experience.md`, sections 5, 12 and 13, item 28), and
 //! its tokens are the spec's.
 
 #![allow(

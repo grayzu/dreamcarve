@@ -406,8 +406,8 @@ fn header(ui: &mut Ui, app: &App, sheet: &Sheet, out: &mut Vec<Action>) {
     );
 }
 
-/// The library's `mm` / `in` (capability 64; section 15, "Library
-/// units"): a preference, never a library or project change.
+/// The library's `mm` / `in` (capability 64; section 7, "Tool Library
+/// header"): a preference, never a library or project change.
 fn units_control(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
     const OPTIONS: [Units; 2] = [Units::Mm, Units::Inch];
     let strings = app.strings();

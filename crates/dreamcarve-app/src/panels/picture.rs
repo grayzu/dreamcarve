@@ -20,7 +20,7 @@
 //! thumbnail is an egui texture made once from the model's pixels, thinned
 //! to at most [`PREVIEW_MAX_PX`] a side so a camera's picture costs a
 //! frame nothing. The sheet has no Cancel: the header's `x`, Escape and
-//! the scrim close it (`experience.md`, section 13, item 9).
+//! the scrim close it (`experience.md`, section 13, item 76).
 
 use std::path::{Path, PathBuf};
 

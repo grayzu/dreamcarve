@@ -10,7 +10,7 @@
 //! unless the user chose otherwise.
 //!
 //! The one place a colour is written: every widget takes its colours from
-//! a [`Palette`] (section 13, item 1; `tests/theme.rs` scans for literals
+//! a [`Palette`] (section 13, item 28; `tests/theme.rs` scans for literals
 //! elsewhere). The operation colours and the depth ramp (slice 16) are
 //! here too. Both operation sets are the app's own since the redesign
 //! moved green, orange and cyan off the accent's hue; the CLI's
@@ -935,7 +935,7 @@ mod tests {
 
     /// The type scale has only the spec's sizes, and one size under
     /// 12 px: the rail's 11-px label, which sits under an icon
-    /// (`redesign.md`, "Shape, size and type"; section 13, item 5).
+    /// (`redesign.md`, "Shape, size and type"; section 13, item 41).
     #[test]
     fn type_scale_is_the_spec_sizes() {
         for (style, font) in text_styles() {

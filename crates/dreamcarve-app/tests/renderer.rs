@@ -63,7 +63,7 @@ fn stroke_width_px(
     width
 }
 
-/// `experience.md` checklist item 15: "a fit view and a 4× zoom show the
+/// `experience.md` checklist item 85: "a fit view and a 4× zoom show the
 /// same stroke widths". One 100 × 40 mm rectangle on the stock, the grid
 /// off: its bottom edge measures 1.25 px (the shape's weight, section 9)
 /// at fit and after a 4× zoom about it, and 2 px selected, at both.

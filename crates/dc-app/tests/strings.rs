@@ -242,7 +242,7 @@ fn placeholders_are_filled() {
     }
 }
 
-/// Slice 29 (#621; functional 63, experience checklist 32): *Delete*,
+/// Slice 29 (#621; functional 63, experience checklist 77): *Delete*,
 /// never *Remove*, names a deletion. The values that say `Remove` are the
 /// target actions (the target-editing bar, and the Design Tree's `Remove
 /// from “{name}”` and its hover text), which take a shape out of an

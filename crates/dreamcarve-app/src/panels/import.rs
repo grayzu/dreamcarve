@@ -21,7 +21,7 @@
 //! the bytes again, and asks the shell for *Import*, *Choose…* and close.
 //! The footer has the one primary action and no Cancel: the header's `x`,
 //! Escape and the scrim close the sheet (`experience.md`, section 13,
-//! item 9).
+//! item 76).
 
 use std::path::{Path, PathBuf};
 
