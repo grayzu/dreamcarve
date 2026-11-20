@@ -189,7 +189,7 @@ The project file is the one the command line reads and writes
 ([The project file](project-file.md)). Nothing about the window is in it:
 panel sizes, recent files, the appearance and what the Viewport shows are
 the app's own preferences, kept in `gui.toml` beside `config.toml`
-([Configuration](configuration.md#where-it-lives)).
+([Configuration](configuration.md#the-apps-preferences)).
 
 ## Appearance
 

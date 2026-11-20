@@ -2499,3 +2499,97 @@ fn warnings_screenshots() {
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }
+
+/// The chapter "Configuration"
+/// (`docs/book/src/user-guide/configuration.md`, "The app's
+/// preferences"): the Appearance menu and its three choices, what the
+/// app writes to `gui.toml` beside `config.toml`, and that the file can
+/// be deleted or damaged: the app starts with its defaults and writes a
+/// new one.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn configuration_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-config", &dialogs) else {
+        return;
+    };
+    let gui_toml = dir.join("config").join("gui.toml");
+    let written = || std::fs::read_to_string(&gui_toml).unwrap_or_default();
+    assert!(
+        written().contains("plaque.dcv"),
+        "opening a project writes it to the recent files"
+    );
+
+    // Appearance, from the rail: three choices, the current one ticked.
+    h.get_by_label_contains("Appearance: Dark").click();
+    h.run();
+    for choice in ["System", "Light", "Dark"] {
+        assert!(h.query_by_label(choice).is_some(), "the menu has {choice}");
+    }
+    shoot(&mut h, &out, "appearance-menu", Crop::StepPanel);
+    click(&mut h, "Light");
+    h.run();
+    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::Light);
+    assert!(written().contains("theme = \"light\""), "written at once");
+
+    // View ▸ Appearance is the same menu.
+    click_button(&mut h, "View");
+    click(&mut h, "Appearance");
+    click(&mut h, "System");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::System);
+
+    // A group left open and the colour mode are remembered too.
+    open_operation(&mut h, "Panel");
+    open_group(&mut h, "Depth");
+    click(&mut h, "By depth");
+    h.run();
+    drop(h);
+    let text = written();
+    for line in [
+        "theme = \"system\"",
+        "colour = \"by_depth\"",
+        "\"operation.pocket.depth\" = true",
+        "[visibility]",
+        "[panels]",
+        "[tab]",
+    ] {
+        assert!(text.contains(line), "gui.toml has `{line}`:\n{text}");
+    }
+
+    // Deleted, it is the defaults again: dark, the groups closed.
+    std::fs::remove_file(&gui_toml).unwrap();
+    let plaque = dir.with_file_name("plaque").join("plaque.dcv");
+    let mut h = window(&dir, Some(plaque.clone()), &dialogs).unwrap();
+    assert!(h.state().app().prefs().sections.is_empty());
+    assert!(gui_toml.exists(), "and the app writes a new one");
+    open_operation(&mut h, "Panel");
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Step-down")
+            .is_none(),
+        "the Depth group is closed again"
+    );
+    drop(h);
+
+    // Damaged, it is the defaults too: the app starts all the same. (The
+    // window is built without `window`'s override of the appearance.)
+    std::fs::write(&gui_toml, "theme = 7\n").unwrap();
+    let h = Harness::builder()
+        .with_size(WINDOW)
+        .with_pixels_per_point(SCALE)
+        .renderer(egui_kittest::wgpu::WgpuTestRenderer::new())
+        .build_eframe({
+            let options = options(&dir.join("config"), Some(plaque), &dialogs);
+            move |cc| dreamcarve_app::Shell::new(cc, options).expect("the shell starts")
+        });
+    assert_eq!(
+        h.state().app().prefs().theme,
+        dc_app::Theme::Dark,
+        "a file the app cannot read is the defaults"
+    );
+    assert_eq!(h.state().app().project().operations.len(), 5);
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
