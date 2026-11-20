@@ -219,8 +219,10 @@ pub(super) fn duplicate(project: &Project, ids: &[InstanceId]) -> Result<Project
 }
 
 /// `DeleteInstances`: the instances go, with their placed tabs, their
-/// entries in every operation's targets, and any definition no instance
-/// uses after (capability 59). The operations stay.
+/// entries in every operation's targets and in every Inlay's drawn
+/// `boundary`, and any definition no instance uses after (capability 59).
+/// The operations stay. An Inlay whose last boundary shape goes has its
+/// band from its margin again, and validation asks for one that is unset.
 pub(super) fn delete(project: &Project, ids: &[InstanceId]) -> Result<Project, CommandError> {
     require_all(project, ids)?;
     let mut next = project.clone();
@@ -229,6 +231,9 @@ pub(super) fn delete(project: &Project, ids: &[InstanceId]) -> Result<Project, C
     for operation in &mut next.operations {
         if let Some(targets) = super::operations::targets_mut(operation) {
             targets.retain(|t| !ids.contains(t));
+        }
+        if let dc_project::Operation::Inlay(inlay) = operation {
+            inlay.boundary.retain(|shape| !ids.contains(shape));
         }
     }
     let used: Vec<_> = next

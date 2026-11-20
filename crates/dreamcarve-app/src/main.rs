@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use dc_app::Strings;
+use dc_app::{StrKey, Strings};
 use dreamcarve_app::{NativeDialogs, Options, Shell};
 use dreamcarve_shell::Paths;
 use eframe::egui;
@@ -30,15 +30,16 @@ struct Args {
     file: Option<PathBuf>,
 }
 
-/// The window's size and place from `gui.toml`, or 1280 × 800.
-fn viewport(paths: Option<&Paths>) -> egui::ViewportBuilder {
+/// The window's size and place from `gui.toml`, or 1280 × 800, under the
+/// app's name `title` until the shell titles it for its project.
+fn viewport(paths: Option<&Paths>, title: &str) -> egui::ViewportBuilder {
     let window = paths
         .map(|p| {
             dreamcarve_app::files::prefs_from_file(&dreamcarve_shell::gui_prefs::load(p).prefs)
         })
         .and_then(|prefs| prefs.window);
     let mut builder = egui::ViewportBuilder::default()
-        .with_title("DreamCarve")
+        .with_title(title)
         .with_app_id("dreamcarve")
         .with_drag_and_drop(true)
         .with_inner_size([1280.0, 800.0]);
@@ -64,18 +65,22 @@ fn viewport(paths: Option<&Paths>) -> egui::ViewportBuilder {
 fn main() -> ExitCode {
     let args = Args::parse();
     let config = Paths::from_env().ok();
+    // The app's name is the string table's, as every other string the
+    // window shows is (capability 80).
+    let strings = Strings::english();
+    let name = strings.get(StrKey::AppName);
     let options = eframe::NativeOptions {
-        viewport: viewport(config.as_ref()),
+        viewport: viewport(config.as_ref(), name),
         renderer: eframe::Renderer::Wgpu,
         ..eframe::NativeOptions::default()
     };
     let shell_options = Options {
         config,
         open: args.open.or(args.file),
-        dialogs: Box::new(NativeDialogs::new(&Strings::english())),
+        dialogs: Box::new(NativeDialogs::new(&strings)),
     };
     let result = eframe::run_native(
-        "DreamCarve",
+        name,
         options,
         Box::new(move |cc| Ok(Box::new(Shell::new(cc, shell_options)?))),
     );

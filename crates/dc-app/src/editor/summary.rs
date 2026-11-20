@@ -180,6 +180,21 @@ impl Cx<'_> {
                 let tool = Slot::of(row).tool(self.project, self.op)?;
                 Some(self.labelled(row, &tool.name))
             }
+            // A drawn boundary by its shape's name (`boundary frame`), or
+            // by how many shapes draw it; none says nothing, and the
+            // margin after it speaks for the band.
+            FieldKind::BoundaryPicker => {
+                let shapes = super::boundary(self.op);
+                let text = match shapes {
+                    [] => return None,
+                    [_] => super::boundary_text(self.project, self.strings, self.op)?,
+                    _ => self.strings.fmt(
+                        StrKey::EditorTargetsCount,
+                        &[("count", &shapes.len().to_string())],
+                    ),
+                };
+                Some(self.labelled(row, &text))
+            }
             FieldKind::EarlierPocket => {
                 let id = value.as_str()?;
                 let name = earlier_pockets(self.project, self.op)

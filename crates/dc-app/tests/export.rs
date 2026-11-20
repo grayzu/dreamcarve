@@ -153,6 +153,73 @@ fn plan_lists_programs_as_the_cli_prints_them() {
     }
 }
 
+/// Acceptance 76's clause "with the male thickness cleared … the Export
+/// step lists the female board only" (capability 68a): the inlay
+/// fixture's male board thickness emptied in the editor, as the window
+/// empties it. Nothing blocks the export (`inlay_male_board_unset` is a
+/// warning), every program the plan lists is the female board's, under
+/// the names and with the bytes `dreamcarve export` writes for that file,
+/// and there are fewer than with the thickness set, when the male's are
+/// listed too.
+#[test]
+fn male_thickness_cleared_exports_the_female_board_only() {
+    let bytes = read(&fixture("dc.dcv"));
+    let mut harness = generated(&bytes);
+    let both = ready(&harness, &options());
+    assert!(both.programs.iter().any(|p| p.program.board == Board::Male));
+
+    let inlay = harness.app.project().operations[0].clone();
+    let thickness = dc_app::editor::fields::rows(&inlay)
+        .into_iter()
+        .find(|row| row.key == "male_board.thickness_mm")
+        .expect("the male board's thickness row");
+    let cleared = dc_app::editor::commit_text(harness.app.project(), &inlay, thickness, "")
+        .expect("an empty thickness is accepted")
+        .expect("and is a change");
+    harness.run(cleared).unwrap();
+    harness.generate();
+    assert!(
+        harness
+            .warnings()
+            .iter()
+            .any(|f| f.code.as_deref() == Some("inlay_male_board_unset") && f.tier != Tier::Error),
+        "{:?}",
+        harness.warnings()
+    );
+
+    let ready = ready(&harness, &options());
+    assert_eq!(ready.blocked(), None, "the female still exports");
+    assert!(!ready.programs.is_empty());
+    assert!(
+        ready
+            .programs
+            .iter()
+            .all(|p| p.program.board == Board::Female),
+        "no male program is listed"
+    );
+    assert!(ready.programs.len() < both.programs.len());
+    let names = ready.names("dc");
+    assert!(
+        names
+            .iter()
+            .all(|n| !n.contains("male") || n.contains("female")),
+        "{names:?}"
+    );
+    let built = cli_build(harness.app.project(), ProgramSplit::ProjectDefault, None);
+    let cli: Vec<&str> = built.programs.iter().map(|p| p.text.as_str()).collect();
+    let texts: Vec<&str> = ready
+        .programs
+        .iter()
+        .map(|p| p.program.text.as_str())
+        .collect();
+    assert!(texts == cli, "the programs are the CLI's for that file");
+    assert_eq!(
+        names,
+        dc_job::program_names(harness.app.project(), "dc", &built.programs),
+        "under the CLI's names"
+    );
+}
+
 /// Acceptance 76 and 85: with the inlay fixture's female board unticked,
 /// the plan lists the male board's programs alone, as `export --board
 /// male` writes them, and nothing in the project changes; unticking both

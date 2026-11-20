@@ -21,7 +21,7 @@ use eframe::egui::{self, Button, Key, Modifiers, Ui};
 use crate::keyboard::{self, Command as Shortcut};
 use crate::shell::files;
 use crate::shell::theme::{self, Palette};
-use crate::shell::window::{Action, FrameState, shortcut_action, shortcut_text};
+use crate::shell::window::{Action, BookPage, FrameState, shortcut_action, shortcut_text};
 use crate::widgets::icon::Icon;
 
 /// A menu row reading `key` with `shortcut`, pushing `action` when chosen.
@@ -96,18 +96,18 @@ pub(crate) fn menus(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) 
         .inner
 }
 
-/// Help's rows: the User Guide and About. The Help menu's, and the
-/// rail's Help button's.
+/// Help's rows (capability 79): the book's quick start for the app, its
+/// Keyboard chapter and its front page, each opened in the browser, and
+/// About. The Help menu's, and the rail's Help button's.
 pub(crate) fn help_items(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
-    item(
-        ui,
-        strings,
-        StrKey::AppMenuUserGuide,
-        None,
-        Action::UserGuide,
-        out,
-    );
+    for (label, page) in [
+        (StrKey::AppMenuQuickStart, BookPage::QuickStart),
+        (StrKey::AppMenuKeyboardShortcuts, BookPage::Keyboard),
+        (StrKey::AppMenuUserGuide, BookPage::Front),
+    ] {
+        item(ui, strings, label, None, Action::OpenBook(page), out);
+    }
     item(ui, strings, StrKey::AppMenuAbout, None, Action::About, out);
 }
 

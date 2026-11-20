@@ -435,9 +435,11 @@ fn post_switch_keeps_settings() {
 
 /// Capability 62 and acceptance 70: one program with `M6` is offered
 /// where the definition's tool change has `M6` (grblHAL; GRBL 1.1 has
-/// none, #57), canned cycles where the definition has them (LinuxCNC, not
-/// grblHAL or GRBL), each decided from the definition as `validate`
-/// decides it.
+/// none, #57), canned cycles where the definition has them, each decided
+/// from the definition as `validate` decides it. Of the six bundled
+/// post-processors the two whose definitions have canned cycles are
+/// LinuxCNC and Mach3 (`G81` and `G82` in both), so the switch is offered
+/// on those two and on none of generic, GRBL, grblHAL and UCCNC.
 #[test]
 fn m6_and_canned_cycles_offered_per_definition() {
     let base = plaque();
@@ -478,6 +480,22 @@ fn m6_and_canned_cycles_offered_per_definition() {
         offers("grbl").canned_cycles,
         Offer::Refused { .. }
     ));
+    // Acceptance 70's last clause, by name: the bundled post-processors
+    // that offer canned cycles are exactly LinuxCNC and Mach3.
+    let mut offered: Vec<&str> = dc_project::latest_definitions()
+        .expect("bundled")
+        .into_iter()
+        .map(|definition| definition.id)
+        .filter(|id| offers(id).canned_cycles == Offer::Offered)
+        .collect();
+    offered.sort_unstable();
+    assert_eq!(offered, ["linuxcnc", "mach3"]);
+    for id in ["generic", "grbl", "grblhal", "uccnc"] {
+        assert!(
+            matches!(offers(id).canned_cycles, Offer::Refused { .. }),
+            "{id} has no canned cycles to offer"
+        );
+    }
 
     // Not offered means no command: the mode and the switch cannot be set.
     let grbl = on_post(base.clone(), "grbl");

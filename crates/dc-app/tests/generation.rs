@@ -457,6 +457,48 @@ fn a_bitmap_edit_changes_only_the_digest_of_the_carve_that_reads_it() {
     );
 }
 
+/// The design's rule for an Inlay's drawn boundary (format 26; phase 3's
+/// capability 49f): the male's band ends at the outlines of the shapes
+/// `boundary` lists, which are not targets, so moving one changes what
+/// the Inlay generates and must change its digest. The lettered pair with
+/// its frame as the boundary (`dc-boundary.dcv`), the frame moved 3 mm
+/// (acceptance 61m's project): the digest changes, and so does the male.
+/// The same move in the pair without a boundary (`dc.dcv`), where nothing
+/// reads the frame, leaves the digest alone.
+#[test]
+fn moving_an_inlays_boundary_shape_changes_its_digest() {
+    let inlay = op("op1");
+    let moved = |project: &Project| {
+        let mut moved = project.clone();
+        let frame = moved
+            .instances
+            .iter_mut()
+            .find(|i| i.id.as_str() == "i3")
+            .expect("the frame");
+        frame.transform = frame.transform.then(Transform::translate(3.0, 0.0));
+        moved
+    };
+    let drawn = load_dcv(&common::fixture("dc-boundary.dcv"));
+    let shifted = moved(&drawn);
+    assert!(!dc_job::validation(&shifted).has_errors());
+    assert!(
+        dc_job::generate_operation(&shifted, &inlay) != dc_job::generate_operation(&drawn, &inlay),
+        "the male's band follows its drawn edge"
+    );
+    assert_ne!(
+        generation::digest(&shifted, &inlay),
+        generation::digest(&drawn, &inlay),
+        "so the Inlay's digest covers the boundary's shape"
+    );
+
+    let computed = load_dcv(&common::fixture("dc.dcv"));
+    assert_eq!(
+        generation::digest(&moved(&computed), &inlay),
+        generation::digest(&computed, &inlay),
+        "a shape no boundary lists is not the Inlay's input"
+    );
+}
+
 /// Acceptance 87 and the design's dependency rule: after an edit only the
 /// operations whose inputs it touched are pending. An Engrave reads its
 /// own record, tool and targets, so editing it regenerates it and the two

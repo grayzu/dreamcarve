@@ -305,8 +305,13 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
         }
         focus_ring_at(ui, &response, radius);
     }
+    // A button the spec disables is still drawn in an enabled `Ui`, so
+    // egui counts its response as enabled and its "disabled" tooltip
+    // would never open: the reason a button cannot be pressed is its
+    // plain hover text. Only inside a `Ui` that is itself disabled is the
+    // response disabled, and the tooltip the disabled one.
     match spec.tooltip {
-        Some(tip) if enabled => response.on_hover_text(tip),
+        Some(tip) if response.enabled() => response.on_hover_text(tip),
         Some(tip) => response.on_disabled_hover_text(tip),
         None => response,
     }

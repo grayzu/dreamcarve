@@ -47,6 +47,9 @@
 //! whose tabs are the Profile's tab rows at `cut_out.tabs`. Slice 15
 //! (#544) fills the Photo V-Carve: its picture in the targets' place
 //! ([`Row::picks_picture`]), chosen from the project's, and its grooves.
+//! The Inlay's drawn boundary (format 26) has its row since the phase's
+//! audit ([`Row::picks_boundary`]), so every setting of every record has
+//! one.
 //!
 //! Slice 26 (#618, the review redesign; capabilities 66, 66a): there is no
 //! Identity group, since the name is the editor's header and *enabled* the
@@ -315,6 +318,13 @@ pub enum FieldKind {
     PicturePicker,
     /// Instances, by id: the Targets group.
     InstanceList,
+    /// The closed shapes that draw an Inlay's male band edge, by instance
+    /// id (`boundary`, format 26; capability 68): a dropdown of
+    /// [`super::offered_boundaries`] under *None*, which leaves the band
+    /// the design grown by the margin; what the file lists shown as
+    /// chosen ([`super::boundary_text`]), a choice written by
+    /// [`super::set_boundary`].
+    BoundaryPicker,
     /// A Pocket's `rest_of`: none, or one of the earlier enabled Pockets
     /// ([`super::earlier_pockets`]), by id.
     EarlierPocket,
@@ -409,6 +419,9 @@ pub struct Row {
 /// The key of a Photo V-Carve's picture in its record: the bitmap's id.
 const IMAGE_KEY: &str = "image";
 
+/// The key of an Inlay's drawn boundary in its record: instance ids.
+const BOUNDARY_KEY: &str = "boundary";
+
 impl Row {
     /// Whether it is a Photo V-Carve's Picture row (capability 67: "its
     /// Setup row is a **Picture** dropdown of the project's pictures, not
@@ -416,6 +429,13 @@ impl Row {
     #[must_use]
     pub const fn picks_picture(&self) -> bool {
         matches!(self.kind, FieldKind::PicturePicker)
+    }
+
+    /// Whether it is an Inlay's Boundary row (capability 68; phase 3's
+    /// capability 49f): a [`FieldKind::BoundaryPicker`].
+    #[must_use]
+    pub const fn picks_boundary(&self) -> bool {
+        matches!(self.kind, FieldKind::BoundaryPicker)
     }
 
     /// What its value is measured in.
@@ -1411,7 +1431,9 @@ fn cut_out_template(project: &Project) -> Value {
 }
 
 /// Capability 68's Inlay line and 68a, every field (slice 14, #543; mock-up
-/// 06, right): the values once, for both boards; the male board's sizes,
+/// 06, right): the values once, for both boards; the male's drawn
+/// boundary ([`Row::picks_boundary`]) before the margin and the rounding
+/// it replaces; the male board's sizes,
 /// the stock's while `null`, and its thickness, required for the male;
 /// the derived line under Depth; the clearing list (slice 13's block);
 /// the cut-out, off at `null`, with the Profile's tab rows at
@@ -1449,6 +1471,15 @@ const INLAY: &[Row] = &[
         FieldKind::Length,
         StrKey::EditorFieldMaleThickness,
         StrKey::EditorFieldMaleThicknessHelp,
+    ),
+    // The drawn edge stands before the margin and the rounding it
+    // replaces (phase 3's capability 49f).
+    row(
+        Group::Depth,
+        BOUNDARY_KEY,
+        FieldKind::BoundaryPicker,
+        StrKey::EditorFieldBoundary,
+        StrKey::EditorFieldBoundaryHelp,
     ),
     row(
         Group::Depth,

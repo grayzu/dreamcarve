@@ -698,6 +698,32 @@ fn delete_removes_targets_tabs_and_the_unused_definition() {
     );
 }
 
+/// Capability 59 for an Inlay's drawn boundary (format 26): deleting the
+/// shape that draws it takes it off the Inlay's `boundary`, as it is
+/// taken off a target list, so the file never names a shape it no longer
+/// has (`inlay_boundary_unknown`); the Inlay stays, its targets untouched.
+#[test]
+fn delete_takes_a_shape_off_an_inlays_boundary() {
+    let before = common::load_dcv(&common::fixture("dc-boundary.dcv"));
+    let Operation::Inlay(drawn) = operation(&before, "op1") else {
+        panic!("op1 is an Inlay");
+    };
+    assert_eq!(drawn.boundary, [instance("i3")]);
+    let after = Command::DeleteInstances(vec![instance("i3")])
+        .apply(&before)
+        .expect("deletes");
+    let Operation::Inlay(inlay) = operation(&after, "op1") else {
+        panic!("still an Inlay");
+    };
+    assert!(inlay.boundary.is_empty(), "{:?}", inlay.boundary);
+    assert_eq!(inlay.targets, drawn.targets);
+    assert!(
+        !dc_project::validate(&after)
+            .iter()
+            .any(|p| p.code() == "inlay_boundary_unknown")
+    );
+}
+
 /// Capability 63 (slice 8 refines it): a tool an operation uses cannot be
 /// removed, and the refusal names the operations.
 #[test]

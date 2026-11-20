@@ -280,6 +280,22 @@ selected pictures through `operations::add_menu` and `add`, which take
 the selected shapes and the selected pictures; `photo_target` decides the
 picture.
 
+An Inlay's drawn boundary (phase 3's capability 49f, format 26; added
+after the phase's audit) is a row of the same shape: a
+`FieldKind::BoundaryPicker` (`Row::picks_boundary`) in the Inlay's Depth
+group, before the margin and the rounding it replaces, served by
+`editor::offered_boundaries`, `boundary_text` and `set_boundary`. The
+shapes offered are those `dc_project::boundary_instance` accepts for the
+Inlay (every profile closed, not one of its targets), so the row and
+validation cannot differ; `boundary_of_selection` narrows the selection
+to them, for a band drawn by several shapes. Three things elsewhere read
+the list: `generation::digest` hashes each boundary instance and its
+definition with the targets, so moving the shape regenerates the Inlay;
+`DeleteInstances` takes a deleted shape off every `boundary`; and the
+Scene's `MaleBoardView::boundaries` holds
+`dc_job::preview::male_boundaries`, which the Viewport draws dashed on
+the male board as `--preview` does.
+
 In the window (slice D6) the Add picture sheet is `panels/picture.rs`,
 over a `PictureImport` the shell opens on a thread of its own, since
 decoding a camera's picture takes longer than a frame; a dropped file
@@ -334,9 +350,19 @@ focus loss or Enter; Escape restores. The stored value is millimetres.
 `panel.section.item` with `{name}` placeholders. `build.rs` generates the
 `StrKey` enum, so a key that is not in the table fails to compile, and the
 test `strings::every_key_is_used` scans the two GUI crates for each
-variant (acceptance 91). Warning and error text comes from `dc-cam`'s and
-`dc-project`'s `Display`, the CLI's text, with the code beside it; phase 8
-keys them.
+variant (acceptance 91's second half). Its first half is
+`crates/dreamcarve-app/tests/strings.rs::no_user_visible_string_literal_outside_the_table`,
+a scan of the window's sources for string literals that read as words (a
+capital letter, or two words, once escapes and `{placeholders}` are taken
+out). A literal that does must be a developer's by what it is passed to
+(a lint's reason, `Debug` output, a compile-time path or name, a clap
+attribute), one of the fonts' and text styles' names, or the Keyboard
+chapter's text in `keyboard.rs`, which a second test holds out of the
+window; each entry of those lists must match a literal. One lower-case
+word reads as a key and is let through. Warning and error text comes from
+`dc-cam`'s and `dc-project`'s `Display`, the CLI's text, with the code
+beside it, and `dc-app`'s own refusals (`CommandError`) are worded the same
+way; phase 8 keys them, and the scan does not read `dc-app`.
 
 ### Preferences
 
@@ -593,12 +619,13 @@ headless half is `dc-app`'s, so the window only draws it:
   set: Taper per side, Flute length*, from `Tool::unset_values()`) and
   `library::skipped`.
 
-The library's type filter (`KindFilter`) has no tapered ball nose entry
-yet: the window matches it exhaustively, so the variant lands with the
-window's slice (`KindFilter::label` is there for it to switch to).
-`operations::new_operation` still gives a new V-Carve or Inlay the
-project's first V-bit; a project with only a tapered ball nose gets no
-tool there, and the picker offers it.
+The library's type filter (`KindFilter`) has a tapered ball nose entry
+(`library::the_type_filter_has_a_tapered_ball_nose_entry`), which landed
+with the window's slice. `operations::new_operation` gives a new carve
+the first tool its picker offers, so a project whose only carving tool is
+a tapered ball nose gets it
+(`operations::a_new_carve_takes_the_first_tool_its_picker_offers`; the
+worklog's decision 8).
 
 ### Test harness
 
@@ -618,11 +645,15 @@ widget-level behaviour through its accessibility tree (click a row, type
 in a field, assert the command emitted). Snapshot images are kept to a
 handful, generated on Linux only, with `kittest.toml` thresholds; the
 other platforms run the behaviour tests without image comparison, since
-font rasterisation differs per OS. CI's Linux job installs Mesa's lavapipe
-for a software Vulkan adapter; macOS runners render with Metal; Windows
-runners use the DX12 WARP adapter, and if WARP proves unreliable the
-Windows job keeps the egui-only (CPU) harness and the rendering tests run
-on the other two.
+font rasterisation differs per OS. CI's Linux job is to install Mesa's
+lavapipe for a software Vulkan adapter; macOS runners render with Metal;
+Windows runners use the DX12 WARP adapter, and if WARP proves unreliable
+the Windows job keeps the egui-only (CPU) harness and the rendering tests
+run on the other two. **Not yet so** (phase 4 audit): the workflow has no
+step that installs a renderer, and a rendering test prints a line and
+passes where there is no adapter, so a green Linux run would not show a
+rendered frame. The step is part of the release slice, with the snapshot
+pair rendered again on Linux.
 
 ### Visual design
 
@@ -708,14 +739,14 @@ carries. The CLI's existing tests are the regression net for slice 1.
 - `tabs::place_request_equals_tabs_place` (acc 78, first half).
 
 **dreamcarve-shell (slice 1)**
-- `staged::existing_cli_tests_pass_unchanged` (the moved tests), `gui_prefs::missing_file_is_defaults`, `gui_prefs::round_trip`, `gui_prefs::unknown_field_is_a_note_not_an_error`.
+- the moved tests of `crates/dreamcarve-shell/src/staged.rs`, unchanged (not one test: the first plan named them `staged::existing_cli_tests_pass_unchanged`), `gui_prefs::missing_file_is_defaults`, `gui_prefs::round_trip`, `gui_prefs::unknown_field_is_a_note_not_an_error`.
 
 **dc-app core (slice 2)**
 - `command::every_command_round_trips_through_the_file` (each variant applied, saved, loaded, equal).
 - `command::labels_name_the_thing` (acc 86 labels), `command::locked_instances_refuse_transforms` (acc 66).
 - `history::twenty_mixed_edits_undo_and_redo_in_order`, `history::new_edit_clears_redo`, `history::open_clears_history` (acc 62, 86).
 - `app::save_unchanged_is_byte_identical` (acc 62, every fixture), `app::dirty_tracks_the_saved_bytes` (acc 88).
-- `strings::every_key_is_used`, `strings::placeholders_are_filled` (acc 91).
+- `strings::every_key_is_used`, `strings::placeholders_are_filled` (acc 91), and in `crates/dreamcarve-app/tests/strings.rs` `no_user_visible_string_literal_outside_the_table`, the source scan of acc 91.
 - `units::inch_project_displays_inches`, `units::unit_strings_parse_as_the_file_does` (acc 89).
 - `prefs::view_state_is_not_project_state` (acc 81).
 
@@ -729,7 +760,7 @@ carries. The CLI's existing tests are the regression net for slice 1.
 
 **Tree and placement (slice 5)**
 - `tree::rows_follow_file_order_with_badges`, `tree::operations_targeting_each_instance`, `tree::duplicate_is_a_linked_copy` (acc 67), `tree::delete_removes_targets_and_tabs_and_warns` (acc 68), `tree::rename_is_one_step`.
-- `properties::typed_x_y_w_h_rotation_mirror_produce_the_expected_transforms` (acc 66), `properties::multi_selection_shows_mixed_values` (port: `mixedValue.test.ts`).
+- `properties::typed_x_y_w_h_produce_the_expected_transforms` and `arrange::rotate_90_and_flip_equal_the_typed_transforms` (acc 66; one test in the first plan, `typed_x_y_w_h_rotation_mirror_produce_the_expected_transforms`, split when rotation and the flips became Arrange actions), `properties::multi_selection_shows_mixed_values` (port: `mixedValue.test.ts`).
 - `commands::centre_on_stock`, `commands::fit_stock_to_shapes_equals_init` (acc 69).
 
 **Import (slice 6)**
@@ -751,11 +782,11 @@ carries. The CLI's existing tests are the regression net for slice 1.
 **Operations and editors (slices 10–15)**
 - `editor::fields_table_matches_the_records` (acc 73, table-driven over every kind), `editor::set_and_get_by_key_path_round_trip`, `editor::tool_derived_defaults_show_the_tools_value_and_write_null`, `editor::located_warning_matches_its_row`.
 - `operations::add_targets_the_selection_with_cli_defaults` (acc 72), `operations::add_menu_partitions_by_eligibility`, `operations::reorder_enable_duplicate` (acc 74), `operations::delete_keeps_placed_tabs`.
-- `editor::clearing_list_orders_and_warns` (acc 75), `editor::inlay_both_boards` (acc 76, after #498), `editor::photo_v_carve_fields` (acc 77, after 3.5), `editor::drill_cycle_fields_follow_the_cycle`, `editor::profile_tab_request_and_place_tabs` (acc 78).
+- `editor::clearing_list_orders_and_warns` (acc 75), `editor::inlay_both_boards` (acc 76, after #498), `editor::photo_v_carve_fields` (acc 77, after 3.5), `editor::drill_cycle_fields_follow_the_cycle`, `editor::profile_tab_request_round_trips` and `tabs::place_tabs_equals_tabs_place_and_clears_the_request` (acc 78; one test in the first plan, `profile_tab_request_and_place_tabs`).
 - Slice 15, a picture selected and placed: `editor::photo_needs_a_picture_target`, `pictures::a_click_inside_a_footprint_picks_the_picture_under_everything_else`, `pictures::a_picture_is_selected_from_its_row_or_the_viewport`, `pictures::a_pictures_properties_are_its_position_size_and_pixels`, `pictures::moving_a_picture_is_one_undo_step_and_takes_its_grooves_along`, `pictures::resizing_a_picture_keeps_its_proportions_and_its_centre`, `pictures::a_photo_v_carves_picture_is_marked_as_its_target`, `pictures::a_bitmap_rows_menu_adds_a_photo_v_carve_on_it`.
 
 **Export (slice 18)**
-- `export::plan_waits_for_generation`, `export::plan_lists_programs_as_the_cli_prints_them`, `export::board_tick_filters_without_saving` (acc 76, 85), `export::errors_disable_warnings_do_not` (acc 84), `export::override_not_saved` (acc 85), `export::preview_svg_equals_the_cli` (acc 83).
+- `export::plan_waits_for_generation`, `export::plan_lists_programs_as_the_cli_prints_them`, `export::board_tick_filters_without_saving` (acc 76, 85), `export::errors_disable_warnings_do_not` (acc 84), `export::override_not_saved` (acc 85), `scene::svg_dump_equals_preview` (acc 83; `export::preview_svg_equals_the_cli` until slice 32 took the preview out of the sheet).
 - `gui_equality::app_export_equals_cli_export_on_six_posts` (acc 83, `crates/dreamcarve/tests/`), `gui_equality::quick_start_parts_from_the_app` (acc 90).
 
 **Shell (slices 3, 19, 20, 22)**
@@ -859,7 +890,8 @@ rebases, and none waits for another to start.
     with *Regenerate all*), counts, estimate, Z range, message; no stock
     size. The toolpath view as a popover from the status bar with the
     by-operation key, replacing the Viewport card. The depth legend at the
-    Viewport's bottom-left with the positive band and work-coordinate
+    Viewport's bottom-left (since D4 it hangs under the floating controls
+    at the top right) with the positive band and work-coordinate
     labels; Fit leaving room for it. *Regenerate all* removed from View
     and from the drawer; the drawer's group heading only with two or
     more groups. [main]
@@ -877,8 +909,9 @@ rebases, and none waits for another to start.
       plaque the ticks in order are `+10 clearance`, `+5 safe Z`,
       `0 stock top`, `−1 Border and squiggle`, `−4 Panel`, `−6 Square
       recess`, `−12 Screw holes, Cut out`; with Z zero at the stock
-      bottom the stock top's tick is `+11.8` and the cuts' are positive
-      or zero.
+      bottom the stock top's tick is `+11.8` and the cuts' are positive,
+      but for the through cuts, which go the through-cut allowance below
+      the bottom (`−0.2 Screw holes, Cut out`).
     - `view::by_operation_key_lists_each_operation_colour`: one entry
       per enabled operation in list order, colour from the palette by
       index, names from the file.
@@ -1192,9 +1225,9 @@ rebases, and none waits for another to start.
       bounds equal the drawing's bounds and it holds no stock outline.
     - `kittest::file_menu_labels_in_order`: the File menu's items equal
       79a's list.
-    - `kittest::appearance_has_three_checked_choices`: System is checked
-      by default; choosing Dark checks it, sets `Prefs::theme` and
-      applies the dark visuals.
+    - `kittest::appearance_has_three_checked_choices`: Dark is checked
+      by default (functional 79a; the worklog's UI decisions); choosing
+      another checks it, sets `Prefs::theme` and applies its visuals.
     - `kittest::unsaved_sheet_is_save_dont_save_cancel`: on close, quit,
       open and each *New*, the sheet's buttons are exactly those three;
       *Don't Save* proceeds without writing (acceptance 88).
@@ -1215,6 +1248,15 @@ rebases, and none waits for another to start.
     - `theme::no_colour_literal_outside_theme` still green.
     - A checklist comment on #549 with every item ticked and every
       screenshot captioned.
+
+    **Superseded.** This slice reviewed the layout slices 23 to 35
+    built (pull request #666), which the redesign replaced. The review
+    that closes the phase is the redesign's own, slice D5: the checklist
+    is `experience.md` section 13's 100 items, the pictures are at 1× as
+    that section asks, and the record is `review/final/README.md`
+    (functional acceptance 104), not a comment on #549. The snapshot
+    pair was regenerated on macOS for the new layout and must be
+    rendered again on Linux before it can pass there.
 
 ## Redesign slices
 
@@ -1256,7 +1298,9 @@ D3. **The steps, the header, the rail, the step panel, the Inspector
       order, 56 × 52; a new project on Design, the plaque on Export; the
       pick stays through an edit; *New* opens on Design.
     - `kittest::continue_goes_to_the_next_step_and_export_is_the_primary_on_export`:
-      *Continue* from Design; *Export G-code* on Export opens the sheet,
+      *Continue* from Design; *Export G-code* on Export is the primary
+      button (it opened the export sheet in D3; since D4 it writes the
+      programs, and the test asserts no sheet opens),
       and is disabled once a used tool has no feed, when Tools and
       Export are marked with an error.
     - `kittest::inspector_shows_properties_only_with_a_selection` (was
@@ -1291,6 +1335,56 @@ D3. **The steps, the header, the rail, the step panel, the Inspector
       asserts what it did before.
     - `review::redesign_d3_screenshots` writes
       `docs/specs/phase-4/review/d3/`.
+
+## Audit follow-up
+
+The phase's exit-criteria audit (`audit.md`; worklog E2) found one
+functional gap and seventeen acceptance clauses that no test asserted.
+Worklog E6 closed what could be closed in the two GUI crates. Its tests,
+by the acceptance test each is for:
+
+- **An Inlay's drawn boundary** (functional 68, 68a; "The editors"
+  above): `editor::inlay_boundary_is_one_of_the_projects_closed_shapes`,
+  `scene::male_band_follows_a_drawn_boundary`,
+  `generation::moving_an_inlays_boundary_shape_changes_its_digest`,
+  `command::delete_takes_a_shape_off_an_inlays_boundary`,
+  `kittest::inlay_boundary_is_picked_in_the_editor_and_the_male_band_follows_it`,
+  and `gui_equality::inlay_boundary_set_in_the_app_equals_the_clis_project`
+  (the app's programs against the binary's for `dc-boundary.dcv`).
+- **66, 95**: `kittest::locked_shape_has_read_only_fields_and_a_disabled_arrange_group`.
+  A button the spec disables now shows its reason on hover
+  (`widgets/button.rs`): it sits in an enabled `Ui`, so egui's
+  disabled-tooltip never opened for it.
+- **68**: `tree::delete_removes_targets_and_tabs_and_warns` ties the
+  drawer's row to validation's `operation_has_no_targets` and deletes a
+  Pocket's one target too;
+  `kittest::deleting_a_target_lists_the_no_targets_error_in_the_drawer`
+  reads the row in the window.
+- **69**: `kittest::origin_crosshair_and_park_mark_move_on_the_viewport`,
+  on what the Viewport paints; its overlay reads `project::marks`.
+- **70**: `project::m6_and_canned_cycles_offered_per_definition` names
+  the bundled post-processors that offer canned cycles, and
+  `kittest::export_step_offers_m6_and_canned_cycles_where_the_post_processor_has_them`
+  reads the Export step on each of the six.
+- **71**: `kittest::delete_is_disabled_for_a_tool_in_use_and_names_its_operations`;
+  `tools::missing_rate_is_an_error_and_blocks_export` asserts the red
+  mark through `tools::lacks_value`, which the Tools step draws from.
+- **74**: `gui_equality::reorder_and_untick_reach_the_saved_file_and_the_written_programs`.
+- **76**: `export::male_thickness_cleared_exports_the_female_board_only`.
+- **79** (capability): `kittest::help_opens_the_quick_start_the_keyboard_chapter_and_about`.
+- **80**: `kittest::depth_legend_puts_clearance_and_safe_z_in_the_rapid_grey_band`.
+- **84**: `kittest::a_project_with_only_warnings_exports_and_the_status_bar_counts_them`;
+  `export_sheet_disabled_on_errors_and_writes_all_or_none` asserts which
+  tool the finding's click opens.
+- **87**: `viewport::layers::tests::a_stale_operations_toolpath_is_drawn_faded`
+  (the draw list) and `renderer::stale_toolpaths_render_faded` (the
+  frame, where there is an adapter).
+- **88**: `Ask::NewFromPicture` in `kittest::unsaved_sheet_is_save_dont_save_cancel`
+  and `save_on_untitled_asks_where_and_cancel_cancels_all`, which now
+  compares the file *Save* writes with the changed project.
+- **91**: `crates/dreamcarve-app/tests/strings.rs` ("Strings" above).
+- **97**: `kittest::required_field_shows_required_not_a_message` asserts
+  the `circle-x` glyph in the field.
 
 ## Open questions
 

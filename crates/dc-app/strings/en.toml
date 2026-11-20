@@ -175,6 +175,9 @@ no_canned = "Not offered: {name} has no canned cycles."
 # bar, the empty state, the unsaved-changes sheet, file dialogs, and the
 # messages the status bar shows after a file action.
 [app]
+# The app's name: the window's title until a project gives it one, and
+# the name the operating system lists the app under.
+name = "DreamCarve"
 title = "{name} — DreamCarve"
 title_unsaved = "{name}* — DreamCarve"
 # The window title's name before the project has a file.
@@ -226,6 +229,10 @@ theme_dark = "Dark"
 fit_stock = "Fit Stock to Shapes…"
 project_settings = "Project Settings…"
 tool_library = "Tool Library…"
+# Help (capability 79): the book's quick start for the app, its Keyboard
+# chapter and its front page, each opened in the browser, and About.
+quick_start = "Quick Start"
+keyboard_shortcuts = "Keyboard Shortcuts"
 user_guide = "User Guide"
 about = "About DreamCarve"
 
@@ -792,6 +799,11 @@ inlay_seat = "seat: moves {taper} mm per {taper_step}° of taper, {tip} mm per {
 # Slice 15 (#544): a Photo V-Carve's Picture row when the bitmap it names
 # is gone, and how a closed Strategy group words its grooves.
 picture_missing = "{id} · not in the project"
+# An Inlay's Boundary row (phase 3's capability 49f): its empty choice,
+# and the choice that takes the shapes selected on the drawing, for a
+# band drawn by several.
+boundary_none = "None (use the band margin)"
+boundary_selection = "Selected shapes ({count})"
 summary_line_angle = "angle {value}"
 summary_line_spacing = "spacing {value}"
 
@@ -953,6 +965,8 @@ glue_gap = "Glue gap"
 glue_gap_help = "The gap left under the seated plug, below the inlay depth; the value you change to adjust the fit."
 plug_depth = "Plug depth"
 plug_depth_help = "How far below the male's start plane its band is cut flat; the room you saw through to free the plug."
+boundary = "Boundary"
+boundary_help = "A closed shape drawn round the design whose outline is the outer edge of the male's band, in place of the band margin and the outline rounding; none grows the band from the design by the margin."
 margin = "Band margin"
 margin_help = "How far beyond the design the male's band reaches; needed once the male is cut."
 outline_rounding = "Outline rounding"

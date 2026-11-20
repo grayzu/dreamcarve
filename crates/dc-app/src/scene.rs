@@ -27,7 +27,8 @@
 //! With an enabled Inlay the Scene holds its male board (slice 14, #543;
 //! [`MaleBoardView`]): the board's frame, its origin mark and the Inlay's
 //! design mirrored as the generator mirrors it
-//! ([`dc_job::preview::male_shapes`]), all offset to the right of the
+//! ([`dc_job::preview::male_shapes`]) with its drawn boundary, when it has
+//! one ([`dc_job::preview::male_boundaries`]), all offset to the right of the
 //! stock by one stock width plus [`MALE_BOARD_GAP_MM`] for display only.
 //! The male runs stay in their board's own space, as `--preview` and the
 //! export read them; the Viewport adds [`Scene::board_offset`] as it
@@ -197,6 +198,12 @@ pub struct MaleBoardView {
     /// Each Inlay's design as its male cuts it, offset; none while no
     /// Inlay's male board thickness is set (the male board is empty).
     pub shapes: Vec<MaleShape>,
+    /// Each Inlay's drawn boundary as its male cuts it
+    /// ([`dc_job::preview::male_boundaries`]: the shapes its `boundary`
+    /// lists, mirrored with the design), offset: the band's outer edge,
+    /// drawn dashed as `--preview` draws it. None for a band grown from
+    /// the design by the margin, and while the male is not cut.
+    pub boundaries: Vec<Polyline>,
 }
 
 /// The male board of `project`, when it has an enabled Inlay.
@@ -242,6 +249,11 @@ fn male_board(project: &Project) -> Option<MaleBoardView> {
             }
         })
         .collect();
+    let boundaries = preview::male_boundaries(project)
+        .iter()
+        .flat_map(|boundary| &boundary.outlines)
+        .filter_map(|outline| shift.apply_polyline(outline).ok())
+        .collect();
     Some(MaleBoardView {
         op: inlay.id.clone(),
         name: inlay.name.clone(),
@@ -249,6 +261,7 @@ fn male_board(project: &Project) -> Option<MaleBoardView> {
         frame,
         origin_mm: shift.apply(project.origin.xy.point_mm(&stock)),
         shapes,
+        boundaries,
     })
 }
 

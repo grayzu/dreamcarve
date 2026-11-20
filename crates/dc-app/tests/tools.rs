@@ -143,7 +143,7 @@ fn missing_rate_is_an_error_and_blocks_export() {
     let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
     assert!(!harness.app.validation().has_errors(), "the plaque exports");
     let t2 = tool(harness.app.project(), "t2").clone();
-    assert!(!tools::lacks_rate(&t2));
+    assert!(!tools::lacks_rate(&t2) && !tools::lacks_value(&t2));
     assert_eq!(tools::field_text(&t2, ToolField::Plunge, Units::Mm), "500");
     assert_eq!(
         tools::field_unit(ToolField::Plunge, Units::Mm),
@@ -158,6 +158,10 @@ fn missing_rate_is_an_error_and_blocks_export() {
     let message = "tools[t2].plunge_mm_min is not set (mm/min) for tool `1/4 end mill`";
     let t2 = tool(harness.app.project(), "t2").clone();
     assert!(tools::lacks_rate(&t2), "the row's red mark");
+    assert!(
+        tools::lacks_value(&t2),
+        "which the Tools step draws from `lacks_value`"
+    );
     assert_eq!(
         tools::unset_rates(&t2),
         [("plunge_mm_min", message.to_owned())],
@@ -187,7 +191,7 @@ fn missing_rate_is_an_error_and_blocks_export() {
     harness.run(Command::UpdateTool(typed)).unwrap();
     let t2 = tool(harness.app.project(), "t2");
     assert_eq!(t2.plunge_mm_min, Some(500.0));
-    assert!(!tools::lacks_rate(t2));
+    assert!(!tools::lacks_rate(t2) && !tools::lacks_value(t2));
     assert!(tools::unset_rates(t2).is_empty());
     assert!(
         !harness

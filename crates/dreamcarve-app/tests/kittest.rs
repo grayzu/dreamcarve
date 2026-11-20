@@ -1407,6 +1407,72 @@ fn locked_refuses_with_status_message() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Acceptance 66's and 95's clause for a locked shape and the other
+/// three transforms (capabilities 58 and 58a), in the window. A drag and a
+/// nudge are refused with a status-bar message
+/// (`locked_refuses_with_status_message`); a typed value, Rotate and Flip
+/// cannot be asked for at all. With the locked square selected on the
+/// Design step the Inspector says it is locked, its X, Y, W and H fields
+/// are read-only, and Rotate and the two flips are disabled with the
+/// reason as their tooltip; pressing one changes nothing.
+#[test]
+fn locked_shape_has_read_only_fields_and_a_disabled_arrange_group() {
+    let dir = scratch("locked-inspector");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_step_dt(0.1)
+        .build_eframe(|cc| {
+            dreamcarve_app::Shell::new(cc, options(&dir.join("config"), Some(plaque), &dialogs))
+                .expect("the shell starts")
+        });
+    h.run();
+    h.state_mut()
+        .app_mut()
+        .run(Command::SetInstanceFlags {
+            ids: vec![dc_project::InstanceId::new("i4")],
+            visible: None,
+            locked: Some(true),
+        })
+        .expect("locks the square");
+    go_to(&mut h, "Design");
+    select_only(&mut h, "i4");
+    let locked = h.state().app().project().clone();
+    let steps = undo_steps(&h);
+
+    assert!(
+        h.query_by_label("Locked: cannot be moved or resized. Operations still cut it.")
+            .is_some(),
+        "the Inspector says why nothing can be typed"
+    );
+    for field in ["X", "Y", "W", "H"] {
+        assert!(
+            h.get_by_role_and_label(Role::TextInput, field)
+                .accesskit_node()
+                .is_disabled(),
+            "{field} is read-only"
+        );
+    }
+    let reason = "Every selected shape is locked: unlock one to arrange it";
+    assert!(h.query_by_label(reason).is_none(), "not said until asked");
+    for name in ["Rotate 90° clockwise", "Flip horizontal", "Flip vertical"] {
+        let button = h.get_by_role_and_label(Role::Button, name);
+        assert!(button.accesskit_node().is_disabled(), "{name} is disabled");
+        button.click();
+        h.run();
+        assert_eq!(h.state().app().project(), &locked, "{name} turned nothing");
+        h.get_by_role_and_label(Role::Button, name).hover();
+        wait_for_tooltip(&mut h);
+        assert!(
+            h.query_by_label(reason).is_some(),
+            "{name}'s tooltip says why"
+        );
+    }
+    assert_eq!(undo_steps(&h), steps, "nothing was a step");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Capability 57 in the window (`experience.md`, section 8): a click on a
 /// Design Tree row selects the shape, Ctrl/⌘-click adds or removes one,
 /// Shift-click selects the range from the last click; a row's eye hides
@@ -1595,6 +1661,246 @@ fn park_point_click_on_the_viewport() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Acceptance 69's clause "the Viewport's crosshair and park mark move",
+/// on what the Viewport paints. The origin's crosshair is four arms that
+/// start 3 px from the work zero, with the label `0,0` beside them; the
+/// park mark is a 6-px ring. On the plaque the arms and the label stand
+/// at the stock's bottom-left corner; with the origin set to the stock's
+/// centre they stand there, the label as far from the zero as before, and
+/// none is left at the corner. A park point set at (20, 30) draws the
+/// ring there, and moved to (100, 60) the ring moves with it.
+#[test]
+fn origin_crosshair_and_park_mark_move_on_the_viewport() {
+    let dir = scratch("marks-move");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    // The crosshair's arms: line segments with an end 3 px from `at`.
+    let arms_at = |h: &Harness<'_, dreamcarve_app::Shell>, at: egui::Pos2| {
+        h.output()
+            .shapes
+            .iter()
+            .filter(|clipped| match &clipped.shape {
+                egui::Shape::LineSegment { points, .. } => {
+                    points.iter().any(|p| (p.distance(at) - 3.0).abs() < 0.26)
+                }
+                _ => false,
+            })
+            .count()
+    };
+    // The park mark's rings: 6-px circles centred on `at`.
+    let rings_at = |h: &Harness<'_, dreamcarve_app::Shell>, at: egui::Pos2| {
+        h.output()
+            .shapes
+            .iter()
+            .filter(|clipped| match &clipped.shape {
+                egui::Shape::Circle(circle) => {
+                    circle.center.distance(at) < 0.5 && (circle.radius - 6.0).abs() < 0.01
+                }
+                _ => false,
+            })
+            .count()
+    };
+    let label = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        let rects = text_rects(h, "0,0");
+        assert_eq!(rects.len(), 1, "one origin label: {rects:?}");
+        rects[0].right_top()
+    };
+    let zero = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        let marks = dc_app::project::marks(h.state().app().project());
+        (common::on_screen(h, marks.origin_mm), marks)
+    };
+
+    let (corner, marks) = zero(&h);
+    assert_eq!(marks.origin_mm, dc_geometry::Point::new(0.0, 0.0));
+    assert_eq!(marks.park_mm, None);
+    assert_eq!(arms_at(&h, corner), 4, "the crosshair is at the corner");
+    let beside = label(&h) - corner;
+
+    let centre = dc_app::project::set_origin_xy(
+        h.state().app().project(),
+        dc_app::project::OriginPreset::Centre,
+    )
+    .expect("the origin changes");
+    h.state_mut()
+        .app_mut()
+        .run(centre)
+        .expect("the origin is set");
+    h.run();
+    let (middle, marks) = zero(&h);
+    assert_eq!(marks.origin_mm, dc_geometry::Point::new(85.0, 60.0));
+    assert!(middle.distance(corner) > 50.0, "the zero moved on screen");
+    assert_eq!(arms_at(&h, middle), 4, "the crosshair is at the centre");
+    let old_corner = common::on_screen(&h, dc_geometry::Point::new(0.0, 0.0));
+    assert_eq!(arms_at(&h, old_corner), 0, "and no longer at the corner");
+    let now = label(&h) - middle;
+    assert!(
+        (now - beside).length() < 0.5,
+        "the label moved with it: {now:?} against {beside:?}"
+    );
+
+    for (x_mm, y_mm) in [(20.0, 30.0), (100.0, 60.0)] {
+        let before = h.state().app().project().heights.park;
+        let at_mm = dc_geometry::Point::new(x_mm, y_mm);
+        let park = dc_app::project::set_park(h.state().app().project(), at_mm)
+            .expect("the park point changes");
+        h.state_mut().app_mut().run(park).expect("the park is set");
+        h.run();
+        assert_eq!(
+            rings_at(&h, common::on_screen(&h, at_mm)),
+            1,
+            "the park mark is at ({x_mm}, {y_mm})"
+        );
+        if let Some(old) = before {
+            let old = common::on_screen(&h, dc_geometry::Point::new(old.x_mm, old.y_mm));
+            assert_eq!(rings_at(&h, old), 0, "and gone from where it was");
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Acceptance 70's offers, in the window (capability 62): on the Export
+/// step's Post-processor group, for each of the six bundled
+/// post-processors in turn, *Tool change* lists *One program with M6*
+/// exactly where the definition's tool change has `M6` (grblHAL, and not
+/// GRBL), and *Canned drill cycles* is a checkbox exactly where the
+/// definition has canned cycles, which is LinuxCNC and Mach3; elsewhere
+/// its place holds the line that says the controller has none. The
+/// post-processor is switched by the Controller dropdown's own command.
+#[test]
+fn export_step_offers_m6_and_canned_cycles_where_the_post_processor_has_them() {
+    let dir = scratch("post-offers");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        900.0,
+    );
+    assert_eq!(h.state().step(), dc_app::steps::Step::Export);
+    h.get_by_role_and_label(Role::Button, "Post-processor")
+        .click();
+    h.run();
+
+    let mut with_canned = Vec::new();
+    let mut with_m6 = Vec::new();
+    for definition in dc_project::latest_definitions().expect("bundled") {
+        let post = definition.post_processor();
+        if h.state().app().project().post_processor.id != definition.id {
+            h.state_mut()
+                .app_mut()
+                .run(Command::SwitchPost {
+                    id: definition.id.to_owned(),
+                })
+                .expect("the post-processor switches");
+            h.run();
+        }
+        let id = definition.id;
+
+        let checkbox = h
+            .query_by_role_and_label(Role::CheckBox, "Canned drill cycles")
+            .is_some();
+        let none = format!("Not offered: {} has no canned cycles.", post.name);
+        assert_eq!(checkbox, post.canned_cycles.is_some(), "{id}: the checkbox");
+        assert_eq!(
+            h.query_by_label(&none).is_some(),
+            post.canned_cycles.is_none(),
+            "{id}: the line in its place"
+        );
+        if checkbox {
+            with_canned.push(id);
+        }
+
+        h.get_by_role_and_label(Role::ComboBox, "Tool change")
+            .scroll_to_me();
+        h.run();
+        h.get_by_role_and_label(Role::ComboBox, "Tool change")
+            .click();
+        h.run();
+        assert!(
+            h.query_by_label("One program per tool").is_some(),
+            "{id}: the list is open"
+        );
+        let m6 = h.query_by_label("One program with M6").is_some();
+        assert_eq!(m6, post.tool_change.has_m6(), "{id}: one program with M6");
+        if m6 {
+            with_m6.push(id);
+        }
+        h.key_press(egui::Key::Escape);
+        h.run();
+    }
+    with_canned.sort_unstable();
+    assert_eq!(with_canned, ["linuxcnc", "mach3"]);
+    assert!(with_m6.contains(&"grblhal") && !with_m6.contains(&"grbl"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Acceptance 68 in the window (capability 59): the plaque's `outline`
+/// deleted with the Delete key leaves the Cut out Profile with no target,
+/// and the Warnings drawer lists validation's `operation_has_no_targets`
+/// error for it, in the error's own words; undo takes the row away again.
+#[test]
+fn deleting_a_target_lists_the_no_targets_error_in_the_drawer() {
+    let dir = scratch("delete-target");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    go_to(&mut h, "Design");
+    select_only(&mut h, "i1");
+    h.key_press(egui::Key::Delete);
+    h.run();
+    settle_generation(&mut h, "the plaque without its outline");
+    let project = h.state().app().project();
+    assert!(project.instances.iter().all(|i| i.id.as_str() != "i1"));
+    let problems = dc_project::validate(project);
+    let message = problems
+        .iter()
+        .find(|p| p.code() == "operation_has_no_targets")
+        .expect("the Cut out Profile has no target left")
+        .to_string();
+    assert!(message.contains("Cut out"), "{message}");
+
+    // The drawer's row is `check`'s line for it: `error: ` and the
+    // message, with no code.
+    let line = format!("error: {message}");
+    assert!(h.query_by_label(&line).is_none(), "the drawer is closed");
+    h.get_by_label("Warnings").click();
+    h.run();
+    assert!(h.state().warnings_open());
+    assert!(
+        h.query_all_by_label(&line).count() >= 1,
+        "the drawer lists the error: {line}"
+    );
+
+    command_key(&h, egui::Key::Z);
+    h.run();
+    settle_generation(&mut h, "the plaque again");
+    assert!(
+        h.state()
+            .app()
+            .project()
+            .instances
+            .iter()
+            .any(|i| i.id.as_str() == "i1"),
+        "undo brings the outline back"
+    );
+    assert_eq!(
+        h.query_all_by_label_contains(&message).count(),
+        0,
+        "and the row goes"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A file dropped on the window: a path on disk.
 #[derive(Debug)]
 struct Dropped(std::path::PathBuf);
@@ -1609,12 +1915,20 @@ impl egui::DroppedFile for Dropped {
     }
 }
 
-/// Drops `path` on the window, as the OS hands a dropped file over.
+/// Drops `path` on the window, as the OS hands a dropped file over. One
+/// frame takes the drop. The window is then left to settle, unless the
+/// file is a picture being decoded on its thread: that is
+/// `common::settle_picture`'s to wait for, a frame at a time, since a
+/// `run` the picture lands in the middle of has too few frames left for
+/// the sheet it opens.
 fn drop_file(h: &mut Harness<'_, dreamcarve_app::Shell>, path: &std::path::Path) {
     h.input_mut()
         .dropped_files
         .push(std::sync::Arc::new(Dropped(path.to_path_buf())));
-    h.run();
+    h.step();
+    if !h.state().opening_picture() {
+        h.run();
+    }
 }
 
 /// Capability 55 (#535): a dropped `.svg` opens the Import drawing sheet,
@@ -2008,7 +2322,6 @@ fn add_picture_and_see_its_tree_row() {
     let gradient = common::fixture("photo/gradient.png");
     dialogs.answer(&gradient);
     button_named(&h, "Add picture").click();
-    h.run();
     common::settle_picture(&mut h);
     assert_eq!(dialogs.asked(), ["open_picture"]);
     assert!(
@@ -2121,7 +2434,6 @@ fn new_from_picture_through_the_sheet() {
     let gradient = common::fixture("photo/gradient.png");
     dialogs.answer(&gradient);
     button_named(&h, "New from picture…").click();
-    h.run();
     common::settle_picture(&mut h);
     assert_eq!(dialogs.asked(), ["open_picture"]);
     let sheet = h.get_by_role(Role::Dialog);
@@ -2589,6 +2901,88 @@ fn click_drawer_row(h: &mut Harness<'_, dreamcarve_app::Shell>, line: &str) {
     h.run();
 }
 
+/// Acceptance 84's second half, in the window: "a project with only
+/// warnings exports, and the status bar counts them". The version 14
+/// plaque's holes are too small for its drill, which `check` warns of
+/// and does not refuse. Its status bar's counts cell says how many
+/// warnings there are, the number of warning rows the drawer lists and no
+/// error count; *Export G-code* is enabled on the Export step, and
+/// pressed it writes every program the plan lists.
+#[test]
+fn a_project_with_only_warnings_exports_and_the_status_bar_counts_them() {
+    let dir = scratch("warnings-export");
+    let plaque = dir.join("plaque.dcv");
+    std::fs::copy(
+        common::repo_root()
+            .join("crates/dreamcarve/tests/fixtures/holds-slug-migration/plaque.dcv"),
+        &plaque,
+    )
+    .expect("fixture copied");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+
+    let counts = dc_app::warnings::counts(h.state().app());
+    assert_eq!(counts.errors, 0, "only warnings");
+    assert!(counts.warnings > 0, "the holes are too small for the drill");
+    let listed = dc_app::warnings::panel(h.state().app())
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .filter(|row| row.note.is_none() && row.level == dc_app::warnings::Level::Warning)
+        .count();
+    assert_eq!(counts.warnings, listed, "what the drawer lists");
+
+    // The status bar's cell: the count, in words, in its bottom strip.
+    let status_top = 800.0 - STATUS_BAR_PX;
+    let said = if counts.warnings == 1 {
+        "1 warning".to_owned()
+    } else {
+        format!("{} warnings", counts.warnings)
+    };
+    assert!(
+        h.query_all_by_label(&said)
+            .any(|node| node.rect().top() >= status_top),
+        "the status bar says `{said}`"
+    );
+    assert!(
+        h.query_all_by_label_contains(" error")
+            .all(|node| node.rect().top() < status_top),
+        "and counts no error"
+    );
+    assert!(
+        h.query_all_by_label("No problems")
+            .all(|node| node.rect().top() < status_top)
+    );
+
+    // And it exports: the button is enabled, and writes the plan's files.
+    go_to(&mut h, "Export");
+    settle_export(&mut h);
+    assert!(
+        !h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled(),
+        "warnings do not block export"
+    );
+    let date = dreamcarve_shell::clock::today_utc();
+    let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(h.state().app(), &options) else {
+        panic!("the plaque has generated");
+    };
+    assert_eq!(ready.blocked(), None);
+    press_export(&mut h);
+    let files = ready.files("plaque");
+    assert!(!files.is_empty());
+    for (name, text) in files {
+        let written = std::fs::read_to_string(dir.join(&name)).expect("program written");
+        assert!(written == text, "{name} is the plan's program");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Presses the header's *Export G-code*, the export command.
 fn press_export(h: &mut Harness<'_, dreamcarve_app::Shell>) {
     h.get_by_role_and_label(Role::Button, "Export G-code")
@@ -2761,6 +3155,26 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     assert!(
         h.state().layout().inspector.is_some(),
         "with the tool in the Inspector"
+    );
+    // Which tool: the one that lacks the feed, by its name in the
+    // editor's Name field (acceptance 84, "a click on it opens the tool").
+    let lacking = h
+        .state()
+        .app()
+        .project()
+        .tools
+        .iter()
+        .find(|t| t.id == used)
+        .expect("the tool is still there")
+        .name
+        .clone();
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Name")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some(lacking.as_str()),
+        "the Inspector holds the tool without a feed"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -4263,6 +4677,140 @@ fn inlay_editor_shows_the_male_board() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Steps the window until generation is over, for `what`.
+fn settle_generation(h: &mut Harness<'_, dreamcarve_app::Shell>, what: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "{what} generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+}
+
+/// Capability 68 for an Inlay's drawn boundary in the window (phase 3's
+/// capability 49f; the phase 4 audit's one functional gap): the lettered
+/// inlay's Depth group has a *Boundary* dropdown reading *None (use the
+/// band margin)*. Choosing `frame` writes `boundary: ["i3"]` as one undo
+/// step, the dropdown reads `frame`, validation's line that the margin
+/// now does nothing is under *Band margin*, and once the Inlay has
+/// generated again the male board holds the frame as its drawn edge and
+/// the male's cuts end at it, the end mill's centre its radius inside:
+/// the band follows the boundary. *None* empties the list again.
+#[test]
+fn inlay_boundary_is_picked_in_the_editor_and_the_male_band_follows_it() {
+    let dir = scratch("inlay-boundary");
+    let dc = copy_fixture("dc.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(dc), &dialogs),
+        1280.0,
+        900.0,
+    );
+    settle_generation(&mut h, "the inlay pair");
+    let boundary_of = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<String> {
+        let dc_project::Operation::Inlay(inlay) = operation_of(h, "op1") else {
+            panic!("op1 is an Inlay");
+        };
+        inlay
+            .boundary
+            .iter()
+            .map(|i| i.as_str().to_owned())
+            .collect()
+    };
+    // The box of the male's cutting moves, in its board's own space.
+    let cut_box = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        h.state()
+            .app()
+            .scene()
+            .runs_on(dc_project::Board::Male)
+            .flat_map(|run| run.toolpath.moves.iter())
+            .filter(|m| !matches!(m.kind, dc_job::MoveKind::Rapid))
+            .map(|m| dc_geometry::Point::new(m.to.x, m.to.y))
+            .fold(None::<dc_geometry::Rect>, |acc, p| {
+                Some(acc.map_or_else(|| dc_geometry::Rect::from_point(p), |r| r.including(p)))
+            })
+            .expect("the male is cut")
+    };
+    let margin_box = cut_box(&h);
+    assert!(
+        h.state()
+            .app()
+            .scene()
+            .male_board()
+            .expect("a male board")
+            .boundaries
+            .is_empty()
+    );
+
+    open_operation(&mut h, "DC");
+    assert!(
+        h.query_by_role_and_label(Role::ComboBox, "Boundary")
+            .is_none(),
+        "the row is Depth's, closed until opened"
+    );
+    open_group(&mut h, "Depth");
+    let row = h.get_by_role_and_label(Role::ComboBox, "Boundary");
+    assert_eq!(
+        row.accesskit_node().value().as_deref(),
+        Some("None (use the band margin)")
+    );
+    let steps = undo_steps(&h);
+    h.get_by_role_and_label(Role::ComboBox, "Boundary").click();
+    h.run();
+    assert!(
+        h.query_by_label("letter-D").is_none(),
+        "a target is not offered as its own boundary"
+    );
+    h.get_by_label("frame").click();
+    h.run();
+    assert_eq!(boundary_of(&h), ["i3"]);
+    assert_eq!(undo_steps(&h), steps + 1, "one step");
+    assert_eq!(h.state().app().undo_label(), Some("Set boundary of “DC”"));
+    assert_eq!(
+        h.get_by_role_and_label(Role::ComboBox, "Boundary")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some("frame")
+    );
+
+    settle_generation(&mut h, "the drawn boundary");
+    assert!(
+        h.query_by_label_contains("so margin_mm does nothing")
+            .is_some(),
+        "validation's line is under the margin the boundary replaces"
+    );
+    let app = h.state().app();
+    let board = app.scene().male_board().expect("a male board");
+    assert_eq!(board.boundaries.len(), 1, "the frame, as the male cuts it");
+    let edge = board.boundaries[0].bounds().expect("an outline has a box");
+    let (left, right) = (edge.min.x - board.offset.x, edge.max.x - board.offset.x);
+    let cut = cut_box(&h);
+    let radius_mm = 3.175 / 2.0;
+    let near = |a: f64, b: f64| (a - b).abs() <= 0.05;
+    assert!(
+        near(cut.min.x, left + radius_mm)
+            && near(cut.max.x, right - radius_mm)
+            && near(cut.min.y, edge.min.y + radius_mm)
+            && near(cut.max.y, edge.max.y - radius_mm),
+        "the male's cuts {cut:?} end at the drawn edge {edge:?}"
+    );
+    assert!(
+        !(near(margin_box.min.x, cut.min.x) && near(margin_box.max.y, cut.max.y)),
+        "the margin's band was another: {margin_box:?}"
+    );
+
+    // None: the band is the margin's again.
+    h.get_by_role_and_label(Role::ComboBox, "Boundary").click();
+    h.run();
+    h.get_by_label("None (use the band margin)").click();
+    h.run();
+    assert!(boundary_of(&h).is_empty());
+    assert_eq!(undo_steps(&h), steps + 2);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// #581, decision 1, in the window: choosing *V-bit* for an end mill in
 /// the Tools step changes nothing in the project and shows an empty,
 /// required *Angle* field; typing an angle makes the switch, one undo
@@ -5676,6 +6224,76 @@ fn depth_legend_paints_under_a_sheet() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Acceptance 80's clause "the clearance height and safe Z above the
+/// stock top (positive, in the rapid grey band)", on what the legend
+/// paints. The plaque with a 10 mm clearance height and 5 mm safe Z, *By
+/// depth* on: the legend has one bar filled with the rapid grey (the
+/// Viewport's rapid colour at 35 %); the `+10 clearance` and `+5 safe Z`
+/// labels are level with it, clearance above safe Z; and the stock top's
+/// label and every cut's are below it, on the ramp.
+#[test]
+fn depth_legend_puts_clearance_and_safe_z_in_the_rapid_grey_band() {
+    let dir = scratch("legend-band");
+    let text = std::fs::read_to_string(common::fixture("plaque.dcv")).unwrap();
+    let text = text
+        .replace("\"safe_z_mm\": 15.0", "\"safe_z_mm\": 5.0")
+        .replace("\"clearance_mm\": null", "\"clearance_mm\": 10.0");
+    let plaque = dir.join("plaque.dcv");
+    std::fs::write(&plaque, text).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    h.get_by_label("By depth").click();
+    h.run();
+
+    let grey = theme::DARK.viewport_rapid.gamma_multiply(0.35);
+    let bands: Vec<egui::Rect> = h
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(rect) if rect.fill == grey => Some(rect.rect),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bands.len(), 1, "one rapid-grey band: {bands:?}");
+    let band = bands[0];
+    let label = |h: &Harness<'_, dreamcarve_app::Shell>, text: &str| {
+        let rects = text_rects(h, text);
+        assert_eq!(rects.len(), 1, "one `{text}` label: {rects:?}");
+        rects[0]
+    };
+    let clearance = label(&h, "+10  clearance");
+    let safe_z = label(&h, "+5  safe Z");
+    for (name, rect) in [("clearance", clearance), ("safe Z", safe_z)] {
+        assert!(
+            band.y_range().contains(rect.center().y),
+            "{name}'s label {rect:?} is level with the band {band:?}"
+        );
+        assert!(rect.left() > band.right(), "{name} is beside the band");
+    }
+    assert!(
+        clearance.center().y < safe_z.center().y,
+        "clearance above safe Z"
+    );
+    for cut in ["0  stock top", "Panel", "Screw holes, Cut out"] {
+        let rect = label(&h, cut);
+        assert!(
+            rect.center().y >= band.bottom() - 0.5,
+            "`{cut}` {rect:?} is on the ramp, under the band {band:?}"
+        );
+    }
+    assert!(
+        clearance.center().y < label(&h, "0  stock top").center().y,
+        "the band is above the stock top"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// The window rectangles of the last frame's text shapes whose text
 /// contains `needle`.
 fn text_rects(h: &Harness<'_, dreamcarve_app::Shell>, needle: &str) -> Vec<egui::Rect> {
@@ -5813,6 +6431,32 @@ fn assert_required(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str, mess
         "{label}'s placeholder"
     );
     assert_eq!(field.accesskit_node().value().as_deref(), Some(""));
+    // Acceptance 97, "and the glyph in the Feed field": `circle-x`, by
+    // its codepoint in the bundled icon font's own map, is painted once
+    // on the field's line, inside its frame, right of where the text
+    // starts and before the unit.
+    let frame = field.rect();
+    let circle_x = include_str!("../assets/icons/lucide/codepoints.json")
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("\"circle-x\": "))
+        .and_then(|code| code.trim_end_matches(',').parse::<u32>().ok())
+        .and_then(char::from_u32)
+        .expect("the bundled map names circle-x")
+        .to_string();
+    let glyphs: Vec<egui::Rect> = text_rects(h, &circle_x)
+        .into_iter()
+        .filter(|glyph| frame.y_range().contains(glyph.center().y))
+        .collect();
+    assert_eq!(
+        glyphs.len(),
+        1,
+        "{label}: one glyph on its line: {glyphs:?}"
+    );
+    assert!(
+        glyphs[0].left() > frame.left() && glyphs[0].right() < frame.right() + 64.0,
+        "{label}: the glyph {:?} is in the field {frame:?}, before its unit",
+        glyphs[0]
+    );
     assert!(
         h.query_by_label(message).is_none(),
         "no line under {label} carries the message"
@@ -5876,6 +6520,60 @@ fn required_field_shows_required_not_a_message() {
         .map(|f| f.message.clone())
         .expect("validation locates the unset thickness");
     assert_required(&mut h, "Thickness", &message);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Acceptance 71's clause for *Delete* on a tool in use (capability 63),
+/// in the window: on the plaque's Tools step with the 1/4 end mill
+/// selected, which three operations cut with, *Delete* is disabled and
+/// its tooltip is the command's refusal, naming each of them; with the
+/// unused placeholder selected it is enabled and has no such tooltip.
+#[test]
+fn delete_is_disabled_for_a_tool_in_use_and_names_its_operations() {
+    let dir = scratch("delete-in-use");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_step_dt(0.1)
+        .build_eframe(|cc| {
+            dreamcarve_app::Shell::new(cc, options(&dir.join("config"), Some(plaque), &dialogs))
+                .expect("the shell starts")
+        });
+    h.run();
+    go_to(&mut h, "Tools");
+    let refusal = "tool “1/4 end mill” is used by “Panel”, “Square recess” and “Cut out”";
+
+    h.get_by_label("1/4 end mill").click();
+    h.run();
+    let delete = h.get_by_role_and_label(Role::Button, "Delete");
+    assert!(
+        delete.accesskit_node().is_disabled(),
+        "a tool in use cannot be deleted"
+    );
+    assert!(h.query_by_label(refusal).is_none(), "not said until asked");
+    h.get_by_role_and_label(Role::Button, "Delete").hover();
+    wait_for_tooltip(&mut h);
+    assert!(
+        h.query_by_label(refusal).is_some(),
+        "the tooltip names the operations that use it"
+    );
+    let tools = h.state().app().project().tools.len();
+    h.get_by_role_and_label(Role::Button, "Delete").click();
+    h.run();
+    assert_eq!(h.state().app().project().tools.len(), tools, "nothing went");
+
+    // The unused placeholder can go.
+    h.get_by_label("Set me").click();
+    h.run();
+    assert!(
+        !h.get_by_role_and_label(Role::Button, "Delete")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Delete").hover();
+    wait_for_tooltip(&mut h);
+    assert!(h.query_by_label_contains("is used by").is_none());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -7285,6 +7983,71 @@ fn open_menu(h: &mut Harness<'_, dreamcarve_app::Shell>, title: &str) {
     h.run();
 }
 
+/// Capability 79's last sentence: "Help ▸, and the rail's Help, open the
+/// book's quick start for the app, the Keyboard chapter, and About". The
+/// Help menu's rows are *Quick Start*, *Keyboard Shortcuts*, *User Guide*
+/// and *About DreamCarve*, in the header's menu and under the rail's Help
+/// alike; the first three ask the operating system to open the book's
+/// page (`quick-start/app.html`, `user-guide/keyboard.html`, its front
+/// page), and About says the version in the status bar.
+#[test]
+fn help_opens_the_quick_start_the_keyboard_chapter_and_about() {
+    let dir = scratch("help-menu");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    let book = "https://grayzu.github.io/dreamcarve/";
+    let rows = [
+        ("Quick Start", format!("{book}quick-start/app.html")),
+        (
+            "Keyboard Shortcuts",
+            format!("{book}user-guide/keyboard.html"),
+        ),
+        ("User Guide", book.to_owned()),
+    ];
+    for opener in ["Help", "Help and About"] {
+        for (row, url) in &rows {
+            h.get_by_label(opener).click();
+            h.run();
+            if opener == "Help" {
+                assert_menu(
+                    &h,
+                    "Help",
+                    &[
+                        "Quick Start",
+                        "Keyboard Shortcuts",
+                        "User Guide",
+                        "About DreamCarve",
+                    ],
+                );
+            }
+            h.get_by_label(row).click();
+            h.step();
+            let opened: Vec<String> = h
+                .output()
+                .platform_output
+                .commands
+                .iter()
+                .filter_map(|c| match c {
+                    egui::OutputCommand::OpenUrl(open) => Some(open.url.clone()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(opened, std::slice::from_ref(url), "{opener} ▸ {row}");
+            h.run();
+        }
+        h.get_by_label(opener).click();
+        h.run();
+        h.get_by_label("About DreamCarve").click();
+        h.run();
+        assert_eq!(
+            h.state().message(),
+            Some(concat!("DreamCarve ", env!("CARGO_PKG_VERSION"))),
+            "{opener} ▸ About says the version"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Slice 35 (#627), capability 79a and acceptance 103: the File menu's
 /// rows are 79a's list in its order, new-project and add-to-project
 /// apart (*Save Setup Sheet…* joins them only after an export). The View
@@ -7453,15 +8216,17 @@ enum Ask {
     Open,
     New,
     NewFromDrawing,
+    NewFromPicture,
 }
 
 impl Ask {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Close,
         Self::Quit,
         Self::Open,
         Self::New,
         Self::NewFromDrawing,
+        Self::NewFromPicture,
     ];
 
     fn press(self, h: &mut Harness<'_, dreamcarve_app::Shell>) {
@@ -7474,13 +8239,18 @@ impl Ask {
                 open_menu(h, "File");
                 h.get_by_label("New Project from Drawing…").click();
             }
+            Self::NewFromPicture => {
+                open_menu(h, "File");
+                h.get_by_label("New Project from Picture…").click();
+            }
         }
         h.run();
     }
 }
 
 /// Slice 35 (#627), capability 51 and acceptance 88: on close, quit,
-/// *Open*, *New* and *New Project from Drawing…* with unsaved changes,
+/// *Open* and each *New* (*New*, *New Project from Drawing…* and *New
+/// Project from Picture…*) with unsaved changes,
 /// the sheet's buttons are exactly *Save*, *Don't Save* and *Cancel*;
 /// *Cancel* keeps the project and its changes; *Don't Save* goes ahead
 /// without writing the file.
@@ -7536,6 +8306,7 @@ fn unsaved_sheet_is_save_dont_save_cancel() {
                 assert!(app.project().instances.is_empty(), "a new project");
             }
             Ask::NewFromDrawing => assert_eq!(dialogs.asked(), ["open_drawing"]),
+            Ask::NewFromPicture => assert_eq!(dialogs.asked(), ["open_picture"]),
         }
     }
     std::fs::remove_dir_all(&dir).ok();
@@ -7572,16 +8343,21 @@ fn save_on_untitled_asks_where_and_cancel_cancels_all() {
         // Answered, Save writes there and then goes ahead.
         let path = dir.join(format!("{ask:?}.dcv"));
         dialogs.answer(&path);
+        let unsaved = h.state().app().serialize().expect("the project saves");
         ask.press(&mut h);
         click_in_sheet(&mut h, "Save");
         let written = std::fs::read_to_string(&path).expect("the file is written");
-        assert!(!written.is_empty());
+        assert!(
+            written == unsaved,
+            "{ask:?}: Save writes the changed project before going ahead"
+        );
         let last = dialogs.asked().last().cloned().unwrap_or_default();
         match ask {
             Ask::Close | Ask::Quit => assert!(h.state().close_allowed(), "{ask:?}"),
             Ask::Open => assert_eq!(last, "open_project"),
             Ask::New => assert!(h.state().app().source().is_none(), "a new project"),
             Ask::NewFromDrawing => assert_eq!(last, "open_drawing"),
+            Ask::NewFromPicture => assert_eq!(last, "open_picture"),
         }
     }
     std::fs::remove_dir_all(&dir).ok();

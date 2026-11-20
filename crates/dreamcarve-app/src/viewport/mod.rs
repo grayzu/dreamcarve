@@ -1449,7 +1449,10 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
     let painter = ui.painter_at(pane);
     let project = state.app.project();
 
-    let origin = window_pos(pane, camera, project.origin.xy.point_mm(&project.stock));
+    // Where the two marks are is the model's (`dc_app::project::marks`),
+    // so what acceptance 69 asserts of it is what is drawn here.
+    let marks = dc_app::project::marks(project);
+    let origin = window_pos(pane, camera, marks.origin_mm);
     let axis = Stroke::new(1.0, palette.viewport_axis);
     for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
         let dir = egui::vec2(dx, dy);
@@ -1477,8 +1480,8 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
         male_board_marks(ui, &painter, pane, state, board, camera);
     }
 
-    if let Some(park) = project.heights.park {
-        let at = window_pos(pane, camera, Point::new(park.x_mm, park.y_mm));
+    if let Some(park_mm) = marks.park_mm {
+        let at = window_pos(pane, camera, park_mm);
         let stroke = Stroke::new(1.25, palette.viewport_park);
         painter.circle_stroke(at, PARK_RADIUS_PX, stroke);
         let d = PARK_RADIUS_PX * std::f32::consts::FRAC_1_SQRT_2;

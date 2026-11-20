@@ -287,10 +287,41 @@ fn duplicate_is_a_linked_copy() {
     );
 }
 
+/// Whether the Warnings drawer of `harness` shows validation's
+/// `operation_has_no_targets` for operation `op`: an error row about that
+/// operation's targets whose message is the one `dc_project::validate`
+/// gives under that code. An error's row carries no code (`check` prints
+/// an error's message alone), so the code is tied to the row through the
+/// problem's own words.
+fn drawer_shows_no_targets(harness: &Harness, op: &OperationId) -> bool {
+    let field = format!("operations[{op}].targets");
+    let problems = dc_project::validate(harness.app.project());
+    let Some(problem) = problems
+        .iter()
+        .find(|p| p.code() == "operation_has_no_targets" && p.field().as_deref() == Some(&field))
+    else {
+        return false;
+    };
+    let message = problem.to_string();
+    dc_app::warnings::panel(&harness.app)
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .any(|row| {
+            row.level == dc_app::warnings::Level::Error
+                && row.code.is_none()
+                && row.op.as_ref() == Some(op)
+                && row.field.as_deref() == Some(field.as_str())
+                && row.message == message
+                && row.line.contains(&message)
+        })
+}
+
 /// Acceptance 68 (capability 59): deleting the plaque's outline from the
 /// context menu removes it from the Cut out Profile's targets, leaves the
-/// Profile (enabled) with `operation_has_no_targets` in the Warnings panel,
-/// and removes the outline's placed tabs; undo restores all three.
+/// Profile (enabled) with validation's `operation_has_no_targets` error
+/// as a row of the Warnings drawer, and removes the outline's placed
+/// tabs; undo restores all three. Deleting `square`, the one target of
+/// the Square recess Pocket, leaves that Pocket the same way.
 #[test]
 fn delete_removes_targets_and_tabs_and_warns() {
     let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
@@ -303,11 +334,17 @@ fn delete_removes_targets_and_tabs_and_warns() {
     // Validation's `operation_has_no_targets`: an error, so the panel
     // prints its message without the code, located at the targets.
     let no_targets = |h: &Harness| {
-        h.warnings().iter().any(|f| {
+        let found = h.warnings().iter().any(|f| {
             f.field.as_deref() == Some("operations[op4].targets")
                 && f.op.as_ref() == Some(&op4)
                 && f.message.contains("Cut out")
-        })
+        });
+        assert_eq!(
+            found,
+            drawer_shows_no_targets(h, &op4),
+            "the drawer's row is the finding"
+        );
+        found
     };
     assert!(!no_targets(&harness));
 
@@ -329,6 +366,27 @@ fn delete_removes_targets_and_tabs_and_warns() {
     assert_eq!(harness.app.undo().as_deref(), Some("Delete “outline”"));
     assert_eq!(harness.app.project(), &placed, "undo restores all three");
     assert!(!no_targets(&harness));
+
+    // A Pocket's one target: the Square recess is left with no targets
+    // and the same error; it has no tabs to lose.
+    let op2 = OperationId::new("op2");
+    assert!(!drawer_shows_no_targets(&harness, &op2));
+    let command = dc_app::tree::menu_command(harness.app.project(), MenuItem::Delete, &[id("i4")])
+        .expect("Delete is a command");
+    harness.run(command).expect("deletes");
+    let recess = harness
+        .app
+        .project()
+        .operations
+        .iter()
+        .find(|o| *o.id() == op2)
+        .expect("the Pocket stays");
+    assert_eq!(recess.kind(), "pocket");
+    assert!(recess.targets().is_empty(), "its target went");
+    assert!(drawer_shows_no_targets(&harness, &op2));
+    assert_eq!(harness.app.undo().as_deref(), Some("Delete “square”"));
+    assert_eq!(harness.app.project(), &placed);
+    assert!(!drawer_shows_no_targets(&harness, &op2));
 }
 
 /// `experience.md`, section 8, "Inline rename": the typed name, trimmed,
