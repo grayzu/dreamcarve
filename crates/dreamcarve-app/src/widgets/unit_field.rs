@@ -44,8 +44,6 @@ const UNIT_PX: f32 = 28.0;
 const RESET_PX: f32 = 22.0;
 /// Inner padding, px.
 const PADDING_PX: f32 = 10.0;
-/// The label column of an editor row, px (section 3).
-pub const LABEL_PX: f32 = 112.0;
 
 /// A field to draw.
 #[derive(Debug, Clone, Copy)]
@@ -161,13 +159,14 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     };
     let tier = spec.required.map_or(spec.tier, |_| Some(Tier::Error));
     let placeholder_text = spec.required.map_or(spec.placeholder, |r| r.placeholder);
-    // One line of text, centred in the control.
-    let line_px = ui.text_style_height(&TextStyle::Body);
+    // One line of text, centred in the control. The text edit is the
+    // control's whole height, so a click anywhere in the frame lands in
+    // it and assistive tools are given the field, not a line of it.
     let text_rect = Rect::from_min_max(
-        egui::pos2(rect.left() + PADDING_PX, rect.center().y - line_px / 2.0),
+        egui::pos2(rect.left() + PADDING_PX, rect.top()),
         egui::pos2(
             rect.right() - PADDING_PX - unit_px - reset_px - glyph_px,
-            rect.center().y + line_px / 2.0,
+            rect.bottom(),
         ),
     );
     let mut child = ui.new_child(
@@ -187,9 +186,13 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
                 .margin(Margin::ZERO)
                 .font(TextStyle::Body)
                 .hint_text(placeholder)
+                .align(Align2::LEFT_CENTER)
+                .min_size(egui::vec2(0.0, HEIGHT_PX))
                 .desired_width(text_rect.width()),
         )
         .accessible_name(spec.name);
+    // The focus is the text's; the ring goes round the field's frame.
+    crate::shell::focus::outline(ui.ctx(), spec.id, rect, theme::CONTROL_RADIUS_PX);
 
     let escaped = ui.input(|i| i.key_pressed(Key::Escape));
     let mut committed = None;
@@ -320,22 +323,8 @@ pub fn validation_line(ui: &mut Ui, message: &str) {
 /// An editor row: the label in its 112-px column, then `field` at the
 /// rest of the width. The label names the field for assistive tools.
 pub fn row<R>(ui: &mut Ui, label: &str, field: impl FnOnce(&mut Ui) -> R) -> (Response, R) {
-    let palette = Palette::current(ui);
     ui.horizontal_top(|ui| {
-        let (rect, label_response) =
-            ui.allocate_exact_size(egui::vec2(LABEL_PX, HEIGHT_PX), Sense::hover());
-        let galley = ui.painter().layout(
-            label.to_owned(),
-            TextStyle::Body.resolve(ui.style()),
-            palette.text_secondary,
-            LABEL_PX,
-        );
-        ui.painter().galley(
-            egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
-            galley,
-            palette.text_secondary,
-        );
-        label_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, label));
+        let label_response = crate::widgets::row::label_slot(ui, label, false);
         let inner = ui.vertical(|ui| field(ui)).inner;
         (label_response, inner)
     })

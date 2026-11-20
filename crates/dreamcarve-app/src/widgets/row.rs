@@ -58,44 +58,67 @@ pub(crate) fn surface(ui: &Ui, rect: Rect, selected: bool, hovered: bool) {
     }
 }
 
-/// A field's label, `text`, 112 px wide and a control tall; hovering it
-/// shows `help` and, on a second line in the mono face, `path`, the
-/// `.dcv` field it writes. Its dotted underline appears on hover to say it
-/// has help.
-pub(crate) fn label(ui: &mut Ui, text: &str, help: &str, path: Option<&str>) -> Response {
-    let palette = Palette::current(ui);
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(LABEL_PX, HEIGHT_PX), Sense::hover());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
-    let colour = if ui.is_enabled() {
-        palette.text_primary
-    } else {
-        palette.text_disabled
-    };
-    let painter = ui.painter_at(rect);
-    // One line, an ellipsis when it does not fit (section 12, "Text
-    // truncation"); the tooltip's help names the field in full.
-    let mut job = egui::text::LayoutJob::simple_singleline(
+/// A label laid out for the label column: the whole of `text`, wrapped at
+/// its words to the column's 112 px. A label is never cut: in a tool
+/// where the label is the instruction, "Through-cut all…" says nothing.
+/// Two lines of the body face are a control tall, so a wrapped label
+/// keeps its row's height and the rows stay aligned.
+pub(crate) fn label_galley(
+    ui: &Ui,
+    text: &str,
+    colour: egui::Color32,
+) -> std::sync::Arc<egui::Galley> {
+    ui.painter().layout(
         text.to_owned(),
         TextStyle::Body.resolve(ui.style()),
         colour,
-    );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 4.0);
-    let galley = painter.layout_job(job);
+        LABEL_PX,
+    )
+}
+
+/// Draws a field's label in its column, in text.secondary
+/// (`experience.md`, section 4, "Field label"): `text` whole, on one line
+/// or wrapped to two ([`label_galley`]), centred on the control beside
+/// it. The slot is a control tall, and taller only for a label of three
+/// lines. `text` is its accessible name. `underlined` draws the dotted
+/// rule under each line that says the label has help.
+pub(crate) fn label_slot(ui: &mut Ui, text: &str, help: bool) -> Response {
+    let palette = Palette::current(ui);
+    let colour = if ui.is_enabled() {
+        palette.text_secondary
+    } else {
+        palette.text_disabled
+    };
+    let galley = label_galley(ui, text, colour);
+    let height = HEIGHT_PX.max(galley.size().y);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(LABEL_PX, height), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
     let at = egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
-    let width = galley.size().x.min(rect.width());
-    painter.galley(at, galley, colour);
-    if response.hovered() {
-        let y = rect.center().y + 8.0;
-        painter.extend(egui::Shape::dashed_line(
-            &[
-                egui::pos2(rect.left(), y),
-                egui::pos2(rect.left() + width, y),
-            ],
-            Stroke::new(1.0, palette.text_disabled),
-            1.0,
-            2.0,
-        ));
+    if help && response.hovered() {
+        for line in &galley.rows {
+            let line = line.rect().translate(at.to_vec2());
+            ui.painter().extend(egui::Shape::dashed_line(
+                &[
+                    egui::pos2(line.left(), line.bottom()),
+                    egui::pos2(line.right(), line.bottom()),
+                ],
+                Stroke::new(1.0, palette.text_disabled),
+                1.0,
+                2.0,
+            ));
+        }
     }
+    ui.painter().galley(at, galley, colour);
+    response
+}
+
+/// A field's label, `text`, in the 112-px column ([`label_slot`]);
+/// hovering it shows `help` and, on a second line in the mono face,
+/// `path`, the `.dcv` field it writes. Its dotted underline appears on
+/// hover to say it has help.
+pub(crate) fn label(ui: &mut Ui, text: &str, help: &str, path: Option<&str>) -> Response {
+    let palette = Palette::current(ui);
+    let response = label_slot(ui, text, true);
     response.on_hover_ui(|ui| {
         ui.label(RichText::new(help).text_style(TextStyle::Body));
         if let Some(path) = path {
@@ -256,4 +279,62 @@ fn note(
             .selectable(false),
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use dc_app::StrKey;
+
+    use super::*;
+
+    /// Every field label of the string table (an entry with a `_help`
+    /// beside it) is drawn whole in the 112-px label column: on one line
+    /// or two, which is a control's height, so no row grows and none is
+    /// cut. *Through-cut allowance*, *Tool-change machine Z* and *Canned
+    /// drill cycles* were cut to "Through-cut all…", "Tool-change m…" and
+    /// "Canned drill cy…".
+    #[test]
+    fn every_field_label_fits_its_column_whole() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, dc_app::Theme::Dark);
+        let labels: Vec<&str> = StrKey::ALL
+            .iter()
+            .filter(|key| {
+                let help = format!("{}_help", key.key());
+                StrKey::ALL.iter().any(|k| k.key() == help)
+            })
+            .map(|key| key.english())
+            .collect();
+        for long in [
+            "Through-cut allowance",
+            "Tool-change machine Z",
+            "Canned drill cycles",
+        ] {
+            assert!(labels.contains(&long), "{long} is a field label");
+        }
+        let mut wrapped = 0;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for label in &labels {
+                let galley = label_galley(ui, label, theme::NONE);
+                let drawn: String = galley
+                    .rows
+                    .iter()
+                    .map(|row| row.text())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+                assert!(!galley.elided, "{label} is cut");
+                assert_eq!(words(&drawn), words(label), "{label} is drawn whole");
+                assert!(galley.rows.len() <= 2, "{label} takes more than two lines");
+                assert!(
+                    galley.size().x <= LABEL_PX && galley.size().y <= HEIGHT_PX,
+                    "{label} is {:?}, outside its {LABEL_PX} × {HEIGHT_PX} slot",
+                    galley.size()
+                );
+                wrapped += usize::from(galley.rows.len() == 2);
+            }
+        });
+        output.textures_delta.clear();
+        assert!(wrapped >= 3, "the long labels wrap: {wrapped} did");
+    }
 }
