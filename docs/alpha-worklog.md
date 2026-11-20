@@ -4,6 +4,46 @@ The local record of the push to an early alpha, started 2026-11-18. It
 stands in for GitHub issues and pull requests while that process is paused.
 One line per slice; details live in the commits and the specs.
 
+## Where it stands (2026-11-19)
+
+Every slice below marked done is merged on `alpha` and pushed. The gate
+passes on macOS: 3,346 tests, twice running, with fmt, clippy and
+check-headers clean.
+
+To try it:
+
+```sh
+cargo run --release -p dreamcarve-app          # or:
+tools/bundle-macos.sh && open target/bundle/DreamCarve.app
+```
+
+Then follow `docs/book/src/quick-start/app.md`. The pictures of every
+state of the app are in `docs/specs/phase-4/review/final/`.
+
+Waiting for the maintainer:
+
+- The bench checks: 3.4 (#606), 3.5 (#649), 3.6 (#684), and the coaster
+  from the app for phase 4.
+- The image-prep defaults on their own art
+  (`tests/fixtures/prep/README.md`, "Still to confirm").
+- The decisions under "Decisions made while wiring", checklist items 4,
+  15, 34, 64, 65 and 99 in `docs/specs/phase-4/review/final/README.md`,
+  and the rest of "Decisions waiting for the maintainer" in
+  `docs/specs/phase-4/audit.md`.
+- The result of the sign's full cut (#429), which was closed without one.
+- A run on Windows and Linux, then the tags `v0.3.0` and `v0.4.0`.
+
+Not done, by choice, until after that testing:
+
+- F4: `Warning` and `CamError` restructured.
+- A7's remainder: the fail-loud work inside dc-geometry.
+- Review-plan stage 3: the Profile restructure, the `offset` retry
+  ladder, undo sharing, the S6 search.
+- The release slice (E4): signed bundles, an icon, a double-clicked
+  `.dcv` on macOS.
+
+Smaller items still open are rows B4, B6, D8 and the notes under A.
+
 ## Process for this push
 
 Decided by the maintainer on 2026-11-18. It overrides the "Git" and "How
@@ -141,6 +181,15 @@ Decisions made while wiring, for the maintainer to confirm:
   match the CLI's programs only when their tools are added in the order
   the chapter gives, because a clearing run's comment names the tool's id
   in the file.
+- The app colours by operation; the CLI's `--preview` still colours by
+  tool run, so the two differ on a project with clearing passes or an
+  Inlay (the sign's Lettering is purple in the CLI's SVG and green in the
+  app). dc-job was not changed.
+- An operation that validation blocks draws no toolpath at all (it used
+  to keep its last one, faded). A tool losing its feed therefore makes
+  every operation using it vanish from the Viewport until the feed is
+  back.
+- *Project ▸ Project Settings…* keeps its name and opens the Stock step.
 - *Add to project* in the Tool Library now closes the sheet (capability
   64 changed to say so). It used to stay open, and its scrim swallowed
   the next click.
@@ -156,7 +205,7 @@ Decisions made while wiring, for the maintainer to confirm:
 | --- | --- | --- |
 | E1 | The quick start "From SVG to G-code in the app" (the coaster, then the plaque, the sign and the inlay pair), tested by `quick_start_parts_from_the_app`; 32 screenshots written by `cargo test -p dreamcarve-app --test book -- --ignored`; chapters The app, Importing, Stock and origin, Toolpath preview, Exporting; `docs::book_builds_and_every_screenshot_exists` (#550) | done |
 | E5 | The rest of the book for the app: new chapters Placing shapes and Operations; an "In the app" part in each operation chapter, Images, Photo V-Carve, Tool library, Tapered ball nose, Tabs, Warnings, Configuration and Post-processors; Keyboard checked against `keyboard.rs`; Crate map and Porting brought up to date; 32 more pictures; an anchor for each of the 150 warning codes. `mdbook build` has still not been run: mdbook is not installed here | done |
-| D9 | The Inlay editor's picture in the book (`op-inlay.png`) predates the Boundary row; `tests/book.rs`'s `click_button` waits the way the flaky test did. Defects the chapters found: the Viewport colours each tool run while a row's glyph takes its place in the list, so clearing passes, an Inlay's male board, or an unticked or failed operation shift every later colour; a stale toolpath stays drawn at full strength after its operation's only target is deleted; a Warnings row for a tool opens the Tools step but does not focus the field; *Copy* prints the hint `unused_tool` as a warning, as `check` does; `dreamcarve config path` does not list `gui.toml`, and a damaged one falls back to defaults silently; a tool's row shows no mark for a warning; the Add picture sheet says "Warnings panel"; some engine messages name ids, not names (`operation \`op4\` cuts off the stock`) | todo |
+| D9 | The defects the chapters found, fixed: one colour per operation on its row, its toolpaths on both boards and the Layers key (`dc_app::operations::colour_at`); an operation that cannot generate draws nothing; a Warnings row focuses a tool's, a stock's or a settings field; a tool's row carries its findings; a damaged `gui.toml` is said once and kept until a preference changes, and `config path` lists the file; findings shown with names (`operation \`Cut out\` (\`op4\`)`); eleven book pictures regenerated | done |
 | E2 | A local macOS bundle (`tools/bundle-macos.sh`) and the phase 4 audit, `docs/specs/phase-4/audit.md`: of 43 acceptance tests 11 are covered clause for clause, 31 partly, 1 waits for the maintainer; 17 clauses have no assertion | done |
 | E6 | The phase 4 audit's gaps closed. The Inlay's **Boundary** row, proven by `gui_equality::inlay_boundary_set_in_the_app_equals_the_clis_project`; on the way, the generation digest now covers boundary shapes and deleting a shape clears it from `boundary`. 15 of the 17 clauses asserted or implemented (a disabled button now shows its reason; the Viewport reads `project::marks`); acceptance 91's string scan (`tests/strings.rs`); 22 spec rows corrected; Help gained *Quick Start* and *Keyboard Shortcuts*; the app announced in the CHANGELOG; `drop_of_png_opens_the_picture_sheet` no longer flaky. The audit now reads 18 covered, 24 partial, 2 clauses unasserted | done |
 | E4 | For the release slice (#551), not done here: the signed and notarised bundles on three platforms through cargo-dist; an app icon; opening a double-clicked `.dcv` on macOS, which arrives as an Apple Event the app does not read yet; the licence texts for the app's crates | owner |
