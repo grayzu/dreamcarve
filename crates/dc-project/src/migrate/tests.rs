@@ -192,6 +192,8 @@ fn sample_root_at(version: u32) -> Value {
 /// the file says its version in so many words; from 24, that the
 /// migration notes nothing. Version 18 has no plain sample and versions
 /// 26 to 28 hold more than one fixture; their tests are further down.
+/// The fixtures of 21, 22 and 25 that hold what those formats added are
+/// in the table after this one.
 #[test]
 fn every_older_sample_fixture_loads_as_the_sample_project() {
     let fixtures: [(u32, &[u8]); 25] = [
@@ -249,6 +251,207 @@ fn every_older_sample_fixture_loads_as_the_sample_project() {
                 assert_eq!((&tool.vendor, &tool.product_id), (&None, &None), "{case}");
             }
         }
+    }
+}
+
+const V21_COUNTERSINK_FIXTURE: &[u8] =
+    include_bytes!("../../tests/fixtures/dcv/v21/countersink.dcv");
+const V22_INLAY_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v22/inlay.dcv");
+const V25_MALE_BOARD_FIXTURE: &[u8] =
+    include_bytes!("../../tests/fixtures/dcv/v25/inlay-male-board.dcv");
+
+/// One fixture that holds what its format added, where the plain sample
+/// does not.
+struct FeatureFixture {
+    /// The fixture's name under its version's folder.
+    name: &'static str,
+    /// The version the file is written in.
+    version: u32,
+    /// The file.
+    bytes: &'static [u8],
+    /// What the format wrote for the feature, and what a later format
+    /// added or replaced, which a file of this version does not hold.
+    holds: &'static [&'static str],
+    lacks: &'static [&'static str],
+    /// The project the file loads as at the current version.
+    expected: fn() -> crate::Project,
+    /// Whether a project holds the feature the format added.
+    has_feature: fn(&crate::Project) -> bool,
+}
+
+/// The sample project with the 90° V-bit `t2` and `op` after its Profile.
+fn sample_with_v_bit_and(op: Operation) -> crate::Project {
+    let mut project = sample_project();
+    project.tools.push(crate::test_support::tool_v_bit_90());
+    project.operations.push(op);
+    project
+}
+
+/// The plain samples of formats 21, 22 and 25 hold nothing those formats
+/// added (a countersink, an Inlay, an Inlay's male board), so each has a
+/// second fixture that does, written by hand in its own format from the
+/// sample of that version and the step's description of the format: no
+/// current build can save an old format. Each row's file says its
+/// version, holds the format's own words and none of a later format's,
+/// loads as the project the row expects at the current version with
+/// nothing for validation to report and nothing noted, and that project
+/// holds the feature.
+///
+/// - 21: a countersink Drill `o3` of a 3.175 mm hole `i2` with the V-bit.
+/// - 22: the female Inlay `o7` as format 22 wrote it, with `side` and
+///   without the fields formats 23 to 26 added; it gains them, unset.
+/// - 25: the Inlay with a measured male board 10 mm thick, so the one
+///   file cuts both boards; `plug_depth_mm` 0.5 keeps the male's
+///   engagement within the bit's cone.
+#[test]
+fn feature_fixtures_load_holding_what_their_format_added() {
+    use crate::model::{
+        DrillCycle, DrillOp, FeatureDefinition, FeatureInstance, InlayOp, MaleBoard,
+    };
+    use crate::test_support::sample_inlay;
+    use crate::{DefinitionId, InstanceId, ToolId};
+    use dc_geometry::{Point, Polyline, Transform};
+
+    let fixtures = [
+        FeatureFixture {
+            name: "countersink",
+            version: 21,
+            bytes: V21_COUNTERSINK_FIXTURE,
+            holds: &[
+                "\"countersink\": {",
+                "\"start_plane_cleared_externally\": false",
+            ],
+            lacks: &["\"inlay\"", "\"bitmaps\""],
+            expected: || {
+                let mut project = sample_with_v_bit_and(Operation::Drill(DrillOp {
+                    targets: vec![InstanceId::new("i2")],
+                    tool: ToolId::new("t2"),
+                    depth_mm: None,
+                    cycle: DrillCycle::Countersink {
+                        diameter_mm: 6.0,
+                        start_depth_mm: 0.0,
+                        start_plane_cleared_externally: false,
+                    },
+                    ..sample_drill()
+                }));
+                let hole = FeatureDefinition {
+                    id: DefinitionId::new("d2"),
+                    name: "Hole".into(),
+                    profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 3.175 / 2.0)],
+                };
+                project.instances.push(FeatureInstance {
+                    id: InstanceId::new("i2"),
+                    definition: hole.id.clone(),
+                    transform: Transform::translate(35.0, 25.0),
+                    name: "Hole".into(),
+                    visible: true,
+                    locked: false,
+                    z_top_mm: Some(6.0),
+                    z_bottom_mm: Some(0.0),
+                });
+                project.definitions.insert(hole.id.clone(), hole);
+                project
+            },
+            has_feature: |project| {
+                project.operations.iter().any(|op| {
+                    matches!(
+                        op,
+                        Operation::Drill(DrillOp {
+                            cycle: DrillCycle::Countersink { .. },
+                            ..
+                        })
+                    )
+                })
+            },
+        },
+        FeatureFixture {
+            name: "inlay",
+            version: 22,
+            bytes: V22_INLAY_FIXTURE,
+            holds: &["\"kind\": \"inlay\"", "\"side\": \"female\""],
+            lacks: &[
+                "\"cut_out\"",
+                "\"outline_rounding_mm\"",
+                "\"male_board\"",
+                "\"boundary\"",
+                "\"bitmaps\"",
+            ],
+            expected: || sample_with_v_bit_and(Operation::Inlay(sample_inlay())),
+            has_feature: |project| {
+                project
+                    .operations
+                    .iter()
+                    .any(|op| matches!(op, Operation::Inlay(_)))
+            },
+        },
+        FeatureFixture {
+            name: "inlay-male-board",
+            version: 25,
+            bytes: V25_MALE_BOARD_FIXTURE,
+            holds: &["\"male_board\": {", "\"thickness_mm\": 10.0"],
+            lacks: &[
+                "\"side\": \"female\"",
+                "\"side\": \"male\"",
+                "\"boundary\"",
+                "\"bitmaps\"",
+            ],
+            expected: || {
+                sample_with_v_bit_and(Operation::Inlay(InlayOp {
+                    male_board: MaleBoard {
+                        width_mm: None,
+                        height_mm: None,
+                        thickness_mm: Some(10.0),
+                    },
+                    plug_depth_mm: Some(0.5),
+                    ..sample_inlay()
+                }))
+            },
+            has_feature: |project| {
+                project
+                    .operations
+                    .iter()
+                    .any(|op| matches!(op, Operation::Inlay(inlay) if inlay.cuts_male()))
+            },
+        },
+    ];
+    for fixture in fixtures {
+        let FeatureFixture { name, version, .. } = fixture;
+        let case = format!("v{version}/{name}.dcv");
+        let text = std::str::from_utf8(fixture.bytes).unwrap();
+        assert!(
+            text.contains(&format!("\"version\": {version},")),
+            "{case}: a version {version} file"
+        );
+        for words in fixture.holds {
+            assert!(text.contains(words), "{case} holds {words}");
+        }
+        for words in fixture.lacks {
+            assert!(!text.contains(words), "{case} holds {words}");
+        }
+        // The plain sample of the same version does not hold the feature.
+        assert!(
+            !(fixture.has_feature)(&sample_project()),
+            "{case}: the sample has the feature"
+        );
+
+        let loaded = load(fixture.bytes).unwrap_or_else(|err| panic!("{case}: {err}"));
+        assert_eq!(loaded.project.version, CURRENT_VERSION, "{case}");
+        assert_eq!(loaded.project, (fixture.expected)(), "{case}");
+        assert!((fixture.has_feature)(&loaded.project), "{case}");
+        assert_eq!(loaded.problems, vec![], "{case}");
+        assert_eq!(loaded.notes, vec![], "{case}");
+
+        // Saved, it is a current file that loads as the same project.
+        let saved = save(&loaded.project).unwrap_or_else(|err| panic!("{case}: {err}"));
+        assert!(
+            saved.contains(&format!("\"version\": {CURRENT_VERSION},")),
+            "{case}"
+        );
+        assert_eq!(
+            load(saved.as_bytes()).unwrap().project,
+            loaded.project,
+            "{case}"
+        );
     }
 }
 
