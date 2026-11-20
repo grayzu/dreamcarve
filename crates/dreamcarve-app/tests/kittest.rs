@@ -1915,12 +1915,20 @@ impl egui::DroppedFile for Dropped {
     }
 }
 
-/// Drops `path` on the window, as the OS hands a dropped file over.
+/// Drops `path` on the window, as the OS hands a dropped file over. One
+/// frame takes the drop. The window is then left to settle, unless the
+/// file is a picture being decoded on its thread: that is
+/// `common::settle_picture`'s to wait for, a frame at a time, since a
+/// `run` the picture lands in the middle of has too few frames left for
+/// the sheet it opens.
 fn drop_file(h: &mut Harness<'_, dreamcarve_app::Shell>, path: &std::path::Path) {
     h.input_mut()
         .dropped_files
         .push(std::sync::Arc::new(Dropped(path.to_path_buf())));
-    h.run();
+    h.step();
+    if !h.state().opening_picture() {
+        h.run();
+    }
 }
 
 /// Capability 55 (#535): a dropped `.svg` opens the Import drawing sheet,
@@ -2314,7 +2322,6 @@ fn add_picture_and_see_its_tree_row() {
     let gradient = common::fixture("photo/gradient.png");
     dialogs.answer(&gradient);
     button_named(&h, "Add picture").click();
-    h.run();
     common::settle_picture(&mut h);
     assert_eq!(dialogs.asked(), ["open_picture"]);
     assert!(
@@ -2427,7 +2434,6 @@ fn new_from_picture_through_the_sheet() {
     let gradient = common::fixture("photo/gradient.png");
     dialogs.answer(&gradient);
     button_named(&h, "New from picture…").click();
-    h.run();
     common::settle_picture(&mut h);
     assert_eq!(dialogs.asked(), ["open_picture"]);
     let sheet = h.get_by_role(Role::Dialog);

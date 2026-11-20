@@ -153,18 +153,32 @@ pub fn open_operation(harness: &mut Harness<'_, Shell>, name: &str) {
     harness.run();
 }
 
-/// Runs frames until the picture the Add picture sheet waits for is
+/// Draws frames until the picture the Add picture sheet waits for is
 /// decoded (on its own thread) and the sheet is open, or its refusal is
-/// in the status bar.
+/// in the status bar. Call it straight after the click or the drop that
+/// asks for the picture, with no `run` between.
+///
+/// The frames are drawn one at a time (`step`) until the picture has
+/// landed, and only then is the window left to settle (`run`). The
+/// thread lands when it lands; `run` gives a window four frames to stop
+/// asking for more, and a picture that landed between two of them left
+/// the sheet it opens too few: the test then failed with "exceeded
+/// max_steps (4). It would have settled after 6 steps", three times in
+/// 150 runs of `drop_of_png_opens_the_picture_sheet` (the phase 4
+/// audit's "`Harness::run` and `max_steps`"). The first few frames take
+/// the click and start the thread.
 pub fn settle_picture(harness: &mut Harness<'_, Shell>) {
     let started = std::time::Instant::now();
+    for _ in 0..3 {
+        harness.step();
+    }
     while harness.state().opening_picture() {
         assert!(
             started.elapsed() < std::time::Duration::from_secs(30),
             "the picture never landed"
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
-        harness.run();
+        harness.step();
     }
     harness.run();
 }

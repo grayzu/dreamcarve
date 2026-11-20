@@ -764,7 +764,6 @@ fn d6_pictures(out: &Path, looks: &[dc_app::Theme]) {
     // the title leaves the field, as a click anywhere does.
     dialogs.answer(&picture);
     h.get_by_role_and_label(Role::Button, "Add picture").click();
-    h.run();
     common::settle_picture(&mut h);
     h.get_by_role_and_label(Role::TextInput, "Width").focus();
     h.run();
@@ -993,7 +992,6 @@ fn d4_sheets(out: &Path, looks: &[dc_app::Theme]) {
     let picture = common::write_colour_png(&dir, "landscape.png", &common::landscape(480, 320));
     dialogs.answer(&picture);
     h.get_by_role_and_label(Role::Button, "Add picture").click();
-    h.run();
     common::settle_picture(&mut h);
     park_pointer(&mut h);
     shoot_in(&mut h, out, "09-sheet-add-picture", looks);
@@ -1622,7 +1620,6 @@ fn final_sheets(shots: &Shots) {
     let picture = common::write_colour_png(&dir, "landscape.png", &common::landscape(480, 320));
     dialogs.answer(&picture);
     h.get_by_role_and_label(Role::Button, "Add picture").click();
-    h.run();
     common::settle_picture(&mut h);
     shots.take(&mut h, "h03-sheet-add-picture");
     h.key_press(egui::Key::Escape);
