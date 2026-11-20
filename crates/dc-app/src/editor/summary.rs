@@ -66,6 +66,15 @@ pub fn group(project: &Project, strings: &Strings, op: &Operation, group: Group)
         {
             continue;
         }
+        // A switch that holds its whole group (an Inlay's Cut-out) has
+        // the group's own name, which the header already says: off, the
+        // group has *None*; on, its fields speak for it.
+        if holds_group(row, &rows) {
+            if fields::get(&record, row.key).is_none_or(Value::is_null) {
+                return strings.get(StrKey::EditorSummaryNone).to_owned();
+            }
+            continue;
+        }
         if let Some(phrase) = cx.phrase(row, &rows) {
             phrases.push(phrase);
         }
@@ -83,6 +92,17 @@ pub fn group(project: &Project, strings: &Strings, op: &Operation, group: Group)
             .collect::<Vec<_>>()
             .join(", "),
     )
+}
+
+/// Whether `row` is a switch every other row of its group, `rows`, is
+/// nested under: the feature the group is (`cut_out`, over `cut_out.tool`
+/// and the rest; alone while it is off, since its fields are not there).
+fn holds_group(row: &Row, rows: &[&'static Row]) -> bool {
+    let nested = format!("{}.", row.key);
+    matches!(row.kind, FieldKind::Toggle(_))
+        && rows
+            .iter()
+            .all(|other| other.key == row.key || other.key.starts_with(&nested))
 }
 
 /// Whether `group` of an operation of `kind` is open when the editor

@@ -760,6 +760,10 @@ summary_tools = "tool's {value}"
 summary_stock = "same as stock {value}"
 summary_unset = "not set"
 summary_off = "{label} off"
+# A group whose switch is off (an Inlay with no cut-out), and a tool named
+# by its name alone.
+summary_none = "None"
+summary_named = "{value}"
 summary_relief = "relief {value}"
 summary_start = "start {value}"
 summary_raster = "raster {value}"

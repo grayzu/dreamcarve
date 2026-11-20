@@ -3729,6 +3729,59 @@ mod summary {
         assert_eq!(summary::group(&project, &strings, &panel, Group::Setup), "");
     }
 
+    /// Row D5 of the worklog, defect 7: an Inlay's closed Cut-out group
+    /// said "Cut-out" after its title, the name of the switch that holds
+    /// the group, and nothing of what the cut-out is. It says the tool,
+    /// whether tabs hold the plug, and the allowance; and *None* when the
+    /// Inlay has no cut-out.
+    #[test]
+    fn closed_cut_out_group_says_its_tool_and_tabs() {
+        let strings = Strings::english();
+        let project = common::load_dcv(&common::fixture("dc.dcv"));
+        let inlay = project
+            .operations
+            .iter()
+            .find(|op| matches!(op, Operation::Inlay(_)))
+            .expect("the inlay pair's Inlay")
+            .clone();
+        let tool = fields::get(&fields::record(&inlay).unwrap(), "cut_out.tool")
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .expect("the fixture's Inlay has a cut-out");
+        let name = &project
+            .tools
+            .iter()
+            .find(|t| t.id.as_str() == tool)
+            .expect("the cut-out's tool")
+            .name;
+        assert_eq!(
+            summary::group(&project, &strings, &inlay, Group::CutOut),
+            format!("{name}, holding tabs, cut-out allowance 0.2 mm")
+        );
+        let untabbed = fields::set(&inlay, "cut_out.tabs", serde_json::Value::Null).unwrap();
+        assert_eq!(
+            summary::group(&project, &strings, &untabbed, Group::CutOut),
+            format!("{name}, holding tabs off, cut-out allowance 0.2 mm")
+        );
+        let none = fields::set(&inlay, "cut_out", serde_json::Value::Null).unwrap();
+        assert_eq!(
+            summary::group(&project, &strings, &none, Group::CutOut),
+            "None"
+        );
+        // No closed group of any kind repeats its own title as its
+        // summary.
+        for op in &project.operations {
+            for (group, _) in fields::groups(op) {
+                let said = summary::group(&project, &strings, op, group);
+                assert_ne!(
+                    said,
+                    strings.get(group.title()),
+                    "{group:?} of {}",
+                    op.name()
+                );
+            }
+        }
+    }
+
     /// Functional 66: every group but Setup starts closed; a group holding
     /// a located warning opens by itself, and only it: the Pocket's
     /// `relief_corner_too_tight` is Corners and tabs'.

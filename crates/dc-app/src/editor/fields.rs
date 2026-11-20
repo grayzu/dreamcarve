@@ -1496,7 +1496,9 @@ const INLAY: &[Row] = &[
         FieldKind::ToolPicker,
         StrKey::EditorFieldCutOutTool,
         StrKey::EditorFieldCutOutToolHelp,
-    ),
+    )
+    // The closed group names the tool by its name alone.
+    .summarised(StrKey::EditorSummaryNamed),
     row(
         Group::CutOut,
         "cut_out.tabs",
