@@ -711,7 +711,11 @@ Controls:
 - **Status cell.** One of: nothing; spinner; `triangle-alert` + count in
   status.warning; `circle-x` filled in status.error; `info` in status.info
   for an unused tool or the tool's red dot (spec 63: a 8-px filled
-  status.error dot when a feed is missing). Hover lists the messages.
+  status.error dot when a feed is missing). Hover lists the messages. A
+  tool's row carries the warning mark and the error mark too, for the
+  findings that name the tool, drawn by the painter an operation's row
+  uses (`widgets::status`); the worst shows: an error, the red dot, the
+  warnings, the hint.
 - **Design Tree row.** 30 px, on its own 8-px-radius surface like a list
   row (hover `surface.hover`; selected `accent.soft` with the 3-px
   `accent` bar): `eye`, `lock` (hover-revealed unless

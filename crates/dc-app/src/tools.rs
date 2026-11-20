@@ -758,6 +758,86 @@ pub fn located(project: &Project, path: &str) -> Option<(ToolId, Option<ToolFiel
     Some((tool.id.clone(), field))
 }
 
+/// Whether `finding` names tool `id`: its field is the tool's
+/// (`tools[t1]`) or one of the tool's (`tools[t1].rpm`).
+fn names(finding: &Finding, id: &ToolId) -> bool {
+    finding
+        .field
+        .as_deref()
+        .and_then(|field| field.strip_prefix("tools["))
+        .and_then(|rest| rest.strip_prefix(id.as_str()))
+        .and_then(|rest| rest.strip_prefix(']'))
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
+/// The mark in a tool row's status cell (capability 63; `experience.md`,
+/// section 7, "Status cell"): the worst of what is said of the tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowMark {
+    /// Nothing to say.
+    Clean,
+    /// Only the `unused_tool` hint: the `info` glyph.
+    Hint,
+    /// This many warnings name it: the warning glyph and the count, as
+    /// an operation's row shows its own.
+    Warnings(usize),
+    /// It still needs a value ([`lacks_value`]): the red dot.
+    LacksValue,
+    /// An error names it that is not a value still to set (a diameter
+    /// out of range): the error mark of an operation's row.
+    Error,
+}
+
+/// A tool row's status cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowStatus {
+    /// The mark.
+    pub mark: RowMark,
+    /// What hovering it lists: the errors that name the tool, the values
+    /// it still needs, then the warnings, then the hint, each as the
+    /// Warnings drawer words it.
+    pub messages: Vec<String>,
+}
+
+/// The status cell of `tool`'s row, from `findings` ([`App::warnings`]):
+/// what the findings that name the tool come to, with the values it
+/// still needs, which mark it whether or not an operation uses it yet.
+///
+/// [`App::warnings`]: crate::App::warnings
+#[must_use]
+pub fn row_status(tool: &Tool, findings: &[Finding]) -> RowStatus {
+    let unset = unset_values(tool);
+    let mine = |tier: dc_job::Tier| {
+        findings
+            .iter()
+            .filter(move |f| f.tier == tier && names(f, &tool.id))
+    };
+    // An unset value's error is the dot's, said once, by `unset`.
+    let errors: Vec<&Finding> = mine(dc_job::Tier::Error)
+        .filter(|f| !unset.iter().any(|(_, message)| *message == f.message))
+        .collect();
+    let warnings: Vec<&Finding> = mine(dc_job::Tier::Warning).collect();
+    let hints: Vec<&Finding> = mine(dc_job::Tier::Hint).collect();
+    let mark = if !errors.is_empty() {
+        RowMark::Error
+    } else if !unset.is_empty() {
+        RowMark::LacksValue
+    } else if !warnings.is_empty() {
+        RowMark::Warnings(warnings.len())
+    } else if !hints.is_empty() {
+        RowMark::Hint
+    } else {
+        RowMark::Clean
+    };
+    let messages = errors
+        .iter()
+        .map(|f| f.message.clone())
+        .chain(unset.into_iter().map(|(_, message)| message))
+        .chain(warnings.iter().chain(&hints).map(|f| f.message.clone()))
+        .collect();
+    RowStatus { mark, messages }
+}
+
 /// The `unused_tool` hint about tool `id` among `findings`, as `check`
 /// prints it, when there is one.
 #[must_use]

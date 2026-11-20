@@ -7,9 +7,11 @@
 //! library…* over the project's tools, one 52-px row each with its type
 //! glyph, name, and under it its cutting diameter, a tapered ball nose's
 //! tip, its angle labelled for what it is (`90°`, `6.7°/side`) and its
-//! number (`tools::row_detail`), a red dot when it lacks a value an
+//! number (`tools::row_detail`), and a status cell
+//! (`tools::row_status`): a red dot when it lacks a value an
 //! operation needs (a feed, plunge rate or RPM, a tapered ball nose's
-//! tip, taper or flute length) and the `unused_tool` hint
+//! tip, taper or flute length), the mark an operation's row has when a
+//! warning or an error names the tool, and the `unused_tool` hint
 //! when no operation uses it; *Duplicate* and *Delete* under the list;
 //! and *Tool Library…* at the card's foot. The Inspector holds the
 //! selected tool's editor ([`editor_card`]), the rows of `tools::rows`,
@@ -34,7 +36,7 @@
 //! the field a Warnings row asked for ([`open_field`]) are view state,
 //! kept in egui's memory.
 
-use dc_app::tools::{self, KindChoice, KindSwitch, ToolField};
+use dc_app::tools::{self, KindChoice, KindSwitch, RowMark, ToolField};
 use dc_app::{Command, CommandError, StrKey, Strings};
 use dc_project::{Project, Tool, ToolId, ToolKind, Units};
 use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
@@ -450,44 +452,51 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
         rect.center().y + 9.0,
     );
 
-    // The status cell: the red dot for a value the tool still needs (a
-    // rate, a tapered ball nose's tip, taper or flute length), each
-    // named in its tooltip; else the hint.
+    // The status cell (`tools::row_status`): the error mark or the
+    // warning mark and count of an operation's row when a finding names
+    // the tool; the red dot for a value it still needs (a rate, a tapered
+    // ball nose's tip, taper or flute length); else the hint. Hovering it
+    // lists the messages behind it.
     let cell = Rect::from_center_size(
         egui::pos2(rect.right() - 8.0 - STATUS_PX / 2.0, rect.center().y),
         egui::vec2(STATUS_PX, STATUS_PX),
     );
-    let lacks = tools::lacks_value(tool);
-    let hint = tools::unused_hint(app.warnings(), &tool.id);
-    let messages: Vec<String> = if lacks {
-        tools::unset_values(tool)
-            .into_iter()
-            .map(|(_, message)| message)
-            .collect()
-    } else {
-        hint.iter().map(|h| h.message.clone()).collect()
-    };
-    if lacks {
-        ui.painter()
-            .circle_filled(cell.center(), 4.0, palette.status_error.stroke);
-    } else if hint.is_some() {
-        let glyph = Icon::Info.galley(ui, theme::ICON_SMALL_PX, palette.status_info.text);
-        ui.painter().galley(
-            cell.center() - glyph.size() / 2.0,
-            glyph,
-            palette.status_info.text,
-        );
-    }
-    if !messages.is_empty() {
-        let id = ui.make_persistent_id(("tool_status", tool.id.as_str()));
-        let status = ui.interact(cell, id, Sense::hover());
-        if lacks {
-            // The dot has no words: assistive tools read what it means.
-            let name = strings.get(StrKey::AppToolsLacksValue);
-            status.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, name));
+    let status = tools::row_status(tool, app.warnings());
+    // The marks have no words: assistive tools read what each means.
+    let name = match status.mark {
+        RowMark::Clean => return,
+        RowMark::Error => {
+            crate::widgets::status::error(ui, cell);
+            strings.get(StrKey::AppToolsRowError).to_owned()
         }
-        status.on_hover_text(messages.join("\n"));
-    }
+        RowMark::LacksValue => {
+            ui.painter()
+                .circle_filled(cell.center(), 4.0, palette.status_error.stroke);
+            strings.get(StrKey::AppToolsLacksValue).to_owned()
+        }
+        RowMark::Warnings(count) => {
+            crate::widgets::status::warnings(ui, cell, count);
+            dc_app::status::counted(
+                strings,
+                count,
+                StrKey::AppStatusWarning,
+                StrKey::AppStatusWarnings,
+            )
+        }
+        RowMark::Hint => {
+            let glyph = Icon::Info.galley(ui, theme::ICON_SMALL_PX, palette.status_info.text);
+            ui.painter().galley(
+                cell.center() - glyph.size() / 2.0,
+                glyph,
+                palette.status_info.text,
+            );
+            strings.get(StrKey::AppToolsRowHint).to_owned()
+        }
+    };
+    let id = ui.make_persistent_id(("tool_status", tool.id.as_str()));
+    let response = ui.interact(cell, id, Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &name));
+    response.on_hover_text(status.messages.join("\n"));
 }
 
 /// The selected project tool's fields (its footer is [`footer`]): the

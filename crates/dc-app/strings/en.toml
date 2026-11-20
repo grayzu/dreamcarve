@@ -556,6 +556,8 @@ angle_per_side = "{angle}°/side"
 # What a row's red dot means, for assistive tools; its tooltip names the
 # values.
 lacks_value = "Has a value still to set"
+row_error = "Has an error"
+row_hint = "Has a hint"
 saved = "Saved “{name}” to the library as {id}"
 already_saved = "“{name}” is already in the library as {id}"
 save_failed = "Cannot save “{name}” to the library: {reason}"

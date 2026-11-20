@@ -470,7 +470,11 @@ folder are app preferences, kept outside the project.
     ball nose's per side, `6.7°/side`, since the two unlabelled side by
     side are the mix-up phase 3's research warns of), number, and a red
     dot when the tool lacks a value an operation needs: a feed, plunge
-    rate or RPM, or a tapered ball nose's tip, taper or flute length. No
+    rate or RPM, or a tapered ball nose's tip, taper or flute length. A
+    warning that names the tool (a plunge rate above the feed, a spindle
+    speed out of range) puts the mark an operation's row carries on its
+    row, the warning glyph and the count, and an error of another kind
+    the error mark; hovering the mark lists the messages. No
     tool is selected until a row is clicked or a tool is added. Selecting
     a row edits it in the Inspector, in place
     (selecting *is* editing; there is no Edit button): name, type

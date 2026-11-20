@@ -8574,6 +8574,65 @@ fn v_bit_90(h: &Harness<'_, dreamcarve_app::Shell>, id: &str, name: &str) -> dc_
     }
 }
 
+/// Capability 63 (slice D9), in the window: a warning that names a tool
+/// marks the tool's row in the Tools step with the mark an operation's
+/// row has, a warning glyph and the count, and hovering it lists the
+/// message. The plaque's 1/4 end mill, given a plunge rate above its
+/// feed, gets *1 warning*; the row used to show nothing, since only a
+/// missing value marked a tool. The 1/8 end mill's row stays clean.
+#[test]
+fn a_warning_about_a_tool_marks_its_row() {
+    let dir = scratch("tool-row-warning");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    go_to(&mut h, "Tools");
+    let marks = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<egui::Rect> {
+        let panel = h.state().layout().step_panel.expect("the step panel shows");
+        h.query_all_by_label("1 warning")
+            .map(|node| node.rect())
+            .filter(|rect| panel.contains_rect(*rect))
+            .collect()
+    };
+    assert!(marks(&h).is_empty(), "the plaque's tools have no warning");
+
+    let project = h.state().app().project().clone();
+    let mut fast = project.tools[1].clone();
+    assert_eq!(fast.name, "1/4 end mill");
+    fast.plunge_mm_min = Some(5000.0);
+    h.state_mut()
+        .app_mut()
+        .run(Command::UpdateTool(fast))
+        .unwrap();
+    h.run();
+    let marked = marks(&h);
+    assert_eq!(marked.len(), 1, "one row is marked");
+    let row = h
+        .get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .rect();
+    assert!(
+        row.contains_rect(marked[0]),
+        "the mark is on the 1/4 end mill's row: {:?} in {row:?}",
+        marked[0]
+    );
+    let panel = h.state().layout().step_panel.unwrap();
+    h.query_all_by_label("1 warning")
+        .find(|node| panel.contains_rect(node.rect()))
+        .unwrap()
+        .hover();
+    wait_for_tooltip(&mut h);
+    assert!(
+        h.query_by_label_contains("plunges at 5000 mm/min")
+            .is_some(),
+        "hovering it lists the message"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// How many rows of the Tools list show the red dot, as assistive tools
 /// read it.
 fn rows_lacking_a_value(h: &Harness<'_, dreamcarve_app::Shell>) -> usize {

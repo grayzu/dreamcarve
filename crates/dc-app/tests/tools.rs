@@ -1192,3 +1192,79 @@ fn a_findings_path_names_the_tool_and_its_field() {
         );
     }
 }
+
+/// Capability 63 (slice D9): a tool's row carries what is said of the
+/// tool, as an operation's row does of the operation. On the plaque the
+/// unused `Set me` lacks its rates, with the `unused_tool` hint behind
+/// the dot, and shows the hint once they are set; the others are clean.
+/// A plunge rate above the feed on the 1/4 end mill is a warning located
+/// on that tool, so its row is marked with one warning and holds its
+/// message, where the row showed nothing. An error that names the tool
+/// (its diameter put at zero) outranks it. A value the tool still needs
+/// is the red dot, as before, with the warnings still behind it.
+#[test]
+fn a_tools_row_carries_the_findings_that_name_it() {
+    use tools::RowMark;
+    let mut harness = Harness::from_project(plaque());
+    harness.generate();
+    let status = |harness: &Harness, id: &str| {
+        tools::row_status(tool(harness.app.project(), id), harness.warnings())
+    };
+    let placeholder = status(&harness, "t1");
+    assert_eq!(placeholder.mark, RowMark::LacksValue);
+    assert!(
+        placeholder
+            .messages
+            .last()
+            .unwrap()
+            .contains("not used by any"),
+        "{:?}",
+        placeholder.messages
+    );
+    let mut set = tool(harness.app.project(), "t1").clone();
+    (set.feed_mm_min, set.plunge_mm_min, set.rpm) = (Some(900.0), Some(300.0), Some(18_000));
+    harness.run(Command::UpdateTool(set)).unwrap();
+    assert_eq!(status(&harness, "t1").mark, RowMark::Hint);
+    assert_eq!(status(&harness, "t2").mark, RowMark::Clean);
+    assert_eq!(status(&harness, "t3").mark, RowMark::Clean);
+    assert!(status(&harness, "t2").messages.is_empty());
+
+    let mut fast = tool(harness.app.project(), "t2").clone();
+    fast.plunge_mm_min = Some(5000.0);
+    harness.run(Command::UpdateTool(fast.clone())).unwrap();
+    let warned = status(&harness, "t2");
+    assert_eq!(warned.mark, RowMark::Warnings(1));
+    assert_eq!(warned.messages.len(), 1);
+    assert!(
+        warned.messages[0].contains("plunges at 5000 mm/min"),
+        "{:?}",
+        warned.messages
+    );
+    assert_eq!(status(&harness, "t3").mark, RowMark::Clean, "only its own");
+
+    let mut flat = fast.clone();
+    flat.diameter_mm = 0.0;
+    harness.run(Command::UpdateTool(flat)).unwrap();
+    let wrong = status(&harness, "t2");
+    assert_eq!(wrong.mark, RowMark::Error);
+    assert!(
+        wrong.messages[0].contains("diameter_mm is 0"),
+        "the error first: {:?}",
+        wrong.messages
+    );
+
+    let mut unset = fast;
+    unset.rpm = None;
+    harness.run(Command::UpdateTool(unset)).unwrap();
+    let lacking = status(&harness, "t2");
+    assert_eq!(lacking.mark, RowMark::LacksValue);
+    assert!(lacking.messages[0].contains("tools[t2].rpm is not set"));
+    assert!(
+        lacking
+            .messages
+            .iter()
+            .any(|m| m.contains("plunges at 5000")),
+        "the warning is still listed: {:?}",
+        lacking.messages
+    );
+}

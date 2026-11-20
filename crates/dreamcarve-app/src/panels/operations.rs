@@ -529,9 +529,9 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
 }
 
 /// The status cell (section 7): the spinner, a warning count, the error
-/// mark, or nothing. Hovering it names what it shows.
+/// mark, or nothing (`widgets::status`, a tool's row's marks too).
+/// Hovering it names what it shows.
 fn status_cell(ui: &mut Ui, state: &FrameState<'_>, rect: Rect, row: &ListRow) {
-    let palette = Palette::current(ui);
     let strings = state.app.strings();
     match row.status {
         Status::Clean => {}
@@ -556,28 +556,7 @@ fn status_cell(ui: &mut Ui, state: &FrameState<'_>, rect: Rect, row: &ListRow) {
                 Sense::hover(),
             );
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &text));
-            let glyph_galley =
-                Icon::TriangleAlert.galley(ui, theme::ICON_SMALL_PX, palette.status_warning.stroke);
-            let count_galley = ui.painter().layout_no_wrap(
-                count.to_string(),
-                TextStyle::Small.resolve(ui.style()),
-                palette.status_warning.text,
-            );
-            let total = glyph_galley.size().x + 2.0 + count_galley.size().x;
-            let x = rect.center().x - total / 2.0;
-            ui.painter().galley(
-                egui::pos2(x, rect.center().y - glyph_galley.size().y / 2.0),
-                glyph_galley.clone(),
-                palette.status_warning.stroke,
-            );
-            ui.painter().galley(
-                egui::pos2(
-                    x + glyph_galley.size().x + 2.0,
-                    rect.center().y - count_galley.size().y / 2.0,
-                ),
-                count_galley,
-                palette.status_warning.text,
-            );
+            crate::widgets::status::warnings(ui, rect, count);
             let _ = response.on_hover_text(hover_text(&text, row));
         }
         Status::Error => {
@@ -588,15 +567,7 @@ fn status_cell(ui: &mut Ui, state: &FrameState<'_>, rect: Rect, row: &ListRow) {
                 Sense::hover(),
             );
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
-            ui.painter()
-                .circle_filled(rect.center(), 7.0, palette.status_error.stroke);
-            // The mark cut out of the disc, in the card's own colour.
-            let cross = Icon::X.galley(ui, 12.0, palette.surface_panel);
-            ui.painter().galley(
-                rect.center() - cross.size() / 2.0,
-                cross,
-                palette.surface_panel,
-            );
+            crate::widgets::status::error(ui, rect);
             let _ = response.on_hover_text(hover_text(text, row));
         }
     }
