@@ -28,9 +28,12 @@ use dc_project::{Board, InstanceId, Project};
 use crate::viewport::lod;
 use crate::viewport::renderer::{Segment, StyleId, StyleWord, gpu_f32};
 
-/// The most a flattened arc strays from the true one, screen pixels, at
-/// the least zoom of its band; under twice that at the most.
-const ARC_TOLERANCE_PX: f64 = 0.25;
+/// The most a flattened arc strays from the true one, in points, at the
+/// least zoom of its band; under twice that at the most. An eighth: at
+/// the top of a band on a 2× display that is half a device pixel, under
+/// what a 1.25-px anti-aliased line shows, so a circle reads as a circle.
+/// At a quarter the coaster's outline showed its chords there.
+const ARC_TOLERANCE_PX: f64 = 0.125;
 /// The finest display tolerance, mm, however far in the camera is.
 const MIN_TOLERANCE_MM: f64 = 1e-4;
 
@@ -520,9 +523,10 @@ mod tests {
     use super::*;
 
     /// One band per doubling; a band's tolerance keeps a flattened arc
-    /// within half a pixel at every zoom in it.
+    /// within a quarter of a point at every zoom in it, which is half a
+    /// device pixel on a 2× display.
     #[test]
-    fn arcs_flatten_under_half_a_pixel_in_every_band() {
+    fn arcs_flatten_under_a_quarter_point_in_every_band() {
         for px_per_mm in [0.05, 0.3, 1.0, 1.99, 2.0, 7.5, 150.0, 2000.0] {
             let b = band(px_per_mm);
             assert!(
@@ -530,7 +534,7 @@ mod tests {
                 "{px_per_mm} px/mm in band {b}"
             );
             let error_px = tolerance_mm(b) * px_per_mm;
-            assert!(error_px < 0.5 + 1e-9, "{px_per_mm} px/mm: {error_px} px");
+            assert!(error_px < 0.25 + 1e-9, "{px_per_mm} px/mm: {error_px} px");
         }
     }
 

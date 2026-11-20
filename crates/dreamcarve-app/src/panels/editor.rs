@@ -1105,6 +1105,22 @@ fn tool_text(strings: &Strings, project: &Project, tool: &dc_project::Tool) -> S
     )
 }
 
+/// A picker row's padding at each end, px.
+const PICKER_PAD_PX: f32 = 8.0;
+/// The widest the picker's popover grows for a long name, px; a longer
+/// name is cut, with the whole of it in the row's tooltip.
+const PICKER_MAX_PX: f32 = 360.0;
+
+/// `tool`'s size as a picker row shows it: its diameter, a typed value,
+/// as its field reads (`3.175 mm`).
+fn picker_size(tool: &Tool, units: dc_project::Units) -> String {
+    format!(
+        "{} {}",
+        dc_app::units::field_text(tool.diameter_mm, units),
+        dc_app::units::suffix(units)
+    )
+}
+
 /// One row of the tool picker's popover (section 7, "Dropdown": "the tool
 /// dropdown shows the tool-type glyph, name, size and `(T2)`"): `tool`'s
 /// type glyph, `label` (its name and number), and its diameter at the
@@ -1129,7 +1145,7 @@ fn picker_row(ui: &mut Ui, cx: &Cx<'_>, tool: &Tool, chosen: bool, label: &str) 
     } else {
         palette.text_primary
     };
-    let pad = 8.0;
+    let pad = PICKER_PAD_PX;
     paint_tool_icon(
         ui,
         egui::pos2(
@@ -1139,14 +1155,8 @@ fn picker_row(ui: &mut Ui, cx: &Cx<'_>, tool: &Tool, chosen: bool, label: &str) 
         &tool.cutter,
         palette.text_secondary,
     );
-    let units = cx.project.display_units;
-    let size = format!(
-        "{} {}",
-        dc_app::units::summary_text(tool.diameter_mm, units),
-        dc_app::units::suffix(units)
-    );
     let size = ui.painter().layout_no_wrap(
-        size,
+        picker_size(tool, cx.project.display_units),
         TextStyle::Small.resolve(ui.style()),
         palette.text_secondary,
     );
@@ -1249,9 +1259,41 @@ fn tool_picker(
     );
     let refused_id = id.with("refused");
     egui::Popup::menu(&response).show(|ui| {
-        // As wide as its field: the popover's margin and outline are its
-        // own.
-        let inner = rect.width() - 2.0 * (ui.spacing().menu_margin.leftf() + 1.0);
+        // As wide as its field (the popover's margin and outline are its
+        // own), and wider where a tool's name and size need it: a picker
+        // that cuts its names is no picker.
+        let field = rect.width() - 2.0 * (ui.spacing().menu_margin.leftf() + 1.0);
+        let body = TextStyle::Body.resolve(ui.style());
+        let small = TextStyle::Small.resolve(ui.style());
+        let units = cx.project.display_units;
+        let widest = offered
+            .iter()
+            .map(|tool| {
+                let name = tool_text(cx.strings, cx.project, tool);
+                let name_px = ui
+                    .painter()
+                    .layout_no_wrap(name, body.clone(), palette.text_primary)
+                    .size()
+                    .x;
+                let size_px = ui
+                    .painter()
+                    .layout_no_wrap(
+                        picker_size(tool, units),
+                        small.clone(),
+                        palette.text_secondary,
+                    )
+                    .size()
+                    .x;
+                PICKER_PAD_PX
+                    + theme::ICON_SMALL_PX
+                    + 6.0
+                    + name_px
+                    + 16.0
+                    + size_px
+                    + PICKER_PAD_PX
+            })
+            .fold(field, f32::max);
+        let inner = widest.min(PICKER_MAX_PX).ceil();
         ui.set_min_width(inner);
         ui.set_max_width(inner);
         for tool in offered {

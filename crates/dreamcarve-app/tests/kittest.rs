@@ -3045,8 +3045,19 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     );
     h.get_by_label("Run instructions").click();
     h.run();
-    for step in &result.instructions.steps {
-        assert_eq!(in_export_step(&h, &step.before), 1, "{}", step.before);
+    // Each step once, under the window's own number: the report's line
+    // without the number the report gave it ("1. 1. plaque-1-T2.nc" was
+    // the number said twice).
+    for (k, step) in result.instructions.steps.iter().enumerate() {
+        let number = format!("{}.", k + 1);
+        let line = step
+            .before
+            .strip_prefix(&number)
+            .expect("the report numbers the plaque's two programs")
+            .trim_start();
+        assert_eq!(in_export_step(&h, line), 1, "{line}");
+        assert_eq!(in_export_step(&h, &number), 1, "numbered {number}");
+        assert_eq!(in_export_step(&h, &step.before), 0, "{}", step.before);
     }
     for note in &result.instructions.notes {
         assert_eq!(in_export_step(&h, note), 1, "the note {note}");

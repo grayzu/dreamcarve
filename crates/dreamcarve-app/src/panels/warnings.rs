@@ -450,8 +450,8 @@ fn draw_note(
 
 /// One row: the tier as a status chip (glyph and word), the code as a
 /// link, the message, the field; clicking it selects what it names. The
-/// message is read here, so it is never cut: it wraps in the room
-/// between the code and the field, and the row grows by its lines.
+/// message is read here, so it is never cut: it wraps in the room after
+/// the code, and the row grows by its lines.
 fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
@@ -483,15 +483,29 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
         .as_ref()
         .map_or(0.0, |field| width_of(field, palette.text_secondary) + gap);
     let inner = ui.available_width() - 2.0 * MARGIN_PX;
-    let message_px = (inner - chip_px - gap - code_px - field_px).max(120.0);
-    let message = ui.painter().layout(
-        row.message.clone(),
-        TextStyle::Body.resolve(ui.style()),
-        palette.text_primary,
-        message_px,
-    );
+    let body = TextStyle::Body.resolve(ui.style());
+    // Where the message and its field fit one line, the field stands at
+    // the row's right end; where they do not, the message has the whole
+    // width after the code and the field goes under it, as the Export
+    // step lists a finding.
+    let room = (inner - chip_px - gap - code_px).max(120.0);
+    let natural = ui
+        .painter()
+        .layout_no_wrap(row.message.clone(), body.clone(), palette.text_primary)
+        .size()
+        .x;
+    let field_beside = natural + field_px <= room;
+    let message = ui
+        .painter()
+        .layout(row.message.clone(), body, palette.text_primary, room);
     let line_px = ui.text_style_height(&TextStyle::Body);
-    let height = ROW_PX.max(message.size().y + (ROW_PX - line_px));
+    let field_line_px = ui.text_style_height(&TextStyle::Monospace) + 2.0;
+    let under_px = if row.field.is_some() && !field_beside {
+        field_line_px
+    } else {
+        0.0
+    };
+    let height = ROW_PX.max(message.size().y + under_px + (ROW_PX - line_px));
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
@@ -541,14 +555,20 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
         .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &row.message));
     ui.painter().galley(at, message, palette.text_primary);
     if let Some(field) = &row.field {
-        // At the row's right end, on the first line.
-        let place = ui.painter().text(
-            egui::pos2(rect.right() - MARGIN_PX, first.center().y),
-            egui::Align2::RIGHT_CENTER,
-            field,
-            mono,
-            palette.text_secondary,
-        );
+        let (anchor, align) = if field_beside {
+            (
+                egui::pos2(rect.right() - MARGIN_PX, first.center().y),
+                egui::Align2::RIGHT_CENTER,
+            )
+        } else {
+            (
+                egui::pos2(at.x, place.bottom() + field_line_px / 2.0),
+                egui::Align2::LEFT_CENTER,
+            )
+        };
+        let place = ui
+            .painter()
+            .text(anchor, align, field, mono, palette.text_secondary);
         ui.interact(place, response.id.with("field"), Sense::hover())
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, field));
     }

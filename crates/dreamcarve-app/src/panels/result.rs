@@ -277,6 +277,16 @@ fn cell(ui: &mut Ui, text: &str, style: TextStyle, colour: egui::Color32, width:
     );
 }
 
+/// Step `number`'s line without the number the report gave it: with
+/// several programs `export` prints `1. plaque-1-T2.nc  Before you
+/// start: …`, and the window numbers its steps in a gutter of its own,
+/// so the line read "1. 1. plaque-1-T2.nc".
+fn unnumbered(before: &str, number: usize) -> &str {
+    before
+        .strip_prefix(&format!("{number}."))
+        .map_or(before, str::trim_start)
+}
+
 /// The steps, numbered; the notes as callouts; then each program's
 /// details and each operation's line.
 fn run_instructions(ui: &mut Ui, result: &ExportResult) {
@@ -290,7 +300,12 @@ fn run_instructions(ui: &mut Ui, result: &ExportResult) {
                 TextStyle::Body,
                 palette.text_secondary,
             );
-            wrapped(ui, &step.before, TextStyle::Body, palette.text_primary);
+            wrapped(
+                ui,
+                unnumbered(&step.before, k + 1),
+                TextStyle::Body,
+                palette.text_primary,
+            );
         });
     }
     for note in &instructions.notes {
@@ -359,4 +374,26 @@ fn wrapped(ui: &mut Ui, text: &str, style: TextStyle, colour: egui::Color32) {
             .wrap()
             .selectable(false),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A step is numbered once: the report's own number is taken off the
+    /// line the window numbers, and a line with none (one program) or
+    /// with another step's number is left as it is.
+    #[test]
+    fn a_step_is_numbered_once() {
+        assert_eq!(
+            unnumbered("1. plaque-1-T2.nc  Before you start: fit T2", 1),
+            "plaque-1-T2.nc  Before you start: fit T2"
+        );
+        assert_eq!(
+            unnumbered("Before you start: fit T1", 1),
+            "Before you start: fit T1"
+        );
+        assert_eq!(unnumbered("2. b.nc  Before: …", 1), "2. b.nc  Before: …");
+        assert_eq!(unnumbered("12. l.nc", 12), "l.nc");
+    }
 }
