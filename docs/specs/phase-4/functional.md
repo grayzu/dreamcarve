@@ -731,7 +731,7 @@ folder are app preferences, kept outside the project.
     | Bore | Depth: `depth_mm`, `pitch_mm` (tool's step-down), `stock_to_leave_mm`, `through_cut_allowance_mm`. Strategy: `direction`. Heights: `safe_z_mm`. |
     | Engrave | Depth: `depth_mm`, `step_down_mm` (tool's), `through_cut_allowance_mm`. Strategy: `alternate_direction`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | V-Carve | Depth: `flat_depth_mm` (off for `null`), `start_depth_mm`, `start_plane_cleared_externally`, `through_cut_allowance_mm`. Strategy: `strategy` (Medial; Offset with `step_over_mm` and `direction`), `step_over_fraction`, `clearing` (70). Order: `machining_order`. Heights: `safe_z_mm`. |
-    | Inlay (format 25, #498) | Depth, one set for both boards (68a): `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `margin_mm`, `outline_rounding_mm` (off for `null`), `through_cut_allowance_mm`. Male board: `male_board.width_mm` and `height_mm` (the stock's for `null`), `male_board.thickness_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out: off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
+    | Inlay (format 26; one file since #498) | Depth, one set for both boards (68a): `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `boundary` (none, or the closed shapes that draw the male band's edge; phase 3's 49f), `margin_mm`, `outline_rounding_mm` (off for `null`), `through_cut_allowance_mm`. Male board: `male_board.width_mm` and `height_mm` (the stock's for `null`), `male_board.thickness_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out: off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | Photo V-Carve | Targets: `image`. Depth: `max_depth_mm`, `start_depth_mm`, `start_plane_cleared_externally`, `invert`, `through_cut_allowance_mm`. Strategy: `strategy` (Raster, Hatch), `line_angle_deg`, `line_spacing_fraction` (as a percentage), `sample_mm`. Heights: `safe_z_mm`, `stepover_retract_mm`. |
 
     Photo V-Carve lands with phase 3.5 (format v27); its editor is a slice
@@ -772,7 +772,22 @@ folder are app preferences, kept outside the project.
     with the bit's cutting height, and a third line is the **seat line**
     with `check`'s figures: `seat: moves 0.55 mm per 0.5° of taper,
     0.76 mm per 0.05 mm of tip radius; test-fit before gluing`, in
-    millimetres whatever the display units, as its steps are. One tool,
+    millimetres whatever the display units, as its steps are. The male's
+    band ends where the design grown by the margin ends, or at a **drawn
+    boundary** (phase 3's capability 49f): the **Boundary** row, in Depth
+    before the margin and the rounding it replaces, is a dropdown of
+    *None (use the band margin)* and the project's shapes that can be
+    one, which are those validation accepts: every outline closed, and
+    not one of the Inlay's own targets. Choosing a shape makes it the
+    boundary, one undo step; with two or more such shapes selected on the
+    drawing the dropdown also offers *Selected shapes*, for a band drawn
+    by several. The row writes `boundary` and nothing else: a margin or a
+    rounding still set shows `inlay_margin_ignored` under itself until
+    the user clears it, as a hand-edited file does, and the boundary's
+    own errors (`inlay_boundary_crosses_design` and the rest) show under
+    the row. A shape that is deleted leaves the list. The Viewport draws
+    the boundary dashed on the male board, mirrored with the design, as
+    `--preview` does. One tool,
     one clearing list and one cut-out serve both boards, so the same bit
     angle on both sides is enforced by construction. The Viewport draws the
     male board beside the stock (72). Export writes both boards' programs
@@ -1216,7 +1231,12 @@ byte-identical output with the program's header date pinned (`--date`).
     exceeds the cone height), and the Export step lists both boards'
     programs with the CLI's names. Unticking the female board exports the
     male programs alone and leaves the file unchanged. Exporting both
-    gives the quick start's committed programs.
+    gives the quick start's committed programs. With the fixture's frame
+    chosen in the Boundary row and the margin and rounding cleared, the
+    project is the one the Inlay chapter's hand edit makes
+    (`tests/fixtures/dc-boundary.dcv`), the male board shows the frame
+    dashed with the male's cuts ending at it, and both boards' programs
+    equal the CLI's for that project.
 77. **Photo V-Carve** (56, 68). The gradient fixture with a Photo V-Carve
     at `init`'s defaults draws the grooves `--preview` draws; `check`'s
     groove count appears in the operation's status. Runs once phase 3.5

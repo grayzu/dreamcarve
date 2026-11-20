@@ -243,7 +243,8 @@ fn push_once<'a, T: PartialEq + ?Sized>(list: &mut Vec<&'a T>, item: &'a T) {
 /// (a rest Pocket, a countersink, a V-Carve, an Inlay or a Photo
 /// V-Carve), the record of every operation before it; every
 /// tool those records name (their own, their clearing passes', their
-/// cut-outs'); every instance they target and the definition each
+/// cut-outs'); every instance they target, and every one an Inlay's
+/// drawn `boundary` lists, with the definition each
 /// names; every bitmap they name (a Photo V-Carve's `image`), its
 /// picture and its footprint, and no other bitmap of the project;
 /// `stock`, `origin`, `heights`, `display_units`, the two
@@ -282,6 +283,13 @@ pub fn digest(project: &Project, op: &OperationId) -> u64 {
         }
         for target in record.targets() {
             push_once(&mut targets, target);
+        }
+        // An Inlay's male reads its drawn boundary's shapes too (format
+        // 26): the band ends at their outlines, wherever they are moved.
+        if let Operation::Inlay(inlay) = record {
+            for shape in &inlay.boundary {
+                push_once(&mut targets, shape);
+            }
         }
         if let Some(bitmap) = bitmap_of(record) {
             push_once(&mut bitmaps, bitmap);

@@ -89,10 +89,9 @@ fn still_to_come(kind: Kind) -> &'static [&'static str] {
         Kind::Drill | Kind::Bore => &[],
         // Complete in slice 13 (#542).
         Kind::VCarve => &[],
-        // Complete in slice 14 (#543), but for the drawn boundary (format
-        // 26, #449, #602): the data model lands first; picking its
-        // instances is a row of a later slice.
-        Kind::Inlay => &["boundary"],
+        // Complete in slice 14 (#543); its drawn boundary (format 26,
+        // #449, #602) has its row since the phase's audit (worklog E6).
+        Kind::Inlay => &[],
         // Complete in slice 15 (#544).
         Kind::PhotoVCarve => &[],
     }
@@ -414,6 +413,15 @@ fn other_value(
             Value::from(other.id.as_str())
         }
         FieldKind::InstanceList => Value::from(vec!["i1", "i2"]),
+        // An Inlay's drawn boundary: the file reads any ids; validation
+        // says whether each is a closed shape of the project.
+        FieldKind::BoundaryPicker => {
+            if current.as_array().is_some_and(Vec::is_empty) {
+                Value::from(vec!["i3"])
+            } else {
+                Value::Array(Vec::new())
+            }
+        }
         FieldKind::LengthList => {
             if current.as_array().is_some_and(Vec::is_empty) {
                 Value::from(vec![12.5, 60.0])
@@ -2324,6 +2332,7 @@ fn inlay_both_boards() {
             (
                 Group::Depth,
                 vec![
+                    "boundary",
                     "margin_mm",
                     "outline_rounding_mm",
                     "through_cut_allowance_mm",
@@ -2601,6 +2610,244 @@ fn inlay_both_boards() {
         ["set the inlay depth, glue gap and plug depth to see the male's planes"]
     );
     assert!(!alert);
+}
+
+/// Capability 68 for an Inlay's drawn boundary (phase 3's capability 49f,
+/// acceptance 61l to 61n; format 26), which had no row until the phase's
+/// audit: the Boundary row stands in Depth before the margin and the
+/// rounding it replaces. It offers the shapes validation takes as a
+/// boundary: the lettered pair's `frame`, and neither its letters, which
+/// are the Inlay's targets, nor an open path. *None* is the band grown
+/// from the design by the margin, the fixture's state. Choosing the frame
+/// writes `boundary: ["i3"]` as one undo step, and choosing it again is
+/// none. With the margin and the rounding still set, validation's
+/// `inlay_margin_ignored` sits under each of them; cleared, the saved
+/// file is the committed `dc-boundary.dcv`, the project the Inlay
+/// chapter's hand edit makes. The closed Depth group names the shape. A
+/// hand-edited boundary that is a target, an open path, or no shape of
+/// the project still shows as chosen, with validation's error under the
+/// row. *None* empties the list again.
+#[test]
+fn inlay_boundary_is_one_of_the_projects_closed_shapes() {
+    let strings = Strings::english();
+    let mut project = common::load_dcv(&common::fixture("dc.dcv"));
+    // An open path beside the pair: the plaque's squiggle.
+    let plaque = common::plaque();
+    let squiggle = plaque
+        .instances
+        .iter()
+        .find(|i| i.name == "squiggle")
+        .expect("the plaque's open path")
+        .clone();
+    project.definitions.insert(
+        squiggle.definition.clone(),
+        plaque.definitions[&squiggle.definition].clone(),
+    );
+    project.instances.push(squiggle);
+    let mut h = dc_app::test_support::Harness::from_project(project);
+    let steps = |h: &dc_app::test_support::Harness| h.app.history().undo_labels().count();
+    let inlay = op_of(&h, "op1");
+    let frame = dc_project::InstanceId::new("i3");
+
+    let row = row_of(&inlay, "boundary");
+    assert!(row.picks_boundary());
+    assert!(matches!(row.kind, FieldKind::BoundaryPicker));
+    assert_eq!(row.group, Group::Depth);
+    assert_eq!(strings.get(row.label), "Boundary");
+    assert!(!row_of(&inlay, "targets").picks_boundary());
+    assert!(!row_of(&inlay, "margin_mm").picks_boundary());
+
+    // Offered: closed shapes that are not the Inlay's targets.
+    let offered = editor::offered_boundaries(h.app.project(), &inlay);
+    assert_eq!(offered, [(frame.clone(), "frame".to_owned())]);
+    let pocket = common::plaque().operations[2].clone();
+    assert!(
+        editor::offered_boundaries(h.app.project(), &pocket).is_empty(),
+        "no other kind has a boundary"
+    );
+    assert_eq!(
+        editor::boundary_text(h.app.project(), &strings, &pocket),
+        None
+    );
+
+    // None: the computed band.
+    assert!(editor::boundary(&inlay).is_empty());
+    assert_eq!(
+        editor::boundary_text(h.app.project(), &strings, &inlay).as_deref(),
+        Some("None (use the band margin)")
+    );
+    assert_eq!(editor::set_boundary(&inlay, row, &[]).unwrap(), None);
+    let depth = summary_of(&h, Group::Depth);
+    assert!(depth.starts_with("Band margin 8 mm"), "{depth}");
+    assert!(
+        editor::set_boundary(
+            &inlay,
+            row_of(&inlay, "margin_mm"),
+            std::slice::from_ref(&frame)
+        )
+        .is_err(),
+        "only the Boundary row takes one"
+    );
+
+    // Chosen: one undo step, named for the field.
+    let before = steps(&h);
+    let label = run_edit(
+        &mut h,
+        editor::set_boundary(&inlay, row, &[frame.clone(), frame.clone()]),
+    );
+    assert_eq!(label, "Set boundary of “DC”");
+    assert_eq!(steps(&h), before + 1);
+    let drawn = op_of(&h, "op1");
+    assert_eq!(
+        editor::boundary(&drawn),
+        std::slice::from_ref(&frame),
+        "listed once"
+    );
+    assert_eq!(
+        editor::boundary_text(h.app.project(), &strings, &drawn).as_deref(),
+        Some("frame")
+    );
+    assert_eq!(
+        editor::set_boundary(&drawn, row, std::slice::from_ref(&frame)).unwrap(),
+        None,
+        "choosing it again is no step"
+    );
+    let depth = summary_of(&h, Group::Depth);
+    assert!(depth.starts_with("Boundary frame"), "{depth}");
+
+    // The margin and the rounding it replaces say so until cleared.
+    h.generate();
+    let ignored = coded(&h, "inlay_margin_ignored");
+    assert_eq!(ignored.len(), 2, "{:?}", h.warnings());
+    let located = editor::Located::of(h.warnings(), &drawn);
+    for key in ["margin_mm", "outline_rounding_mm"] {
+        let under = located
+            .status(row_of(&drawn, key))
+            .unwrap_or_else(|| panic!("a message under {key}"));
+        assert_eq!(under.tier, Tier::Warning);
+        assert!(under.message.contains("boundary"), "{}", under.message);
+    }
+    assert!(
+        located.status(row).is_none(),
+        "the boundary itself is sound"
+    );
+    let edit = editor::commit_text(h.app.project(), &drawn, row_of(&drawn, "margin_mm"), "");
+    run_edit(&mut h, edit);
+    let drawn = op_of(&h, "op1");
+    let edit = editor::switch(
+        h.app.project(),
+        &drawn,
+        row_of(&drawn, "outline_rounding_mm"),
+        false,
+    );
+    run_edit(&mut h, edit);
+    h.generate();
+    assert!(
+        coded(&h, "inlay_margin_ignored").is_empty(),
+        "{:?}",
+        h.warnings()
+    );
+    assert!(
+        !h.warnings().iter().any(|f| f.tier == Tier::Error),
+        "{:?}",
+        h.warnings()
+    );
+
+    // What the Inlay chapter's hand edit makes, but for the open path
+    // added here.
+    let mut saved = h.app.project().clone();
+    saved.instances.retain(|i| i.name != "squiggle");
+    let used: Vec<_> = saved
+        .instances
+        .iter()
+        .map(|i| i.definition.clone())
+        .collect();
+    saved.definitions.retain(|id, _| used.contains(id));
+    // The fixture is the chapter's hand edit, so it is compared as a
+    // project, as `quick_start.rs` compares it; saved again it is the
+    // app's file byte for byte.
+    let committed = common::load_dcv(&common::fixture("dc-boundary.dcv"));
+    assert_eq!(saved, committed, "the committed drawn-boundary project");
+    assert_eq!(
+        dc_project::save(&saved).unwrap(),
+        dc_project::save(&committed).unwrap()
+    );
+
+    // A hand-edited list is kept and shown, with validation's error
+    // under the row.
+    let drawn = op_of(&h, "op1");
+    // (An error's finding carries its message and no code, so each is
+    // known by validation's words: `inlay_boundary_is_target`,
+    // `inlay_boundary_open`, `inlay_boundary_unknown`.)
+    for (ids, shown, code) in [
+        (vec!["i1"], "letter-D", "also one of its targets"),
+        (vec!["i10"], "squiggle", "not a closed outline"),
+        (
+            vec!["i3", "i77"],
+            "2 shapes · frame, i77 · not in the project",
+            "no instance of the project",
+        ),
+    ] {
+        let edited = fields::set(&drawn, "boundary", Value::from(ids)).unwrap();
+        let mut hand = h.clone();
+        hand.run(Command::UpdateOperation(edited.clone())).unwrap();
+        hand.generate();
+        assert_eq!(
+            editor::boundary_text(hand.app.project(), &strings, &edited).as_deref(),
+            Some(shown)
+        );
+        let located = editor::Located::of(hand.warnings(), &edited);
+        let status = located
+            .status(row)
+            .unwrap_or_else(|| panic!("{code}: a message under the Boundary row"));
+        assert_eq!(status.tier, Tier::Error, "{code}");
+        assert!(status.message.contains(code), "{}", status.message);
+        let field =
+            if edited == fields::set(&drawn, "boundary", Value::from(vec!["i3", "i77"])).unwrap() {
+                "operations[op1].boundary[1]"
+            } else {
+                "operations[op1].boundary[0]"
+            };
+        assert!(
+            hand.warnings()
+                .iter()
+                .any(|f| f.message == status.message && f.field.as_deref() == Some(field)),
+            "{code}: located at {field}: {:?}",
+            hand.warnings()
+        );
+        assert!(
+            matches!(located.group(Group::Depth), Some((Tier::Error, _))),
+            "{code}: its closed group carries the error"
+        );
+    }
+
+    // The selection narrowed to what the row offers, for a band drawn by
+    // several shapes.
+    let selected = [
+        dc_project::InstanceId::new("i1"),
+        frame.clone(),
+        dc_project::InstanceId::new("i10"),
+    ];
+    assert_eq!(
+        editor::boundary_of_selection(h.app.project(), &drawn, &selected),
+        std::slice::from_ref(&frame)
+    );
+
+    // None again: the list is empty, one step, and undo restores it.
+    run_edit(&mut h, editor::set_boundary(&drawn, row, &[]));
+    assert!(editor::boundary(&op_of(&h, "op1")).is_empty());
+    h.app.undo().expect("a step to undo");
+    assert_eq!(editor::boundary(&op_of(&h, "op1")), [frame]);
+}
+
+/// The closed header's summary of `group` of the harness's `op1`.
+fn summary_of(h: &dc_app::test_support::Harness, group: Group) -> String {
+    editor::summary::group(
+        h.app.project(),
+        &Strings::english(),
+        &op_of(h, "op1"),
+        group,
+    )
 }
 
 // #685 (phase 3.6's model in the app; functional 68's V-Carve, Inlay and

@@ -468,6 +468,89 @@ fn app_export_equals_cli_export_on_six_posts() {
     assert!(compared > 0, "some files were compared");
 }
 
+/// Capability 68 for an Inlay's drawn boundary (phase 3's capability 49f;
+/// the phase 4 audit's one functional gap; S20): the lettered pair given
+/// its boundary in the app exports what the CLI exports for the project
+/// the Inlay chapter makes by hand. The app opens `tests/fixtures/dc.dcv`,
+/// the pair with a margin; the editor's Boundary row takes the frame, the
+/// Band margin field is emptied and Outline rounding switched off, each
+/// through the function the window calls for that row. The project the
+/// app then holds is the committed `tests/fixtures/dc-boundary.dcv`
+/// (which `quick_start.rs::inlay_boundary_chapter_runs` holds to the
+/// chapter's hand edit), and every program the app plans, both boards',
+/// is byte for byte the file `dreamcarve export --date` writes for that
+/// committed project, as is the Viewport's SVG dump its `--preview`.
+#[test]
+fn inlay_boundary_set_in_the_app_equals_the_clis_project() {
+    let dir = work_dir("inlay_boundary_set_in_the_app_equals_the_clis_project");
+    let fixtures = repo_root().join("tests/fixtures");
+    let mut harness =
+        Harness::open(&std::fs::read(fixtures.join("dc.dcv")).expect("the pair")).expect("opens");
+    let inlay = |harness: &Harness| harness.app.project().operations[0].clone();
+    let row = |harness: &Harness, key: &str| {
+        dc_app::editor::fields::rows(&inlay(harness))
+            .into_iter()
+            .find(|r| r.key == key)
+            .unwrap_or_else(|| panic!("no row `{key}`"))
+    };
+    let edit = |harness: &mut Harness,
+                command: Result<Option<dc_app::Command>, dc_app::CommandError>| {
+        let command = command.expect("accepted").expect("a change");
+        harness.run(command).expect("runs");
+    };
+
+    let boundary = row(&harness, "boundary");
+    let offered = dc_app::editor::offered_boundaries(harness.app.project(), &inlay(&harness));
+    let [(frame, name)] = &offered[..] else {
+        panic!("the frame alone is offered: {offered:?}");
+    };
+    assert_eq!(name, "frame");
+    let set = dc_app::editor::set_boundary(&inlay(&harness), boundary, std::slice::from_ref(frame));
+    edit(&mut harness, set);
+    let margin = row(&harness, "margin_mm");
+    let cleared = dc_app::editor::commit_text(harness.app.project(), &inlay(&harness), margin, "");
+    edit(&mut harness, cleared);
+    let rounding = row(&harness, "outline_rounding_mm");
+    let off = dc_app::editor::switch(harness.app.project(), &inlay(&harness), rounding, false);
+    edit(&mut harness, off);
+
+    // The project is the one the chapter's hand edit makes.
+    let committed = std::fs::read(fixtures.join("dc-boundary.dcv")).expect("the fixture");
+    let by_hand = dc_project::load(&committed).expect("it loads").project;
+    assert_eq!(harness.app.project(), &by_hand);
+
+    // The CLI exports the committed file; the app plans its own.
+    std::fs::write(dir.join("dc-boundary.dcv"), &committed).expect("copied");
+    let preview = dc_app::export::preview_name("dc-boundary");
+    run(
+        &dir,
+        &[
+            "export",
+            "dc-boundary.dcv",
+            "--date",
+            DATE,
+            "--preview",
+            &preview,
+        ],
+    );
+    harness.generate();
+    let mut files = app_programs(&harness, "dc-boundary");
+    let males = files.iter().filter(|(n, _)| n.contains("-male-")).count();
+    let females = files.iter().filter(|(n, _)| n.contains("-female-")).count();
+    assert!(males > 0 && females > 0, "both boards: {files:?}");
+    files.push((
+        preview,
+        harness.app.scene().preview_svg(harness.app.project()),
+    ));
+    let mut expected: Vec<String> = files.iter().map(|(n, _)| n.clone()).collect();
+    expected.sort();
+    assert_eq!(written(&dir, "dc-boundary.dcv"), expected, "the files");
+    for (name, text) in &files {
+        let cli = std::fs::read_to_string(dir.join(name)).expect("file written");
+        assert!(cli == *text, "{name} differs from the CLI's");
+    }
+}
+
 /// Part `part` of the app quick start built by the chapter's steps
 /// ([`app_steps::build`]) and generated, ready to export.
 fn generated_part(text: &str, part: &str, lib: &Library) -> Harness {

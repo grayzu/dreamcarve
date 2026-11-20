@@ -146,7 +146,8 @@ pub(crate) fn grid(project: &Project, grid: Option<Grid>) -> Vec<Segment> {
 
 /// The stock's dashed outline and, with an Inlay, the male board's
 /// beside it (`viewport.male-board`, dashed 6/4) with the design mirrored
-/// on it, its arcs flattened to `tolerance_mm`.
+/// on it and, when the Inlay has one, its drawn boundary in the board's
+/// own dashes, their arcs flattened to `tolerance_mm`.
 #[must_use]
 pub(crate) fn stock(project: &Project, scene: &Scene, tolerance_mm: f64) -> Vec<Segment> {
     let (w, h) = (project.stock.width_mm, project.stock.height_mm);
@@ -174,6 +175,11 @@ pub(crate) fn stock(project: &Project, scene: &Scene, tolerance_mm: f64) -> Vec<
             for outline in &shape.outlines {
                 push_outline(&mut out, outline, tolerance_mm, StyleId::MaleShape);
             }
+        }
+        // A drawn boundary is the band's outer edge: dashed in the
+        // board's grey, as `--preview` draws it.
+        for outline in &board.boundaries {
+            push_outline(&mut out, outline, tolerance_mm, StyleId::MaleBoard);
         }
     }
     out

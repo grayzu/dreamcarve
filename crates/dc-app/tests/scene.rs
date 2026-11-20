@@ -491,6 +491,112 @@ fn male_board_sits_beside_the_stock_in_display_only() {
     );
 }
 
+/// The box of the end points of every cutting move of the Scene's male
+/// runs, in the male board's own space, mm.
+fn male_cut_box(scene: &dc_app::Scene) -> dc_geometry::Rect {
+    scene
+        .runs_on(dc_project::Board::Male)
+        .flat_map(|run| run.toolpath.moves.iter())
+        .filter(|m| !matches!(m.kind, dc_job::MoveKind::Rapid))
+        .map(|m| Point::new(m.to.x, m.to.y))
+        .fold(None::<dc_geometry::Rect>, |acc, p| {
+            Some(acc.map_or_else(|| dc_geometry::Rect::from_point(p), |r| r.including(p)))
+        })
+        .expect("the male is cut")
+}
+
+/// Capability 72 for an Inlay's drawn boundary (phase 3's capability 49f,
+/// acceptance 61l, 61m and 61p; `--preview`'s dashed outline, #603): the
+/// lettered pair with its frame chosen in the editor's Boundary row. The
+/// male board holds the frame as the male cuts it, mirrored with the
+/// design about X = 55 and moved onto the drawn board, where the pair
+/// with a margin holds none; the male's cuts end at it, the end mill's
+/// centre its radius (1.5875 mm) inside; and with the frame moved 3 mm
+/// right the edge on the male and the cuts with it move 3 mm left. The
+/// Viewport's SVG dump is still the CLI's preview, boundary and all.
+#[test]
+fn male_band_follows_a_drawn_boundary() {
+    let mut harness = Harness::open(&common::read(&common::fixture("dc.dcv"))).expect("it opens");
+    harness.generate();
+    let board = harness.app.scene().male_board().expect("a male board");
+    assert!(board.boundaries.is_empty(), "a band grown by its margin");
+    let margin_box = male_cut_box(harness.app.scene());
+
+    let inlay = harness.app.project().operations[0].clone();
+    let row = dc_app::editor::fields::rows(&inlay)
+        .into_iter()
+        .find(|r| r.picks_boundary())
+        .expect("the Boundary row");
+    let frame = dc_project::InstanceId::new("i3");
+    let command = dc_app::editor::set_boundary(&inlay, row, std::slice::from_ref(&frame))
+        .expect("accepted")
+        .expect("a change");
+    harness.run(command).expect("the boundary is set");
+    assert!(
+        harness.app.generation().busy(),
+        "the Inlay is to be generated again"
+    );
+    harness.generate();
+
+    let edge_box = |harness: &Harness| {
+        let board = harness.app.scene().male_board().expect("a male board");
+        assert_eq!(board.boundaries.len(), 1, "the frame's one outline");
+        let on_board = board.boundaries[0].bounds().expect("an outline has a box");
+        // Back to the board's own space, where its runs are.
+        dc_geometry::Rect {
+            min: Point::new(on_board.min.x - board.offset.x, on_board.min.y),
+            max: Point::new(on_board.max.x - board.offset.x, on_board.max.y),
+        }
+    };
+    let near = |a: f64, b: f64| (a - b).abs() <= 0.05;
+    let follows = |cut: dc_geometry::Rect, edge: dc_geometry::Rect| {
+        let radius_mm = 3.175 / 2.0;
+        near(cut.min.x, edge.min.x + radius_mm)
+            && near(cut.min.y, edge.min.y + radius_mm)
+            && near(cut.max.x, edge.max.x - radius_mm)
+            && near(cut.max.y, edge.max.y - radius_mm)
+    };
+
+    // The frame is 90 × 60 at (10, 10), which its mirror about X = 55
+    // leaves where it is.
+    let edge = edge_box(&harness);
+    assert!(approx_eq(edge.min.x, 10.0, 0.01) && approx_eq(edge.max.x, 100.0, 0.01));
+    assert!(approx_eq(edge.min.y, 10.0, 0.01) && approx_eq(edge.max.y, 70.0, 0.01));
+    let cut = male_cut_box(harness.app.scene());
+    assert!(follows(cut, edge), "{cut:?} is not {edge:?} inset");
+    assert!(
+        !follows(margin_box, edge),
+        "the margin's band was another: {margin_box:?}"
+    );
+
+    // Moved 3 mm right as drawn, 3 mm left as the male cuts it.
+    harness
+        .run(Command::TransformInstances {
+            ids: vec![frame],
+            delta: Transform::translate(3.0, 0.0),
+        })
+        .expect("the frame moves");
+    harness.generate();
+    let moved = edge_box(&harness);
+    assert!(approx_eq(moved.min.x, 7.0, 0.01) && approx_eq(moved.max.x, 97.0, 0.01));
+    let cut = male_cut_box(harness.app.scene());
+    assert!(follows(cut, moved), "{cut:?} is not {moved:?} inset");
+
+    let project = harness.app.project().clone();
+    let built = dc_job::build(
+        &project,
+        dc_job::ProgramSplit::ProjectDefault,
+        dc_app::test_support::DATE,
+    );
+    let generated = built.generated.expect("it generates");
+    let dump = harness.app.scene().preview_svg(&project);
+    assert_eq!(
+        dump,
+        dc_job::preview::render_generated(&project, &generated)
+    );
+    assert!(dump.contains("male-boundary"), "the dashed drawn edge");
+}
+
 /// Slice 27 (#619; capability 67, acceptance 98): while an operation is
 /// selected its targets are marked where the shapes are. Selecting the
 /// plaque's Panel, the third operation of the list, gives `pocket` and

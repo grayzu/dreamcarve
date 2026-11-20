@@ -280,6 +280,22 @@ selected pictures through `operations::add_menu` and `add`, which take
 the selected shapes and the selected pictures; `photo_target` decides the
 picture.
 
+An Inlay's drawn boundary (phase 3's capability 49f, format 26; added
+after the phase's audit) is a row of the same shape: a
+`FieldKind::BoundaryPicker` (`Row::picks_boundary`) in the Inlay's Depth
+group, before the margin and the rounding it replaces, served by
+`editor::offered_boundaries`, `boundary_text` and `set_boundary`. The
+shapes offered are those `dc_project::boundary_instance` accepts for the
+Inlay (every profile closed, not one of its targets), so the row and
+validation cannot differ; `boundary_of_selection` narrows the selection
+to them, for a band drawn by several shapes. Three things elsewhere read
+the list: `generation::digest` hashes each boundary instance and its
+definition with the targets, so moving the shape regenerates the Inlay;
+`DeleteInstances` takes a deleted shape off every `boundary`; and the
+Scene's `MaleBoardView::boundaries` holds
+`dc_job::preview::male_boundaries`, which the Viewport draws dashed on
+the male board as `--preview` does.
+
 In the window (slice D6) the Add picture sheet is `panels/picture.rs`,
 over a `PictureImport` the shell opens on a thread of its own, since
 decoding a camera's picture takes longer than a frame; a dropped file

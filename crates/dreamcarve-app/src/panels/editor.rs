@@ -605,6 +605,7 @@ pub(super) fn control(
         FieldKind::Toggle(_) => switch(ui, cx, slot, out),
         FieldKind::ToolPicker => tool_picker(ui, cx, slot, id, offered, out),
         FieldKind::PicturePicker => picture_picker(ui, cx, slot.row, id, out),
+        FieldKind::BoundaryPicker => boundary_picker(ui, cx, slot.row, id, out),
         FieldKind::InstanceList => {
             // Setup's Targets row: one line (capability 67).
             label(ui, cx, slot);
@@ -1028,6 +1029,70 @@ fn picture_picker(
             ui,
             id.with("refused"),
             editor::set_picture(cx.op, row, &picture),
+            out,
+        );
+    }
+    Some(response)
+}
+
+/// An Inlay's Boundary row (capability 68; phase 3's capability 49f): a
+/// dropdown of *None* (the band grown from the design by the margin) and
+/// the shapes validation takes as a drawn boundary, what the file lists
+/// shown as chosen. Choosing a shape makes it the boundary alone; with
+/// two or more such shapes selected on the drawing, *Selected shapes*
+/// takes them all, for a band drawn by several. A listed shape the
+/// project no longer has shows by its id, with validation's message under
+/// the row. The shapes are asked for only while the list is open: the
+/// question nests each shape's outlines.
+fn boundary_picker(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    row: &Row,
+    id: Id,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    label(ui, cx, &Slot::of(row));
+    let selected = editor::boundary_text(cx.project, cx.strings, cx.op).unwrap_or_default();
+    let current = editor::boundary(cx.op);
+    let mut picked: Option<Vec<InstanceId>> = None;
+    let width = ui.available_width();
+    let response = egui::ComboBox::from_id_salt(id)
+        .icon(crate::widgets::icon::combo_chevron)
+        .truncate()
+        .selected_text(selected)
+        .width(width)
+        .show_ui(ui, |ui| {
+            let none = cx.strings.get(StrKey::EditorBoundaryNone);
+            if ui.selectable_label(current.is_empty(), none).clicked() {
+                picked = Some(Vec::new());
+            }
+            for (shape, name) in editor::offered_boundaries(cx.project, cx.op) {
+                if ui
+                    .selectable_label(current == std::slice::from_ref(&shape), name)
+                    .clicked()
+                {
+                    picked = Some(vec![shape]);
+                }
+            }
+            let several = editor::boundary_of_selection(cx.project, cx.op, cx.selected);
+            if several.len() > 1 {
+                ui.separator();
+                let text = cx.strings.fmt(
+                    StrKey::EditorBoundarySelection,
+                    &[("count", &several.len().to_string())],
+                );
+                if ui.selectable_label(current == several, text).clicked() {
+                    picked = Some(several);
+                }
+            }
+        })
+        .response
+        .accessible_name(cx.strings.get(row.label));
+    if let Some(shapes) = picked {
+        commit(
+            ui,
+            id.with("refused"),
+            editor::set_boundary(cx.op, row, &shapes),
             out,
         );
     }

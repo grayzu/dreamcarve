@@ -4263,6 +4263,140 @@ fn inlay_editor_shows_the_male_board() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Steps the window until generation is over, for `what`.
+fn settle_generation(h: &mut Harness<'_, dreamcarve_app::Shell>, what: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "{what} generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+}
+
+/// Capability 68 for an Inlay's drawn boundary in the window (phase 3's
+/// capability 49f; the phase 4 audit's one functional gap): the lettered
+/// inlay's Depth group has a *Boundary* dropdown reading *None (use the
+/// band margin)*. Choosing `frame` writes `boundary: ["i3"]` as one undo
+/// step, the dropdown reads `frame`, validation's line that the margin
+/// now does nothing is under *Band margin*, and once the Inlay has
+/// generated again the male board holds the frame as its drawn edge and
+/// the male's cuts end at it, the end mill's centre its radius inside:
+/// the band follows the boundary. *None* empties the list again.
+#[test]
+fn inlay_boundary_is_picked_in_the_editor_and_the_male_band_follows_it() {
+    let dir = scratch("inlay-boundary");
+    let dc = copy_fixture("dc.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(dc), &dialogs),
+        1280.0,
+        900.0,
+    );
+    settle_generation(&mut h, "the inlay pair");
+    let boundary_of = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<String> {
+        let dc_project::Operation::Inlay(inlay) = operation_of(h, "op1") else {
+            panic!("op1 is an Inlay");
+        };
+        inlay
+            .boundary
+            .iter()
+            .map(|i| i.as_str().to_owned())
+            .collect()
+    };
+    // The box of the male's cutting moves, in its board's own space.
+    let cut_box = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        h.state()
+            .app()
+            .scene()
+            .runs_on(dc_project::Board::Male)
+            .flat_map(|run| run.toolpath.moves.iter())
+            .filter(|m| !matches!(m.kind, dc_job::MoveKind::Rapid))
+            .map(|m| dc_geometry::Point::new(m.to.x, m.to.y))
+            .fold(None::<dc_geometry::Rect>, |acc, p| {
+                Some(acc.map_or_else(|| dc_geometry::Rect::from_point(p), |r| r.including(p)))
+            })
+            .expect("the male is cut")
+    };
+    let margin_box = cut_box(&h);
+    assert!(
+        h.state()
+            .app()
+            .scene()
+            .male_board()
+            .expect("a male board")
+            .boundaries
+            .is_empty()
+    );
+
+    open_operation(&mut h, "DC");
+    assert!(
+        h.query_by_role_and_label(Role::ComboBox, "Boundary")
+            .is_none(),
+        "the row is Depth's, closed until opened"
+    );
+    open_group(&mut h, "Depth");
+    let row = h.get_by_role_and_label(Role::ComboBox, "Boundary");
+    assert_eq!(
+        row.accesskit_node().value().as_deref(),
+        Some("None (use the band margin)")
+    );
+    let steps = undo_steps(&h);
+    h.get_by_role_and_label(Role::ComboBox, "Boundary").click();
+    h.run();
+    assert!(
+        h.query_by_label("letter-D").is_none(),
+        "a target is not offered as its own boundary"
+    );
+    h.get_by_label("frame").click();
+    h.run();
+    assert_eq!(boundary_of(&h), ["i3"]);
+    assert_eq!(undo_steps(&h), steps + 1, "one step");
+    assert_eq!(h.state().app().undo_label(), Some("Set boundary of “DC”"));
+    assert_eq!(
+        h.get_by_role_and_label(Role::ComboBox, "Boundary")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some("frame")
+    );
+
+    settle_generation(&mut h, "the drawn boundary");
+    assert!(
+        h.query_by_label_contains("so margin_mm does nothing")
+            .is_some(),
+        "validation's line is under the margin the boundary replaces"
+    );
+    let app = h.state().app();
+    let board = app.scene().male_board().expect("a male board");
+    assert_eq!(board.boundaries.len(), 1, "the frame, as the male cuts it");
+    let edge = board.boundaries[0].bounds().expect("an outline has a box");
+    let (left, right) = (edge.min.x - board.offset.x, edge.max.x - board.offset.x);
+    let cut = cut_box(&h);
+    let radius_mm = 3.175 / 2.0;
+    let near = |a: f64, b: f64| (a - b).abs() <= 0.05;
+    assert!(
+        near(cut.min.x, left + radius_mm)
+            && near(cut.max.x, right - radius_mm)
+            && near(cut.min.y, edge.min.y + radius_mm)
+            && near(cut.max.y, edge.max.y - radius_mm),
+        "the male's cuts {cut:?} end at the drawn edge {edge:?}"
+    );
+    assert!(
+        !(near(margin_box.min.x, cut.min.x) && near(margin_box.max.y, cut.max.y)),
+        "the margin's band was another: {margin_box:?}"
+    );
+
+    // None: the band is the margin's again.
+    h.get_by_role_and_label(Role::ComboBox, "Boundary").click();
+    h.run();
+    h.get_by_label("None (use the band margin)").click();
+    h.run();
+    assert!(boundary_of(&h).is_empty());
+    assert_eq!(undo_steps(&h), steps + 2);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// #581, decision 1, in the window: choosing *V-bit* for an end mill in
 /// the Tools step changes nothing in the project and shows an empty,
 /// required *Angle* field; typing an angle makes the switch, one undo

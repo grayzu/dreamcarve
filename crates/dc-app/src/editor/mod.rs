@@ -28,6 +28,13 @@
 //! Picture row ([`Row::picks_picture`]) offers the project's pictures
 //! ([`offered_pictures`]), shows the one carved ([`picture_text`]) and
 //! writes the one chosen ([`set_picture`]).
+//!
+//! An Inlay's male band may end at a drawn edge (phase 3's capability
+//! 49f, format 26): its Boundary row ([`Row::picks_boundary`]) offers the
+//! shapes validation takes as one ([`offered_boundaries`]) under *None*,
+//! which leaves the band the design grown by the margin, shows what the
+//! file lists ([`boundary_text`]) and writes the choice
+//! ([`set_boundary`]).
 
 pub mod clearing;
 pub mod fields;
@@ -40,8 +47,8 @@ use std::borrow::Cow;
 use dc_geometry::Point;
 use dc_job::{Finding, Tier};
 use dc_project::{
-    Bitmap, BitmapId, Board, DrillCycle, INLAY_MIN_PLUG_BASE_MM, Operation, OperationId, Problem,
-    Project, Tool, ToolId, ToolKind, Units,
+    Bitmap, BitmapId, Board, DrillCycle, INLAY_MIN_PLUG_BASE_MM, InstanceId, Operation,
+    OperationId, Problem, Project, Tool, ToolId, ToolKind, Units,
 };
 use serde_json::{Value, json};
 
@@ -1071,6 +1078,129 @@ pub fn set_picture(
         });
     }
     Slot::of(row).update(op, Value::from(picture.as_str()))
+}
+
+/// The shapes an Inlay's Boundary row offers (capability 68; phase 3's
+/// capability 49f): the project's instances validation takes as a drawn
+/// boundary of `op` ([`dc_project::boundary_instance`]: every profile a
+/// closed outline, and not one of the Inlay's own targets), in file
+/// order, by id and name. The row asks the project's rule rather than keep
+/// one of its own, so it offers exactly what the file accepts. A hidden
+/// or a locked shape is offered too, as neither flag stops an operation
+/// cutting; so is a shape another operation cuts. Whether the design lies
+/// inside the shape is not asked here: a boundary that crosses the design
+/// is accepted, as a hand-edited file's is, and carries validation's
+/// message under the row. Empty for any other kind.
+#[must_use]
+pub fn offered_boundaries(project: &Project, op: &Operation) -> Vec<(InstanceId, String)> {
+    let Operation::Inlay(inlay) = op else {
+        return Vec::new();
+    };
+    project
+        .instances
+        .iter()
+        .filter(|instance| dc_project::boundary_instance(project, inlay, &instance.id).is_ok())
+        .map(|instance| (instance.id.clone(), instance.name.clone()))
+        .collect()
+}
+
+/// The shapes Inlay `op`'s male band ends at, as the file lists them;
+/// empty for a band grown from the design by the margin, and for any
+/// other kind.
+#[must_use]
+pub fn boundary(op: &Operation) -> &[InstanceId] {
+    match op {
+        Operation::Inlay(inlay) => &inlay.boundary,
+        _ => &[],
+    }
+}
+
+/// `selected` narrowed to the shapes Inlay `op`'s Boundary row offers
+/// ([`offered_boundaries`]), in the selection's order: what the row's
+/// *Selected shapes* writes, for a band drawn by several shapes.
+#[must_use]
+pub fn boundary_of_selection(
+    project: &Project,
+    op: &Operation,
+    selected: &[InstanceId],
+) -> Vec<InstanceId> {
+    let offered = offered_boundaries(project, op);
+    selected
+        .iter()
+        .filter(|id| offered.iter().any(|(shape, _)| shape == *id))
+        .cloned()
+        .collect()
+}
+
+/// What the Boundary row shows as chosen for Inlay `op`: *None (use the
+/// band margin)* for an empty list; one shape's name; several as the
+/// Targets row words them (`2 shapes · left, right`). A listed id the
+/// project no longer has shows as the id (`i9 · not in the project`), so
+/// the row never reads as empty while the file holds a value; validation
+/// says so under it (`inlay_boundary_unknown`). `None` for another kind.
+#[must_use]
+pub fn boundary_text(project: &Project, strings: &Strings, op: &Operation) -> Option<String> {
+    let Operation::Inlay(inlay) = op else {
+        return None;
+    };
+    let names: Vec<String> = inlay
+        .boundary
+        .iter()
+        .map(|id| {
+            project
+                .instances
+                .iter()
+                .find(|instance| instance.id == *id)
+                .map_or_else(
+                    || strings.fmt(StrKey::EditorPictureMissing, &[("id", id.as_str())]),
+                    |instance| instance.name.clone(),
+                )
+        })
+        .collect();
+    let joined = names.join(", ");
+    Some(match names.len() {
+        0 => strings.get(StrKey::EditorBoundaryNone).to_owned(),
+        1 => joined,
+        n => strings.fmt(
+            StrKey::EditorTargetsMany,
+            &[("count", &n.to_string()), ("names", &joined)],
+        ),
+    })
+}
+
+/// The Boundary row's choice: Inlay `op`'s male band ending at `shapes`,
+/// each listed once in the order given, or, for none, grown from the
+/// design by the margin again. One `UpdateOperation`, so one undo step;
+/// `None` when that is what the file lists already. The margin and the
+/// rounding are left as they are: with a boundary they do nothing, and
+/// validation says so under each until it is cleared
+/// (`inlay_margin_ignored`), as a hand-edited file is told.
+///
+/// # Errors
+///
+/// [`CommandError::FieldRefused`] when the row is not a Boundary row
+/// ([`Row::picks_boundary`]), or the file refuses it.
+pub fn set_boundary(
+    op: &Operation,
+    row: &Row,
+    shapes: &[InstanceId],
+) -> Result<Option<Command>, CommandError> {
+    if !row.picks_boundary() {
+        return Err(CommandError::FieldRefused {
+            field: row.key.to_owned(),
+            reason: "it does not name a boundary".to_owned(),
+        });
+    }
+    let mut listed: Vec<&InstanceId> = Vec::with_capacity(shapes.len());
+    for shape in shapes {
+        if !listed.contains(&shape) {
+            listed.push(shape);
+        }
+    }
+    Slot::of(row).update(
+        op,
+        Value::Array(listed.iter().map(|id| Value::from(id.as_str())).collect()),
+    )
 }
 
 /// A click on the Viewport at `at_mm` (project space, Y-up, mm) while a
