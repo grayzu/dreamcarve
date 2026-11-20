@@ -460,4 +460,69 @@ mod tests {
             assert_eq!(text(RING_CROSS, mode), text(crlf.as_bytes(), mode));
         }
     }
+
+    /// Acceptance 61d: "Output piece order and ids follow position, not
+    /// document order." Three 10 mm squares on a 100 mm page, written in
+    /// the file top right first, then bottom right, then bottom left. The
+    /// pieces come in `dc_geometry`'s canonical order (design spec, "Image
+    /// prep", step 7), by each one's lowest and then leftmost point on the
+    /// page: bottom left, bottom right, top right. `piece-1` to `piece-3`
+    /// are written in that order, each starting at that corner of its
+    /// square, and every other order of the file gives the same text.
+    #[test]
+    fn piece_order_and_ids_follow_position_not_document_order() {
+        let square = |x: f64, y: f64| format!(r#"<rect x="{x}" y="{y}" width="10" height="10"/>"#);
+        // SVG's Y runs down: y 70 is the lower row of the page.
+        let (top_right, bottom_right, bottom_left) =
+            (square(70.0, 10.0), square(70.0, 70.0), square(10.0, 70.0));
+        let document = [&top_right, &bottom_right, &bottom_left];
+        let source = |order: [usize; 3]| {
+            let body: String = order.iter().map(|&k| document[k].as_str()).collect();
+            svg(100.0, 100.0, &body)
+        };
+
+        let pieces = prepared(&source([0, 1, 2]), PrepMode::Shapes).pieces;
+        // The lowest-then-leftmost corner of each piece, Y-up.
+        let corners: Vec<(f64, f64)> = pieces
+            .iter()
+            .map(|piece| {
+                let b = piece.outer().polyline().bounds().expect("bounds");
+                (b.min.x, b.min.y)
+            })
+            .collect();
+        assert_eq!(corners.len(), 3);
+        for (got, want) in corners
+            .iter()
+            .zip([(10.0, 20.0), (70.0, 20.0), (70.0, 80.0)])
+        {
+            assert!(
+                (got.0 - want.0).abs() < 1e-4 && (got.1 - want.1).abs() < 1e-4,
+                "the pieces are at {corners:?}"
+            );
+        }
+
+        // The ids follow: each path starts at that corner, Y flipped back.
+        let out = text(&source([0, 1, 2]), PrepMode::Shapes);
+        let starts: Vec<&str> = out
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix("<path id=\""))
+            .map(|rest| {
+                let (id_and_start, _) = rest.split_once(" L").expect("a second vertex");
+                id_and_start
+            })
+            .collect();
+        assert_eq!(
+            starts,
+            [
+                r#"piece-1" d="M 10 80"#,
+                r#"piece-2" d="M 70 80"#,
+                r#"piece-3" d="M 70 20"#
+            ],
+            "{out}"
+        );
+
+        for order in [[0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
+            assert_eq!(text(&source(order), PrepMode::Shapes), out, "{order:?}");
+        }
+    }
 }
