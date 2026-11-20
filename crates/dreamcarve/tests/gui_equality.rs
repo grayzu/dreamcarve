@@ -468,6 +468,126 @@ fn app_export_equals_cli_export_on_six_posts() {
     assert!(compared > 0, "some files were compared");
 }
 
+/// The operations the written programs cut, in the order the files run
+/// (their names sort in run order): each `( Operation <n>: <name> )`
+/// comment of each file in `dir`, the project file aside.
+fn written_operations(dir: &Path, project: &str) -> Vec<String> {
+    written(dir, project)
+        .iter()
+        .flat_map(|file| {
+            std::fs::read_to_string(dir.join(file))
+                .expect("program readable")
+                .lines()
+                .filter_map(|line| {
+                    let (_, name) = line.strip_prefix("( Operation ")?.split_once(": ")?;
+                    Some(name.trim_end_matches(" )").to_owned())
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Acceptance 74's two clauses about the files (capability 65): the
+/// plaque's Bore moved below its Panel pocket in the app is the order of
+/// the saved file's list and of the written programs, and an operation
+/// unticked is `"enabled": false` in the saved file and in no written
+/// program. The app saves, `dreamcarve export` writes the programs for
+/// that file, and each is byte for byte what the app plans; the
+/// operations the written files name, in run order, are the list's.
+#[test]
+fn reorder_and_untick_reach_the_saved_file_and_the_written_programs() {
+    let root = work_dir("reorder_and_untick_reach_the_saved_file_and_the_written_programs");
+    let plaque = std::fs::read(repo_root().join("tests/fixtures/plaque.dcv")).expect("plaque");
+    let mut harness = Harness::open(&plaque).expect("the plaque opens");
+    let names = |harness: &Harness| -> Vec<String> {
+        harness
+            .app
+            .project()
+            .operations
+            .iter()
+            .filter(|o| o.enabled())
+            .map(|o| o.name().to_owned())
+            .collect()
+    };
+    let export = |harness: &mut Harness, case: &str| -> (String, Vec<String>) {
+        let dir = root.join(case);
+        std::fs::create_dir_all(&dir).expect("case dir");
+        let saved = harness.save().expect("saves");
+        std::fs::write(dir.join("plaque.dcv"), &saved).expect("project written");
+        run(&dir, &["export", "plaque.dcv", "--date", DATE]);
+        harness.generate();
+        let files = app_programs(harness, "plaque");
+        let mut expected: Vec<String> = files.iter().map(|(n, _)| n.clone()).collect();
+        expected.sort();
+        assert_eq!(written(&dir, "plaque.dcv"), expected, "{case}: the files");
+        for (name, text) in &files {
+            let cli = std::fs::read_to_string(dir.join(name)).expect("file written");
+            assert!(cli == *text, "{case}: {name} differs from the CLI's");
+        }
+        (saved, written_operations(&dir, "plaque.dcv"))
+    };
+
+    let (_, as_opened) = export(&mut harness, "as-opened");
+    assert_eq!(
+        as_opened,
+        [
+            "Screw holes",
+            "Border and squiggle",
+            "Panel",
+            "Square recess",
+            "Cut out"
+        ]
+    );
+    assert_eq!(as_opened, names(&harness));
+
+    // The Bore dragged below the Panel pocket.
+    let bore = dc_project::OperationId::new("op3");
+    let reorder = dc_app::operations::reorder(harness.app.project(), &bore, 2).expect("a move");
+    harness.run(reorder).expect("reordered");
+    let (saved, reordered) = export(&mut harness, "reordered");
+    assert_eq!(
+        reordered,
+        [
+            "Border and squiggle",
+            "Panel",
+            "Screw holes",
+            "Square recess",
+            "Cut out"
+        ],
+        "the written programs follow the list"
+    );
+    let file: serde_json::Value = serde_json::from_str(&saved).expect("the file is JSON");
+    let listed: Vec<&str> = file["operations"]
+        .as_array()
+        .expect("operations")
+        .iter()
+        .filter_map(|o| o["name"].as_str())
+        .collect();
+    assert_eq!(listed, reordered, "and so does the saved file's list");
+
+    // The Engrave unticked.
+    harness
+        .run(dc_app::Command::SetOperationEnabled {
+            id: dc_project::OperationId::new("op5"),
+            enabled: false,
+        })
+        .expect("unticked");
+    let (saved, unticked) = export(&mut harness, "unticked");
+    let file: serde_json::Value = serde_json::from_str(&saved).expect("the file is JSON");
+    let engrave = file["operations"]
+        .as_array()
+        .expect("operations")
+        .iter()
+        .find(|o| o["id"] == "op5")
+        .expect("the Engrave is still in the file");
+    assert_eq!(engrave["enabled"], false, "the saved file says so");
+    assert_eq!(
+        unticked,
+        ["Panel", "Screw holes", "Square recess", "Cut out"],
+        "and no written program cuts it"
+    );
+}
+
 /// Capability 68 for an Inlay's drawn boundary (phase 3's capability 49f;
 /// the phase 4 audit's one functional gap; S20): the lettered pair given
 /// its boundary in the app exports what the CLI exports for the project

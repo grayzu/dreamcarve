@@ -616,6 +616,74 @@ mod tests {
         assert!(engraved.iter().all(|s| s.style.colour_slot() == 2));
     }
 
+    /// Runs every pending job of `app` on this thread, as the worker does.
+    fn generate(app: &mut dc_app::App) {
+        let estimate = dc_job::EstimateConfig::default();
+        while let Some(work) = app.next_work() {
+            let result = dc_app::generation::execute(app.project(), work, "2026-10-15", &estimate);
+            app.accept(result);
+        }
+    }
+
+    /// Acceptance 87's clause "the stale toolpaths show faded", on the
+    /// Viewport's draw list. On the generated plaque no segment of any
+    /// operation's toolpath carries the stale bit. After an edit every
+    /// generator reads (the stock widened) each operation keeps its old
+    /// runs, so its toolpath is still drawn, and every segment of it
+    /// carries the stale bit, which the shader draws at 35 % alpha
+    /// (`shader.wgsl`; `renderer.rs`'s rendered test counts the pixels);
+    /// generated again, none does.
+    #[test]
+    #[allow(clippy::panic, reason = "test code reports failure by panicking")]
+    fn a_stale_operations_toolpath_is_drawn_faded() {
+        let mut app = plaque();
+        generate(&mut app);
+        let zoom = band(4.0);
+        let drawn = |app: &dc_app::App| -> Vec<(bool, Vec<Segment>)> {
+            let visibility = app.view().visibility;
+            let look = ToolpathLook {
+                visibility: &visibility,
+                ramp: None,
+                tolerance_mm: tolerance_mm(zoom),
+                lod_mm: lod_mm(zoom),
+                male_offset: None,
+            };
+            app.scene()
+                .operations()
+                .iter()
+                .map(|op| (op.stale, toolpath(op, look)))
+                .collect()
+        };
+
+        let fresh = drawn(&app);
+        assert_eq!(fresh.len(), 5, "the plaque's five operations");
+        for (stale, segments) in &fresh {
+            assert!(!stale && !segments.is_empty());
+            assert!(segments.iter().all(|s| !s.style.stale()));
+        }
+
+        let mut stock = app.project().stock.clone();
+        stock.width_mm += 5.0;
+        app.run(dc_app::Command::SetStock(stock))
+            .unwrap_or_else(|e| panic!("{e}"));
+        let waiting = drawn(&app);
+        assert_eq!(waiting.len(), fresh.len(), "the old drawings stay");
+        for ((stale, segments), (_, was)) in waiting.iter().zip(&fresh) {
+            assert!(stale, "every operation waits for its new toolpath");
+            assert_eq!(segments.len(), was.len(), "the same moves");
+            assert!(segments.iter().all(|s| s.style.stale()), "each drawn faded");
+            for (now, before) in segments.iter().zip(was) {
+                assert_eq!(now.style.row(), before.style.row(), "a fade keeps the row");
+            }
+        }
+
+        generate(&mut app);
+        for (stale, segments) in drawn(&app) {
+            assert!(!stale && !segments.is_empty());
+            assert!(segments.iter().all(|s| !s.style.stale()));
+        }
+    }
+
     /// A closed path closes once, and the dash phase runs on along it.
     #[test]
     #[allow(clippy::float_cmp, reason = "whole millimetres, exact in f32")]

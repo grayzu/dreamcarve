@@ -227,6 +227,126 @@ fn toolpaths_draw_in_operation_colours_and_by_depth() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Acceptance 87's clause "the stale toolpaths show faded", rendered. On
+/// the generated plaque each operation's cuts paint in its colour. After
+/// an edit every generator reads (the stock widened), with generation
+/// stopped so nothing replaces them, the operations are stale and keep
+/// their runs: the Viewport holds under a tenth of the pixels it held in
+/// the runs' full colours, yet the toolpaths are still there, since the
+/// frame differs from the one drawn with every toolpath layer off. Like
+/// every rendering test it renders nothing without a wgpu adapter;
+/// `layers::tests::a_stale_operations_toolpath_is_drawn_faded` asserts
+/// the draw list everywhere.
+#[test]
+fn stale_toolpaths_render_faded() {
+    let dir = scratch("renderer-stale");
+    let plaque = common::copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = wgpu_harness(
+        "stale_toolpaths_render_faded",
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    ) else {
+        std::fs::remove_dir_all(&dir).unwrap();
+        return;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "the plaque generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.state_mut().app_mut().view_mut().visibility.grid = false;
+    h.run();
+    let palette = theme::Palette::of(h.ctx.theme());
+    let runs = h.state().app().scene().operations().len();
+    // Counted on the Viewport alone: the Operations list and the Layers
+    // popover draw each operation's colour on their own swatches.
+    let pane = h.state().layout().viewport;
+    #[allow(clippy::cast_precision_loss, reason = "a pixel of a 1280 × 800 image")]
+    let on_viewport =
+        move |x: u32, y: u32| pane.shrink(2.0).contains(egui::pos2(x as f32, y as f32));
+    let in_colours = |h: &mut Harness<'static, Shell>| -> Vec<usize> {
+        let image = h.render().expect("a frame renders");
+        (0..runs)
+            .map(|k| {
+                let pixels = image
+                    .enumerate_pixels()
+                    .filter(|(x, y, _)| on_viewport(*x, *y))
+                    .map(|(_, _, p)| p.0);
+                pixels_near(pixels, palette.operation(k), 6)
+            })
+            .collect()
+    };
+    let fresh = in_colours(&mut h);
+
+    // Stale, and kept so: the edit, then Stop before a frame hands the
+    // worker anything.
+    let mut stock = h.state().app().project().stock.clone();
+    stock.width_mm += 5.0;
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::SetStock(stock))
+        .expect("the stock widens");
+    h.state_mut().app_mut().stop();
+    h.run();
+    let operations = h.state().app().scene().operations();
+    assert_eq!(operations.len(), runs, "the old drawings stay");
+    assert!(
+        operations.iter().all(|op| op.stale && !op.runs.is_empty()),
+        "every operation is stale and keeps its runs"
+    );
+    let stale = in_colours(&mut h);
+    let faded = h.render().expect("a frame renders");
+    let mut visibility = h.state().app().view().visibility;
+    visibility.cuts = false;
+    visibility.rapids = false;
+    visibility.plunges = false;
+    visibility.arrows = false;
+    visibility.start_points = false;
+    visibility.tab_marks = false;
+    h.state_mut().app_mut().set_visibility(visibility);
+    h.run();
+    // Counted over what is there with no toolpath drawn, and summed over
+    // the runs: one run's colour at 35 % over the stock can come within
+    // the tolerance of another's at full strength, so a single colour's
+    // count need not fall, where the sum does, tenfold.
+    let none = in_colours(&mut h);
+    for k in 0..runs {
+        assert!(
+            fresh[k] > none[k] + 20,
+            "run {k} draws in its colour when current: {fresh:?} over {none:?}"
+        );
+    }
+    let over = |counts: &[usize]| -> usize {
+        counts
+            .iter()
+            .zip(&none)
+            .map(|(count, base)| count.saturating_sub(*base))
+            .sum()
+    };
+    let (current, waiting) = (over(&fresh), over(&stale));
+    assert!(
+        waiting * 10 < current,
+        "the stale toolpaths are faded: {waiting} pixels in a run's full colour ({stale:?}), \
+         {current} when current ({fresh:?})"
+    );
+
+    // Faded, not gone: with the toolpath layers off the frame is another.
+    let hidden = h.render().expect("a frame renders");
+    let differing = faded
+        .pixels()
+        .zip(hidden.pixels())
+        .filter(|(a, b)| (0..3).any(|c| a.0[c].abs_diff(b.0[c]) > 6))
+        .count();
+    assert!(
+        differing > 200,
+        "the stale toolpaths are still drawn: {differing} pixels differ from none drawn"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Capability 56, rendered (slice D6): a picture draws at its footprint
 /// the right way up and unmirrored, in its own grays. The picture is
 /// four flat quarters, each a gray of its own (top-left 240, top-right
