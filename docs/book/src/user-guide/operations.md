@@ -20,7 +20,7 @@ machine cuts the top one first. From the left, a row has:
 | --- | --- |
 | A **grip** | Drag the row up or down by it to change the cut order |
 | A **tick box** | Unticked, the operation is left out of the programs and its time out of the estimate, with the warning `operation_disabled` to remind you. It keeps all its settings |
-| A **glyph** for the kind | Coloured by the row's place in the list: blue, red, green, purple, orange, and so on for eight colours |
+| A **glyph** for the kind | Coloured by the row's place in the list: blue, red, green, purple, orange, and so on for eight colours. The operation's toolpath is the same colour |
 | The **name**, and under it the kind and the tool | Click the row to open the operation in the Inspector |
 | An **eye** | Hides the operation's toolpath on the Viewport. This is how you look at the job, not part of it: a hidden toolpath is still exported |
 | A **status mark** at the right | A spinner while the toolpath is worked out, a warning mark with a count, or a red mark for an error. Nothing when the operation is clean |
@@ -28,14 +28,12 @@ machine cuts the top one first. From the left, a row has:
 Holding the pointer on a row marks the shapes it cuts, on the Viewport
 and in the Design step's list.
 
-> **Toolpath colours.** On the plaque each toolpath has its row's
-> colour. That is not always so. The Viewport gives a colour to each
-> **tool run**, as the command line's preview does: a V-Carve or an Inlay
-> with clearing passes takes one colour for each pass and one for the
-> V-bit, an Inlay takes more for its male board, and an operation that
-> is unticked or cannot be worked out takes none. The operations after
-> it then have a different colour on the Viewport from their row's. The
-> **Layers** key shows the colours as drawn.
+> **Toolpath colours.** Each toolpath has its row's colour, whatever
+> the operation is made of: a V-Carve's or an Inlay's clearing passes are
+> the operation's colour, drawn lighter than the V-bit's lines, and an
+> Inlay is one colour on both boards. Unticking an operation, or one
+> that cannot be worked out, changes no other operation's colour. The
+> **Layers** key lists the same colours.
 
 Over the list are three buttons:
 
@@ -208,7 +206,9 @@ are in the Warnings drawer, and mark the row and the header.
 There is no Generate button. A moment after any change, the app works
 out the toolpath of each operation the change affects, and only those.
 The row shows a spinner, the old toolpath stays on the Viewport, faded,
-and the status bar says *Generating 2 of 5…* with a **Stop** button.
+and the status bar says *Generating 2 of 5…* with a **Stop** button. An
+operation with an error that stops it, such as no shape left to cut or a
+tool with no feed, draws nothing until the error is fixed.
 
 The status bar's **Est.** is the estimated time of every enabled
 operation. Hold the pointer on a row for the estimated time of the

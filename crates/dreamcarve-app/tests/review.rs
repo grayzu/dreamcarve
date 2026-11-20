@@ -26,7 +26,9 @@
 //! V-Carve and the tapered ball nose in the window) into `review/d6/` the
 //! same way, and `redesign_d4_screenshots` slice D4's (Export as a step,
 //! the Viewport's floating controls, the Warnings drawer, the sheets and
-//! the status bar) into `review/d4/`.
+//! the status bar) into `review/d4/`, and `redesign_d9_screenshots` slice
+//! D9's (what the fixes to the defects the user guide found look like)
+//! into `review/d9/`.
 //!
 //! The slice D2 set beside it, `review/d2/`, shows the tokens and the
 //! components in the layout before the steps; the test that wrote it was
@@ -1060,6 +1062,199 @@ fn redesign_d6_screenshots() {
     SCALE.set(1.0);
     d6_pictures(&out, &looks);
     d6_tools(&out, &looks);
+}
+
+/// Where the slice D9 pictures are committed.
+fn d9_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-4/review/d9"),
+        PathBuf::from,
+    )
+}
+
+/// Opens the Warnings drawer from the rail.
+fn open_drawer(h: &mut H) {
+    h.get_by_label_contains("Warnings:").click();
+    h.run();
+}
+
+/// The drawer's row about `field`, by its name.
+fn row_about(h: &H, field: &str) -> String {
+    dc_app::warnings::panel(h.state().app())
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .find(|row| row.field.as_deref() == Some(field))
+        .unwrap_or_else(|| panic!("a row about {field}"))
+        .name
+}
+
+/// The slice D9 set (`docs/alpha-worklog.md`, slice D9): what the fixes
+/// to the defects the user guide found look like, in dark at 1×, written
+/// to `docs/specs/phase-4/review/d9/`, where they are committed.
+///
+/// - `01`: the sign on the Operations step with its first operation
+///   unticked and the Layers popover open. The Background V-Carve is two
+///   tool runs, its V-bit's lines and its clearing pass's rings; both are
+///   its row's colour, the rings lighter, and every later operation still
+///   has its row's colour on the Viewport and in the key.
+/// - `02`: an Inlay after an unticked V-Carve: both boards in the
+///   Inlay's colour, the second.
+/// - `03`: the plaque after the square, the only shape its Square recess
+///   cuts, was deleted: the row is marked with the error and no toolpath
+///   is drawn where the recess was.
+/// - `04`: the plaque with a plunge rate above the feed on the 1/4 end
+///   mill, after a click on that warning's row in the drawer: the Tools
+///   step, the tool in the Inspector, the Plunge field focused, and the
+///   warning mark on the tool's row.
+/// - `05`: the drawer on the plaque with its outline moved off the
+///   stock: the message names `Cut out` where the engine's text gives
+///   `op4` alone.
+/// - `06`: an Inlay with no tool picked: the error, in the drawer and
+///   under the Tool row, names `Inlay 1` and says *(none chosen)*.
+/// - `07`, `08`: the window started on the plaque with a `gui.toml` that
+///   does not parse: the status bar's message, and the same as a hint in
+///   the drawer.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review redesign_d9 -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed D9 review pictures; run by hand"]
+fn redesign_d9_screenshots() {
+    let out = d9_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark];
+    SCALE.set(1.0);
+    let dir = scratch("review-d9");
+
+    // 01: the sign, its first operation unticked, the key open.
+    let Some(mut h) = window(&dir, Some(fixture("sign.dcv")), 1280.0, 800.0) else {
+        return;
+    };
+    let first = h.state().app().project().operations[0].id().clone();
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::SetOperationEnabled {
+            id: first,
+            enabled: false,
+        })
+        .unwrap();
+    settle(&mut h);
+    go_to(&mut h, "Operations");
+    h.get_by_role_and_label(Role::Button, "Layers").click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(
+        &mut h,
+        &out,
+        "01-sign-rows-toolpaths-key-one-colour",
+        &looks,
+    );
+    drop(h);
+
+    // 02: an Inlay, both boards, after an unticked V-Carve.
+    let mut h = window(&dir, Some(fixture("dc-tbn.dcv")), 1280.0, 800.0).unwrap();
+    go_to(&mut h, "Operations");
+    h.get_by_role_and_label(Role::Button, "Layers").click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "02-inlay-both-boards-one-colour", &looks);
+    drop(h);
+
+    // 03: the only target of the Square recess deleted.
+    let mut h = window(&dir, Some(fixture("plaque.dcv")), 1280.0, 800.0).unwrap();
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::DeleteInstances(vec![
+            dc_project::InstanceId::new("i4"),
+        ]))
+        .unwrap();
+    settle(&mut h);
+    go_to(&mut h, "Operations");
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "03-target-deleted-no-toolpath", &looks);
+    drop(h);
+
+    // 04: a warning about a tool, its row clicked in the drawer.
+    let mut h = window(&dir, Some(fixture("plaque.dcv")), 1280.0, 800.0).unwrap();
+    let mut fast = h.state().app().project().tools[1].clone();
+    fast.plunge_mm_min = Some(5000.0);
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateTool(fast.clone()))
+        .unwrap();
+    settle(&mut h);
+    go_to(&mut h, "Design");
+    open_drawer(&mut h);
+    let name = row_about(&h, &format!("tools[{}].plunge_mm_min", fast.id));
+    click(&mut h, &name);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "04-tool-finding-field-focused", &looks);
+    drop(h);
+
+    // 05: a generation error, which the engine words with the
+    // operation's id, named in the drawer.
+    let mut h = window(&dir, Some(fixture("plaque.dcv")), 1280.0, 800.0).unwrap();
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::TransformInstances {
+            ids: vec![dc_project::InstanceId::new("i1")],
+            delta: dc_geometry::Transform::translate(60.0, 0.0),
+        })
+        .unwrap();
+    settle(&mut h);
+    go_to(&mut h, "Operations");
+    open_drawer(&mut h);
+    park_pointer(&mut h);
+    shoot_in(
+        &mut h,
+        &out,
+        "05-drawer-message-names-the-operation",
+        &looks,
+    );
+
+    // 06: a validation error with an empty tool id, in the drawer and
+    // under the field.
+    h.state_mut().app_mut().undo();
+    let project = h.state().app().project().clone();
+    let inlay = dc_app::operations::new_operation(
+        &project,
+        h.state().app().strings(),
+        dc_app::operations::Kind::Inlay,
+        &[dc_project::InstanceId::new("i4")],
+    )
+    .unwrap();
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::AddOperation(inlay))
+        .unwrap();
+    settle(&mut h);
+    open_operation(&mut h, "Inlay 1");
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "06-no-tool-named-in-words", &looks);
+    drop(h);
+
+    // 07, 08: a gui.toml that does not parse. A short path, so the
+    // message reads whole in the pictures.
+    let short = std::env::temp_dir().join("dreamcarve-d9");
+    let _ = std::fs::remove_dir_all(&short);
+    std::fs::create_dir_all(short.join("config")).unwrap();
+    let damaged = "theme = \"light\"\n[panels\nleft_width = 250.0\n";
+    std::fs::write(short.join("config/gui.toml"), damaged).unwrap();
+    let mut h = window(&short, Some(fixture("plaque.dcv")), 1280.0, 800.0).unwrap();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "07-damaged-gui-toml-status-bar", &looks);
+    open_drawer(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "08-damaged-gui-toml-drawer-hint", &looks);
+    drop(h);
+    assert_eq!(
+        std::fs::read_to_string(short.join("config/gui.toml")).unwrap(),
+        damaged,
+        "the pictures were taken without the file being written over"
+    );
+    std::fs::remove_dir_all(&short).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Where the final review's pictures are committed.

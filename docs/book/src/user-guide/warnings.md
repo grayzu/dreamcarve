@@ -26,9 +26,10 @@ rail** marks each step: a check when it is complete, an amber dot when
 something in it has a warning, a red dot when something in it has an
 error. An error also puts a red dot on **Export**, because it stops
 export. A hint marks no step. **A row** in the Operations list carries
-its operation's warnings and errors, and a row in the Tools list a red
-dot while the tool lacks a value. And the **Warnings drawer** lists
-every finding in full.
+its operation's warnings and errors, and a row in the Tools list carries
+its tool's: a warning mark with a count, an error mark, or a red dot
+while the tool lacks a value. And the **Warnings drawer** lists every
+finding in full.
 
 ### The three kinds
 
@@ -55,7 +56,9 @@ Each row has:
 - its **code**, in green, when it has one. Click the code to open this
   chapter at that code's entry, in your browser;
 - the **message**, which names the operation, shape or tool and says
-  what to do;
+  what to do. The app gives the name, with the id the project file uses
+  after it: operation `Cut out` (`op4`). The command line prints some
+  of these with the id alone;
 - the **value** it is about, as the project file names it:
   `tools[t1].plunge_mm_min`.
 
@@ -70,19 +73,22 @@ has a heading, `Panel · Pocket`, when there is more than one group.
 | The row is about | The app opens |
 | --- | --- |
 | A value of an operation | The Operations step, with the operation in the Inspector and the keyboard in that field. The same message is under the field |
-| A tool | The Tools step, with the tool in the Inspector |
+| A value of a tool | The Tools step, with the tool in the Inspector and the keyboard in that field |
+| A tool as a whole (`unused_tool`) | The Tools step, with the tool in the Inspector |
 | A shape | The Design step, with the shape selected |
-| The stock or the origin | The Stock step |
-| An output setting | The Export step, with the setting's group open |
+| The stock or the origin | The Stock step, with the keyboard in the field |
+| An output setting | The Export step, with the setting's group open and the keyboard in the field |
 
-![After a click on the warning's row: the Tools step with the 1/4 end mill in the Inspector, its Plunge reading 5000 mm/min beside a Feed of 1500, and the drawer still open over the Viewport](figures/app/warnings-go-to.png)
+![After a click on the warning's row: the Tools step with the 1/4 end mill in the Inspector, the keyboard in its Plunge field, which reads 5000 mm/min under a Feed of 1500, a warning mark with a 1 on the tool's row in the list, and the drawer still open over the Viewport](figures/app/warnings-go-to.png)
 
 The drawer stays open while you fix things, and follows the project: put
 the plunge rate right and its row goes.
 
 **Copy** puts the list on the clipboard as `dreamcarve check` prints it,
 ending with `check`'s own count. That is the form to paste into a bug
-report. Drag the handle at the drawer's top edge to make it taller, and
+report. It is the command line's text, not the drawer's, so a hint is a
+`warning:` line in it and is counted with the warnings, and an operation
+may be named by its id alone. Drag the handle at the drawer's top edge to make it taller, and
 close it with the × at its right.
 
 ### Notes

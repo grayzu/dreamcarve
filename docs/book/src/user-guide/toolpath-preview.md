@@ -9,12 +9,14 @@ There is nothing to press to see a toolpath. The app works each one out
 again a moment after any change that affects it. While it does, the old
 toolpath stays on the Viewport, faded, the operation's row shows a
 spinner, and the status bar says *Generating 2 of 5…* with a **Stop**
-button. An operation that cannot be worked out, for want of a depth or a
-feed, draws nothing and is marked red in the list; the Warnings drawer
-says why.
+button. An operation that cannot be worked out, for want of a depth, a
+feed, or a shape to cut after its only one was deleted, draws nothing
+and is marked red in the list; the Warnings drawer says why. A faded
+toolpath is always one that is on its way; nothing is left on the
+Viewport that the project would not cut.
 
 What the Viewport draws is what **Export G-code** writes. The command
-line's `export --preview` draws the same picture as an SVG file.
+line's `export --preview` draws the same moves as an SVG file.
 
 ## Reading the picture
 
@@ -66,15 +68,23 @@ program's coordinates, measured from the origin: `X 64.2  Y 51.8`.
 The control at the Viewport's top right, which appears once the project
 has a toolpath, chooses how the cuts are coloured.
 
-**By operation**, the default, gives each tool run its own colour, as
-the command line's preview does. An operation that is one cut with one
-tool has one colour, and while every operation is like that it is the
-colour of its row's glyph. An operation with clearing passes, or an
-Inlay's second board, takes a colour for each run, and an operation that
-is turned off takes none, so the operations after it differ from their
-rows ([Operations in the app](operations.md#the-list)). The **Layers**
-key shows the colours as drawn. There are eight colours; the ninth run
-takes the first again.
+**By operation**, the default, gives each operation one colour: the
+colour of its row's glyph in the Operations list
+([Operations in the app](operations.md#the-list)). Everything the
+operation cuts is that colour, with every tool it uses and on both
+boards of an Inlay, and so is its entry in the **Layers** key. The
+clearing passes of a V-Carve or an Inlay are drawn lighter than the
+V-bit's lines, so the two can be told apart. The colour is the row's
+place in the list, so it changes only when you drag the row: unticking
+an operation, or one that cannot be worked out, changes no other
+operation's colour. There are eight colours; the ninth operation takes
+the first again.
+
+The command line's `export --preview` uses the same eight colours but
+gives one to each tool run it draws, so in its picture a clearing pass or
+an Inlay's male board has a colour of its own, and an operation after one
+of those, or after one that is turned off, is not the colour it has in
+the app.
 
 **By depth** colours every cut by how deep it is, from pale at the top of
 the stock to dark at the deepest cut in the project:

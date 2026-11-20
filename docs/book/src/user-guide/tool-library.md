@@ -45,6 +45,11 @@ diameter and the tool number. A V-bit's row adds its angle, `6.35 mm ·
 
 - a **red dot** means the tool has a value still to set. Hold the pointer
   on it to see which;
+- a **warning mark** with a count means a warning is about the tool, such
+  as a plunge rate above its feed, and a red **error mark** an error
+  that is not a missing value. They are the marks an operation's row
+  has. Hold the pointer on one to read the messages, or open the Warnings
+  drawer and click the row there to be taken to the field;
 - a blue **hint** mark means no operation uses the tool yet. It stops
   nothing.
 

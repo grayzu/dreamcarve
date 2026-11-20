@@ -208,9 +208,18 @@ fn click(h: &mut H, label: &str) {
     h.run();
 }
 
+/// Clicks the button `label` and lets the window settle. A button that
+/// asks for a picture (*New from picture…*, *Add picture*) hands the
+/// file to a thread that decodes it, and the sheet opens when that lands.
+/// `run` gives a window four frames to stop asking for more, so a picture
+/// landing between two of them failed the test with "exceeded max_steps";
+/// the frames are drawn one at a time until the picture has landed, as
+/// the kittest drop tests draw them (`common::settle_picture`), and only
+/// then is the window left to settle. A button that starts no decode
+/// costs three frames more.
 fn click_button(h: &mut H, label: &str) {
     h.get_by_role_and_label(Role::Button, label).click();
-    h.run();
+    common::settle_picture(h);
 }
 
 fn click_in_sheet(h: &mut H, label: &str) {
@@ -707,7 +716,6 @@ fn importing_screenshots() {
     // New from picture…: the sheet asks for one side of the picture.
     dialogs.answer(&picture);
     click_button(&mut h, "New from picture…");
-    common::settle_picture(&mut h);
     type_in_sheet(&mut h, "Width", "120");
     shoot(&mut h, &out, "import-picture-sheet", Crop::Sheet);
     click_in_sheet(&mut h, "Create project");
@@ -1087,7 +1095,6 @@ fn pictures_screenshots() {
     go_to(&mut h, "Design");
     dialogs.answer(&picture);
     click_button(&mut h, "Add picture");
-    common::settle_picture(&mut h);
     let add = h
         .get_by_role(Role::Dialog)
         .get_by_role_and_label(Role::Button, "Add picture");
@@ -1198,7 +1205,6 @@ fn pictures_screenshots() {
     let mut h = window(&dir, None, &dialogs).unwrap();
     dialogs.answer(&picture);
     click_button(&mut h, "New from picture…");
-    common::settle_picture(&mut h);
     type_in_sheet(&mut h, "Width", "120");
     click_in_sheet(&mut h, "Create project");
     settle(&mut h);
