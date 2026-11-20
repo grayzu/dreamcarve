@@ -308,6 +308,79 @@ fn check_prints_the_seat_line() {
     );
 }
 
+/// Acceptance 61v, "`check` says so": a 30 × 10 mm rectangle V-carved
+/// with the Fine Detail bit, `flat_depth_mm` 2, at a `step_over_fraction`
+/// of 0.4. The ridge between two floor passes is the ball's scallop, `ρ −
+/// √(ρ² − (step/2)²)` with the step 0.4 of the bit's 2.503 mm width at
+/// 2 mm: 0.116 mm, where a V-bit's would be 0.4 · 2 = 0.8 mm. `check`
+/// prints it in the carve's summary line.
+#[test]
+fn check_prints_the_tapered_floor_ridge() {
+    let dir = work_dir("check_prints_the_tapered_floor_ridge");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut bit = tool_tbn_fine();
+    bit.id = ToolId::new("tv");
+    bit.feed_mm_min = Some(1500.0);
+    bit.plunge_mm_min = Some(500.0);
+    bit.rpm = Some(18000);
+    bit.step_over_fraction = Some(0.4);
+    project.tools.push(bit);
+    let rectangle = FeatureDefinition {
+        id: DefinitionId::new("dv"),
+        name: "Rectangle".into(),
+        profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 30.0, 10.0)],
+    };
+    project.definitions.insert(rectangle.id.clone(), rectangle);
+    project.instances.push(FeatureInstance {
+        id: InstanceId::new("iv"),
+        definition: DefinitionId::new("dv"),
+        transform: Transform::translate(40.0, 50.0),
+        name: "Rectangle".into(),
+        visible: true,
+        locked: false,
+        z_top_mm: None,
+        z_bottom_mm: None,
+    });
+    project.operations = vec![Operation::VCarve(dc_project::VCarveOp {
+        targets: vec![InstanceId::new("iv")],
+        tool: ToolId::new("tv"),
+        flat_depth_mm: Some(2.0),
+        ..dc_project::test_support::sample_v_carve()
+    })];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    // The scallop by hand: the Fine bit's tip radius 1.143 mm, 6.7° a side.
+    let rho: f64 = 1.143;
+    let beta = 6.7_f64.to_radians();
+    let width_mm = 2.0 * (2.0 + rho * (1.0 / beta.sin() - 1.0)) * beta.tan();
+    let half_step_mm = 0.4 * width_mm / 2.0;
+    let ridge_mm = rho - (rho * rho - half_step_mm * half_step_mm).sqrt();
+    assert_approx_eq!(ridge_mm, 0.116, 0.005);
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "check: {report}{}",
+        stderr(&out)
+    );
+    let line = report
+        .lines()
+        .find(|l| l.starts_with("V-Carve o6 "))
+        .unwrap_or_else(|| panic!("the carve's summary line: {report}"));
+    let (_, after) = line
+        .split_once("floor ridges ")
+        .unwrap_or_else(|| panic!("the line states the ridge: {line}"));
+    let (printed, _) = after.split_once(" mm").expect("a height in mm");
+    let printed_mm: f64 = printed.parse().expect("the ridge's height is a number");
+    // To the three places `check` prints.
+    assert_approx_eq!(printed_mm, ridge_mm, 0.0005);
+    assert_approx_eq!(printed_mm, 0.116, 0.005);
+}
+
 // ── Test part 5's projects (slice 27g, #683; functional spec, "Test ────────
 // ── parts → Tapered ball nose carve and inlay") ─────────────────────────
 

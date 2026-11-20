@@ -31,6 +31,10 @@ use dc_project::{
 };
 use dreamcarve_shell::clock;
 
+/// Clauses of phase 3's acceptance tests 55, 61, 61j, 61m and 61n
+/// (`docs/specs/phase-3/audit.md`).
+#[path = "cli/acceptance_3.rs"]
+mod acceptance_3;
 /// Pictures: `init` on a PNG or JPEG, `image add` and `image list` (#645).
 #[path = "cli/picture.rs"]
 mod picture;
@@ -12638,7 +12642,8 @@ fn version_18_stock_to_leave_project_exports_byte_identical_programs() {
 /// coaster countersunk with a 90° 6.35 mm V-bit to a 6 mm mouth, on
 /// LinuxCNC with canned cycles on, export as plain moves: one plunge per
 /// hole to Z −3 at the plunge rate, no cycle word, no
-/// `canned_cycle_expanded` warning, and `check` is quiet about it.
+/// `canned_cycle_expanded` warning, and `check` is quiet about it. With
+/// `dwell_s: 0.5` each plunge is followed by a `G4 P0.500` at the bottom.
 #[test]
 fn countersink_exports_as_plain_moves_with_canned_cycles() {
     let dir = work_dir("countersink_exports_as_plain_moves_with_canned_cycles");
@@ -12723,6 +12728,44 @@ fn countersink_exports_as_plain_moves_with_canned_cycles() {
         })
         .count();
     assert_eq!(plunges, 4, "{text}");
+    // The spindle's spin-up dwell is the programs' only `G4`.
+    let hole_dwells = |text: &str| {
+        text.lines()
+            .map(code_words)
+            .filter(|w| w == &["G4", "P0.500"])
+            .count()
+    };
+    assert_eq!(hole_dwells(&text), 0, "no dwell is asked for: {text}");
+
+    // Acceptance 55: `dwell_s: 0.5` writes a `G4` at the bottom, the line
+    // after each hole's plunge, still as plain moves.
+    for op in &mut project.operations {
+        if let Operation::Drill(drill) = op {
+            drill.dwell_s = 0.5;
+        }
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "export with a dwell: {report}");
+    let text: String = programs
+        .iter()
+        .map(|p| std::fs::read_to_string(p).expect("program readable"))
+        .collect();
+    let lines: Vec<Vec<String>> = text.lines().map(code_words).collect();
+    let after_a_plunge: Vec<&Vec<String>> = lines
+        .windows(2)
+        .filter(|pair| {
+            pair[0].first().is_some_and(|g| g == "G1")
+                && pair[0].get(1).is_some_and(|z| z == "Z-3.000")
+        })
+        .map(|pair| &pair[1])
+        .collect();
+    assert_eq!(after_a_plunge.len(), 4, "{text}");
+    for words in after_a_plunge {
+        assert_eq!(words, &["G4", "P0.500"], "a dwell at the bottom: {text}");
+    }
+    assert_eq!(hole_dwells(&text), 4, "one dwell a hole: {text}");
 }
 
 // ── Image prep, slice 3.4-3: the import checks (49a, acceptance 61a) ─────
