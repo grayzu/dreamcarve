@@ -815,6 +815,11 @@ picture_missing = "{id} · not in the project"
 # band drawn by several.
 boundary_none = "None (use the band margin)"
 boundary_selection = "Selected shapes ({count})"
+# What stands in the place of the Band margin and the Outline rounding
+# while a boundary is chosen, and why (capability 68a): the engine reads
+# neither then.
+boundary_replaces = "Set by the boundary"
+boundary_replaces_help = "Not used while a Boundary is chosen: the boundary's outline is the outer edge of the male's band. Choose None as the Boundary to use this instead."
 summary_line_angle = "angle {value}"
 summary_line_spacing = "spacing {value}"
 

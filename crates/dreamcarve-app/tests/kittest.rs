@@ -4791,19 +4791,19 @@ fn inlay_editor_shows_the_male_board() {
     );
     open_operation(&mut h, "DC");
     // The derived line and the margin are Depth's, closed until opened;
-    // the values and the board thickness are Setup's (#618).
+    // the values are Setup's (#618); the board's thickness is the Male
+    // board group's, first in it (the smoke test's item 5).
     assert!(
         h.query_by_role_and_label(Role::TextInput, "Band margin")
             .is_none()
     );
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Board thickness")
+            .is_none(),
+        "the thickness is not a Setup row"
+    );
     open_group(&mut h, "Depth");
-    for label in [
-        "Inlay depth",
-        "Glue gap",
-        "Plug depth",
-        "Band margin",
-        "Board thickness",
-    ] {
+    for label in ["Inlay depth", "Glue gap", "Plug depth", "Band margin"] {
         assert!(
             h.query_by_role_and_label(Role::TextInput, label).is_some(),
             "{label} is shown"
@@ -4813,6 +4813,22 @@ fn inlay_editor_shows_the_male_board() {
         h.query_by_label("male start plane 3 mm · band floor 5 mm below the board top")
             .is_some(),
         "the derived line"
+    );
+    open_group(&mut h, "Male board");
+    let top = |h: &Harness<'_, dreamcarve_app::Shell>, label: &str| {
+        h.get_by_role_and_label(Role::TextInput, label).rect().top()
+    };
+    assert!(
+        top(&h, "Board thickness") < top(&h, "Board width")
+            && top(&h, "Board width") < top(&h, "Board height"),
+        "Board thickness is the group's first row"
+    );
+    assert!(
+        top(&h, "Board thickness")
+            > h.query_all_by_role_and_label(Role::Button, "Male board")
+                .map(|n| n.rect().top())
+                .fold(f32::MIN, f32::max),
+        "under the Male board header"
     );
     assert!(
         h.query_by_label("base under the band 7 mm (at least 6 mm)")
@@ -4936,10 +4952,22 @@ fn inlay_boundary_is_picked_in_the_editor_and_the_male_band_follows_it() {
     );
 
     settle_generation(&mut h, "the drawn boundary");
+    // The margin and the rounding the boundary replaces are cleared with
+    // the choice, so validation has nothing to say of them, and their
+    // rows are disabled (the smoke test's item 4).
     assert!(
         h.query_by_label_contains("so margin_mm does nothing")
-            .is_some(),
-        "validation's line is under the margin the boundary replaces"
+            .is_none(),
+        "no value the engine ignores is left in the file"
+    );
+    let dc_project::Operation::Inlay(drawn) = operation_of(&h, "op1") else {
+        panic!("op1 is an Inlay");
+    };
+    assert_eq!((drawn.margin_mm, drawn.outline_rounding_mm), (None, None));
+    assert!(
+        h.get_by_role_and_label(Role::TextInput, "Band margin")
+            .accesskit_node()
+            .is_disabled()
     );
     let app = h.state().app();
     let board = app.scene().male_board().expect("a male board");

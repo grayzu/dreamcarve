@@ -584,7 +584,9 @@ reason as the sign's tools.
 
 The stock is the **female board**, the one that gets the pocket.
 **Board thickness** is the **male board**'s, the one the plug is cut
-from; measure each board and type its own. Do not select `frame`: it is
+from, so it is the first row of the editor's **Male board** group, which
+is open while the thickness is not set; measure each board and type its
+own. Do not select `frame`: it is
 there only to size the stock.
 
 One Inlay cuts both boards from one set of numbers, with one bit, so the

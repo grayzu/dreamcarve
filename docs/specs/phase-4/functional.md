@@ -688,7 +688,7 @@ folder are app preferences, kept outside the project.
     | Bore | Depth |
     | Engrave | Depth |
     | V-Carve | Flat depth (off, or the depth), Clearing passes (the list of 70) |
-    | Inlay | Inlay depth, Glue gap, Plug depth, Male board thickness |
+    | Inlay | Inlay depth, Glue gap, Plug depth (the male board's thickness is the first row of its Male board group, 68a) |
     | Photo V-Carve | (Targets is the Picture) Max depth |
 
     A Setup field keeps its file name, label, unit, help and validation;
@@ -760,7 +760,7 @@ folder are app preferences, kept outside the project.
     | Bore | Depth: `depth_mm`, `pitch_mm` (tool's step-down), `stock_to_leave_mm`, `through_cut_allowance_mm`. Strategy: `direction`. Heights: `safe_z_mm`. |
     | Engrave | Depth: `depth_mm`, `step_down_mm` (tool's), `through_cut_allowance_mm`. Strategy: `alternate_direction`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | V-Carve | Depth: `flat_depth_mm` (off for `null`), `start_depth_mm`, `start_plane_cleared_externally`, `through_cut_allowance_mm`. Strategy: `strategy` (Medial; Offset with `step_over_mm` and `direction`), `step_over_fraction`, `clearing` (70). Order: `machining_order`. Heights: `safe_z_mm`. |
-    | Inlay (format 26; one file since #498) | Depth, one set for both boards (68a): `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `boundary` (none, or the closed shapes that draw the male band's edge; phase 3's 49f), `margin_mm`, `outline_rounding_mm` (off for `null`), `through_cut_allowance_mm`. Male board: `male_board.width_mm` and `height_mm` (the stock's for `null`), `male_board.thickness_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out: off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
+    | Inlay (format 26; one file since #498) | Depth, one set for both boards (68a): `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `boundary` (none, or the closed shapes that draw the male band's edge; phase 3's 49f), `margin_mm`, `outline_rounding_mm` (off for `null`), `through_cut_allowance_mm`. Male board: `male_board.thickness_mm` first, then `male_board.width_mm` and `height_mm` (the stock's for `null`). Clearing: `clearing` (70), `step_over_fraction`. Cut-out: off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | Photo V-Carve | Targets: `image`. Depth: `max_depth_mm`, `start_depth_mm`, `start_plane_cleared_externally`, `invert`, `through_cut_allowance_mm`. Strategy: `strategy` (Raster, Hatch), `line_angle_deg`, `line_spacing_fraction` (as a percentage), `sample_mm`. Heights: `safe_z_mm`, `stepover_retract_mm`. |
 
     Photo V-Carve lands with phase 3.5 (format v27); its editor is a slice
@@ -789,10 +789,17 @@ folder are app preferences, kept outside the project.
     stock's and whose thickness is its own. There is no side to choose.
     The editor shows the Inlay's values once: inlay depth, glue gap, plug
     depth, margin, outline rounding, through-cut allowance; then the
-    **Male board** group: width and height (placeholder *same as stock*),
-    thickness (required for the male to export; it sits in Setup (66a)
-    and shows the required-field look (66b) until it is set, with
-    `inlay_male_board_unset` in the drawer), and the derived base under the band,
+    **Male board** group: thickness first, then width and height
+    (placeholder *same as stock*). The thickness is required for the male
+    to export and shows the required-field look (66b) until it is set,
+    with `inlay_male_board_unset` in the drawer. It is a row of this
+    group and not of Setup (maintainer's smoke test, 2026-11-20: among
+    the Setup rows it read as the stock's thickness, which is the female
+    board's). The group is closed until opened like any other, and the
+    existing rule keeps the value in sight: while the thickness is unset
+    the group holds a located warning, so it opens by itself and its
+    closed header carries the glyph and count (66). Under the thickness
+    is the derived base under the band,
     red below 6 mm (`inlay_plug_base_thin`). Under Depth a read-only line
     shows what the bench needs to see: the male's start plane, its band
     floor, and the flank's engagement against the V-bit's cone height, red
@@ -810,9 +817,20 @@ folder are app preferences, kept outside the project.
     not one of the Inlay's own targets. Choosing a shape makes it the
     boundary, one undo step; with two or more such shapes selected on the
     drawing the dropdown also offers *Selected shapes*, for a band drawn
-    by several. The row writes `boundary` and nothing else: a margin or a
-    rounding still set shows `inlay_margin_ignored` under itself until
-    the user clears it, as a hand-edited file does, and the boundary's
+    by several. With a boundary the engine reads neither the margin nor
+    the rounding (validation's `inlay_margin_ignored`: each "does
+    nothing"), so choosing a shape writes `boundary` and clears
+    `margin_mm` and `outline_rounding_mm` to `null` in the same undo
+    step, *Set boundary of "DC"*, and while a boundary is chosen the
+    **Band margin** and **Outline rounding** rows are disabled: each
+    shows *Set by the boundary* where its value would be, with the
+    reason as its tooltip, and writes nothing. Choosing *None* enables
+    them again, the margin empty and required (the male needs one once
+    it has no boundary). A hand-edited file that has a boundary and a
+    margin shows the margin's value greyed in its disabled row with
+    `inlay_margin_ignored` under it; choosing the boundary again clears
+    it. The closed Depth group's summary names the boundary and leaves
+    out the margin and the rounding. The boundary's
     own errors (`inlay_boundary_crosses_design` and the rest) show under
     the row. A shape that is deleted leaves the list. The Viewport draws
     the boundary dashed on the male board, mirrored with the design, as

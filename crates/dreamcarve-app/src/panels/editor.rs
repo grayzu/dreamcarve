@@ -584,6 +584,12 @@ pub(super) fn control(
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let id = control_id(cx.op, slot.key());
+    // A row another replaces (an Inlay's Band margin under a drawn
+    // boundary) is disabled, and says why where its field would be.
+    if let Some(why) = editor::replaced(cx.op, slot.row) {
+        label(ui, cx, slot);
+        return Some(replaced(ui, cx, slot, id, why, tier));
+    }
     match slot.row.kind {
         FieldKind::Length
         | FieldKind::Rate
@@ -709,6 +715,42 @@ fn typed(
         commit(ui, refused_id, slot.reset(cx.op), out);
     }
     Some(output.response)
+}
+
+/// A row that is not in use (`editor::replaced`; capability 68a): a
+/// disabled field with the reason in its place (*Set by the boundary*)
+/// and the whole of it as the tooltip. It writes nothing. A value a
+/// hand-edited file still holds shows greyed, with validation's message
+/// under the row as for any other.
+fn replaced(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    slot: &Slot<'_>,
+    id: Id,
+    why: editor::Replaced,
+    tier: Option<Tier>,
+) -> egui::Response {
+    let value = slot.value_text(cx.project, cx.op);
+    unit_field(
+        ui,
+        UnitField {
+            enabled: false,
+            disabled_reason: Some(cx.strings.get(why.help)),
+            placeholder: cx.strings.get(why.note),
+            tier,
+            ..UnitField::new(
+                id,
+                cx.strings.get(slot.row.label),
+                &value,
+                if value.is_empty() {
+                    ""
+                } else {
+                    editor::unit_suffix(slot.row, cx.project.display_units)
+                },
+            )
+        },
+    )
+    .response
 }
 
 /// A derived value (S18; slice 12, #541): a read-only field showing
@@ -1088,7 +1130,9 @@ fn boundary_picker(
         commit(
             ui,
             id.with("refused"),
-            editor::set_boundary(cx.op, row, &shapes),
+            // The boundary, and the margin and the rounding it replaces
+            // cleared with it: one undo step.
+            editor::choose_boundary(cx.op, row, &shapes),
             out,
         );
     }

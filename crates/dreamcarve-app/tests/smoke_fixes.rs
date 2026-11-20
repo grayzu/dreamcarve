@@ -28,7 +28,7 @@ use dreamcarve_app::Shell;
 use eframe::egui;
 use eframe::egui::accesskit::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable as _;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 
 /// The plaque, open in a 1280 × 800 window, with its scratch directory.
 fn plaque(name: &str) -> (Harness<'static, Shell>, std::path::PathBuf, QueuedDialogs) {
@@ -351,5 +351,155 @@ fn every_kind_of_field_is_written_when_clicked_away_from() {
         Some("sign"),
         "the file name typed stays"
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The Inlay of the shell's project.
+fn inlay_of(h: &Harness<'_, Shell>) -> dc_project::InlayOp {
+    match h.state().app().project().operations.first() {
+        Some(dc_project::Operation::Inlay(inlay)) => inlay.clone(),
+        other => panic!("the pair's first operation is its Inlay: {other:?}"),
+    }
+}
+
+/// The lettered inlay pair, open in a 1280 × 900 window, after `edit`.
+fn pair(
+    name: &str,
+    edit: impl FnOnce(&mut dc_project::Project),
+) -> (Harness<'static, Shell>, std::path::PathBuf) {
+    let dir = scratch(name);
+    let bytes = std::fs::read(common::fixture("dc.dcv")).unwrap();
+    let mut project = dc_project::load(&bytes).unwrap().project;
+    edit(&mut project);
+    let path = dir.join("dc.dcv");
+    std::fs::write(&path, dc_project::save(&project).unwrap()).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let h = harness(
+        options(&dir.join("config"), Some(path), &dialogs),
+        1280.0,
+        900.0,
+    );
+    (h, dir)
+}
+
+/// The smoke test's item 4 (capability 68a): with a shape chosen as the
+/// Boundary, the Band margin row is disabled and says *Set by the
+/// boundary* where its value was, the Outline rounding with it, and the
+/// file holds no margin; the closed Depth group's summary names the
+/// boundary and no margin. Choosing *None* enables both again.
+#[test]
+fn band_margin_is_disabled_while_a_boundary_is_chosen() {
+    let (mut h, dir) = pair("inlay-margin", |_| {});
+    open_operation(&mut h, "DC");
+    open_group(&mut h, "Depth");
+    let margin = |h: &Harness<'_, Shell>| {
+        let node = h.get_by_role_and_label(Role::TextInput, "Band margin");
+        (
+            node.accesskit_node().is_disabled(),
+            node.value().unwrap_or_default(),
+            node.accesskit_node().placeholder().map(str::to_owned),
+        )
+    };
+    assert!(!margin(&h).0, "enabled with no boundary");
+    assert_eq!(margin(&h).1, "8");
+    assert_eq!(inlay_of(&h).margin_mm, Some(8.0));
+
+    let steps = undo_steps(&h);
+    h.get_by_role_and_label(Role::ComboBox, "Boundary").click();
+    h.run();
+    h.get_by_label("frame").click();
+    h.run();
+    assert_eq!(undo_steps(&h), steps + 1, "one undo step");
+    assert_eq!(h.state().app().undo_label(), Some("Set boundary of “DC”"));
+    assert_eq!(
+        margin(&h),
+        (true, String::new(), Some("Set by the boundary".to_owned())),
+        "disabled, saying why in the value's place"
+    );
+    let inlay = inlay_of(&h);
+    assert_eq!(inlay.margin_mm, None, "no margin is written");
+    assert_eq!(inlay.outline_rounding_mm, None);
+    let rounding = h.get_by_role_and_label(Role::TextInput, "Outline rounding");
+    assert!(rounding.accesskit_node().is_disabled());
+    // Typing reaches nothing: the row is not a field while it is off.
+    assert!(
+        h.query_by_label_contains("does nothing").is_none(),
+        "and validation has nothing to say of it"
+    );
+
+    // Closed, the group says what draws the band.
+    open_group(&mut h, "Depth");
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Band margin")
+            .is_none(),
+        "closed"
+    );
+    let header = h
+        .query_all_by_role_and_label(Role::Button, "Depth")
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .unwrap();
+    let summary = header.value().unwrap_or_default();
+    assert!(summary.starts_with("Boundary frame"), "{summary}");
+    assert!(!summary.to_lowercase().contains("margin"), "{summary}");
+    open_group(&mut h, "Depth");
+
+    // None: the margin is the band's again, empty and asked for.
+    h.get_by_role_and_label(Role::ComboBox, "Boundary").click();
+    h.run();
+    h.get_by_label("None (use the band margin)").click();
+    h.run();
+    assert!(!margin(&h).0, "enabled again");
+    type_into(&mut h, "Band margin", "7");
+    h.key_press(egui::Key::Tab);
+    h.run();
+    assert_eq!(inlay_of(&h).margin_mm, Some(7.0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The smoke test's item 5 (capabilities 66a, 66b and 68a): the male
+/// board's thickness is the first row of the Male board group, not a
+/// Setup row. The group is closed until opened; while the thickness is
+/// unset it opens by itself, and the field shows the required look, so
+/// the value the male needs is in view the moment the Inlay is.
+#[test]
+fn board_thickness_is_the_male_boards_first_row() {
+    // Set: Setup has no thickness, and the group is closed.
+    let (mut h, dir) = pair("inlay-thickness-set", |_| {});
+    open_operation(&mut h, "DC");
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Board thickness")
+            .is_none(),
+        "not in Setup, and the Male board group starts closed"
+    );
+    open_group(&mut h, "Male board");
+    let top = |h: &Harness<'_, Shell>, label: &str| {
+        h.get_by_role_and_label(Role::TextInput, label).rect().top()
+    };
+    assert!(top(&h, "Board thickness") < top(&h, "Board width"));
+    assert!(top(&h, "Board width") < top(&h, "Board height"));
+    assert!(top(&h, "Plug depth") < top(&h, "Board thickness"));
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    // Unset: the group opens by itself, and the field says Required.
+    let (mut h, dir) = pair("inlay-thickness-unset", |project| {
+        let Some(dc_project::Operation::Inlay(inlay)) = project.operations.first_mut() else {
+            panic!("the pair's Inlay");
+        };
+        inlay.male_board.thickness_mm = None;
+    });
+    open_operation(&mut h, "DC");
+    // The warning is the generator's: it is there once the toolpaths are.
+    common::settle(&mut h);
+    let thickness = h.get_by_role_and_label(Role::TextInput, "Board thickness");
+    assert_eq!(
+        thickness.accesskit_node().placeholder(),
+        Some("Required"),
+        "the group opened for its unset thickness"
+    );
+    type_into(&mut h, "Board thickness", "12");
+    h.key_press(egui::Key::Tab);
+    h.run();
+    assert_eq!(inlay_of(&h).male_board.thickness_mm, Some(12.0));
     std::fs::remove_dir_all(&dir).unwrap();
 }
