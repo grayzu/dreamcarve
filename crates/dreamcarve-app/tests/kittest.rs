@@ -1763,6 +1763,144 @@ fn origin_crosshair_and_park_mark_move_on_the_viewport() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Acceptance 70's offers, in the window (capability 62): on the Export
+/// step's Post-processor group, for each of the six bundled
+/// post-processors in turn, *Tool change* lists *One program with M6*
+/// exactly where the definition's tool change has `M6` (grblHAL, and not
+/// GRBL), and *Canned drill cycles* is a checkbox exactly where the
+/// definition has canned cycles, which is LinuxCNC and Mach3; elsewhere
+/// its place holds the line that says the controller has none. The
+/// post-processor is switched by the Controller dropdown's own command.
+#[test]
+fn export_step_offers_m6_and_canned_cycles_where_the_post_processor_has_them() {
+    let dir = scratch("post-offers");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        900.0,
+    );
+    assert_eq!(h.state().step(), dc_app::steps::Step::Export);
+    h.get_by_role_and_label(Role::Button, "Post-processor")
+        .click();
+    h.run();
+
+    let mut with_canned = Vec::new();
+    let mut with_m6 = Vec::new();
+    for definition in dc_project::latest_definitions().expect("bundled") {
+        let post = definition.post_processor();
+        if h.state().app().project().post_processor.id != definition.id {
+            h.state_mut()
+                .app_mut()
+                .run(Command::SwitchPost {
+                    id: definition.id.to_owned(),
+                })
+                .expect("the post-processor switches");
+            h.run();
+        }
+        let id = definition.id;
+
+        let checkbox = h
+            .query_by_role_and_label(Role::CheckBox, "Canned drill cycles")
+            .is_some();
+        let none = format!("Not offered: {} has no canned cycles.", post.name);
+        assert_eq!(checkbox, post.canned_cycles.is_some(), "{id}: the checkbox");
+        assert_eq!(
+            h.query_by_label(&none).is_some(),
+            post.canned_cycles.is_none(),
+            "{id}: the line in its place"
+        );
+        if checkbox {
+            with_canned.push(id);
+        }
+
+        h.get_by_role_and_label(Role::ComboBox, "Tool change")
+            .scroll_to_me();
+        h.run();
+        h.get_by_role_and_label(Role::ComboBox, "Tool change")
+            .click();
+        h.run();
+        assert!(
+            h.query_by_label("One program per tool").is_some(),
+            "{id}: the list is open"
+        );
+        let m6 = h.query_by_label("One program with M6").is_some();
+        assert_eq!(m6, post.tool_change.has_m6(), "{id}: one program with M6");
+        if m6 {
+            with_m6.push(id);
+        }
+        h.key_press(egui::Key::Escape);
+        h.run();
+    }
+    with_canned.sort_unstable();
+    assert_eq!(with_canned, ["linuxcnc", "mach3"]);
+    assert!(with_m6.contains(&"grblhal") && !with_m6.contains(&"grbl"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Acceptance 68 in the window (capability 59): the plaque's `outline`
+/// deleted with the Delete key leaves the Cut out Profile with no target,
+/// and the Warnings drawer lists validation's `operation_has_no_targets`
+/// error for it, in the error's own words; undo takes the row away again.
+#[test]
+fn deleting_a_target_lists_the_no_targets_error_in_the_drawer() {
+    let dir = scratch("delete-target");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    go_to(&mut h, "Design");
+    select_only(&mut h, "i1");
+    h.key_press(egui::Key::Delete);
+    h.run();
+    settle_generation(&mut h, "the plaque without its outline");
+    let project = h.state().app().project();
+    assert!(project.instances.iter().all(|i| i.id.as_str() != "i1"));
+    let problems = dc_project::validate(project);
+    let message = problems
+        .iter()
+        .find(|p| p.code() == "operation_has_no_targets")
+        .expect("the Cut out Profile has no target left")
+        .to_string();
+    assert!(message.contains("Cut out"), "{message}");
+
+    // The drawer's row is `check`'s line for it: `error: ` and the
+    // message, with no code.
+    let line = format!("error: {message}");
+    assert!(h.query_by_label(&line).is_none(), "the drawer is closed");
+    h.get_by_label("Warnings").click();
+    h.run();
+    assert!(h.state().warnings_open());
+    assert!(
+        h.query_all_by_label(&line).count() >= 1,
+        "the drawer lists the error: {line}"
+    );
+
+    command_key(&h, egui::Key::Z);
+    h.run();
+    settle_generation(&mut h, "the plaque again");
+    assert!(
+        h.state()
+            .app()
+            .project()
+            .instances
+            .iter()
+            .any(|i| i.id.as_str() == "i1"),
+        "undo brings the outline back"
+    );
+    assert_eq!(
+        h.query_all_by_label_contains(&message).count(),
+        0,
+        "and the row goes"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A file dropped on the window: a path on disk.
 #[derive(Debug)]
 struct Dropped(std::path::PathBuf);
@@ -3011,6 +3149,26 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     assert!(
         h.state().layout().inspector.is_some(),
         "with the tool in the Inspector"
+    );
+    // Which tool: the one that lacks the feed, by its name in the
+    // editor's Name field (acceptance 84, "a click on it opens the tool").
+    let lacking = h
+        .state()
+        .app()
+        .project()
+        .tools
+        .iter()
+        .find(|t| t.id == used)
+        .expect("the tool is still there")
+        .name
+        .clone();
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Name")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some(lacking.as_str()),
+        "the Inspector holds the tool without a feed"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -8179,10 +8337,14 @@ fn save_on_untitled_asks_where_and_cancel_cancels_all() {
         // Answered, Save writes there and then goes ahead.
         let path = dir.join(format!("{ask:?}.dcv"));
         dialogs.answer(&path);
+        let unsaved = h.state().app().serialize().expect("the project saves");
         ask.press(&mut h);
         click_in_sheet(&mut h, "Save");
         let written = std::fs::read_to_string(&path).expect("the file is written");
-        assert!(!written.is_empty());
+        assert!(
+            written == unsaved,
+            "{ask:?}: Save writes the changed project before going ahead"
+        );
         let last = dialogs.asked().last().cloned().unwrap_or_default();
         match ask {
             Ask::Close | Ask::Quit => assert!(h.state().close_allowed(), "{ask:?}"),

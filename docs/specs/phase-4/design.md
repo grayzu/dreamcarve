@@ -1357,22 +1357,31 @@ by the acceptance test each is for:
   disabled-tooltip never opened for it.
 - **68**: `tree::delete_removes_targets_and_tabs_and_warns` ties the
   drawer's row to validation's `operation_has_no_targets` and deletes a
-  Pocket's one target too.
+  Pocket's one target too;
+  `kittest::deleting_a_target_lists_the_no_targets_error_in_the_drawer`
+  reads the row in the window.
 - **69**: `kittest::origin_crosshair_and_park_mark_move_on_the_viewport`,
   on what the Viewport paints; its overlay reads `project::marks`.
 - **70**: `project::m6_and_canned_cycles_offered_per_definition` names
-  the bundled post-processors that offer canned cycles.
-- **71**: `kittest::delete_is_disabled_for_a_tool_in_use_and_names_its_operations`.
+  the bundled post-processors that offer canned cycles, and
+  `kittest::export_step_offers_m6_and_canned_cycles_where_the_post_processor_has_them`
+  reads the Export step on each of the six.
+- **71**: `kittest::delete_is_disabled_for_a_tool_in_use_and_names_its_operations`;
+  `tools::missing_rate_is_an_error_and_blocks_export` asserts the red
+  mark through `tools::lacks_value`, which the Tools step draws from.
 - **74**: `gui_equality::reorder_and_untick_reach_the_saved_file_and_the_written_programs`.
 - **76**: `export::male_thickness_cleared_exports_the_female_board_only`.
 - **79** (capability): `kittest::help_opens_the_quick_start_the_keyboard_chapter_and_about`.
 - **80**: `kittest::depth_legend_puts_clearance_and_safe_z_in_the_rapid_grey_band`.
-- **84**: `kittest::a_project_with_only_warnings_exports_and_the_status_bar_counts_them`.
+- **84**: `kittest::a_project_with_only_warnings_exports_and_the_status_bar_counts_them`;
+  `export_sheet_disabled_on_errors_and_writes_all_or_none` asserts which
+  tool the finding's click opens.
 - **87**: `viewport::layers::tests::a_stale_operations_toolpath_is_drawn_faded`
   (the draw list) and `renderer::stale_toolpaths_render_faded` (the
   frame, where there is an adapter).
 - **88**: `Ask::NewFromPicture` in `kittest::unsaved_sheet_is_save_dont_save_cancel`
-  and `save_on_untitled_asks_where_and_cancel_cancels_all`.
+  and `save_on_untitled_asks_where_and_cancel_cancels_all`, which now
+  compares the file *Save* writes with the changed project.
 - **91**: `crates/dreamcarve-app/tests/strings.rs` ("Strings" above).
 - **97**: `kittest::required_field_shows_required_not_a_message` asserts
   the `circle-x` glyph in the field.
