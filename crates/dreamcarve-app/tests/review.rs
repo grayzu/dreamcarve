@@ -49,7 +49,7 @@ use common::{
 };
 use eframe::egui;
 use eframe::egui::accesskit::Role;
-use egui_kittest::kittest::Queryable as _;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_kittest::{Harness, SnapshotOptions};
 
 type H = Harness<'static, dreamcarve_app::Shell>;
@@ -743,41 +743,7 @@ fn d6_tools(out: &Path, looks: &[dc_app::Theme]) {
 /// `dreamcarve preview` to draw the same picture and grooves.
 fn d6_pictures(out: &Path, looks: &[dc_app::Theme]) {
     let dir = scratch("review-d6-pictures");
-    let picture = common::write_colour_png(&dir, "landscape.png", &common::landscape(480, 320));
-
-    // What File ▸ New Project from Picture… makes of it, 120 mm wide,
-    // then what its Photo V-Carve needs to cut: a thickness, the V-bit's
-    // rates and a max depth.
-    let mut model = dc_app::import::PictureImport::open(
-        dc_import::ImageFormat::Png,
-        "landscape.png",
-        &std::fs::read(&picture).unwrap(),
-        dc_app::import::Purpose::New,
-    );
-    model.set_width_mm(120.0);
-    let mut app = dc_app::App::new(
-        dc_app::App::new_project().unwrap(),
-        dc_app::Strings::english(),
-        dc_app::Prefs::default(),
-    );
-    app.new_from_picture(&model).unwrap();
-    let mut stock = app.project().stock.clone();
-    stock.thickness_mm = Some(18.0);
-    app.run(dc_app::Command::SetStock(stock)).unwrap();
-    let mut tool = app.project().tools[0].clone();
-    tool.feed_mm_min = Some(1200.0);
-    tool.plunge_mm_min = Some(400.0);
-    tool.rpm = Some(18000);
-    app.run(dc_app::Command::UpdateTool(tool)).unwrap();
-    let mut op = app.project().operations[0].clone();
-    let dc_project::Operation::PhotoVCarve(photo) = &mut op else {
-        panic!("a project from a picture has its Photo V-Carve");
-    };
-    photo.max_depth_mm = Some(2.0);
-    let carve = photo.name.clone();
-    app.run(dc_app::Command::UpdateOperation(op)).unwrap();
-    let project = dir.join("landscape.dcv");
-    std::fs::write(&project, app.serialize().unwrap()).unwrap();
+    let (project, picture, carve) = landscape_project(&dir);
     let kept = common::repo_root().join("target/review");
     std::fs::create_dir_all(&kept).unwrap();
     std::fs::copy(&project, kept.join("d6-landscape.dcv")).unwrap();
@@ -840,6 +806,47 @@ fn d6_pictures(out: &Path, looks: &[dc_app::Theme]) {
     shoot_in(&mut h, out, "03-operations-photo-v-carve", looks);
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A project made round a picture, written into `dir`: a landscape drawn
+/// here (a sun in its top right, a hill rising to its left, so a picture
+/// turned or mirrored shows), 120 mm wide, as File ▸ New Project from
+/// Picture… makes it, then what its Photo V-Carve needs to cut: a
+/// thickness, the V-bit's rates and a max depth. Returns the project's
+/// path, the picture's, and the Photo V-Carve's name.
+fn landscape_project(dir: &Path) -> (PathBuf, PathBuf, String) {
+    let picture = common::write_colour_png(dir, "landscape.png", &common::landscape(480, 320));
+    let mut model = dc_app::import::PictureImport::open(
+        dc_import::ImageFormat::Png,
+        "landscape.png",
+        &std::fs::read(&picture).unwrap(),
+        dc_app::import::Purpose::New,
+    );
+    model.set_width_mm(120.0);
+    let mut app = dc_app::App::new(
+        dc_app::App::new_project().unwrap(),
+        dc_app::Strings::english(),
+        dc_app::Prefs::default(),
+    );
+    app.new_from_picture(&model).unwrap();
+    let mut stock = app.project().stock.clone();
+    stock.thickness_mm = Some(18.0);
+    app.run(dc_app::Command::SetStock(stock)).unwrap();
+    let mut tool = app.project().tools[0].clone();
+    tool.feed_mm_min = Some(1200.0);
+    tool.plunge_mm_min = Some(400.0);
+    tool.rpm = Some(18000);
+    app.run(dc_app::Command::UpdateTool(tool)).unwrap();
+    let mut op = app.project().operations[0].clone();
+    let dc_project::Operation::PhotoVCarve(photo) = &mut op else {
+        panic!("a project from a picture has its Photo V-Carve");
+    };
+    photo.max_depth_mm = Some(2.0);
+    let carve = photo.name.clone();
+    app.run(dc_app::Command::UpdateOperation(op)).unwrap();
+    let project = dir.join("landscape.dcv");
+    std::fs::write(&project, app.serialize().unwrap()).unwrap();
+    (project, picture, carve)
 }
 
 /// Where the slice D4 pictures are committed.
@@ -1055,4 +1062,731 @@ fn redesign_d6_screenshots() {
     SCALE.set(1.0);
     d6_pictures(&out, &looks);
     d6_tools(&out, &looks);
+}
+
+/// Where the final review's pictures are committed.
+fn final_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-4/review/final"),
+        PathBuf::from,
+    )
+}
+
+/// The window's height for a scene that shows an editor with every group
+/// open: tall enough that nothing scrolls out of the picture.
+const TALL_PX: f32 = 1700.0;
+
+/// The final review's pictures: where they go, and how each is taken.
+struct Shots {
+    out: PathBuf,
+}
+
+impl Shots {
+    /// `scene` in dark and light, the pointer off the window.
+    fn take(&self, h: &mut H, scene: &str) {
+        park_pointer(h);
+        self.take_as_is(h, scene);
+    }
+
+    /// `scene` in dark and light, the pointer where it is.
+    fn take_as_is(&self, h: &mut H, scene: &str) {
+        shoot_in(
+            h,
+            &self.out,
+            scene,
+            &[dc_app::Theme::Dark, dc_app::Theme::Light],
+        );
+    }
+}
+
+/// Presses Tab until the control named `label` of `role` has the
+/// keyboard focus, so its ring is drawn.
+fn tab_to(h: &mut H, role: Role, label: &str) {
+    for _ in 0..500 {
+        h.key_press(egui::Key::Tab);
+        h.run();
+        let there = h
+            .query_all(egui_kittest::kittest::by().predicate(|node| node.is_focused()))
+            .next()
+            .is_some_and(|node| {
+                let node = node.accesskit_node();
+                node.role() == role && node.label().as_deref() == Some(label)
+            });
+        if there {
+            return;
+        }
+    }
+    panic!("Tab never reached the {role:?} {label}");
+}
+
+/// The Fusion fixtures as `tools import` writes them, and two tapered
+/// ball noses, one measured and one not, as `config/tools.json` of `dir`.
+fn write_library(dir: &Path) {
+    let mut library = dc_library::Library::default();
+    for name in ["fusion/sample.tools", "fusion/vendors.json"] {
+        let bytes = std::fs::read(fixture(name)).unwrap();
+        library = dc_app::library::import(&library, &bytes, false)
+            .unwrap()
+            .library;
+    }
+    let like = library
+        .tools
+        .iter()
+        .find(|t| t.tool.name == "1/4 in Flat End Mill")
+        .unwrap()
+        .tool
+        .clone();
+    let measured = dc_project::Tool {
+        product_id: Some("UHD-25".into()),
+        ..tapered_like(&like, "Ultra-High Detail", Some(0.762), Some(6.7))
+    };
+    let unmeasured = dc_project::Tool {
+        feed_mm_min: None,
+        ..tapered_like(&like, "Fine Detail", None, None)
+    };
+    for tool in [measured, unmeasured] {
+        dc_library::add(&mut library, tool, None).unwrap();
+    }
+    std::fs::create_dir_all(dir.join("config")).unwrap();
+    std::fs::write(
+        dir.join("config/tools.json"),
+        dc_library::save(&library).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Every group of every kind's editor open, as the preferences keep them.
+fn open_every_group(h: &mut H) {
+    let sections = &mut h.state_mut().app_mut().prefs_mut().sections;
+    for kind in dc_app::operations::Kind::ALL {
+        for group in dc_app::editor::Group::ALL {
+            sections.insert(group.section(kind), true);
+        }
+    }
+}
+
+/// The start screen and each step of a project with nothing in it.
+fn final_blank(shots: &Shots) -> bool {
+    let dir = scratch("review-final-blank");
+    // Recent files for the start screen to list.
+    std::fs::create_dir_all(dir.join("config")).unwrap();
+    let recent: Vec<String> = ["plaque.dcv", "sign.dcv", "dc.dcv"]
+        .iter()
+        .map(|name| format!("{:?}", fixture(name).canonicalize().unwrap()))
+        .collect();
+    std::fs::write(
+        dir.join("config/gui.toml"),
+        format!("recent = [{}]\n", recent.join(", ")),
+    )
+    .unwrap();
+    let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
+        return false;
+    };
+    shots.take(&mut h, "a01-start-screen");
+    for (step, scene) in [
+        ("Stock", "a02-stock-empty"),
+        ("Tools", "a03-tools-empty"),
+        ("Operations", "a04-operations-empty"),
+        ("Export", "a05-export-empty"),
+    ] {
+        go_to(&mut h, step);
+        settle(&mut h);
+        shots.take(&mut h, scene);
+    }
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+    true
+}
+
+/// Each step on the plaque, and the Inspector on what a step selects: a
+/// shape, several shapes, a locked shape, a placed tab, several tabs, an
+/// operation with its groups closed, and a picture.
+fn final_steps_and_inspectors(shots: &Shots) {
+    let dir = scratch("review-final-steps");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let mut h = window(&dir, Some(plaque), 1280.0, 800.0).unwrap();
+    for (step, scene) in [
+        ("Design", "b01-design"),
+        ("Stock", "b02-stock"),
+        ("Tools", "b03-tools"),
+        ("Operations", "b04-operations"),
+        ("Export", "b05-export"),
+    ] {
+        go_to(&mut h, step);
+        settle(&mut h);
+        shots.take(&mut h, scene);
+    }
+
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "square").click();
+    h.run();
+    shots.take(&mut h, "c01-inspector-shape");
+    let two = ["i3", "i4"].map(dc_project::InstanceId::new).to_vec();
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(two));
+    h.run();
+    shots.take(&mut h, "c02-inspector-several-shapes");
+    let square = vec![dc_project::InstanceId::new("i4")];
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::SetInstanceFlags {
+            ids: square.clone(),
+            visible: None,
+            locked: Some(true),
+        })
+        .unwrap();
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(square.clone()));
+    h.run();
+    shots.take(&mut h, "c03-inspector-locked-shape");
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::SetInstanceFlags {
+            ids: square,
+            visible: None,
+            locked: Some(false),
+        })
+        .unwrap();
+
+    // An operation in the Inspector, its groups closed: each says what it
+    // holds.
+    open_operation(&mut h, "Cut out");
+    settle(&mut h);
+    shots.take(&mut h, "c04-inspector-operation-groups-closed");
+
+    // Its tabs placed, then one and several of them selected.
+    click(&mut h, "Place tabs");
+    settle(&mut h);
+    let tabs: Vec<dc_project::TabId> = h
+        .state()
+        .app()
+        .project()
+        .tabs
+        .iter()
+        .map(|t| t.id.clone())
+        .collect();
+    assert!(tabs.len() >= 2, "Place tabs placed the request's tabs");
+    go_to(&mut h, "Design");
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Tabs(vec![tabs[0].clone()]));
+    h.run();
+    shots.take(&mut h, "c05-inspector-tab");
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Tabs(tabs));
+    h.run();
+    shots.take(&mut h, "c06-inspector-several-tabs");
+    drop(h);
+
+    // A picture.
+    let (project, _, _) = landscape_project(&dir);
+    let mut h = window(&dir, Some(project), 1280.0, 800.0).unwrap();
+    let op = h.state().app().project().operations[0].id().clone();
+    h.state_mut().app_mut().toggle_hidden(&op);
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "landscape").click();
+    h.run();
+    settle(&mut h);
+    shots.take(&mut h, "c07-inspector-picture");
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The tool editor on a tool of each kind, and on a tapered ball nose
+/// with nothing measured yet.
+fn final_tools(shots: &Shots) {
+    let dir = scratch("review-final-tools");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let mut h = window(&dir, Some(plaque), 1280.0, 800.0).unwrap();
+    let like = h.state().app().project().tools[1].clone();
+    let of = |id: &str, name: &str, cutter: dc_project::ToolKind| dc_project::Tool {
+        id: dc_project::ToolId::new(id),
+        name: name.into(),
+        number: None,
+        cutter,
+        ..like.clone()
+    };
+    let unset = dc_project::Tool {
+        id: dc_project::ToolId::new("t16"),
+        number: None,
+        feed_mm_min: None,
+        plunge_mm_min: None,
+        rpm: None,
+        ..tapered_like(&like, "New tapered ball nose", None, None)
+    };
+    let added = vec![
+        of("t11", "1/4 ball nose", dc_project::ToolKind::BallNose),
+        of(
+            "t12",
+            "60 degree V-bit",
+            dc_project::ToolKind::VBit {
+                included_angle_deg: 60.0,
+            },
+        ),
+        of(
+            "t13",
+            "Diamond drag engraver",
+            dc_project::ToolKind::Engraver,
+        ),
+        of("t14", "5 mm drill", dc_project::ToolKind::Drill),
+        dc_project::Tool {
+            id: dc_project::ToolId::new("t15"),
+            number: None,
+            ..tapered_like(&like, "Ultra-High Detail", Some(0.762), Some(6.7))
+        },
+        unset,
+    ];
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::AddTools(added))
+        .unwrap();
+    settle(&mut h);
+    go_to(&mut h, "Tools");
+    for (name, scene) in [
+        ("1/4 end mill", "d01-tool-end-mill"),
+        ("1/4 ball nose", "d02-tool-ball-nose"),
+        ("60 degree V-bit", "d03-tool-v-bit"),
+        ("Diamond drag engraver", "d04-tool-engraver"),
+        ("5 mm drill", "d05-tool-drill"),
+        ("Ultra-High Detail", "d06-tool-tapered-ball-nose"),
+        ("New tapered ball nose", "d07-tool-tapered-ball-nose-unset"),
+    ] {
+        h.get_by_role_and_label(Role::ListItem, name).scroll_to_me();
+        h.run();
+        h.get_by_role_and_label(Role::ListItem, name).click();
+        h.run();
+        shots.take(&mut h, scene);
+    }
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The operation editor on each of the eight kinds with every group
+/// open, in a window tall enough to show all of it.
+fn final_editors(shots: &Shots) {
+    let dir = scratch("review-final-editors");
+    let (landscape, _, carve) = landscape_project(&dir);
+    for (project, operations) in [
+        (
+            fixture("plaque.dcv"),
+            vec![
+                ("Cut out", "l01-editor-profile"),
+                ("Panel", "l02-editor-pocket"),
+                ("Screw holes", "l04-editor-bore"),
+                ("Border and squiggle", "l05-editor-engrave"),
+            ],
+        ),
+        (
+            fixture("sign.dcv"),
+            vec![
+                ("Hanging holes", "l03-editor-drill"),
+                ("Lettering", "l06-editor-v-carve"),
+            ],
+        ),
+        (fixture("dc.dcv"), vec![("DC", "l07-editor-inlay")]),
+        (
+            fixture("dc-tbn.dcv"),
+            vec![("DC inlay", "l08-editor-inlay-tapered-ball-nose")],
+        ),
+        (
+            landscape,
+            vec![(carve.as_str(), "l09-editor-photo-v-carve")],
+        ),
+    ] {
+        let mut h = window(&dir, Some(project), 1280.0, TALL_PX).unwrap();
+        open_every_group(&mut h);
+        for (name, scene) in operations {
+            open_operation(&mut h, name);
+            settle(&mut h);
+            shots.take(&mut h, scene);
+        }
+        drop(h);
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Every menu and popover: the header's six menus, the Add menu, the
+/// rail's Appearance and Help, the status bar's units, a row's Target
+/// actions, the tool picker and a dropdown.
+fn final_menus(shots: &Shots) {
+    let dir = scratch("review-final-menus");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let mut h = window(&dir, Some(plaque), 1280.0, 800.0).unwrap();
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "square").click();
+    h.run();
+    for (menu, scene) in [
+        ("File", "e01-menu-file"),
+        ("Edit", "e02-menu-edit"),
+        ("Arrange", "e03-menu-arrange"),
+        ("View", "e04-menu-view"),
+        ("Project", "e05-menu-project"),
+        ("Help", "e06-menu-help"),
+    ] {
+        click(&mut h, menu);
+        shots.take(&mut h, scene);
+        h.key_press(egui::Key::Escape);
+        h.run();
+    }
+    go_to(&mut h, "Operations");
+    click(&mut h, "Add");
+    shots.take(&mut h, "e07-menu-add-operation");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_label_contains("Appearance:").click();
+    h.run();
+    shots.take(&mut h, "e08-menu-appearance");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    click(&mut h, "Help and About");
+    shots.take(&mut h, "e09-menu-rail-help");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "mm").click();
+    h.run();
+    shots.take(&mut h, "e10-menu-units");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    open_operation(&mut h, "Cut out");
+    settle(&mut h);
+    click(&mut h, "Target actions");
+    shots.take(&mut h, "e11-menu-target-actions");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_role_and_label(Role::ComboBox, "Tool").click();
+    h.run();
+    shots.take(&mut h, "e12-popover-tool-picker");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_role_and_label(Role::ComboBox, "Side").click();
+    h.run();
+    shots.take(&mut h, "e13-dropdown-side");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    // The Arrange group's Rotate popover, from a shape's Properties.
+    go_to(&mut h, "Design");
+    click(&mut h, "Rotate by an angle");
+    shots.take(&mut h, "e14-popover-rotate");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The Viewport's floating controls and what hangs from them: the
+/// read-out under the pointer, the Layers popover, the depth legend with
+/// the program extents on, the target-editing bar, and the Warnings
+/// drawer holding an error, a warning and a hint.
+fn final_viewport(shots: &Shots) {
+    let dir = scratch("review-final-viewport");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let mut h = window(&dir, Some(plaque), 1280.0, 800.0).unwrap();
+    go_to(&mut h, "Operations");
+    settle(&mut h);
+    let over = common::on_screen(&h, dc_geometry::Point::new(64.2, 51.8));
+    h.event(egui::Event::PointerMoved(over));
+    h.run();
+    shots.take_as_is(&mut h, "f01-viewport-by-operation-read-out");
+    h.get_by_role_and_label(Role::Button, "Layers").click();
+    h.run();
+    shots.take(&mut h, "f02-layers-popover");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    click(&mut h, "By depth");
+    toolpath_view(&mut h, &["Program extents"]);
+    let over = common::on_screen(&h, dc_geometry::Point::new(64.2, 51.8));
+    h.event(egui::Event::PointerMoved(over));
+    h.run();
+    shots.take_as_is(&mut h, "f03-depth-legend-and-extents");
+    toolpath_view(&mut h, &["Program extents"]);
+    click(&mut h, "By operation");
+
+    // Target editing: the bar across the Viewport, the tree in the step
+    // panel, the rest of the window inert.
+    open_operation(&mut h, "Panel");
+    click(&mut h, "Edit targets");
+    shots.take(&mut h, "f04-target-editing");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+
+    // The drawer: an error (a cutting tool with no feed), a warning (a
+    // tool that plunges faster than it cuts) and the plaque's hint.
+    delete_a_feed(&mut h);
+    let without = h.state().app().project().operations[0].tool().clone();
+    let mut fast = h
+        .state()
+        .app()
+        .project()
+        .tools
+        .iter()
+        .find(|t| t.id != without && t.feed_mm_min.is_some())
+        .expect("a tool that still has its feed")
+        .clone();
+    fast.plunge_mm_min = Some(5000.0);
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateTool(fast))
+        .unwrap();
+    settle(&mut h);
+    let counts = dc_app::warnings::counts(h.state().app());
+    assert!(
+        counts.errors > 0 && counts.warnings > 0 && counts.hints > 0,
+        "the drawer's scene has every tier: {counts:?}"
+    );
+    go_to(&mut h, "Operations");
+    h.get_by_label_contains("Warnings:").click();
+    h.run();
+    shots.take(&mut h, "g01-warnings-drawer");
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Every sheet: Import drawing on an SVG and on a DXF, Add picture, the
+/// Tool Library (a row selected, the Delete question, the import review,
+/// and empty) and unsaved changes.
+fn final_sheets(shots: &Shots) {
+    let dir = scratch("review-final-sheets");
+    write_library(&dir);
+    let dialogs = QueuedDialogs::default();
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let mut h = window_with(&dir, Some(plaque), 1280.0, 800.0, &dialogs).unwrap();
+    go_to(&mut h, "Design");
+    for (drawing, scene) in [
+        ("sign.svg", "h01-sheet-import-drawing-svg"),
+        ("dxf/layers.dxf", "h02-sheet-import-drawing-dxf"),
+    ] {
+        h.input_mut()
+            .dropped_files
+            .push(std::sync::Arc::new(Dropped(fixture(drawing))));
+        h.run();
+        shots.take(&mut h, scene);
+        h.key_press(egui::Key::Escape);
+        h.run();
+    }
+
+    let picture = common::write_colour_png(&dir, "landscape.png", &common::landscape(480, 320));
+    dialogs.answer(&picture);
+    h.get_by_role_and_label(Role::Button, "Add picture").click();
+    h.run();
+    common::settle_picture(&mut h);
+    shots.take(&mut h, "h03-sheet-add-picture");
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    click(&mut h, "Project");
+    click(&mut h, "Tool Library…");
+    // Scrolled to the tapered ball noses, the measured one selected: the
+    // Tip column, the angle per side, and the dash a tool still needs.
+    for name in ["Fine Detail", "Ultra-High Detail"] {
+        h.get_by_role(Role::Dialog)
+            .get_by_role_and_label(Role::ListItem, name)
+            .scroll_to_me();
+        h.run();
+    }
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "Ultra-High Detail")
+        .click();
+    h.run();
+    shots.take(&mut h, "h04-sheet-tool-library");
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "Acme Router Bits 1/4\" Downcut")
+        .scroll_to_me();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "Acme Router Bits 1/4\" Downcut")
+        .click();
+    h.run();
+    for name in ["ACME Router Bits 1/8\" Ball Nose", "Birch Tooling BT-DR5"] {
+        h.get_by_role(Role::Dialog)
+            .get_by_role_and_label(Role::CheckBox, name)
+            .click();
+        h.run();
+    }
+    shots.take(&mut h, "h05-sheet-tool-library-editing");
+    h.get_by_role(Role::Dialog).get_by_label("Delete").click();
+    h.run();
+    shots.take(&mut h, "h06-sheet-tool-library-delete");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    dialogs.answer(&fixture("fusion/sample.tools"));
+    h.get_by_role(Role::Dialog).get_by_label("Import…").click();
+    h.run();
+    shots.take(&mut h, "h07-sheet-tool-library-import-review");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // Unsaved changes, on closing the window.
+    let mut stock = h.state().app().project().stock.clone();
+    stock.width_mm += 10.0;
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::SetStock(stock))
+        .unwrap();
+    h.run();
+    common::press_close(&mut h);
+    h.step();
+    h.run();
+    shots.take(&mut h, "h09-sheet-unsaved-changes");
+    drop(h);
+
+    // The Tool Library with nothing in it.
+    let empty = scratch("review-final-sheets-empty");
+    let mut h = window(&empty, Some(fixture("plaque.dcv")), 1280.0, 800.0).unwrap();
+    click(&mut h, "Project");
+    click(&mut h, "Tool Library…");
+    shots.take(&mut h, "h08-sheet-tool-library-empty");
+    drop(h);
+    std::fs::remove_dir_all(&empty).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The Export step: ready, with its settings groups open, blocked by an
+/// error, and after an export, with the run instructions closed and open.
+fn final_export(shots: &Shots) {
+    // A short path, so the folder reads whole in the pictures.
+    let dir = std::env::temp_dir().join("dreamcarve-plaque");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let copy = copy_fixture("plaque.dcv", &dir);
+    let mut h = window(&dir, Some(copy.clone()), 1280.0, 800.0).unwrap();
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    click(&mut h, "Program Details");
+    shots.take(&mut h, "i01-export-ready");
+    h.get_by_role_and_label(Role::Button, "Export G-code")
+        .click();
+    h.run();
+    shots.take(&mut h, "i04-export-done");
+    click(&mut h, "Run instructions");
+    shots.take(&mut h, "i05-export-done-run-instructions");
+    click(&mut h, "Done");
+    delete_a_feed(&mut h);
+    settle(&mut h);
+    shots.take(&mut h, "i03-export-blocked");
+    drop(h);
+
+    // The settings groups open, in a window tall enough for all three.
+    let mut h = window(&dir, Some(copy), 1280.0, TALL_PX).unwrap();
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    for group in ["Post-processor", "Heights", "Tolerances"] {
+        click(&mut h, group);
+    }
+    shots.take(&mut h, "i02-export-settings-open");
+    // The result with its run instructions open, all of them in view.
+    h.get_by_role_and_label(Role::Button, "Export G-code")
+        .click();
+    h.run();
+    click(&mut h, "Run instructions");
+    shots.take(&mut h, "i06-export-done-run-instructions-whole");
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The window at its minimum size, with all four cards, and narrower,
+/// where the Inspector lies over the Viewport.
+fn final_windows(shots: &Shots) {
+    let dir = scratch("review-final-windows");
+    let mut h = window(&dir, Some(fixture("plaque.dcv")), 1280.0, 768.0).unwrap();
+    open_operation(&mut h, "Cut out");
+    settle(&mut h);
+    shots.take(&mut h, "j01-window-1280x768");
+    h.set_size(egui::vec2(1100.0, 768.0));
+    h.run();
+    shots.take(&mut h, "j02-window-1100-wide");
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    shots.take(&mut h, "j03-window-1100-wide-export");
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The focus ring after Tab, on each kind of control: a field, a
+/// dropdown, a segmented control's pill, a section header, a rail step,
+/// the header's primary pill, a tree row, a list row, a bare checkbox, a
+/// switch and a status-bar pill.
+fn final_focus(shots: &Shots) {
+    let dir = scratch("review-final-focus");
+    let mut h = window(&dir, Some(fixture("plaque.dcv")), 1280.0, 800.0).unwrap();
+    settle(&mut h);
+    go_to(&mut h, "Stock");
+    for (role, label, scene) in [
+        (Role::Button, "Continue", "k01-focus-primary-pill"),
+        (Role::Tab, "Tools", "k02-focus-rail-step"),
+        (Role::RadioButton, "in", "k03-focus-segment"),
+        (Role::TextInput, "Thickness", "k04-focus-field"),
+        (Role::Button, "Origin", "k05-focus-section-header"),
+        (Role::ComboBox, "XY zero", "k06-focus-dropdown"),
+        (Role::Button, "mm", "k07-focus-status-pill"),
+    ] {
+        tab_to(&mut h, role, label);
+        shots.take(&mut h, scene);
+    }
+    h.key_press(egui::Key::Escape);
+    h.run();
+    go_to(&mut h, "Design");
+    tab_to(&mut h, Role::TreeItem, "pocket");
+    shots.take(&mut h, "k08-focus-tree-row");
+    open_operation(&mut h, "Cut out");
+    settle(&mut h);
+    for (role, label, scene) in [
+        (Role::ListItem, "Panel", "k09-focus-list-row"),
+        (Role::CheckBox, "Enable Panel", "k10-focus-checkbox"),
+        (Role::Switch, "Tab request", "k11-focus-switch"),
+    ] {
+        tab_to(&mut h, role, label);
+        shots.take(&mut h, scene);
+    }
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The final review's set (`docs/alpha-worklog.md`, row D5;
+/// `docs/specs/phase-4/redesign.md`, "Slices", D5): one picture of every
+/// state the window can show, in dark and light at 1×, written to
+/// `docs/specs/phase-4/review/final/`, where they are committed and where
+/// `README.md` ticks `experience.md`'s checklist against them.
+///
+/// - `a`: the start screen and each step of an empty project.
+/// - `b`: each step on the plaque.
+/// - `c`: the Inspector on a shape, several, a locked one, an operation
+///   with its groups closed, a tab, several, and a picture.
+/// - `d`: the tool editor on each kind of tool.
+/// - `e`: every menu and popover.
+/// - `f`, `g`: the Viewport's floating controls, the depth legend, target
+///   editing, and the Warnings drawer.
+/// - `h`: every sheet.
+/// - `i`: the Export step ready, blocked and done.
+/// - `j`: the window at 1280 × 768 and 1100 px wide.
+/// - `k`: the focus ring on each kind of control.
+/// - `l`: the operation editor on each kind, every group open.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review redesign_review -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed final review pictures; run by hand"]
+fn redesign_review() {
+    let out = final_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    SCALE.set(1.0);
+    let shots = Shots { out };
+    if !final_blank(&shots) {
+        return;
+    }
+    final_steps_and_inspectors(&shots);
+    final_tools(&shots);
+    final_editors(&shots);
+    final_menus(&shots);
+    final_viewport(&shots);
+    final_sheets(&shots);
+    final_export(&shots);
+    final_windows(&shots);
+    final_focus(&shots);
 }
