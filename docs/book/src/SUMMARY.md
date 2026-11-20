@@ -21,6 +21,7 @@
 - [Overview](user-guide/overview.md)
 - [The app](user-guide/the-app.md)
 - [The project file](user-guide/project-file.md)
+- [Importing drawings and pictures](user-guide/importing.md)
 - [Importing DXF](user-guide/importing-dxf.md)
 - [Preparing artwork](user-guide/preparing-artwork.md)
 - [Shapes, holes, and islands](user-guide/shapes-and-holes.md)
