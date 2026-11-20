@@ -29,10 +29,11 @@
 
 use std::collections::BTreeSet;
 
-use dc_geometry::Rect;
+use dc_geometry::{Point, Rect};
 use dc_job::{AxisRange, Finished};
 use dc_project::{Board, OperationId, OriginZ, Project, Units};
 
+use crate::app::App;
 use crate::strings::{StrKey, Strings};
 
 use crate::scene::Scene;
@@ -546,4 +547,72 @@ pub fn signed_label(z_mm: f64, units: Units) -> String {
     } else {
         format!("+{text}")
     }
+}
+
+/// The read-out that floats at the Viewport's bottom left (`redesign.md`,
+/// "The Viewport's floating controls"; functional spec, capabilities 72
+/// and 74). A part with nothing to say is `None`, and with both `None`
+/// nothing is drawn.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Readout {
+    /// The cursor's position from the origin (`X 64.2  Y 51.8`), while
+    /// the pointer is over the Viewport.
+    pub cursor: Option<String>,
+    /// The program's Z range (`Z −12..15`), while the program extents are
+    /// shown.
+    pub z_range: Option<String>,
+}
+
+/// The Viewport's read-out for `app`, with the pointer at `cursor_mm` in
+/// project space, mm, when it is over the Viewport.
+#[must_use]
+pub fn readout(app: &App, cursor_mm: Option<Point>) -> Readout {
+    Readout {
+        cursor: cursor_mm.map(|p| cursor(app.strings(), p, app.project().display_units)),
+        z_range: z_range(app),
+    }
+}
+
+/// Whether the project has a toolpath to show: the Viewport's toolpath
+/// controls (the colour mode and *Layers*) appear with the first one, so
+/// a project fresh from a drawing shows only the drawing (capability 73).
+#[must_use]
+pub fn has_toolpaths(app: &App) -> bool {
+    app.scene()
+        .operations()
+        .iter()
+        .any(|op| !op.runs.is_empty())
+}
+
+/// `p` as the read-out writes it (`experience.md`, section 9): one
+/// decimal in mm and three in inches, from the origin, never `-0.0`.
+fn cursor(strings: &Strings, p: Point, units: Units) -> String {
+    let decimals = match units {
+        Units::Mm => 1,
+        Units::Inch => 3,
+    };
+    let coordinate = |mm: f64| {
+        let text = format!("{:.decimals$}", crate::units::to_display(mm, units));
+        match text.strip_prefix('-') {
+            Some(digits) if digits.chars().all(|c| c == '0' || c == '.') => digits.to_owned(),
+            _ => text,
+        }
+    };
+    strings.fmt(
+        StrKey::AppViewportCursor,
+        &[("x", &coordinate(p.x)), ("y", &coordinate(p.y))],
+    )
+}
+
+/// The program's Z range while the extents are shown (capability 74;
+/// `experience.md`, section 9): the tool centre's, in machine coordinates
+/// as `check` prints it.
+fn z_range(app: &App) -> Option<String> {
+    if !app.view().visibility.extents {
+        return None;
+    }
+    let finished = app.generation().finished()?;
+    let extents = program_extents(app.project(), finished)?;
+    let z = range_label(extents.z?, extents.units);
+    Some(app.strings().fmt(StrKey::AppToolpathsZRange, &[("z", &z)]))
 }

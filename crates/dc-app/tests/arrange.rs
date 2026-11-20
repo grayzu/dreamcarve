@@ -51,7 +51,7 @@ fn centre_of(harness: &Harness, ids: &[InstanceId]) -> Point {
 }
 
 /// Acceptance 95 (capabilities 58a and 66): with the square selected the
-/// toolbar's Rotate turns it 90° clockwise, the popover's angle 30 turns
+/// Arrange group's Rotate turns it 90° clockwise, the popover's angle 30 turns
 /// it 30° anticlockwise, and each flip mirrors it, each about its
 /// bounding-box centre: the transform acceptance 66 expects for the same
 /// rotation or mirror. Each is one undo step with its label, and undo

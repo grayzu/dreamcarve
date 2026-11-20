@@ -26,7 +26,25 @@ pub(crate) fn segmented(
     selected: usize,
     width_px: f32,
 ) -> Option<usize> {
-    track(ui, id, options, selected, width_px, egui::Role::RadioButton)
+    segmented_sized(
+        ui,
+        id,
+        options,
+        selected,
+        egui::vec2(width_px, theme::CONTROL_PX),
+    )
+}
+
+/// [`segmented`] at `size`: a control shorter than the 32-px one, for a
+/// floating pill on the Viewport.
+pub(crate) fn segmented_sized(
+    ui: &mut Ui,
+    id: Id,
+    options: &[&str],
+    selected: usize,
+    size: egui::Vec2,
+) -> Option<usize> {
+    track(ui, id, options, selected, size, egui::Role::RadioButton)
 }
 
 /// The track and its segments, each heard as `role`.
@@ -35,12 +53,12 @@ fn track(
     id: Id,
     options: &[&str],
     selected: usize,
-    width_px: f32,
+    size: egui::Vec2,
     role: egui::Role,
 ) -> Option<usize> {
     let palette = Palette::current(ui);
-    let height = theme::CONTROL_PX;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width_px, height), Sense::hover());
+    let height = size.y;
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let count = options.len().max(1);
     #[allow(
         clippy::cast_precision_loss,

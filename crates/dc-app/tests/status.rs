@@ -29,7 +29,6 @@ use common::{checked_projects, load_dcv, plaque, plaque_bytes, quick_start_proje
 /// The status bar of `harness`'s app off the Viewport, with nothing said.
 fn idle_inputs(estimate: &EstimateConfig) -> Inputs<'_> {
     Inputs {
-        cursor_mm: None,
         drag: None,
         hover: None,
         message: None,
@@ -98,11 +97,12 @@ fn selected_operation_summary_in_message_cell() {
 }
 
 /// Capability 50b, table-driven over the states the generation cell has:
-/// a project with shapes and no operation has no Toolpaths cell and no
-/// generation text; the plaque mid-generation says `Generating 1 of 5…`
-/// with Stop; after Stop, `Stopped` with Regenerate all; idle, nothing.
-/// With no cursor position the cursor cell is empty, never `X — Y —`; over
-/// the Viewport it reads the position from the origin.
+/// a project with shapes and no operation has no toolpath controls on the
+/// Viewport and no generation text; the plaque mid-generation says
+/// `Generating 1 of 5…` with Stop; after Stop, `Stopped` with Regenerate
+/// all; idle, nothing. The Viewport's read-out (redesign slice D4) has no
+/// cursor part off the Viewport, never `X — Y —`; over it, it reads the
+/// position from the origin.
 #[test]
 fn cells_follow_the_state() {
     let estimate = EstimateConfig::default();
@@ -114,7 +114,10 @@ fn cells_follow_the_state() {
     let mut harness = Harness::from_project(shapes_only);
     harness.generate();
     let bar = status::cells(&harness.app, &inputs);
-    assert!(!bar.toolpaths, "no Toolpaths button without a toolpath");
+    assert!(
+        !dc_app::view::has_toolpaths(&harness.app),
+        "no toolpath controls without a toolpath"
+    );
     assert_eq!(bar.generation, None, "no generation text");
 
     // The plaque, opened and not yet generated: one of five.
@@ -130,7 +133,10 @@ fn cells_follow_the_state() {
             .map(|a| (a.action, a.label.as_str())),
         Some((GenerationAction::Stop, "Stop"))
     );
-    assert!(!bar.toolpaths, "nothing generated yet");
+    assert!(
+        !dc_app::view::has_toolpaths(&harness.app),
+        "nothing generated yet"
+    );
 
     // Stop: Stopped, and Regenerate all is offered.
     harness.app.stop();
@@ -152,24 +158,33 @@ fn cells_follow_the_state() {
     harness.generate();
     let bar = status::cells(&harness.app, &inputs);
     assert_eq!(bar.generation, None, "idle says nothing");
-    assert!(bar.toolpaths, "the plaque has toolpaths");
+    assert!(
+        dc_app::view::has_toolpaths(&harness.app),
+        "the plaque has toolpaths"
+    );
 
-    // The cursor: empty off the Viewport, never dashes.
-    assert_eq!(bar.cursor, "");
+    // The cursor: nothing off the Viewport, never dashes.
+    let readout = |at| dc_app::view::readout(&harness.app, at);
+    assert_eq!(readout(None).cursor, None);
     assert!(bar.texts().iter().all(|t| !t.contains('—')), "no dashes");
-    let over = Inputs {
-        cursor_mm: Some(Point::new(64.2, 51.8)),
-        ..idle_inputs(&estimate)
-    };
-    assert_eq!(status::cells(&harness.app, &over).cursor, "X 64.2  Y 51.8");
-    let origin = Inputs {
-        cursor_mm: Some(Point::new(-0.01, 0.0)),
-        ..idle_inputs(&estimate)
-    };
     assert_eq!(
-        status::cells(&harness.app, &origin).cursor,
-        "X 0.0  Y 0.0",
+        readout(Some(Point::new(64.2, 51.8))).cursor.as_deref(),
+        Some("X 64.2  Y 51.8")
+    );
+    assert_eq!(
+        readout(Some(Point::new(-0.01, 0.0))).cursor.as_deref(),
+        Some("X 0.0  Y 0.0"),
         "no −0.0 at the origin"
+    );
+    // The Z range is the read-out's while the program extents show.
+    assert_eq!(readout(None).z_range, None, "extents are off");
+    let mut shown = harness.app.view().visibility;
+    shown.extents = true;
+    harness.app.set_visibility(shown);
+    let z = dc_app::view::readout(&harness.app, None).z_range;
+    assert!(
+        z.as_deref().is_some_and(|z| z.starts_with("Z ")),
+        "the Z range with the extents on: {z:?}"
     );
 
     // The units button names the display units.
@@ -193,7 +208,7 @@ fn dimension(mm: f64, units: Units) -> String {
 }
 
 /// Capability 50b, acceptance 94: for every fixture, generated or not, no
-/// cell's text contains the stock's dimensions; Project Settings shows
+/// cell's text contains the stock's dimensions; the Stock step shows
 /// them.
 #[test]
 fn stock_size_is_never_a_cell() {

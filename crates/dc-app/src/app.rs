@@ -231,8 +231,8 @@ impl App {
     /// How many times the project has been replaced since the app began:
     /// *New*, *Open*, *New from drawing* and an example each count one;
     /// an edit, undo or save does not. The shell compares it between
-    /// frames to apply what a newly opened project starts with (the CAM
-    /// panel's tab, Project Settings' open rule).
+    /// frames to apply what a newly opened project starts with (the
+    /// step it opens on, and no tool in the Inspector).
     #[must_use]
     pub const fn replaced(&self) -> u64 {
         self.replaced

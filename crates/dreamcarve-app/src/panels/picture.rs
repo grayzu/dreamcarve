@@ -218,7 +218,6 @@ fn header(ui: &mut Ui, strings: &Strings, purpose: Purpose, out: &mut Vec<Action
 
 /// The file's path and *Choose…*.
 fn file_row(ui: &mut Ui, strings: &Strings, sheet: &Sheet, out: &mut Vec<Action>) {
-    let palette = Palette::current(ui);
     ui.horizontal(|ui| {
         row::label(
             ui,
@@ -232,8 +231,8 @@ fn file_row(ui: &mut Ui, strings: &Strings, sheet: &Sheet, out: &mut Vec<Action>
                 out.push(Action::PictureSheet(Request::Choose));
             }
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                let path = sheet.path.display().to_string();
-                text(ui, &path, TextStyle::Monospace, palette.text_primary).on_hover_text(&path);
+                // Cut at its start: the file's name is at its end.
+                row::path(ui, &sheet.path.display().to_string());
             });
         });
     });

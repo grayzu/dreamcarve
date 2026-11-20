@@ -104,7 +104,7 @@ pub enum Icon {
     PencilLine,
     /// `move-down`: a drill.
     MoveDown,
-    /// `layers`: the status bar's Toolpaths button.
+    /// `layers`: the Viewport's Layers button.
     Layers,
     /// `circle-check`: the status bar's *No problems*; the export result's status.
     CircleCheck,
@@ -133,6 +133,12 @@ pub enum Icon {
     CircleHelp,
     /// `library-big`: the Tool Library.
     LibraryBig,
+    /// `mouse-pointer-2`: the Viewport's Select tool.
+    MousePointer,
+    /// `zoom-in`: the Viewport's Zoom in.
+    ZoomIn,
+    /// `zoom-out`: the Viewport's Zoom out.
+    ZoomOut,
 }
 
 impl Icon {
@@ -199,6 +205,9 @@ impl Icon {
             Self::SunMoon => "sun-moon",
             Self::CircleHelp => "circle-question-mark",
             Self::LibraryBig => "library-big",
+            Self::MousePointer => "mouse-pointer-2",
+            Self::ZoomIn => "zoom-in",
+            Self::ZoomOut => "zoom-out",
         }
     }
 
@@ -264,12 +273,15 @@ impl Icon {
             Self::SunMoon => '\u{e2b2}',
             Self::CircleHelp => '\u{e082}',
             Self::LibraryBig => '\u{e54e}',
+            Self::MousePointer => '\u{e1c3}',
+            Self::ZoomIn => '\u{e1b6}',
+            Self::ZoomOut => '\u{e1b7}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 58] = [
+    pub const ALL: [Self; 61] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -328,6 +340,9 @@ impl Icon {
         Self::SunMoon,
         Self::CircleHelp,
         Self::LibraryBig,
+        Self::MousePointer,
+        Self::ZoomIn,
+        Self::ZoomOut,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

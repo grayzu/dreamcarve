@@ -259,7 +259,8 @@ fn variants(
 /// project (`1/4 in` stores 6.35, `10 in/min` stores 254), takes a bare
 /// number in an inch project as inches (`0.5` stores 12.7), takes `mm` in
 /// an inch project, and shows the stored value back in inches with `in`.
-/// The Project panel's and the Tools tab's lengths and rates do the same.
+/// The Stock and Export steps' and the Tools step's lengths and rates do
+/// the same.
 #[test]
 fn every_length_and_rate_field_accepts_unit_strings() {
     use dc_app::editor::fields::Unit;
@@ -353,7 +354,7 @@ fn every_length_and_rate_field_accepts_unit_strings() {
         "every length and rate row of the table was typed into: {unreached:?}"
     );
 
-    // The Project panel's lengths.
+    // The Stock and Export steps' lengths.
     use dc_app::project::{Field, Quantity};
     let plaque = common::plaque();
     let mut inch = plaque.clone();
@@ -398,7 +399,7 @@ fn every_length_and_rate_field_accepts_unit_strings() {
     harness.run(park).expect("the park runs");
     assert_eq!(Field::Park.text(harness.app.project()), "0.25, 0.5");
 
-    // The Tools tab's lengths and rates.
+    // The Tools step's lengths and rates.
     use dc_app::tools::{self, ToolField};
     let tool = &plaque.tools[1];
     for (field, typed, stored, shown) in [

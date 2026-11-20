@@ -33,13 +33,18 @@
 //!
 //! - **Cuts**: one solid path per run of cutting moves between rapids, in
 //!   the operation's colour.
-//! - **Tab marks**: within a run, the *floor* is the Z the last descent
-//!   reached. A cutting move that starts or ends above the floor is over a
-//!   tab, and each stretch of them is drawn again with a heavy stroke: one
-//!   mark per tab per pass that rises over it.
-//! - **Start points**: where each descent begins, from a rapid or from the
-//!   floor of the pass before, a circle the size of the bit, with a tick
-//!   one diameter long in the direction of the first cut after it.
+//! - **Tab marks**: on a cut that leaves tabs (a Profile, an Inlay's
+//!   cut-out), the *floor* within a run is the Z the last descent reached.
+//!   A cutting move that starts or ends above the floor is over a tab, and
+//!   each stretch of them is drawn again with a heavy stroke: one mark per
+//!   tab per pass that rises over it. No other cut has tab marks.
+//! - **Start points**: where each descent begins, a circle the size of the
+//!   bit, with a tick one diameter long in the direction of the first cut
+//!   after it. For a cut made in level passes that is a descent from a
+//!   rapid or from the floor of the pass before. A carve (a V-Carve, an
+//!   Inlay, a Photo V-Carve) changes depth all along its cut, so there it
+//!   is where the bit comes down into the work: after a rapid, and at each
+//!   straight plunge, which is one per groove of a Photo V-Carve.
 //! - **Drill holes**: a Drill draws a circle of the bit at each hole
 //!   instead.
 //! - **Pictures** (format 27): each bitmap as an `<image>` at its
@@ -200,12 +205,7 @@ pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
         } else {
             &frame
         };
-        let drawn = Drawn::of(
-            run.toolpath,
-            matches!(run.op, Operation::Drill(_)),
-            on,
-            run.tool.cut_radius_mm(),
-        );
+        let drawn = Drawn::of(run, on);
         write_operation(&mut svg, on, run, colour, &drawn);
     }
     let boundary = male.is_some() && !male_boundaries(project).is_empty();
@@ -227,10 +227,14 @@ pub fn render_generated(project: &Project, generated: &[EmitOp]) -> String {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Marks {
     /// Each stretch of cutting moves over a tab, as the moves trace it:
-    /// one open polyline per tab per pass that rises over it.
+    /// one open polyline per tab per pass that rises over it. Empty for a
+    /// run that leaves no tab: only a Profile and an Inlay's cut-out do.
     pub tab_marks: Vec<Polyline>,
     /// Where each descent starts, with the direction of the first cut
-    /// after it. Empty for a Drill, whose descents are its holes.
+    /// after it: each pass of a cut made in level passes; on a carve,
+    /// whose depth follows its art, each place the bit comes down into
+    /// the work (one per groove of a Photo V-Carve). Empty for a Drill,
+    /// whose descents are its holes.
     pub start_points: Vec<StartMark>,
     /// A Drill's holes in order, each once, with the bit's radius, mm.
     pub holes: Vec<(Point, f64)>,
@@ -260,13 +264,7 @@ pub fn marks(run: &Run<'_>) -> Marks {
         height_mm: 0.0,
         x_mm: 0.0,
     };
-    Drawn::of(
-        run.toolpath,
-        matches!(run.op, Operation::Drill(_)),
-        &frame,
-        run.tool.cut_radius_mm(),
-    )
-    .marks
+    Drawn::of(run, &frame).marks
 }
 
 /// One enabled Inlay's design as its male cuts it (#498).
@@ -622,11 +620,52 @@ struct Drawn {
 }
 
 impl Drawn {
-    /// Walks `toolpath` once, building its paths in `frame` and its marks
-    /// for a bit of `radius_mm`. A move whose start is unknown, the first,
-    /// only places the tool.
-    fn of(toolpath: &Toolpath, drill: bool, frame: &Frame, radius_mm: f64) -> Self {
-        Walk::new(drill, frame, radius_mm).run(toolpath)
+    /// Walks `run`'s toolpath once, building its paths in `frame` and its
+    /// marks for its bit, read as its kind of cut reads ([`Reading`]). A
+    /// move whose start is unknown, the first, only places the tool.
+    fn of(run: &Run<'_>, frame: &Frame) -> Self {
+        Walk::new(Reading::of(run), frame, run.tool.cut_radius_mm()).run(run.toolpath)
+    }
+}
+
+/// How a run's Z moves read as marks. The toolpath alone does not say: a
+/// rise while cutting is a tab on a Profile and the art's depth on a
+/// carve, so the marks follow the kind of cut (slice D7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    /// A Drill: each descent is a hole. No start points, no tabs.
+    Holes,
+    /// Level passes (a Profile, a Pocket, a Bore, an Engrave, a carve's
+    /// clearing pass, an Inlay's cut-out): a descent from a rapid or from
+    /// the pass before is a start point. On a cut that leaves `tabs` (a
+    /// Profile, a cut-out), a stretch above the pass's floor is a tab.
+    Passes {
+        /// Whether the cut can leave tabs.
+        tabs: bool,
+    },
+    /// A carve's own run (a V-Carve, an Inlay, a Photo V-Carve): its depth
+    /// follows the art, so a rise is no tab and a step deeper along the
+    /// cut is no new pass. A start point is where the bit comes down into
+    /// the work: the first descent after a rapid, and each straight plunge
+    /// after it (a Photo V-Carve reaches its next groove at feed, above
+    /// the stock, and plunges).
+    Carve,
+}
+
+impl Reading {
+    /// How `run`'s moves read.
+    const fn of(run: &Run<'_>) -> Self {
+        match (run.op, run.label) {
+            (Operation::Drill(_), _) => Self::Holes,
+            (Operation::Profile(_), _) | (Operation::Inlay(_), RunLabel::CutOut(_)) => {
+                Self::Passes { tabs: true }
+            }
+            (
+                Operation::VCarve(_) | Operation::Inlay(_) | Operation::PhotoVCarve(_),
+                RunLabel::Main,
+            ) => Self::Carve,
+            _ => Self::Passes { tabs: false },
+        }
     }
 }
 
@@ -763,8 +802,8 @@ fn start_direction(from: Point3, m: &Move) -> Option<Vec2> {
 /// The state of a walk along a toolpath.
 struct Walk<'a> {
     frame: &'a Frame,
-    /// A Drill: its descents are holes, and it has no tabs.
-    drill: bool,
+    /// What a descent and a rise mean on this run.
+    reading: Reading,
     /// The bit's radius, mm: the start circles' and the holes'.
     radius_mm: f64,
     out: Drawn,
@@ -779,15 +818,17 @@ struct Walk<'a> {
     floor_z: f64,
     /// Whether the last cutting move went down.
     descending: bool,
+    /// Whether the bit has come down since the last rapid.
+    entered: bool,
     /// The start in `out.starts` still waiting for its first cut.
     pending_tick: Option<usize>,
 }
 
 impl<'a> Walk<'a> {
-    fn new(drill: bool, frame: &'a Frame, radius_mm: f64) -> Self {
+    fn new(reading: Reading, frame: &'a Frame, radius_mm: f64) -> Self {
         Self {
             frame,
-            drill,
+            reading,
             radius_mm,
             out: Drawn::default(),
             at: None,
@@ -795,6 +836,7 @@ impl<'a> Walk<'a> {
             tab: None,
             floor_z: f64::INFINITY,
             descending: false,
+            entered: false,
             pending_tick: None,
         }
     }
@@ -818,6 +860,7 @@ impl<'a> Walk<'a> {
                 }
                 self.floor_z = m.to.z;
                 self.descending = false;
+                self.entered = false;
             } else {
                 self.cut(from, m);
             }
@@ -831,9 +874,12 @@ impl<'a> Walk<'a> {
     fn cut(&mut self, from: Point3, m: &Move) {
         let frame = self.frame;
         let going_down = m.to.z < from.z - Z_EPS_MM;
-        if going_down && !self.descending && from.z <= self.floor_z + Z_EPS_MM {
-            // A new descent: from a rapid, or from the pass before.
-            if self.drill {
+        let descent = going_down && !self.descending;
+        // A new descent of level passes: from a rapid, or from the pass
+        // before.
+        let from_floor = from.z <= self.floor_z + Z_EPS_MM;
+        match self.reading {
+            Reading::Holes if descent && from_floor => {
                 let hole = xy(from);
                 if self
                     .out
@@ -844,14 +890,19 @@ impl<'a> Walk<'a> {
                 {
                     self.out.marks.holes.push((hole, self.radius_mm));
                 }
-            } else {
-                self.out.marks.start_points.push(StartMark {
-                    at: xy(from),
-                    direction: None,
-                    radius_mm: self.radius_mm,
-                });
-                self.pending_tick = Some(self.out.marks.start_points.len() - 1);
             }
+            Reading::Passes { .. } if descent && from_floor => self.start(from),
+            // The bit comes down into the work: after a rapid, however it
+            // enters, and wherever it plunges straight down again.
+            Reading::Carve
+                if descent && (!self.entered || xy(from).distance_to(xy(m.to)) <= XY_EPS_MM) =>
+            {
+                self.start(from);
+            }
+            _ => {}
+        }
+        if going_down {
+            self.entered = true;
         }
         if !going_down
             && let Some(k) = self.pending_tick
@@ -865,8 +916,8 @@ impl<'a> Walk<'a> {
         self.run
             .get_or_insert_with(|| PathBuilder::starting_at(xy(from), frame))
             .push(from, m, frame);
-        let raised =
-            !self.drill && (from.z > self.floor_z + Z_EPS_MM || m.to.z > self.floor_z + Z_EPS_MM);
+        let raised = self.reading == Reading::Passes { tabs: true }
+            && (from.z > self.floor_z + Z_EPS_MM || m.to.z > self.floor_z + Z_EPS_MM);
         if raised {
             self.tab
                 .get_or_insert_with(|| TabBuilder::starting_at(xy(from)))
@@ -878,6 +929,17 @@ impl<'a> Walk<'a> {
             self.floor_z = m.to.z;
         }
         self.descending = going_down;
+    }
+
+    /// Records a start point at `from`, its tick waiting for the first
+    /// cut that moves in XY.
+    fn start(&mut self, from: Point3) {
+        self.out.marks.start_points.push(StartMark {
+            at: xy(from),
+            direction: None,
+            radius_mm: self.radius_mm,
+        });
+        self.pending_tick = Some(self.out.marks.start_points.len() - 1);
     }
 
     fn end_tab(&mut self) {

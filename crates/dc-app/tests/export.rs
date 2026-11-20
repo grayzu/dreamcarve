@@ -467,3 +467,63 @@ fn result_holds_every_fact_of_the_cli_report() {
         }
     }
 }
+
+/// The Export step offers the program split only where it changes what
+/// is written: with enabled operations that cut with two tools or more.
+/// The plaque cuts with two; with every operation but its first disabled
+/// it cuts with one, and a project with no operation with none.
+#[test]
+fn the_program_split_applies_with_several_tools() {
+    let mut harness = generated(&plaque_bytes());
+    assert!(export::several_tools(harness.app.project()), "the plaque");
+
+    let ops = harness.app.project().operations.clone();
+    for op in ops.iter().skip(1) {
+        harness
+            .run(Command::SetOperationEnabled {
+                id: op.id().clone(),
+                enabled: false,
+            })
+            .unwrap();
+    }
+    assert!(
+        !export::several_tools(harness.app.project()),
+        "one enabled operation, one tool"
+    );
+    let empty = dc_app::App::new_project().unwrap();
+    assert!(!export::several_tools(&empty));
+}
+
+/// The findings the Export step lists when export is blocked are the
+/// Warnings drawer's error rows, in its order: a tool an operation cuts
+/// with, without its feed, is one row that names the tool's field, and a
+/// project with warnings alone has none.
+#[test]
+fn blocking_rows_are_the_drawers_errors() {
+    let mut harness = generated(&plaque_bytes());
+    assert!(dc_app::warnings::blocking(&harness.app).is_empty());
+
+    let used = harness.app.project().operations[0].tool().clone();
+    let mut tool = harness
+        .app
+        .project()
+        .tools
+        .iter()
+        .find(|t| t.id == used)
+        .unwrap()
+        .clone();
+    tool.feed_mm_min = None;
+    harness.run(Command::UpdateTool(tool)).unwrap();
+    let rows = dc_app::warnings::blocking(&harness.app);
+    let errors: Vec<dc_app::warnings::Row> = dc_app::warnings::panel(&harness.app)
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .filter(|row| row.level == dc_app::warnings::Level::Error)
+        .collect();
+    assert_eq!(rows, errors);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        rows[0].field.as_deref(),
+        Some(format!("tools[{used}].feed_mm_min").as_str())
+    );
+}

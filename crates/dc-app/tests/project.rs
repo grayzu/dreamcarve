@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Slice 7 of phase 4 (`docs/specs/phase-4/design.md`, "Test plan →
-//! Project panel"; #536): the Project panel's fields write the `.dcv`
+//! Project panel"; #536): the fields of the project's settings, which the
+//! Stock and Export steps show, write the `.dcv`
 //! fields `check` reads (functional spec, capability 60, acceptance 69),
 //! offer the tool-change height, `M6` and canned cycles only where the
 //! post-processor's definition has them, switch post-processors as
@@ -525,9 +526,9 @@ fn thickness_unset_disables_export() {
     assert_eq!(project::export_refusal(&h.app), None);
 }
 
-/// Slice 23 (#615), capability 60: Project Settings opens on an error in
-/// one of its own fields (the thickness unset), not on an operation's or
-/// a tool's, and not on a warning.
+/// Slice 23 (#615), capability 60: an error in a field of the project's
+/// settings (the thickness unset) is told from an operation's or a
+/// tool's, and from a warning.
 #[test]
 fn settings_error_is_a_project_settings_field_only() {
     let mut h = Harness::open(&plaque_bytes()).expect("the plaque opens");
@@ -569,4 +570,70 @@ fn settings_error_is_a_project_settings_field_only() {
         "stock.thickness_mm",
         Tier::Warning
     )]));
+}
+
+/// The Export step's three groups of output settings start closed, each
+/// with one line of its values on its header (`redesign.md`, "The
+/// steps"): the post-processor and its extension; the clearance and the
+/// park point; the two tolerances. In an inch project the lengths are in
+/// inches.
+#[test]
+fn output_groups_summarise_their_values() {
+    use dc_app::project::Group;
+
+    let strings = Strings::english();
+    let mut h = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    let summary = |h: &Harness, group: Group| group.summary(&strings, h.app.project());
+    assert_eq!(summary(&h, Group::Post), "grblHAL v4 (latest) · .nc");
+    assert_eq!(
+        summary(&h, Group::Heights),
+        "Each operation's safe Z",
+        "no clearance set"
+    );
+    assert_eq!(
+        summary(&h, Group::Tolerances),
+        "Flatten 0.01 mm · arcs 0.01 mm"
+    );
+
+    type_into(&mut h, Field::Clearance, "12");
+    assert_eq!(summary(&h, Group::Heights), "Clearance 12 mm");
+    type_into(&mut h, Field::Park, "20, 30");
+    assert_eq!(summary(&h, Group::Heights), "Clearance 12 mm · park 20, 30");
+    choose(
+        &mut h,
+        |p| project::set_arc_fit(p, false),
+        "arc fitting off",
+    );
+    assert_eq!(
+        summary(&h, Group::Tolerances),
+        "Flatten 0.01 mm · lines only"
+    );
+    h.run(Command::SetDisplayUnits(Units::Inch)).unwrap();
+    assert_eq!(
+        summary(&h, Group::Heights),
+        "Clearance 0.47244 in · park 0.7874, 1.1811"
+    );
+}
+
+/// A finding's field names the group that edits it, so a Warnings row
+/// about an output setting opens its group; a stock or a tool field is
+/// in none of the three.
+#[test]
+fn a_field_names_its_output_group() {
+    use dc_app::project::Group;
+
+    for (path, group) in [
+        ("heights.clearance_mm", Some(Group::Heights)),
+        ("heights.park", Some(Group::Heights)),
+        ("heights", Some(Group::Heights)),
+        ("flatten_tolerance_mm", Some(Group::Tolerances)),
+        ("arc_fit_tolerance_mm", Some(Group::Tolerances)),
+        ("post_processor", Some(Group::Post)),
+        ("post_processor.file_extension", Some(Group::Post)),
+        ("stock.thickness_mm", None),
+        ("tools[t1].feed_mm_min", None),
+        ("heightsmith", None),
+    ] {
+        assert_eq!(Group::of_field(path), group, "{path}");
+    }
 }

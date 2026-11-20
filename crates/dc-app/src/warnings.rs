@@ -538,6 +538,17 @@ pub fn panel(app: &App) -> Vec<Group> {
     groups
 }
 
+/// The rows that block export: the panel's errors, in its order. The
+/// Export step lists them where the export is refused.
+#[must_use]
+pub fn blocking(app: &App) -> Vec<Row> {
+    panel(app)
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .filter(|row| row.level == Level::Error)
+        .collect()
+}
+
 /// The lines `check` prints for the project as it stands, in its order,
 /// without its count line.
 #[must_use]

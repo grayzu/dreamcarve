@@ -134,7 +134,7 @@ pub struct Shortcut {
     /// Where it is read.
     pub scope: Scope,
     /// Whether this build has the command; the chapter notes one that
-    /// does not. Every command is in this build since the export sheet
+    /// does not. Every command is in this build since export arrived
     /// (#547).
     pub available: bool,
 }
@@ -250,13 +250,13 @@ pub const SHORTCUTS: &[Shortcut] = &[
         "Import an SVG or DXF drawing",
         Scope::Anywhere,
     ),
-    // Opens the export sheet (#547).
+    // Opens the Export step, where the programs are written (#547).
     Shortcut {
         command: Command::Export,
         modifiers: COMMAND,
         keys: &[Key::E],
         menu: Some((Menu::File, StrKey::AppMenuExport)),
-        does: "Export the G-code programs",
+        does: "Open the Export step, to export the G-code programs",
         scope: Scope::Anywhere,
         available: true,
     },
@@ -595,7 +595,7 @@ pub fn chapter_table() -> String {
         let does = if shortcut.available {
             shortcut.does.to_owned()
         } else {
-            format!("{} (arrives with the export sheet)", shortcut.does)
+            format!("{} (not in this build)", shortcut.does)
         };
         table.push_str(&format!("| {pc} | {mac} | {does} | {menu} |\n"));
     }

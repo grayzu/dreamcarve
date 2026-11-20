@@ -1135,7 +1135,7 @@ fn a_photo_v_carves_picture_is_marked_as_its_target() {
 }
 
 /// Slice 15 (#544); capabilities 57 and 65: a Pictures row's menu offers
-/// *Add operation ▸*, whose menu for the row is the Operations tab's: a
+/// *Add operation ▸*, whose menu for the row is the Operations step's: a
 /// Photo V-Carve on that picture.
 #[test]
 fn a_bitmap_rows_menu_adds_a_photo_v_carve_on_it() {

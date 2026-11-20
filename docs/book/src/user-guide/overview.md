@@ -196,10 +196,15 @@ dreamcarve check coaster.dcv --preview coaster-preview.svg
   legend at the top left.
 - Cuts are solid lines; rapids, the moves above the stock, are dashed grey.
 - A stretch where the bit rises over a tab is drawn again, heavy: one mark
-  for each tab on each pass that rises over it.
+  for each tab on each pass that rises over it. Only a cut that leaves
+  tabs has them: a Profile, and an Inlay's cut-out.
 - Each pass starts at a circle the size of the bit, with a tick one bit
   diameter long pointing the way the cut goes. This is where `at_distances`
   tabs are measured from ([Tabs: at distances along the outline](tabs.md#at-distances-along-the-outline)).
+  A V-Carve, an Inlay's carve and a Photo V-Carve change depth all along
+  their cut, so they have a circle where the bit comes down into the
+  work and none where the cut only goes deeper: a Photo V-Carve has one
+  at the start of each groove.
 - A Drill draws a circle the size of the bit at each hole.
 - With an [Inlay](inlay.md#programs) that cuts its male, the male board
   is drawn to the right of the stock, 10 mm apart, their bottom edges

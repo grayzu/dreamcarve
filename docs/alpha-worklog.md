@@ -115,11 +115,11 @@ Notes from the fixes:
 | D1 | The redesign brief, `docs/specs/phase-4/redesign.md`: principles, the window, the steps, tokens, components | done |
 | D2 | Theme tokens and widgets: dark default, teal accent, cards, pills | done |
 | D3 | The shell: `dc_app::steps`, the header, the rail, the step panel, the Inspector, the start screen; capabilities 50, 50a, 50b rewritten | done |
-| D4 | Export inlined into its step, the Viewport's floating controls, the drawer and sheets restyled. Also from the D3 review: a blank project shows "1 error" in the status bar and on the Warnings badge; with By depth on and the Inspector open at 1280 px the fitted stock is small; stale comments in dc-app still name the toolbar and the CAM panel; the snapshot pair needs re-rendering on Linux | todo |
+| D4 | Export inlined into its step (a 440-px panel on that step); the Viewport's floating controls (tools and zoom, By operation / By depth and Layers, the cursor read-out); the drawer as a card; the status bar's cells; a blank project shows no problem count; Fit clears the legend | done |
 | D5 | Window tests and snapshots for the new shell | todo |
 
 | D6 | The three features wired into the new window: the Add picture sheet, pictures as textured quads under the shapes, Photo V-Carve's editor, the tapered ball nose's fields, the library's Tip column | done |
-| D7 | From the D6 review: a Photo V-Carve's toolpath draws 453 start circles and 88 tab marks for 48 grooves, in the window and the CLI preview (dc-job's marks); importing a 12 MP picture holds the UI thread about 214 ms in dc-app (the PNG encode and the Scene's decode), and each later command about 10 ms | todo |
+| D7 | Preview marks follow the kind of cut: a Photo V-Carve draws one start per groove and no tab marks, and V-Carve and Inlay lose their false tab marks (98 on the sign). Still open: importing a 12 MP picture holds the UI thread about 214 ms in dc-app | done |
 
 Decisions made while wiring, for the maintainer to confirm:
 
@@ -128,6 +128,13 @@ Decisions made while wiring, for the maintainer to confirm:
   scale; it now says it does (commit `2ddb4837` in dc-app, and the
   window's handles).
 - The Tool Library sheet is 1100 px wide (was 960) so its ten columns fit.
+- The Export step lists the blocking findings itself, starts its three
+  settings groups closed with a one-line summary each, and widens its
+  panel to 440 px. With no folder chosen, **Export G-code** opens the
+  folder dialog first.
+- The zoom percentage is of 96 px per inch, and a click on it sets 100 %.
+- The colour mode (By operation, By depth) is the Viewport control only;
+  it left the Layers popover.
 - A new carve takes the first tool its picker offers, so a project whose
   only carving tool is a tapered ball nose gets it.
 
@@ -135,7 +142,7 @@ Decisions made while wiring, for the maintainer to confirm:
 
 | Slice | What | Status |
 | --- | --- | --- |
-| E1 | Book chapters and the quick start "From SVG to G-code in the app", with screenshots from the build (#550) | todo |
+| E1 | Book chapters and the quick start "From SVG to G-code in the app", with screenshots from the build (#550) | doing |
 | E2 | macOS bundle and the phase 4 audit (#551) | todo |
 | E3 | Bench check in the app and the `v0.4.0` tag | owner |
 
