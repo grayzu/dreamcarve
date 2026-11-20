@@ -148,3 +148,45 @@ fn recent_keeps_ten_most_recent_first() {
         1
     );
 }
+
+/// A sheet that resizes (the Tool Library; the smoke test's item 3) keeps
+/// its size in the preferences' `sizes`, and shows at that size held
+/// between its minimum and what the window leaves round it.
+#[test]
+fn a_sheet_size_is_kept_and_held_inside_the_window() {
+    use dc_app::prefs::{SHEET_GAP_PX, SheetSize};
+
+    let sheet = SheetSize {
+        key: "library",
+        default_px: (1100.0, 640.0),
+        min_px: (880.0, 480.0),
+    };
+    let mut prefs = Prefs::default();
+    assert_eq!(
+        sheet.of(&prefs, (1600.0, 1000.0)),
+        (1100.0, 640.0),
+        "the default"
+    );
+    // A smaller window: what it leaves, never under the minimum unless
+    // the window itself is.
+    assert_eq!(
+        sheet.of(&prefs, (1000.0, 700.0)),
+        (1000.0 - SHEET_GAP_PX, 640.0)
+    );
+    assert_eq!(
+        sheet.of(&prefs, (800.0, 500.0)),
+        (800.0 - SHEET_GAP_PX, 500.0 - SHEET_GAP_PX)
+    );
+
+    // Dragged larger: kept, by name.
+    sheet.set(&mut prefs, (1400.0, 820.0), (1600.0, 1000.0));
+    assert_eq!(prefs.sizes.get("library.width"), Some(&1400.0));
+    assert_eq!(prefs.sizes.get("library.height"), Some(&820.0));
+    assert_eq!(sheet.of(&prefs, (1600.0, 1000.0)), (1400.0, 820.0));
+    // Dragged past the window, or under the minimum: held.
+    sheet.set(&mut prefs, (5000.0, 100.0), (1600.0, 1000.0));
+    assert_eq!(
+        sheet.of(&prefs, (1600.0, 1000.0)),
+        (1600.0 - SHEET_GAP_PX, 480.0)
+    );
+}

@@ -1054,3 +1054,219 @@ fn editing_pane_fields_end_inside_the_sheet() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The rect of the sheet's column heading `name`.
+fn heading(h: &Harness<'_, Shell>, name: &str) -> egui::Rect {
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ColumnHeader, name)
+        .rect()
+}
+
+/// The smoke test's item 2 (capability 64): the table's columns resize by
+/// their dividers. The divider at Type's left edge dragged 40 px to the
+/// right makes Type 40 px narrower and the name, which takes the slack
+/// (and is the column a long tool name needs), 40 px wider; no other
+/// column changes; the width is kept for the session and written to
+/// `gui.toml`, so the sheet opened again has it.
+#[test]
+fn library_columns_resize_by_their_dividers() {
+    let dir = scratch("library-columns");
+    let (config, _) = config_with(&dir, &sample_library());
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+    common::settle(&mut h);
+    let (name, kind, feed) = (
+        heading(&h, "Name"),
+        heading(&h, "Type"),
+        heading(&h, "Feed"),
+    );
+    let divider = h
+        .get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::Splitter, "Resize Type")
+        .rect();
+    assert!(
+        (divider.center().x - kind.left()).abs() < 1.0,
+        "the divider stands at the column's left edge"
+    );
+    common::drag(
+        &mut h,
+        divider.center(),
+        divider.center() + egui::vec2(40.0, 0.0),
+        egui::PointerButton::Primary,
+    );
+    let (name_after, kind_after) = (heading(&h, "Name"), heading(&h, "Type"));
+    assert!(
+        (kind_after.width() - (kind.width() - 40.0)).abs() < 0.5,
+        "Type is 40 px narrower: {} then {}",
+        kind.width(),
+        kind_after.width()
+    );
+    assert!(
+        (name_after.width() - (name.width() + 40.0)).abs() < 0.5,
+        "the name took it: {} then {}",
+        name.width(),
+        name_after.width()
+    );
+    assert_eq!(heading(&h, "Feed"), feed, "the other columns stay");
+    let kept = h.state().app().prefs().sizes.clone();
+    assert_eq!(
+        kept.get("library.column.type").copied(),
+        Some(f64::from(kind.width()) - 40.0)
+    );
+    // A row's cells stand under the headings: the row's value names
+    // them, and the divider is where the heading begins.
+    let divider = h
+        .get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::Splitter, "Resize Type")
+        .rect();
+    assert!((divider.center().x - kind_after.left()).abs() < 1.0);
+
+    // A column stops at its minimum, however far the divider is dragged.
+    let divider = h
+        .get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::Splitter, "Resize Feed")
+        .rect();
+    common::drag(
+        &mut h,
+        divider.center(),
+        divider.center() + egui::vec2(300.0, 0.0),
+        egui::PointerButton::Primary,
+    );
+    assert!(
+        (f64::from(heading(&h, "Feed").width()) - dc_app::library::Column::Feed.min_width_px())
+            .abs()
+            < 0.5,
+        "Feed stops at its minimum"
+    );
+
+    // Written to `gui.toml`, and read by the next session.
+    let file = gui_prefs::load(&Paths::in_dir(config.clone())).prefs;
+    assert_eq!(
+        file.sizes.get("library.column.type"),
+        kept.get("library.column.type")
+    );
+    drop(h);
+    let h = open_sheet(&config, &dialogs);
+    assert!(
+        (heading(&h, "Type").width() - (kind.width() - 40.0)).abs() < 0.5,
+        "the next session opens with the width kept"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The smoke test's item 3 (capability 64): the sheet resizes by its
+/// corner grip and its edges, staying centred, between its minimum and
+/// what the window leaves round it; the size is written to `gui.toml`.
+#[test]
+fn library_sheet_resizes_and_keeps_its_size() {
+    let dir = scratch("library-resize");
+    let (config, _) = config_with(&dir, &sample_library());
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+    common::settle(&mut h);
+    let grip = |h: &Harness<'_, Shell>| {
+        h.get_by_role(Role::Dialog)
+            .get_by_role_and_label(Role::Splitter, "Resize the Tool Library")
+            .rect()
+    };
+    let size = |h: &Harness<'_, Shell>| {
+        let kept = &h.state().app().prefs().sizes;
+        (
+            kept.get("library.width").copied(),
+            kept.get("library.height").copied(),
+        )
+    };
+    assert_eq!(size(&h), (None, None), "the default until it is dragged");
+    let table = heading(&h, "Name").width();
+    let at = grip(&h).center();
+    // 40 px out and 30 px down: the sheet is centred, so it grows twice
+    // that, to about 1180 × 700.
+    common::drag(
+        &mut h,
+        at,
+        at + egui::vec2(40.0, 30.0),
+        egui::PointerButton::Primary,
+    );
+    let (Some(width), Some(height)) = size(&h) else {
+        panic!("the size is kept");
+    };
+    assert!(
+        (width - 1180.0).abs() <= 2.0 && (height - 700.0).abs() <= 2.0,
+        "{width} × {height}"
+    );
+    assert!(
+        (grip(&h).center() - (at + egui::vec2(40.0, 30.0))).length() <= 2.0,
+        "the grip followed the pointer"
+    );
+    assert!(
+        heading(&h, "Name").width() > table + 50.0,
+        "the name column took the new room"
+    );
+
+    // Past the window: held 24 px inside it. Under the minimum: held.
+    let at = grip(&h).center();
+    common::drag(
+        &mut h,
+        at,
+        at + egui::vec2(900.0, 900.0),
+        egui::PointerButton::Primary,
+    );
+    assert_eq!(size(&h), (Some(1280.0 - 48.0), Some(800.0 - 48.0)));
+    let at = grip(&h).center();
+    common::drag(
+        &mut h,
+        at,
+        egui::pos2(640.0, 400.0),
+        egui::PointerButton::Primary,
+    );
+    assert_eq!(size(&h), (Some(920.0), Some(480.0)));
+
+    let file = gui_prefs::load(&Paths::in_dir(config.clone())).prefs;
+    assert_eq!(file.sizes.get("library.width"), Some(&920.0));
+    assert_eq!(file.sizes.get("library.height"), Some(&480.0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The smoke test's item 1 in a sheet (capability 64a): a library tool's
+/// field typed into and left by a click elsewhere in the sheet is
+/// written, as one left with Enter is.
+#[test]
+fn a_library_field_left_by_a_click_is_written() {
+    let dir = scratch("library-click-away");
+    let library = sample_library();
+    let (config, _) = config_with(&dir, &library);
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+    select_row(&mut h, "5 mm Drill");
+    // A click on the field above it, then on the table's heading.
+    for (typed, on_field) in [("250", true), ("300", false)] {
+        h.get_by_role(Role::Dialog)
+            .get_by_role_and_label(Role::TextInput, "Feed")
+            .focus();
+        h.run();
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.run();
+        h.event(egui::Event::Text(typed.to_owned()));
+        h.run();
+        let at = if on_field {
+            h.get_by_role(Role::Dialog)
+                .get_by_role_and_label(Role::TextInput, "Name")
+                .rect()
+                .center()
+        } else {
+            heading(&h, "Name").center()
+        };
+        common::click_at(&mut h, at, egui::Modifiers::NONE);
+        h.run();
+        assert_eq!(field_value(&h, "Feed"), typed, "left by a click at {at:?}");
+        let written = std::fs::read(config.join("tools.json")).unwrap();
+        let read = dc_library::load(&written).unwrap();
+        let drill = read
+            .tools
+            .iter()
+            .find(|t| t.tool.name == "5 mm Drill")
+            .unwrap();
+        assert_eq!(drill.tool.feed_mm_min, typed.parse().ok());
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}

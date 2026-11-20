@@ -601,6 +601,10 @@ column_feed = "Feed"
 column_plunge = "Plunge"
 column_rpm = "RPM"
 column_product = "Product"
+# The divider at a column's left edge, dragged to resize the column, and
+# the grip at the sheet's corner, for assistive tools.
+column_resize = "Resize {column}"
+resize = "Resize the Tool Library"
 # What a row's cells say to assistive tools, each under its heading; a
 # value the tool still needs is drawn as a red dash.
 row_cell = "{column} {value}"

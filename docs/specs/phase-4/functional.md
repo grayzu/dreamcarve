@@ -538,7 +538,14 @@ folder are app preferences, kept outside the project.
     angle it holds, a V-bit's included (`90°`) or a tapered ball nose's
     per side (`6.7°/side`). A value the tool still needs (a rate, a
     tapered ball nose's tip or taper) is a red dash in its cell, never a
-    value. Rows already in the
+    value. The columns resize: every column but the name has a divider
+    at its left edge, and dragging it sets that column's width, down to
+    a minimum that keeps its heading; the name takes what the others
+    leave, so narrowing a column gives a long name more room. The sheet
+    itself resizes by its edges and by the grip at its bottom right
+    corner, between 920 × 480 and the window's size less a margin, and
+    stays centred. The column widths and the sheet's size are kept for
+    the session and in `gui.toml` (`sizes`). Rows already in the
     project are marked. The right pane edits the selected tool in place
     (64a). The header holds the library's **display units**, a `mm` /
     `in` segmented control separate from the project's (53): an app

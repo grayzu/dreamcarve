@@ -5,7 +5,8 @@
 //! (`docs/specs/phase-4/design.md`, "Preferences"; functional spec, open
 //! question 11): the window and panel layout, the toolpath display
 //! settings, the recent files, where each project last exported, the
-//! theme and the Tool Library's display units. View state, never project state: nothing here changes a program
+//! theme, the Tool Library's display units and the sizes the user dragged
+//! a sheet or a table's columns to. View state, never project state: nothing here changes a program
 //! or reaches the `.dcv`.
 //!
 //! Read at start and written on change and on exit. A missing file is the
@@ -55,6 +56,10 @@ pub struct GuiPrefs {
     /// The Tool Library's display units, once chosen; the library file
     /// itself is always millimetres.
     pub library_units: Option<LibraryUnits>,
+    /// The sizes the user has dragged things to, in logical pixels, by
+    /// name: a sheet that resizes (`library.width`) and the Tool Library
+    /// table's columns (`library.column.type`).
+    pub sizes: BTreeMap<String, f64>,
 }
 
 /// The Tool Library's display units (phase 4, capability 64).
@@ -322,7 +327,7 @@ fn describe_error(text: &str, path: &Path, e: &toml::de::Error) -> String {
 
 /// The keys of `table` this build does not know, as dotted paths
 /// (`panels.left_width_px`), in file order. The free maps (`sections`,
-/// `export_dirs`) take any key.
+/// `export_dirs`, `sizes`) take any key.
 fn unknown_keys(table: &toml::Table) -> Vec<String> {
     const TOP: &[&str] = &[
         "theme",
@@ -335,6 +340,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "export_dirs",
         "tab",
         "library_units",
+        "sizes",
     ];
     const WINDOW: &[&str] = &["x", "y", "width", "height", "maximized"];
     const PANELS: &[&str] = &[
@@ -488,6 +494,7 @@ mod tests {
                 shape: TabShape::Smooth,
             },
             library_units: Some(LibraryUnits::In),
+            sizes: [("library.width".to_owned(), 1240.0)].into_iter().collect(),
         };
         save(&paths, &prefs).unwrap();
         let loaded = load(&paths);

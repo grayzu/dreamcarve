@@ -17,6 +17,7 @@ pub(crate) mod row;
 pub(crate) mod scroll;
 pub(crate) mod section;
 pub(crate) mod segmented;
+pub(crate) mod sheet;
 pub(crate) mod spinner;
 pub(crate) mod status;
 pub(crate) mod toggle;

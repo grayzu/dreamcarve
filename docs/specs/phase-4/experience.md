@@ -320,7 +320,8 @@ is a control's height, so the rows stay aligned (*Through-cut
 allowance*, *Tool-change machine Z*). The field fills the rest;
 the unit occupies the last 28 px inside the field. Tool-Library sheet
 1100 × 640 default (its table's ten columns, a type's name whole among
-them, leave the name 120 px), min 800 × 520, its right (editing) pane
+them, leave the name 120 px), resized by the user between 920 × 480
+and the window less 24 px all round, its right (editing) pane
 320 wide;
 Import drawing and Add picture sheets 560 wide; unsaved-changes sheet
 420 wide; the Export step's panel 440 wide; the start screen's content
@@ -769,7 +770,12 @@ Controls:
   trailing `x` clear when non-empty; filters as typed, 150 ms debounce.
 - **Table rows (Tool Library, export programs, Warnings).** 34 px, striped
   with `surface.stripe` on 8-px-radius surfaces, header row text.secondary
-  12 px with `border.default` under it, columns resizable, numbers
+  12 px with `border.default` under it, the Tool Library's columns
+  resizable (a hairline divider at the left edge of every column but
+  the name, `accent` and 2 px under the pointer, with the column-resize
+  cursor: dragging it sets the width of the column at its right, down
+  to the column's minimum, and the name takes the slack, never under
+  120 px; the widths are kept in `gui.toml`), numbers
   right-aligned
   tabular, the tick column 32 px. "Already in project" rows show a `check`
   in text.secondary and the row in text.secondary. A Warnings row is
@@ -927,7 +933,14 @@ Controls:
   validation as the panels, and a footer with the one primary action, a
   pill, on the right and secondary actions on the left. A file's path
   in a sheet is one mono line cut at its start, since its name is at
-  its end; the whole path is its tooltip. Never a second sheet above a
+  its end; the whole path is its tooltip. A sheet that holds a table
+  (the Tool Library, with its import review) resizes: an 8-px strip
+  along each edge and an 18-px grip of three short strokes at its bottom
+  right corner take the drag, with the resize cursor; the sheet stays
+  centred, so the edge follows the pointer and the opposite edge moves
+  the other way; the size is kept in `gui.toml`. A sheet that asks one
+  question (unsaved changes) or holds one form (Import drawing, Add
+  picture) keeps its fixed size. Never a second sheet above a
   sheet: the tool picker from an editor is a popover, the import review
   replaces the Tool Library's panes in place with a *Back*, and so does
   *Delete*'s question, with *Cancel*. Export is not a sheet: it is the

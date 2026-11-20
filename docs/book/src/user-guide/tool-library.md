@@ -132,6 +132,19 @@ rate or RPM, or a tapered ball nose's tip or taper. It is never a
 number. A library tool may lack values; the dash says what an operation
 will ask for.
 
+To give the names more room, make the sheet larger or a column
+narrower:
+
+- **Resize the sheet** by dragging any of its edges, or the grip at its
+  bottom right corner. It stays in the middle of the window, and goes no
+  larger than the window.
+- **Resize a column** by dragging the line at its left edge, in the
+  heading row. **Name** takes whatever width the other columns leave,
+  so dragging the line between **Name** and **Type** to the right makes
+  the names wider.
+
+The app remembers both.
+
 - **Search** matches the name, the vendor, the product id, the diameter
   and a tapered ball nose's tip: `0.762` finds the bit above. Groups with
   no match are hidden.
