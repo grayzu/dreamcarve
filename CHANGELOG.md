@@ -9,6 +9,48 @@ phases bump the patch number.
 
 ### Added
 
+- **The DreamCarve app.** DreamCarve now has a desktop app,
+  `dreamcarve-app`: one window that takes a drawing or a picture to
+  G-code without the command line. It works on the same `.dcv` project
+  file as the `dreamcarve` command, with the same toolpath generators,
+  checks and post-processors, so a project made in one opens in the other
+  and exports the same programs, byte for byte. The window walks five
+  steps, any of which opens at any time:
+  - **Design**: start a project from an SVG or DXF drawing or from a PNG
+    or JPEG picture, or add either to an open project; pick a DXF's
+    layers and units; move, resize, rotate, flip, duplicate, hide, lock
+    and rename shapes, by the Design Tree, by typed values or by their
+    handles on the Viewport.
+  - **Stock**: units, the stock's size and thickness, *Fit to shapes*,
+    and the origin.
+  - **Tools**: the project's tools, each with its feeds, speeds and
+    shape, and the Tool Library, with its vendor groups, editing in
+    place, and the review that imports a Fusion or a DreamCarve library.
+  - **Operations**: every kind of operation, Profile, Pocket, Drill,
+    Bore, Engrave, V-Carve, Inlay and Photo V-Carve, each with every
+    setting of its record in an editor that names what is unset or out
+    of range under the field; targets picked on the drawing; tabs placed,
+    dragged and added on the outline; clearing passes; an Inlay's male
+    board beside the stock, and its drawn boundary.
+  - **Export**: the post-processor and its output settings, the programs
+    that will be written and why not when one is refused, then the files
+    in run order, the run instructions and a setup sheet.
+
+  Toolpaths generate by themselves after each change and draw on the
+  Viewport as the program will cut them, by operation or by depth, with
+  rapids, plunges, start points, tab marks, direction arrows and the
+  program's extents as layers. The Warnings drawer is `check`, always
+  current: its errors, warnings and hints open the field or select the
+  shape they are about, and an error blocks export as it does on the
+  command line. Every change is one undo step. The app never fills a
+  feed, a plunge rate, a spindle speed or a depth with a number of its
+  own. The book has a quick start, "From SVG to G-code in the app", and
+  chapters on the window, importing, stock and origin, the toolpath
+  preview, exporting and the keyboard. For now the app is built from
+  source (`cargo run --release -p dreamcarve-app`, or
+  `tools/bundle-macos.sh` for an unsigned `DreamCarve.app` on a Mac); it
+  is not in the release archives, there is no signed installer, and it
+  has been run on macOS only.
 - **Tapered ball nose chapter, quick start and test part (#683).** The
   user guide has a Tapered ball nose chapter: the bit's four numbers (tip
   diameter, taper per side, flute length, cutting diameter), its cutting
