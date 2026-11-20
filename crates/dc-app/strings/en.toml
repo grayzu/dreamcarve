@@ -175,6 +175,9 @@ no_canned = "Not offered: {name} has no canned cycles."
 # bar, the empty state, the unsaved-changes sheet, file dialogs, and the
 # messages the status bar shows after a file action.
 [app]
+# The app's name: the window's title until a project gives it one, and
+# the name the operating system lists the app under.
+name = "DreamCarve"
 title = "{name} — DreamCarve"
 title_unsaved = "{name}* — DreamCarve"
 # The window title's name before the project has a file.

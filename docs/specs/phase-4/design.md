@@ -350,9 +350,19 @@ focus loss or Enter; Escape restores. The stored value is millimetres.
 `panel.section.item` with `{name}` placeholders. `build.rs` generates the
 `StrKey` enum, so a key that is not in the table fails to compile, and the
 test `strings::every_key_is_used` scans the two GUI crates for each
-variant (acceptance 91). Warning and error text comes from `dc-cam`'s and
-`dc-project`'s `Display`, the CLI's text, with the code beside it; phase 8
-keys them.
+variant (acceptance 91's second half). Its first half is
+`crates/dreamcarve-app/tests/strings.rs::no_user_visible_string_literal_outside_the_table`,
+a scan of the window's sources for string literals that read as words (a
+capital letter, or two words, once escapes and `{placeholders}` are taken
+out). A literal that does must be a developer's by what it is passed to
+(a lint's reason, `Debug` output, a compile-time path or name, a clap
+attribute), one of the fonts' and text styles' names, or the Keyboard
+chapter's text in `keyboard.rs`, which a second test holds out of the
+window; each entry of those lists must match a literal. One lower-case
+word reads as a key and is let through. Warning and error text comes from
+`dc-cam`'s and `dc-project`'s `Display`, the CLI's text, with the code
+beside it, and `dc-app`'s own refusals (`CommandError`) are worded the same
+way; phase 8 keys them, and the scan does not read `dc-app`.
 
 ### Preferences
 
