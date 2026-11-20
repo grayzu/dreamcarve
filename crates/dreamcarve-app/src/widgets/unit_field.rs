@@ -9,8 +9,9 @@
 //! inside the outline, which is `border.default` at rest, `border.strong`
 //! under the pointer and `focus.ring` while typing. The text the user
 //! types lives in egui's memory while the field has focus; it commits on
-//! leaving the field (Tab, Enter, a click elsewhere) and Escape restores
-//! the value, so an edit is one undo step. The outline takes the
+//! leaving the field by any means (Tab, Enter, a click anywhere, the
+//! window losing the focus, a command's key) and Escape restores the
+//! value, so an edit is one undo step. The outline takes the
 //! validation tier's colour; the message under the field is the caller's
 //! ([`validation_line`] in a field column, [`crate::widgets::row::message`]
 //! beside a label). A tool-derived field shows the tool's value as grey
@@ -113,22 +114,94 @@ pub(crate) struct FieldOutput {
     pub reset: bool,
 }
 
+/// What is being typed into a field: the text, the project's value it
+/// started from, and the frame it was last drawn in.
+#[derive(Debug, Clone)]
+struct Draft {
+    typed: String,
+    seed: String,
+    frame_nr: u64,
+}
+
+/// Where the frame a flush was asked in is kept.
+fn flush_id() -> Id {
+    Id::unique("dc.unit_field.flush")
+}
+
+/// Where the frame a flush wrote a field in is kept.
+fn flushed_id() -> Id {
+    Id::unique("dc.unit_field.flushed")
+}
+
+/// Asks the field being typed in to write its text this frame, keeping
+/// the focus: a command's key was pressed (Save, Undo, a step's key), and
+/// the command acts on the project as the user sees it, with the typed
+/// value in it. Called before the panels draw.
+pub(crate) fn flush(ctx: &egui::Context) {
+    let frame_nr = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(flush_id(), frame_nr));
+}
+
+/// Whether [`flush`] was called this frame.
+fn flush_asked(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<u64>(flush_id())) == Some(ctx.cumulative_frame_nr())
+}
+
+/// Whether a field wrote its text this frame because [`flush`] asked: the
+/// window then runs the field's command before the key's.
+pub(crate) fn flushed(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<u64>(flushed_id())) == Some(ctx.cumulative_frame_nr())
+}
+
+/// Whether the window lost the focus this frame, or is without it.
+fn window_left(ui: &Ui) -> bool {
+    ui.input(|i| {
+        !i.focused
+            || i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::WindowFocused(false)))
+    })
+}
+
+/// Whether a text field of another kind (a name edited in place) is left
+/// this frame though the focus is still in it: the window lost the focus,
+/// or a command's key asked the fields to write ([`flush`]), which is
+/// then noted for the window ([`flushed`]).
+pub(crate) fn left_with_focus(ui: &Ui) -> bool {
+    if flush_asked(ui.ctx()) {
+        let frame_nr = ui.ctx().cumulative_frame_nr();
+        ui.data_mut(|d| d.insert_temp(flushed_id(), frame_nr));
+        return true;
+    }
+    window_left(ui)
+}
+
 /// Draws `spec` across the available width.
 pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     let palette = Palette::current(ui);
     let (rect, frame_response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEIGHT_PX), Sense::hover());
     let buffer_id = spec.id.with("typed");
-    let had_focus = ui.memory(|m| m.has_focus(spec.id));
-    // What is typed, and the value it started from. While nothing has
-    // been typed over that value the field follows the project: a field
-    // tabbed into as its neighbour commits (W, then H, which follows W)
-    // shows the new value, and leaving it writes nothing back.
-    let buffer = had_focus
-        .then(|| ui.data(|d| d.get_temp::<(String, String)>(buffer_id)))
-        .flatten();
-    let (mut text, seed) = match buffer {
-        Some((typed, seed)) if typed != seed || seed == spec.value => (typed, seed),
+    let frame_nr = ui.ctx().cumulative_frame_nr();
+    // What is typed, and the value it started from: the draft, kept from
+    // the first frame the field has the focus until it is left. It is
+    // read whoever has the focus now, because the focus may already have
+    // gone when the field draws: a click on a field drawn before this one
+    // gives that one the focus first, and Shift+Tab and an assistive tool
+    // move it between frames. A draft that is not from the last frame
+    // belongs to a field that went unseen, and is dropped, not written
+    // late.
+    let draft = ui
+        .data(|d| d.get_temp::<Draft>(buffer_id))
+        .filter(|draft| draft.frame_nr + 1 >= frame_nr);
+    // While nothing has been typed over the value the draft started from
+    // the field follows the project: a field tabbed into as its neighbour
+    // commits (W, then H, which follows W) shows the new value, and
+    // leaving it writes nothing back.
+    let (mut text, seed) = match &draft {
+        Some(draft) if draft.typed != draft.seed || draft.seed == spec.value => {
+            (draft.typed.clone(), draft.seed.clone())
+        }
         _ => (spec.value.to_owned(), spec.value.to_owned()),
     };
 
@@ -194,15 +267,35 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     // The focus is the text's; the ring goes round the field's frame.
     crate::shell::focus::outline(ui.ctx(), spec.id, rect, theme::CONTROL_RADIUS_PX);
 
-    let escaped = ui.input(|i| i.key_pressed(Key::Escape));
+    // Leaving the field by any means writes what was typed (functional
+    // 52): Tab, a click anywhere, another widget taking the focus, the
+    // window losing it, and a command's key, which may take the field's
+    // panel away with the focus still in it ([`flush`]). Escape is the
+    // one way out that restores the value; the Viewport reads that key
+    // before a panel draws, so the focus router is asked too.
+    let escaped = ui.input(|i| i.key_pressed(Key::Escape))
+        || crate::shell::focus::escape_left_widget(ui.ctx());
+    let window_left = window_left(ui);
+    let flushed = flush_asked(ui.ctx());
     let mut committed = None;
-    if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(buffer_id, (text.clone(), seed)));
-    }
-    if response.lost_focus() {
-        ui.data_mut(|d| d.remove::<(String, String)>(buffer_id));
+    if response.has_focus() && !window_left && !flushed {
+        ui.data_mut(|d| {
+            d.insert_temp(
+                buffer_id,
+                Draft {
+                    typed: text.clone(),
+                    seed,
+                    frame_nr,
+                },
+            );
+        });
+    } else if draft.is_some() {
+        ui.data_mut(|d| d.remove::<Draft>(buffer_id));
         if !escaped && text != spec.value {
             committed = Some(text);
+            if flushed {
+                ui.data_mut(|d| d.insert_temp(flushed_id(), frame_nr));
+            }
         }
     }
 

@@ -619,8 +619,9 @@ Controls:
   in tabular figures, the unit right-aligned in text.secondary inside the
   outline. Typing `0.5 in` in a mm project converts on leave and the field
   shows `12.7 mm`; the unit never changes with the input. Validation on
-  leave (Tab, Enter, click elsewhere); Escape reverts. One undo step per
-  leave.
+  leave, by any means (Tab, Shift+Tab, Enter, a click anywhere in the
+  window, a command's key, the window losing the focus: functional 52);
+  only Escape reverts. One undo step per leave.
 - **Tool-derived placeholder.** When the file holds `null`, the field is
   empty and shows `tool's: 3 mm` in text.disabled; the unit suffix stays.
   A `rotate-ccw` quiet icon button (16 px) appears inside the field's

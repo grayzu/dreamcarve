@@ -445,7 +445,7 @@ fn rename_field(
         || crate::shell::focus::escape_left_widget(ui.ctx());
     if escaped && !fresh {
         Renamed::Reverted
-    } else if edit.lost_focus() && !fresh {
+    } else if (edit.lost_focus() || crate::widgets::unit_field::left_with_focus(ui)) && !fresh {
         Renamed::Committed(text)
     } else {
         Renamed::Typing(text)

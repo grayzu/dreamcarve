@@ -274,7 +274,13 @@ folder are app preferences, kept outside the project.
     in curly quotes), *Reorder
     operations*, *Import plaque.dxf*, *Place 4 tabs*. The menu shows the
     name of the step it would undo. Typing in a field is one step when the
-    field is left, not one per keystroke; dragging is one step when the
+    field is left, not one per keystroke. Leaving a field by any means
+    writes what was typed: Tab or Shift+Tab, Enter, a click anywhere in
+    the window (another field, a label, the Viewport, a menu, another
+    step), a command's key (Save then saves the typed value, and a step's
+    key does not lose it), and the window losing the focus. Escape is the
+    one way out that discards it. Text the field refuses stays out of the
+    project and the field shows why. Dragging is one step when the
     mouse is released. Selection, zoom, pan, panel sizes and toolpath
     visibility are not project changes and are not undone. An instance's
     `visible` and `locked` flags are project data (they are saved) and are

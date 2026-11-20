@@ -1414,7 +1414,14 @@ impl Shell {
                 }
             }
         } else if !sheet_open {
-            actions.extend(shortcuts(ctx, &self.app));
+            let keyed = shortcuts(ctx, &self.app);
+            if !keyed.is_empty() {
+                // A command's key leaves the field being typed in, which
+                // writes its text first (capability 52): Save saves it,
+                // and a step's key does not lose it with the panel.
+                crate::widgets::unit_field::flush(ctx);
+            }
+            actions.extend(keyed);
             actions.extend(viewport::keys(ctx, &self.app));
         }
     }
@@ -2129,6 +2136,8 @@ impl eframe::App for Shell {
         self.disarm_hidden_picks(&ctx);
         let mut actions = Vec::new();
         self.read_input(&ctx, &mut actions);
+        // The keys' actions come first in the list.
+        let keyed = actions.len();
         // The export's plan is built while its step shows, off this
         // thread; look again soon while it is on its way.
         if self.step == Step::Export
@@ -2297,6 +2306,12 @@ impl eframe::App for Shell {
         // In target editing only the mode's own actions run, whatever a
         // panel or a key raised (capability 67).
         let editing_targets = self.app.target_editing().is_some();
+        // A field a command's key made write its text is written before
+        // the command runs: Undo then takes the typed value back, and
+        // Save saves it.
+        if crate::widgets::unit_field::flushed(&ctx) {
+            actions.rotate_left(keyed);
+        }
         for action in actions {
             if !editing_targets || action.in_target_editing() {
                 self.run(&ctx, action);

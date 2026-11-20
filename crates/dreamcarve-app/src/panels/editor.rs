@@ -347,7 +347,9 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, colour: usize, selected: bool, out: &mut Vec
                 s.store(ui.ctx(), field_id);
             }
         }
-        if edit.lost_focus() && !fresh {
+        // Left by any means, the name is written (capability 52).
+        let left = edit.lost_focus() || crate::widgets::unit_field::left_with_focus(ui);
+        if left && !fresh {
             ui.data_mut(|d| d.remove::<(String, bool)>(field_id));
             // The Viewport takes the Escape key before the editor draws,
             // and the focus router says when it left a field.
