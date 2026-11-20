@@ -196,10 +196,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
                         let wants = opening.contains(&group)
                             || focus.is_some_and(|key| rows.iter().any(|r| r.key == key));
                         if !open && wants {
-                            out.push(Action::SetSection {
-                                name: name.clone(),
-                                open: true,
-                            });
+                            out.push(Action::RevealSection(name.clone()));
                         }
                         let summary = if open {
                             String::new()

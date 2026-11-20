@@ -74,6 +74,9 @@ pub struct App {
     /// What opening the file (its migration) or importing into it noted,
     /// for the Warnings panel; cleared when the file is saved.
     notes: Vec<String>,
+    /// The app's own hints ([`App::hints`]): the session's, kept whatever
+    /// project is open.
+    hints: Vec<String>,
     /// Where each value is in the file's text, as opened or last saved,
     /// so a finding's line names its position as `check`'s does.
     source_map: Option<SourceMap>,
@@ -127,6 +130,7 @@ impl App {
             findings: Findings::default(),
             listed: Vec::new(),
             notes: Vec::new(),
+            hints: Vec::new(),
             source_map: None,
             last_resets: Vec::new(),
             scene: Scene::default(),
@@ -458,6 +462,24 @@ impl App {
     #[must_use]
     pub fn notes(&self) -> &[String] {
         &self.notes
+    }
+
+    /// The app's own hints, for the Warnings drawer: what the session has
+    /// to say that is not about the project and that `check` does not
+    /// print (the preferences file could not be read and defaults are in
+    /// use). Each is a row of the hint tier, first among the project's,
+    /// and counted with the hints; *Copy*, which is `check`'s text,
+    /// leaves them out ([`crate::warnings::copy_text`]). They are the
+    /// shell's to set and to take away, and stay through *Open* and
+    /// *New*.
+    #[must_use]
+    pub fn hints(&self) -> &[String] {
+        &self.hints
+    }
+
+    /// Sets the app's own hints ([`App::hints`]); none takes them away.
+    pub fn set_hints(&mut self, hints: Vec<String>) {
+        self.hints = hints;
     }
 
     /// Adds a note to the Warnings panel: an importer's warning about what

@@ -16,6 +16,7 @@ whether each exists:
 ```text
 Config directory: /Users/you/Library/Application Support/dreamcarve (exists)
 Config file:      /Users/you/Library/Application Support/dreamcarve/config.toml (exists)
+App preferences:  /Users/you/Library/Application Support/dreamcarve/gui.toml (exists)
 Tool library:     /Users/you/Library/Application Support/dreamcarve/tools.json (not found)
 ```
 
@@ -90,8 +91,8 @@ is in a second file, `gui.toml`, in the same config directory:
 | Linux and others | `$XDG_CONFIG_HOME/dreamcarve/gui.toml`, or `~/.config/dreamcarve/gui.toml` when `XDG_CONFIG_HOME` is not set |
 | Windows | `%APPDATA%\dreamcarve\gui.toml` |
 
-`DREAMCARVE_CONFIG_DIR` moves it with everything else. `dreamcarve
-config path` does not list it.
+`DREAMCARVE_CONFIG_DIR` moves it with everything else, and `dreamcarve
+config path` lists it as **App preferences**.
 
 The app writes the file itself, when a preference changes and when it
 closes. You never need to edit it. This is what it holds:
@@ -155,6 +156,25 @@ The app is also forgiving about this file, where it is strict about
 `config.toml`. A `gui.toml` it cannot read, or one written by another
 version of DreamCarve with a key this one does not know, never stops the
 app from starting: what cannot be read is left at its default.
+
+**A file it cannot read at all**, because of a typo from an edit by hand
+or a value that is not one it takes, puts every preference at its
+default, and the app says so: once in the status bar when it starts, and
+as a hint in the Warnings drawer, with the file and the line.
+
+```text
+Defaults are in use: the preferences file could not be read
+(/Users/you/Library/Application Support/dreamcarve/gui.toml:2:8: unclosed
+table, expected `]`). It is left as it is until you change a preference.
+```
+
+The app does not write over that file by itself, so you can close the
+app, mend the line and start again with your preferences back. Opening a
+project, moving the window, or a group the app opens to show you a
+warning does not touch it. The first preference you change yourself (the
+appearance, a **Layers** tick, a group you open or close, the width of a
+panel) does: the file is then written whole from what the app holds, and
+the hint goes.
 
 ### Appearance
 

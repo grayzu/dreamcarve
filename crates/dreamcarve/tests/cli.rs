@@ -5291,19 +5291,25 @@ fn plaque_one_program_changes_tool_after_the_engrave() {
     );
 }
 
-/// `config path` prints the config directory, the config file and the
-/// tool library file, each with whether it exists, so a user can find
-/// them (design, "Tool library CLI").
+/// `config path` prints the config directory and every file DreamCarve
+/// keeps in it, each with whether it exists, so a user can find them
+/// (design, "Tool library CLI"): the config file, the app's preferences
+/// (`gui.toml`, which only the app reads and writes; phase 4's open
+/// question 11), which it left out, and the tool library.
 #[test]
 fn config_path_prints_locations() {
     let dir = work_dir("config_path_prints_locations");
     let config = config_dir(&dir);
-    let expected = |state: &str| {
+    let expected = |state: &str, prefs: &str| {
         vec![
             format!("Config directory: {} ({state})", config.display()),
             format!(
                 "Config file:      {} ({state})",
                 config.join("config.toml").display()
+            ),
+            format!(
+                "App preferences:  {} ({prefs})",
+                config.join("gui.toml").display()
             ),
             format!(
                 "Tool library:     {} ({state})",
@@ -5314,7 +5320,7 @@ fn config_path_prints_locations() {
     let out = run(&dir, &["config", "path"]);
     assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
     let lines: Vec<String> = stdout(&out).lines().map(str::to_owned).collect();
-    assert_eq!(lines, expected("not found"));
+    assert_eq!(lines, expected("not found", "not found"));
 
     write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
     // `tools import` creates the library file on first write.
@@ -5326,7 +5332,17 @@ fn config_path_prints_locations() {
     let out = run(&dir, &["config", "path"]);
     assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
     let lines: Vec<String> = stdout(&out).lines().map(str::to_owned).collect();
-    assert_eq!(lines, expected("exists"));
+    assert_eq!(
+        lines,
+        expected("exists", "not found"),
+        "no command line writes gui.toml"
+    );
+
+    // The app writes it; here, by hand.
+    std::fs::write(config.join("gui.toml"), "theme = \"light\"\n").unwrap();
+    let out = run(&dir, &["config", "path"]);
+    let lines: Vec<String> = stdout(&out).lines().map(str::to_owned).collect();
+    assert_eq!(lines, expected("exists", "exists"));
 }
 
 /// The first line of `config path`, the config directory, run with the

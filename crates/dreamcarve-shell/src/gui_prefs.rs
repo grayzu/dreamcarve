@@ -13,6 +13,10 @@
 //! this build does not know (an older or newer DreamCarve wrote it), is
 //! the defaults plus a one-line note for the Warnings panel, never a
 //! refusal to start: a preference is not worth losing the session over.
+//! A file that is there and could not be used at all is reported as such
+//! ([`Loaded::unread`]), so the app can say so and leave it alone: it may
+//! be one typo away from the user's settings, and writing the defaults
+//! over it would lose them.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -229,6 +233,25 @@ pub struct Loaded {
     /// One line per problem with the file, for the Warnings panel: a key
     /// this build does not know, or a file that did not parse.
     pub notes: Vec<String>,
+    /// Why the file is there and none of it is in use: it could not be
+    /// read, or it did not parse (a syntax error, a value of the wrong
+    /// kind), as `path:line:column: message`, the note of it. `prefs` are
+    /// then the defaults, and the caller must not write them over the
+    /// file until the user changes a preference. `None` for a missing
+    /// file and for one that was read, unknown keys or not.
+    pub unread: Option<String>,
+}
+
+impl Loaded {
+    /// The defaults for a file that could not be used, for the reason
+    /// `why`.
+    fn unread(why: String) -> Self {
+        Self {
+            prefs: GuiPrefs::default(),
+            notes: vec![why.clone()],
+            unread: Some(why),
+        }
+    }
 }
 
 /// Reads `gui.toml` of `paths`. A missing file is the defaults with no
@@ -247,10 +270,7 @@ pub fn load(paths: &Paths) -> Loaded {
         // A read error's message is `cannot read <path>: <why>`, the note
         // as it always was; a file past the size limit says so the same
         // way.
-        Err(e) => Loaded {
-            prefs: GuiPrefs::default(),
-            notes: vec![e.to_string()],
-        },
+        Err(e) => Loaded::unread(e.to_string()),
     }
 }
 
@@ -263,13 +283,7 @@ pub fn parse(text: &str, path: &Path) -> Loaded {
     let mut notes = Vec::new();
     let table: toml::Table = match toml::from_str(text) {
         Ok(table) => table,
-        Err(e) => {
-            notes.push(describe_error(text, path, &e));
-            return Loaded {
-                prefs: GuiPrefs::default(),
-                notes,
-            };
-        }
+        Err(e) => return Loaded::unread(describe_error(text, path, &e)),
     };
     for key in unknown_keys(&table) {
         let at = key_position(text, &key)
@@ -279,14 +293,19 @@ pub fn parse(text: &str, path: &Path) -> Loaded {
             path.display()
         ));
     }
-    let prefs = match table.try_into::<GuiPrefs>() {
-        Ok(prefs) => prefs,
+    let (prefs, unread) = match table.try_into::<GuiPrefs>() {
+        Ok(prefs) => (prefs, None),
         Err(e) => {
-            notes.push(describe_error(text, path, &e));
-            GuiPrefs::default()
+            let why = describe_error(text, path, &e);
+            notes.push(why.clone());
+            (GuiPrefs::default(), Some(why))
         }
     };
-    Loaded { prefs, notes }
+    Loaded {
+        prefs,
+        notes,
+        unread,
+    }
 }
 
 /// A TOML error as `path:line:column: message`, as `config.toml`'s are
@@ -492,6 +511,7 @@ mod tests {
         assert_eq!(loaded.prefs.theme, Theme::Light);
         assert!((loaded.prefs.panels.left_width - 250.0).abs() < 1e-9);
         assert_eq!(loaded.notes.len(), 2, "{:?}", loaded.notes);
+        assert_eq!(loaded.unread, None, "the file was read: its values apply");
         assert!(
             loaded.notes[0].starts_with("/somewhere/gui.toml:2:1: unknown key `future_key`"),
             "{}",
@@ -512,10 +532,40 @@ mod tests {
             "{}",
             loaded.notes[0]
         );
+        assert_eq!(
+            loaded.unread.as_ref(),
+            loaded.notes.first(),
+            "it did not parse: the caller is told, with the file and the line"
+        );
         // A value of the wrong kind: the defaults, with the reason.
         let loaded = parse("theme = \"sepia\"\n", path);
         assert_eq!(loaded.prefs, GuiPrefs::default());
         assert_eq!(loaded.notes.len(), 1, "{:?}", loaded.notes);
         assert!(loaded.notes[0].contains("sepia"), "{}", loaded.notes[0]);
+        assert_eq!(loaded.unread.as_ref(), loaded.notes.first());
+    }
+
+    /// Slice D9: `load` tells a file that is there and could not be used
+    /// (`unread`, so the app keeps its hands off it) from one that is
+    /// missing, which is the defaults with nothing to say, and from one
+    /// that was read.
+    #[test]
+    fn a_file_that_could_not_be_used_is_reported_as_unread() {
+        let dir = scratch("unread");
+        let paths = Paths::in_dir(dir.join("config"));
+        assert_eq!(load(&paths).unread, None, "missing");
+        std::fs::create_dir_all(&paths.dir).unwrap();
+        std::fs::write(&paths.gui_prefs_file, "theme = \"light\"\n").unwrap();
+        let read = load(&paths);
+        assert_eq!((read.unread, read.prefs.theme), (None, Theme::Light));
+        std::fs::write(&paths.gui_prefs_file, "theme = \"light\"\n[panels\n").unwrap();
+        let damaged = load(&paths);
+        assert_eq!(damaged.prefs, GuiPrefs::default());
+        let why = damaged.unread.expect("a damaged file is unread");
+        assert!(
+            why.starts_with(&format!("{}:2:", paths.gui_prefs_file.display())),
+            "it names the file and the line: {why}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -95,6 +95,8 @@ pub struct Row {
     pub shape: Option<ShapeRef>,
     /// The whole line as `check` prints it; a carve note's lines, one
     /// per board, joined by newlines. `check` labels a hint `warning`.
+    /// Empty for one of the app's own hints ([`App::hints`]), which
+    /// `check` does not print.
     pub line: String,
     /// The row's name for assistive tools: what the drawer shows of it,
     /// in `check`'s order but in the drawer's words, `hint: unused_tool:
@@ -245,11 +247,23 @@ fn row_name(strings: &Strings, level: Level, code: Option<&str>, message: &str) 
     }
 }
 
-/// Every row in `check`'s order: the notes, the errors, the warnings
-/// (hints among them), then the carve notes.
+/// Every row: the app's own hints ([`App::hints`]), then `check`'s in its
+/// order: the notes, the errors, the warnings (hints among them), then
+/// the carve notes.
 fn rows(app: &App) -> Vec<Row> {
     let location = Location::of(app);
     let strings = app.strings();
+    let own = app.hints().iter().map(|hint| Row {
+        level: Level::Hint,
+        code: None,
+        message: hint.clone(),
+        field: None,
+        op: None,
+        shape: None,
+        line: String::new(),
+        name: row_name(strings, Level::Hint, None, hint),
+        note: None,
+    });
     let notes = app.notes().iter().map(|note| Row {
         level: Level::Note,
         code: None,
@@ -294,7 +308,7 @@ fn rows(app: &App) -> Vec<Row> {
             .map(|facts| carve_row(app.strings(), facts))
             .collect()
     };
-    notes.chain(found).chain(carves).collect()
+    own.chain(notes).chain(found).chain(carves).collect()
 }
 
 /// The carve summary of operation `op` (capability 76a), from the
@@ -590,7 +604,7 @@ pub fn blocking(app: &App) -> Vec<Row> {
 }
 
 /// The lines `check` prints for the project as it stands, in its order,
-/// without its count line.
+/// without its count line. The app's own hints have none.
 #[must_use]
 pub fn lines(app: &App) -> Vec<String> {
     rows(app)
@@ -617,7 +631,8 @@ pub fn counts(app: &App) -> Counts {
 
 /// What *Copy* puts on the clipboard (capability 76): [`lines`], then
 /// `check`'s count line (`plaque.dcv: 0 error(s), 6 warning(s)`, hints
-/// counted as warnings as `check` counts them), each ending in a newline.
+/// counted as warnings as `check` counts them, the app's own left out),
+/// each ending in a newline.
 /// It is `check`'s text and not the drawer's: `check` has no hint tier,
 /// so a row the drawer calls a hint is a `warning:` line here
 /// (acceptance 82), which the button's tooltip says.
@@ -629,11 +644,13 @@ pub fn copy_text(app: &App) -> String {
         text.push_str(&line);
         text.push('\n');
     }
+    // The app's own hints are not `check`'s to count.
+    let hints = counts.hints.saturating_sub(app.hints().len());
     text.push_str(&format!(
         "{}: {} error(s), {} warning(s)\n",
         app.file_name(),
         counts.errors,
-        counts.warnings + counts.hints
+        counts.warnings + hints
     ));
     text
 }

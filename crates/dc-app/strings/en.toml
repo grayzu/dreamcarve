@@ -376,6 +376,7 @@ reading_picture = "Reading {name}…"
 dropped_unknown = "{name} is not a project (.dcv), a drawing (.svg, .dxf) or a picture (.png, .jpg, .jpeg)"
 new_from_drawing = "Made a new project from {name}"
 prefs_failed = "Cannot save preferences: {reason}"
+prefs_unread = "Defaults are in use: the preferences file could not be read ({reason}). It is left as it is until you change a preference."
 about = "DreamCarve {version}"
 
 [app.viewport]

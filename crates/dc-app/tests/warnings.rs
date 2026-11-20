@@ -560,3 +560,47 @@ fn copy_includes_notes_as_check_prints_them() {
         );
     }
 }
+
+/// Slice D9 (capability 76): the app's own hints, what the session has to
+/// say that is not about the project (a preferences file it could not
+/// read), are rows of the drawer's hint tier, first in the project's
+/// group, and counted with the hints. They are not `check`'s: *Copy*,
+/// which must equal `check` on the file, neither lists nor counts them.
+#[test]
+fn the_apps_own_hint_is_listed_and_counted_but_not_copied() {
+    let mut harness = quick_start("plaque");
+    let before = warnings::counts(&harness.app);
+    let copied = warnings::copy_text(&harness.app);
+    assert_eq!(before.hints, 1, "the plaque's unused tool");
+
+    let said = "gui.toml:2:8: could not be read; defaults are in use";
+    harness.app.set_hints(vec![said.to_owned()]);
+    let after = warnings::counts(&harness.app);
+    assert_eq!(after.hints, 2);
+    assert_eq!(
+        (after.errors, after.warnings),
+        (before.errors, before.warnings)
+    );
+    let rows: Vec<warnings::Row> = warnings::panel(&harness.app)
+        .into_iter()
+        .filter(|group| group.op.is_none())
+        .flat_map(|group| group.rows)
+        .collect();
+    let row = &rows[0];
+    assert_eq!((row.level, row.message.as_str()), (Level::Hint, said));
+    assert_eq!(row.name, format!("hint: {said}"));
+    assert_eq!((row.code.as_ref(), row.selection()), (None, None));
+    assert_eq!(
+        warnings::copy_text(&harness.app),
+        copied,
+        "Copy is check's text, with or without it"
+    );
+    assert!(
+        !warnings::lines(&harness.app)
+            .iter()
+            .any(|l| l.contains(said))
+    );
+
+    harness.app.set_hints(Vec::new());
+    assert_eq!(warnings::counts(&harness.app), before);
+}

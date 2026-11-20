@@ -353,6 +353,10 @@ pub(crate) enum Action {
     /// units, stock and origin are (capability 60).
     ShowProject,
     /// A panel section opened or closed, kept in `gui.toml`.
+    /// A section opened by the app, to show what it holds (a group with
+    /// a located finding, the editor's): remembered as
+    /// [`Action::SetSection`] is, but not the user changing a preference.
+    RevealSection(String),
     SetSection {
         name: String,
         open: bool,
@@ -591,6 +595,17 @@ pub struct Shell {
     note_target: Option<dc_project::OperationId>,
     /// Where the keyboard focus was after the last frame (#548).
     focus: focus::Shown,
+    /// Whether `gui.toml` is there and could not be read
+    /// (`gui_prefs::Loaded::unread`), and the user has changed no
+    /// preference since: the defaults are in use, the Warnings drawer
+    /// says so as a hint, and nothing is written over the file, which may
+    /// be a typo away from the user's settings ([`Shell::persist`]).
+    prefs_held: bool,
+    /// Whether the user changed a layout preference this session (a
+    /// section's header, the step panel's toggle, a panel's width
+    /// dragged): what the record's own difference cannot tell from the
+    /// app's bookkeeping.
+    prefs_touched: bool,
 }
 
 impl std::fmt::Debug for Shell {
@@ -618,10 +633,13 @@ impl Shell {
         options: Options,
     ) -> Result<Self, dc_app::CommandError> {
         let mut message = None;
+        // Why the preferences file is there and not in use, when it is.
+        let mut unread = None;
         let written = match &options.config {
             Some(paths) => {
                 let loaded = gui_prefs::load(paths);
                 message = loaded.notes.first().cloned();
+                unread = loaded.unread;
                 loaded.prefs
             }
             None => GuiPrefs::default(),
@@ -685,10 +703,23 @@ impl Shell {
             warnings_open: false,
             note_target: None,
             focus: focus::Shown::default(),
+            prefs_held: unread.is_some(),
+            prefs_touched: false,
         };
         shell.viewport.fit_on_next_frame();
-        if let Some(path) = options.open {
-            shell.open_path(&path);
+        let opened = options.open.is_none_or(|path| shell.open_path(&path));
+        // Said once, where it is seen: the status bar's message, which a
+        // project opened at start would replace with *Opened …* (a file
+        // that did not open keeps its own message), and a hint in the
+        // Warnings drawer for as long as the file is left alone.
+        if let Some(reason) = unread {
+            let said = shell
+                .strings()
+                .fmt(StrKey::AppMessagePrefsUnread, &[("reason", &reason)]);
+            if opened {
+                shell.message = Some(said.clone());
+            }
+            shell.app.set_hints(vec![said]);
         }
         Ok(shell)
     }
@@ -899,7 +930,9 @@ impl Shell {
                     self.open_path(&path);
                 }
             }
-            Pending::OpenPath(path) => self.open_path(&path),
+            Pending::OpenPath(path) => {
+                self.open_path(&path);
+            }
             Pending::Example(example) => self.open_example(example),
             Pending::NewFromDrawing => {
                 let title = self
@@ -923,16 +956,22 @@ impl Shell {
         }
     }
 
-    /// Opens the project at `path`, or says why not.
-    fn open_path(&mut self, path: &Path) {
+    /// Opens the project at `path`, or says why not; whether it opened.
+    fn open_path(&mut self, path: &Path) -> bool {
         let result = files::read(path).and_then(|bytes| {
             self.app
                 .open(&bytes, Some(path.to_path_buf()))
                 .map_err(|e| e.to_string())
         });
         match result {
-            Ok(opened) => self.opened(path, &opened),
-            Err(reason) => self.open_failed(path, &reason),
+            Ok(opened) => {
+                self.opened(path, &opened);
+                true
+            }
+            Err(reason) => {
+                self.open_failed(path, &reason);
+                false
+            }
         }
     }
 
@@ -1426,6 +1465,7 @@ impl Shell {
             Action::ToggleStepPanel => {
                 let panels = &mut self.app.prefs_mut().panels;
                 panels.left_open = !panels.left_open;
+                self.prefs_touched = true;
             }
             Action::CloseInspector => match self.step {
                 Step::Design => self.app.select(dc_app::Selection::Nothing),
@@ -1469,6 +1509,10 @@ impl Shell {
             Action::ShowProject => self.go_to(Step::Stock),
             Action::SetSection { name, open } => {
                 self.app.prefs_mut().sections.insert(name, open);
+                self.prefs_touched = true;
+            }
+            Action::RevealSection(name) => {
+                self.app.prefs_mut().sections.insert(name, true);
             }
             Action::Refused(reason) => self.message = Some(reason),
             Action::OpenLibrary => {
@@ -1833,6 +1877,13 @@ impl Shell {
 
     /// Writes `gui.toml` when a preference changed. The window's place is
     /// written on exit only, since it changes with every move.
+    ///
+    /// While the file on disk is one that could not be read
+    /// ([`Shell::prefs_held`]) nothing is written until the user changes
+    /// a preference: the recent files, the window's place and the
+    /// sections and panels the app opens by itself are bookkeeping, and
+    /// must not replace a file the user may yet mend. Once they do change
+    /// one, the file is theirs to overwrite, and the drawer's hint goes.
     fn persist(&mut self, on_exit: bool) {
         let mut file = files::prefs_to_file(self.app.prefs());
         if !on_exit {
@@ -1840,6 +1891,13 @@ impl Shell {
         }
         if file == self.written {
             return;
+        }
+        if self.prefs_held {
+            if !(self.prefs_touched || user_set(&file) != user_set(&self.written)) {
+                return;
+            }
+            self.prefs_held = false;
+            self.app.set_hints(Vec::new());
         }
         if let Some(paths) = &self.config
             && let Err(e) = gui_prefs::save(paths, &file)
@@ -1852,6 +1910,22 @@ impl Shell {
         }
         self.written = file;
     }
+}
+
+/// The part of `gui.toml`'s record only the user's own choices change:
+/// the appearance, what the Viewport draws and how it colours it, the
+/// last tab size, the Tool Library's units and where each project
+/// exports. The rest (the recent files, the window's place, the panels
+/// and the sections) the app also changes by itself.
+fn user_set(file: &GuiPrefs) -> impl PartialEq + '_ {
+    (
+        file.theme,
+        file.visibility,
+        file.colour,
+        file.tab,
+        file.library_units,
+        &file.export_dirs,
+    )
 }
 
 /// The coaster as `dreamcarve init coaster.svg` writes it: the stock round
@@ -2195,12 +2269,19 @@ impl eframe::App for Shell {
         self.focus = focus::finish(ui, regions);
 
         // The widths the user dragged the panels to are preferences. The
-        // Export step's wider panel is its own, kept for the session.
+        // Export step's wider panel is its own, kept for the session. A
+        // width that moves with the pointer down is the user's doing; one
+        // the window's size gave is not.
+        let dragging = ctx.input(|i| i.pointer.primary_down());
+        let before = self.app.prefs().panels;
         if let Some(shown) = step_panel.filter(|shown| !shown.export) {
             self.app.prefs_mut().panels.left_width = f64::from(shown.width);
         }
         if let Some(shown) = docked {
             self.app.prefs_mut().panels.right_width = f64::from(shown.width);
+        }
+        if dragging && self.app.prefs().panels != before {
+            self.prefs_touched = true;
         }
         self.layout = Layout {
             rail,

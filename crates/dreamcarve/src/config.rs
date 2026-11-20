@@ -37,13 +37,17 @@ pub fn run(command: &ConfigCommand) -> Result<ExitCode, Failure> {
     }
 }
 
-/// `config path`: the directory and both files, each with whether it
-/// exists, so a user can find or create them.
+/// `config path`: the directory and every file DreamCarve keeps in it,
+/// each with whether it exists, so a user can find or create them. The
+/// app's preferences (`gui.toml`) are listed too: no command reads them,
+/// and this is where a user is sent to find the file when the app says it
+/// could not read it.
 fn path() -> Result<ExitCode, Failure> {
     let paths = Paths::from_env()?;
     for (label, path) in [
         ("Config directory:", &paths.dir),
         ("Config file:", &paths.config_file),
+        ("App preferences:", &paths.gui_prefs_file),
         ("Tool library:", &paths.library_file),
     ] {
         let state = if path.exists() { "exists" } else { "not found" };

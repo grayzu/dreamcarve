@@ -373,7 +373,16 @@ way; phase 8 keys them, and the scan does not read `dc-app`.
 `gui.toml` beside `config.toml` (functional Q11), read at start and written
 on change and on exit by `dreamcarve-shell`; `dc-app` holds the record. A
 missing or unreadable file means defaults and a one-line note in the
-Warnings panel, never a refusal to start.
+Warnings panel, never a refusal to start. A file that is there and could
+not be used (`gui_prefs::Loaded::unread`: it did not parse, or a value is
+of the wrong kind) is said once in the status bar's message and listed as
+a hint of the app's own in the drawer (`App::hints`, which *Copy* leaves
+out), with the file and the line, and the shell holds its writes
+(`Shell::prefs_held`) until the user changes a preference: a difference
+in the appearance, the toolpath display, the tab size, the library units
+or an export folder, or a section's header, the step panel's toggle or a
+panel's width dragged. The recent files, the window's place and the
+sections and panels the app opens by itself never replace such a file.
 
 ## Architecture
 

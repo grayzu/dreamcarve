@@ -174,7 +174,16 @@ folder are app preferences, kept outside the project.
     by dragging the gap at their inner edge; their widths, and whether
     the step panel shows (View ▸ *Step Panel*), are remembered between
     sessions in the app's preferences file, `gui.toml` beside
-    `config.toml` in the user config directory (open question 11). The
+    `config.toml` in the user config directory (open question 11), which
+    `dreamcarve config path` lists with the other files there. A
+    `gui.toml` that is there and cannot be read (a syntax error, a value
+    of the wrong kind) is the defaults, and the app says so once, in the
+    status bar's message at start (also when a project is opened at
+    start) and as a hint in the Warnings drawer, naming the file and the
+    line; the hint is the app's own, so *Copy* (76) leaves it out. The
+    app writes nothing over such a file until the user changes a
+    preference: the recent files, the window's place and what the app
+    opens by itself do not count. The
     window is dark until the user chooses Light or System (following the
     OS) from View ▸ Appearance or the rail, so both palettes ship (open
     question 9). Minimum usable window: 1280 × 768, which holds the rail,
