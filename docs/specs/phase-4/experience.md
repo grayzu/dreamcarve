@@ -756,12 +756,23 @@ Controls:
   (`inlay_male_board_unset`'s message, not its code). The code appears in
   the Warnings drawer, not here. One message per field; errors win over
   warnings.
-- **Help affordance.** The wireframes' "?" circle is replaced: hovering a
-  field's *label* for 500 ms shows the chapter's one-sentence definition as
-  a tooltip, with the `.dcv` field name in JetBrains Mono on a second line;
-  the label's underline (1 px dotted, text.disabled) appears on hover to
-  say it has help. `circle-help` is kept only in sheet headers as a link to
-  the chapter.
+- **Help affordance.** The wireframes' "?" circle is replaced. Every
+  field of the app has help: what it does, its unit, the values it takes
+  (validation's own limits) and what leaving it empty means. It shows in
+  two places. Hovering a field's *label* for 500 ms shows it as a
+  tooltip, with the `.dcv` field name in JetBrains Mono on a second
+  line; the label's underline (1 px dotted, text.disabled) appears on
+  hover to say it has help; hovering the *field* shows the same help (a
+  required field's tooltip is the file's message, with the help as a
+  second tooltip under it). And while a field has the keyboard, its help
+  is the **help line** at the foot of the panel that holds it, the step
+  panel's, the Inspector's or a sheet's: a hairline, then `info` 16 px
+  in text.secondary, the field's label in 13-px Medium and the help in
+  12-px text.secondary, wrapped to the panel, 10 px above and below. The
+  line is pinned: the panel's content scrolls above it, and it takes its
+  room only while a field of that panel is focused, so a panel with no
+  field in use loses nothing. `circle-help` is kept only in sheet
+  headers as a link to the chapter.
 - **Rail button.** 56 × 52, a 10-px radius: a 24-px icon over an 11-px
   label, the state mark at the icon's top right (section 2, "Rail").
   The current step's is filled with `accent.soft`, icon and label in

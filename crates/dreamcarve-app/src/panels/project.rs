@@ -219,9 +219,11 @@ fn units_row(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
             .position(|u| *u == cx.project.display_units)
             .unwrap_or(0);
         let width = ui.available_width();
-        if let Some(units) = segmented(ui, Id::unique("project.units"), &labels, selected, width)
-            .and_then(|n| OPTIONS.get(n))
-        {
+        let shown =
+            ui.scope(|ui| segmented(ui, Id::unique("project.units"), &labels, selected, width));
+        let _ =
+            crate::widgets::help::control(ui, shown.response, cx.strings.get(StrKey::ProjectUnits));
+        if let Some(units) = shown.inner.and_then(|n| OPTIONS.get(n)) {
             out.push(Action::run(Command::SetDisplayUnits(*units)));
         }
     });
@@ -410,6 +412,7 @@ fn dropdown<T: Copy + PartialEq>(
         })
         .response
         .accessible_name(name);
+    let response = crate::widgets::help::control(ui, response, name);
     (picked.filter(|p| *p != current), response)
 }
 
@@ -520,13 +523,21 @@ fn origin(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
                 ];
                 let selected = usize::from(cx.project.origin.z == OriginZ::StockBottom);
                 let width = ui.available_width();
-                let picked = segmented(
+                let shown = ui.scope(|ui| {
+                    segmented(
+                        ui,
+                        Id::unique("project.origin.z"),
+                        &options,
+                        selected,
+                        width,
+                    )
+                });
+                let _ = crate::widgets::help::control(
                     ui,
-                    Id::unique("project.origin.z"),
-                    &options,
-                    selected,
-                    width,
+                    shown.response,
+                    cx.strings.get(Choice::OriginZ.label()),
                 );
+                let picked = shown.inner;
                 let z = match picked {
                     Some(0) => Some(OriginZ::StockTop),
                     Some(_) => Some(OriginZ::StockBottom),
@@ -696,7 +707,8 @@ fn controller(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Ac
     choice_row(ui, cx, Choice::Post, |ui| {
         let width = ui.available_width();
         let mut picked = None;
-        egui::ComboBox::from_id_salt("project.post.id")
+        let name = cx.strings.get(Choice::Post.label());
+        let combo = egui::ComboBox::from_id_salt("project.post.id")
             .icon(crate::widgets::icon::combo_chevron)
             .truncate()
             .selected_text(project::post_label(cx.strings, cx.project))
@@ -709,7 +721,8 @@ fn controller(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Ac
                 }
             })
             .response
-            .accessible_name(cx.strings.get(Choice::Post.label()));
+            .accessible_name(name);
+        let _ = crate::widgets::help::control(ui, combo, name);
         if let Some(id) = picked {
             out.extend(project::switch_post(cx.project, id).map(Action::run));
         }
@@ -792,12 +805,11 @@ fn canned_cycles(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
     choice_row(ui, cx, Choice::CannedCycles, |ui| {
         let mut checked = on;
         let name = cx.strings.get(Choice::CannedCycles.label());
-        if ui
+        let ticked = ui
             .scope(|ui| checkbox(ui, "project.canned_cycles", &mut checked, ""))
             .inner
-            .accessible_name(name)
-            .changed()
-        {
+            .accessible_name(name);
+        if crate::widgets::help::control(ui, ticked, name).changed() {
             out.extend(project::set_canned_cycles(cx.project, checked).map(Action::run));
         }
     });

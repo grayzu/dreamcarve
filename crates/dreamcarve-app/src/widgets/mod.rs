@@ -11,6 +11,7 @@ pub(crate) mod button;
 pub(crate) mod card;
 pub(crate) mod checkbox;
 pub(crate) mod chip;
+pub(crate) mod help;
 pub(crate) mod icon;
 pub(crate) mod op_glyph;
 pub(crate) mod row;

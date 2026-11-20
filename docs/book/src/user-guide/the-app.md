@@ -113,8 +113,14 @@ is, a tab with a click on its mark.
 ## Editing
 
 The app has no OK or Cancel buttons. A field applies its value when you
-leave it, with Enter, Tab or a click elsewhere; Escape leaves it and
-keeps the old value.
+leave it, however you leave it: Enter, Tab, a click anywhere else in the
+window, a menu, another step, or switching to another program. Only
+Escape leaves it and keeps the old value.
+
+Every field has help. Hold the pointer on a field or on its label to
+read what it does, its unit, the values it takes and what leaving it
+empty means. While you type in a field, the same help is on a line at
+the foot of the panel the field is in.
 
 Every change to the project is one step for **Undo**, and the **Edit**
 menu names the step it would take back: *Undo Move “square”*, *Undo Set

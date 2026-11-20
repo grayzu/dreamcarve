@@ -665,8 +665,17 @@ folder are app preferences, kept outside the project.
     them. Every field shows its
     unit, validates on leave, shows the file's validation message under
     itself (or, for an unset required value, the required-field look,
-    66b), and shows a short help line (the chapter's one-sentence
-    definition) on hover of its label. A field whose file value is `null`
+    66b), and has help. **Help is universal** (maintainer's smoke test,
+    2026-11-20): every field of the app, here and on the Stock, Tools and
+    Export steps, in the Properties, the Tool Library and the sheets,
+    says what it does, its unit, the values it takes and what leaving it
+    empty means, with the limits validation enforces (a feed is above 0
+    and at most 20000 mm/min, a stepover above 0 and at most 100 %). It
+    shows as a tooltip on the field's label and on the field, and, while
+    the field has the keyboard, on one line at the foot of the panel
+    that holds the field (`experience.md`, "Help affordance"). A test
+    walks every field table for its help, and a second holds the limits
+    the help names to the validator's. A field whose file value is `null`
     and whose default comes from the tool (step-down, stepover, pitch)
     shows that default as grey placeholder text, `tool's: 3 mm`, and clears
     back to it with its ⟲ button. Warnings and errors that `check` locates

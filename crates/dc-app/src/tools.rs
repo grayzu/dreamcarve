@@ -123,6 +123,50 @@ impl ToolField {
         }
     }
 
+    /// Every field a tool of any type has, in the editor's order of a
+    /// tapered ball nose and then a V-bit's own.
+    pub const ALL: [Self; 15] = [
+        Self::Name,
+        Self::Angle,
+        Self::TipDiameter,
+        Self::Taper,
+        Self::FluteLength,
+        Self::Diameter,
+        Self::Flutes,
+        Self::Feed,
+        Self::Plunge,
+        Self::Rpm,
+        Self::StepDown,
+        Self::StepOver,
+        Self::Number,
+        Self::Vendor,
+        Self::ProductId,
+    ];
+
+    /// The field's help: what it is, its unit, the values it takes and
+    /// what leaving it empty means. Its label and the field show it on
+    /// hover, and the panel's help line while it is typed in.
+    #[must_use]
+    pub const fn help(self) -> StrKey {
+        match self {
+            Self::Name => StrKey::AppToolsNameHelp,
+            Self::Diameter => StrKey::AppToolsDiameterHelp,
+            Self::Angle => StrKey::AppToolsAngleHelp,
+            Self::TipDiameter => StrKey::AppToolsTipDiameterHelp,
+            Self::Taper => StrKey::AppToolsTaperHelp,
+            Self::FluteLength => StrKey::AppToolsFluteLengthHelp,
+            Self::Flutes => StrKey::AppToolsFlutesHelp,
+            Self::Feed => StrKey::AppToolsFeedHelp,
+            Self::Plunge => StrKey::AppToolsPlungeHelp,
+            Self::Rpm => StrKey::AppToolsRpmHelp,
+            Self::StepDown => StrKey::AppToolsStepDownHelp,
+            Self::StepOver => StrKey::AppToolsStepOverHelp,
+            Self::Number => StrKey::AppToolsToolNumberHelp,
+            Self::Vendor => StrKey::AppToolsVendorHelp,
+            Self::ProductId => StrKey::AppToolsProductIdHelp,
+        }
+    }
+
     /// The field [`Tool::unset_values`] names `file_name`, when it is one
     /// a tool may still need: a tapered ball nose's values and the rates.
     fn of_unset(file_name: &str) -> Option<Self> {
@@ -346,6 +390,8 @@ pub struct FieldRow {
     pub field: ToolField,
     /// Its label.
     pub label: StrKey,
+    /// Its help ([`ToolField::help`]).
+    pub help: StrKey,
     /// What the field shows, without its unit: empty for `null`.
     pub text: String,
     /// The unit drawn after the value ([`field_unit`]).
@@ -374,6 +420,7 @@ pub fn rows_for(tool: &Tool, choice: KindChoice, units: Units) -> Vec<FieldRow> 
         .map(|field| FieldRow {
             field,
             label: field.label(),
+            help: field.help(),
             text: field_text(tool, field, units),
             unit: field_unit(field, units),
             required: unset

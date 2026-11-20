@@ -32,6 +32,7 @@ use crate::command::{Command, centre, find_instance, selection_bounds};
 use crate::error::CommandError;
 use crate::library::trimmed;
 use crate::mixed::{common_bool, common_number};
+use crate::strings::StrKey;
 use crate::units;
 
 /// Decimals a placement field shows, trailing zeros dropped: a thousandth
@@ -62,6 +63,43 @@ pub enum Field {
 /// The fields the panel shows, in order: X, Y, W and H, and nothing else
 /// (capability 58).
 pub const FIELDS: [Field; 4] = [Field::X, Field::Y, Field::W, Field::H];
+
+impl Field {
+    /// The field's label.
+    #[must_use]
+    pub const fn label(self) -> StrKey {
+        match self {
+            Self::X => StrKey::PlacementX,
+            Self::Y => StrKey::PlacementY,
+            Self::W => StrKey::PlacementW,
+            Self::H => StrKey::PlacementH,
+        }
+    }
+
+    /// The field's help for a selection of shapes: what it is, its unit,
+    /// the values it takes and what typing it does.
+    #[must_use]
+    pub const fn help(self) -> StrKey {
+        match self {
+            Self::X => StrKey::PlacementXHelp,
+            Self::Y => StrKey::PlacementYHelp,
+            Self::W => StrKey::PlacementWHelp,
+            Self::H => StrKey::PlacementHHelp,
+        }
+    }
+
+    /// The field's help for a picture, which keeps its proportions and is
+    /// resized about its centre.
+    #[must_use]
+    pub const fn picture_help(self) -> StrKey {
+        match self {
+            Self::X => StrKey::PlacementPictureXHelp,
+            Self::Y => StrKey::PlacementPictureYHelp,
+            Self::W => StrKey::PlacementPictureWHelp,
+            Self::H => StrKey::PlacementPictureHHelp,
+        }
+    }
+}
 
 /// A change typed into the panel, in millimetres.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -83,6 +83,24 @@ pub enum Quantity {
 }
 
 impl Field {
+    /// Every typed field of the project's settings.
+    pub const ALL: [Self; 14] = [
+        Self::StockWidth,
+        Self::StockHeight,
+        Self::StockThickness,
+        Self::OriginX,
+        Self::OriginY,
+        Self::Clearance,
+        Self::ToolChangeZ,
+        Self::Park,
+        Self::FlattenTolerance,
+        Self::ArcFitTolerance,
+        Self::FileExtension,
+        Self::SpindleDwell,
+        Self::DecimalsMm,
+        Self::DecimalsInch,
+    ];
+
     /// The `.dcv` field it writes, as validation names it: what the help
     /// tooltip shows and what a located finding is matched against.
     #[must_use]
@@ -343,6 +361,16 @@ pub enum Choice {
 }
 
 impl Choice {
+    /// Every chosen row of the project's settings.
+    pub const ALL: [Self; 6] = [
+        Self::OriginXy,
+        Self::OriginZ,
+        Self::Post,
+        Self::SpindleControl,
+        Self::ToolChangeMode,
+        Self::CannedCycles,
+    ];
+
     /// The `.dcv` field it writes.
     #[must_use]
     pub const fn path(self) -> &'static str {

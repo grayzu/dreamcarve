@@ -179,6 +179,9 @@ pub(crate) fn left_with_focus(ui: &Ui) -> bool {
 /// Draws `spec` across the available width.
 pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     let palette = Palette::current(ui);
+    // The help the field's label offered: its tooltip here, and the
+    // panel's help line while it is typed in.
+    let help = crate::widgets::help::take(ui, spec.name);
     let (rect, frame_response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEIGHT_PX), Sense::hover());
     let buffer_id = spec.id.with("typed");
@@ -371,15 +374,33 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
             );
         }
     }
+    if let Some(help) = &help
+        && ui.memory(|m| m.has_focus(spec.id))
+    {
+        crate::widgets::help::focused(ui, spec.name, help);
+    }
     let response = match (spec.enabled, spec.disabled_reason, spec.required) {
         (false, Some(reason), _) => {
             frame_response.on_hover_text(reason);
             response.on_disabled_hover_text(reason)
         }
+        // What the file says of the unset value, then what the field is,
+        // each a tooltip of its own.
         (true, _, Some(required)) => {
             frame_response.on_hover_text(required.message);
-            response.on_hover_text(required.message)
+            let response = response.on_hover_text(required.message);
+            match help {
+                Some(help) => response.on_hover_text(help),
+                None => response,
+            }
         }
+        (true, _, None) => match help {
+            Some(help) => {
+                frame_response.on_hover_text(&help);
+                response.on_hover_text(help)
+            }
+            None => response,
+        },
         _ => response,
     };
     FieldOutput {
@@ -414,10 +435,16 @@ pub fn validation_line(ui: &mut Ui, message: &str) {
 }
 
 /// An editor row: the label in its 112-px column, then `field` at the
-/// rest of the width. The label names the field for assistive tools.
-pub fn row<R>(ui: &mut Ui, label: &str, field: impl FnOnce(&mut Ui) -> R) -> (Response, R) {
+/// rest of the width. The label names the field for assistive tools, and
+/// shows `help` on hover; the field drawn under the same name takes it.
+pub fn row<R>(
+    ui: &mut Ui,
+    label: &str,
+    help: &str,
+    field: impl FnOnce(&mut Ui) -> R,
+) -> (Response, R) {
     ui.horizontal_top(|ui| {
-        let label_response = crate::widgets::row::label_slot(ui, label, false);
+        let label_response = crate::widgets::row::label(ui, label, help, None);
         let inner = ui.vertical(|ui| field(ui)).inner;
         (label_response, inner)
     })

@@ -118,6 +118,9 @@ pub(crate) fn label_slot(ui: &mut Ui, text: &str, help: bool) -> Response {
 /// hover to say it has help.
 pub(crate) fn label(ui: &mut Ui, text: &str, help: &str, path: Option<&str>) -> Response {
     let palette = Palette::current(ui);
+    // The control drawn next under this name takes the help: its tooltip,
+    // and the panel's help line while it has the keyboard.
+    crate::widgets::help::offer(ui, text, help);
     let response = label_slot(ui, text, true);
     response.on_hover_ui(|ui| {
         ui.label(RichText::new(help).text_style(TextStyle::Body));
@@ -137,6 +140,7 @@ pub(crate) fn label(ui: &mut Ui, text: &str, help: &str, path: Option<&str>) -> 
 /// it.
 pub(crate) fn caption(ui: &mut Ui, text: &str, help: &str) -> Response {
     let palette = Palette::current(ui);
+    crate::widgets::help::offer(ui, text, help);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), CAPTION_PX), Sense::hover());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));

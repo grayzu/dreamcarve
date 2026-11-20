@@ -654,7 +654,7 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
         if focus == Some(field) {
             ui.memory_mut(|m| m.request_focus(id));
         }
-        let (label, output) = row(ui, name, |ui| {
+        let (label, output) = row(ui, name, strings.get(row_spec.help), |ui| {
             let output = unit_field(
                 ui,
                 UnitField {
@@ -676,9 +676,6 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
         let left = response.lost_focus();
         if field == ToolField::Name && focus_name {
             focus_with_text_selected(ui, id, value);
-        }
-        if required.is_none() {
-            response.on_hover_text(field.file_name());
         }
         if holding {
             // The held switch: a typed angle makes it, one undo step; the
@@ -743,8 +740,9 @@ fn kind_row(
         KindChoice::of(&tool.cutter)
     };
     let mut chosen = current;
-    let (label, combo) = row(ui, strings.get(StrKey::AppToolsKind), |ui| {
-        egui::ComboBox::from_id_salt(salt.with("kind"))
+    let name = strings.get(StrKey::AppToolsKind);
+    let (label, combo) = row(ui, name, strings.get(StrKey::AppToolsKindHelp), |ui| {
+        let combo = egui::ComboBox::from_id_salt(salt.with("kind"))
             .icon(crate::widgets::icon::combo_chevron)
             .width(ui.available_width())
             .height(KIND_MENU_PX)
@@ -754,7 +752,8 @@ fn kind_row(
                     ui.selectable_value(&mut chosen, choice, kind_label(strings, choice));
                 }
             })
-            .response
+            .response;
+        crate::widgets::help::control(ui, combo, name)
     });
     combo.labelled_by(label.id);
     if chosen != current {

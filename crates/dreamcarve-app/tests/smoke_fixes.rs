@@ -503,3 +503,88 @@ fn board_thickness_is_the_male_boards_first_row() {
     assert_eq!(inlay_of(&h).male_board.thickness_mm, Some(12.0));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The help line at the foot of a panel: the node whose name starts with
+/// `label` and a colon, when it shows.
+fn help_line(h: &Harness<'_, Shell>, label: &str) -> Option<(String, egui::Rect)> {
+    let start = format!("{label}: ");
+    h.query_all_by_role(Role::Label)
+        .filter_map(|node| {
+            let node_ak = node.accesskit_node();
+            let name = node_ak.label().or_else(|| node_ak.value())?;
+            name.starts_with(&start).then(|| (name, node.rect()))
+        })
+        .next()
+}
+
+/// The smoke test's item 6 (capability 66; `experience.md`, section 7,
+/// "Help affordance"): the field that has the keyboard shows its help on
+/// one line at the foot of the panel that holds it, the step panel's,
+/// the Inspector's or a sheet's, and the line goes when the field is
+/// left. A control that is not a text field has it too.
+#[test]
+fn the_focused_field_shows_its_help_at_the_foot_of_its_panel() {
+    let (mut h, dir, _dialogs) = plaque("field-help");
+    let strings = dc_app::Strings::english();
+
+    // The Stock step: nothing until a field has the keyboard.
+    go_to(&mut h, "Stock");
+    assert!(help_line(&h, "Thickness").is_none());
+    h.get_by_role_and_label(Role::TextInput, "Thickness")
+        .focus();
+    h.run();
+    let (text, at) = help_line(&h, "Thickness").expect("the stock thickness's help");
+    assert!(
+        text.ends_with(strings.get(dc_app::StrKey::ProjectStockThicknessHelp)),
+        "{text}"
+    );
+    let panel = h.state().layout().step_panel.expect("the step panel");
+    assert!(
+        panel.contains_rect(at) && at.bottom() > panel.bottom() - 12.0,
+        "at the foot of the step panel: {at:?} in {panel:?}"
+    );
+    let field = h.get_by_role_and_label(Role::TextInput, "Thickness").rect();
+    assert!(field.bottom() < at.top(), "clear of the field it is about");
+    // Another field: its help takes the line.
+    h.get_by_role_and_label(Role::TextInput, "Width").focus();
+    h.run();
+    assert!(help_line(&h, "Thickness").is_none());
+    assert!(help_line(&h, "Width").is_some());
+    // A control that is not typed into.
+    h.get_by_role_and_label(Role::ComboBox, "XY zero").focus();
+    h.run();
+    let (text, _) = help_line(&h, "XY zero").expect("the origin's help");
+    assert!(text.contains("X0 Y0"), "{text}");
+    // Left: the line goes.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(help_line(&h, "XY zero").is_none());
+
+    // The Inspector: a tool's field, then an operation's.
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "Stepover").focus();
+    h.run();
+    let (text, at) = help_line(&h, "Stepover").expect("a tool's stepover has help");
+    assert!(text.contains("above 0 and at most 100 %"), "{text}");
+    let inspector = h.state().layout().inspector.expect("the Inspector");
+    assert!(
+        inspector.contains_rect(at),
+        "at the foot of the Inspector: {at:?} in {inspector:?}"
+    );
+    open_operation(&mut h, "Cut out");
+    h.get_by_role_and_label(Role::TextInput, "Depth").focus();
+    h.run();
+    let (text, at) = help_line(&h, "Depth").expect("an operation's depth has help");
+    assert!(text.contains("How deep the cut goes"), "{text}");
+    assert!(h.state().layout().inspector.unwrap().contains_rect(at));
+
+    // A sheet: the Tool Library's editing pane.
+    h.get_by_label("Project").click();
+    h.run();
+    h.get_by_label("Tool Library…").click();
+    h.run();
+    std::fs::remove_dir_all(&dir).unwrap();
+}

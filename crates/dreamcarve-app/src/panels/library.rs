@@ -63,6 +63,7 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, Dialogs};
 use crate::widgets::button::{ButtonSpec, Kind, button, focus_ring_round, text};
 use crate::widgets::checkbox::paint_box;
+use crate::widgets::help::{self, Scope};
 use crate::widgets::icon::Icon;
 use crate::widgets::scroll;
 use crate::widgets::segmented::segmented;
@@ -322,7 +323,15 @@ pub(crate) fn show(
             let outer = Rect::from_min_size(ui.cursor().min - margin, size);
             ui.set_min_size(inner);
             ui.set_max_size(inner);
-            body(ui, inner.y, app, project_name, sheet, out);
+            // The help of the field being typed in, at the sheet's foot.
+            let foot_px = help::foot_height(ui, Scope::Sheet, size.x);
+            body(ui, inner.y - foot_px, app, project_name, sheet, out);
+            help::settle(ui, Scope::Sheet);
+            if foot_px > 0.0 {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(inner.x, foot_px), Sense::hover());
+                help::foot(ui, Scope::Sheet, rect.expand2(egui::vec2(margin.x, 0.0)));
+            }
             let grip = app.strings().get(StrKey::AppLibraryResize);
             if let Some(asked) = crate::widgets::sheet::resize_handles(
                 ui,
@@ -576,7 +585,9 @@ fn toolbar(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet, out: &mut Vec<Acti
         let search_w = (ui.available_width() - 160.0).clamp(160.0, 320.0);
         search_field(ui, strings, &mut sheet.filter.search, search_w);
         ui.add_space(8.0);
-        egui::ComboBox::from_id_salt("library_kind")
+        let filter = strings.get(StrKey::AppToolsKind);
+        help::offer(ui, filter, strings.get(StrKey::AppLibraryFilterTip));
+        let combo = egui::ComboBox::from_id_salt("library_kind")
             .icon(crate::widgets::icon::combo_chevron)
             .width(ui.available_width().min(170.0))
             .height(crate::panels::tools::KIND_MENU_PX)
@@ -587,7 +598,8 @@ fn toolbar(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet, out: &mut Vec<Acti
                 }
             })
             .response
-            .on_hover_text(strings.get(StrKey::AppToolsKind));
+            .accessible_name(filter);
+        let _ = help::control(ui, combo, filter);
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -647,7 +659,9 @@ fn search_field(ui: &mut Ui, strings: &Strings, search: &mut String, width: f32)
             .desired_width(edit_rect.width()),
     );
     // Named for assistive tools by what it searches, as its hint says.
-    let response = response.accessible_name(strings.get(StrKey::AppLibrarySearch));
+    let name = strings.get(StrKey::AppLibrarySearch);
+    help::offer(ui, name, strings.get(StrKey::AppLibrarySearchTip));
+    let response = help::control(ui, response.accessible_name(name), name);
     // The focus ring goes round the field's frame, not its text.
     focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
     let stroke = if response.has_focus() {

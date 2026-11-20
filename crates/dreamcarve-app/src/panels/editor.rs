@@ -590,6 +590,29 @@ pub(super) fn control(
         label(ui, cx, slot);
         return Some(replaced(ui, cx, slot, id, why, tier));
     }
+    let response = control_of(ui, cx, slot, offered, tier, required, focused, out);
+    // A control that is not a text field takes the help its label
+    // offered here: its tooltip, and the panel's help line while it has
+    // the keyboard. A text field took it as it drew.
+    response.map(|r| crate::widgets::help::control(ui, r, cx.strings.get(slot.row.label)))
+}
+
+/// [`control`]'s control, before its help.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one renderer's inputs, each read by some kind of row"
+)]
+fn control_of(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    slot: &Slot<'_>,
+    offered: &[&Tool],
+    tier: Option<Tier>,
+    required: Option<&str>,
+    focused: bool,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    let id = control_id(cx.op, slot.key());
     match slot.row.kind {
         FieldKind::Length
         | FieldKind::Rate
@@ -844,14 +867,17 @@ fn choice(
     let refused_id = id.with("refused");
     let mut picked = None;
     let response = if fits {
-        picked = segmented(
-            ui,
-            id,
-            &labels,
-            current.unwrap_or(labels.len()),
-            ui.available_width(),
-        );
-        None
+        let shown = ui.scope(|ui| {
+            segmented(
+                ui,
+                id,
+                &labels,
+                current.unwrap_or(labels.len()),
+                ui.available_width(),
+            )
+        });
+        picked = shown.inner;
+        Some(shown.response)
     } else {
         let selected = current
             .and_then(|i| labels.get(i))
@@ -892,6 +918,9 @@ fn checkbox(
     let mut on = slot.checked(cx.op);
     let response = check_box(ui, slot.key(), &mut on, cx.strings.get(row.label));
     let help = cx.strings.get(row.help);
+    if response.has_focus() {
+        crate::widgets::help::focused(ui, cx.strings.get(row.label), help);
+    }
     let response = response.on_hover_ui(|ui| {
         ui.label(egui::RichText::new(help).text_style(TextStyle::Body));
         ui.label(
