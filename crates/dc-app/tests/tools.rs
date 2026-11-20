@@ -1268,3 +1268,142 @@ fn a_tools_row_carries_the_findings_that_name_it() {
         lacking.messages
     );
 }
+
+/// The smoke test's item 7: a stepover is a percentage of the diameter,
+/// and `0.08 %` typed where 8 % was meant is 0.005 mm between passes, a
+/// job four times as long. Beside the percentage the editor says the
+/// distance it comes to, from what is typed, in the units shown: 8 % of a
+/// 6.35 mm bit is 0.508 mm, 0.08 % is 0.005 mm, and in inches 0.02 in and
+/// 0.0002 in. Nothing typed, or text that is no percentage, says nothing.
+#[test]
+fn a_stepover_says_the_distance_between_passes() {
+    let strings = dc_app::Strings::english();
+    let project = plaque();
+    let tool = &project.tools[1];
+    assert!((tool.diameter_mm - 6.35).abs() < 1e-12);
+    let note = |typed: &str, units| tools::step_over_note(&strings, tool, typed, units);
+    assert_eq!(
+        note("8", Units::Mm).as_deref(),
+        Some("0.508 mm from one pass to the next")
+    );
+    assert_eq!(
+        note("8 %", Units::Mm).as_deref(),
+        Some("0.508 mm from one pass to the next")
+    );
+    assert_eq!(
+        note("0.08", Units::Mm).as_deref(),
+        Some("0.005 mm from one pass to the next"),
+        "the maintainer's 0.08 %"
+    );
+    assert_eq!(
+        note("40", Units::Mm).as_deref(),
+        Some("2.54 mm from one pass to the next")
+    );
+    assert_eq!(
+        note("8", Units::Inch).as_deref(),
+        Some("0.02 in from one pass to the next")
+    );
+    assert_eq!(
+        note("0.08", Units::Inch).as_deref(),
+        Some("0.0002 in from one pass to the next")
+    );
+    // Too small for the figures shown: said so, never as 0.
+    assert_eq!(
+        note("0.001", Units::Mm).as_deref(),
+        Some("less than 0.001 mm from one pass to the next")
+    );
+    for nothing in ["", "  ", "wide", "-5", "0"] {
+        assert_eq!(note(nothing, Units::Mm), None, "`{nothing}`");
+    }
+
+    // An operation's own stepover says it with its tool's diameter, and
+    // an empty one with the tool's stepover, which it takes. A V-Carve's
+    // floor stepover is a share of the cut's width there, not of the
+    // diameter, so it says nothing.
+    let pocket = &project.operations[2];
+    assert!(matches!(pocket, dc_project::Operation::Pocket(_)));
+    let row = dc_app::editor::fields::rows(pocket)
+        .into_iter()
+        .find(|r| r.key == "step_over_fraction")
+        .expect("a Pocket has a stepover");
+    let of = |typed: &str| dc_app::editor::step_over_note(&project, &strings, pocket, row, typed);
+    assert_eq!(
+        of("50").as_deref(),
+        Some("3.175 mm from one pass to the next")
+    );
+    assert_eq!(
+        of("").as_deref(),
+        Some("2.54 mm from one pass to the next"),
+        "empty takes the tool's 40 %"
+    );
+    assert_eq!(of("wide"), None);
+    let depth = dc_app::editor::fields::rows(pocket)
+        .into_iter()
+        .find(|r| r.key == "depth_mm")
+        .unwrap();
+    assert_eq!(
+        dc_app::editor::step_over_note(&project, &strings, pocket, depth, "50"),
+        None,
+        "only a stepover"
+    );
+    let sign = common::load_dcv(&fixture("sign.dcv"));
+    for op in &sign.operations {
+        for row in dc_app::editor::fields::rows(op) {
+            if !matches!(op, dc_project::Operation::Pocket(_)) {
+                assert_eq!(
+                    dc_app::editor::step_over_note(&sign, &strings, op, row, "50"),
+                    None,
+                    "{}: {}",
+                    op.name(),
+                    row.key
+                );
+            }
+        }
+    }
+}
+
+/// The smoke test's item 7, second half: a finding located at a tool's
+/// field shows under that field in the tool editor, as an operation's
+/// does under its own, so the warning for an absurd stepover has
+/// somewhere to show. A plunge rate above the feed is located at the
+/// plunge; the value a tool still needs is not repeated here, since its
+/// field says Required.
+#[test]
+fn a_finding_at_a_tools_field_is_that_fields_status() {
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    let mut fast = harness.app.project().tools[1].clone();
+    fast.plunge_mm_min = Some(5000.0);
+    fast.feed_mm_min = Some(1000.0);
+    harness.run(Command::UpdateTool(fast.clone())).unwrap();
+    harness.generate();
+    let tool = harness.app.project().tools[1].clone();
+    let status = tools::field_status(harness.app.project(), harness.app.warnings(), &tool);
+    let plunge = status
+        .iter()
+        .find(|(field, _)| *field == ToolField::Plunge)
+        .map(|(_, status)| *status)
+        .expect("the plunge has a finding");
+    assert_eq!(plunge.tier, Tier::Warning);
+    assert!(
+        plunge.message.contains("plunges at 5000"),
+        "{}",
+        plunge.message
+    );
+    assert!(
+        status.iter().all(|(field, _)| *field == ToolField::Plunge),
+        "only that field: {status:?}"
+    );
+    // Another tool's findings are not this one's.
+    let other = harness.app.project().tools[2].clone();
+    assert!(tools::field_status(harness.app.project(), harness.app.warnings(), &other).is_empty());
+    // An unset value is the field's Required look, not a line under it.
+    fast.rpm = None;
+    harness.run(Command::UpdateTool(fast)).unwrap();
+    harness.generate();
+    let tool = harness.app.project().tools[1].clone();
+    let status = tools::field_status(harness.app.project(), harness.app.warnings(), &tool);
+    assert!(
+        status.iter().all(|(field, _)| *field != ToolField::Rpm),
+        "{status:?}"
+    );
+}

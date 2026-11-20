@@ -581,10 +581,102 @@ fn the_focused_field_shows_its_help_at_the_foot_of_its_panel() {
     assert!(text.contains("How deep the cut goes"), "{text}");
     assert!(h.state().layout().inspector.unwrap().contains_rect(at));
 
-    // A sheet: the Tool Library's editing pane.
-    h.get_by_label("Project").click();
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The smoke test's item 7: beside a stepover percentage the distance
+/// between passes it comes to, following what is typed. The plaque's
+/// 1/4 end mill at 40 % says 2.54 mm; `8` typed says 0.508 mm and `0.08`
+/// says 0.005 mm before the field is left, so the slip is seen while it
+/// is made. A Pocket's own Stepover says its distance too, the tool's
+/// while it is empty.
+#[test]
+fn a_stepover_field_says_its_distance_as_it_is_typed() {
+    let (mut h, dir, _dialogs) = plaque("stepover-note");
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
     h.run();
-    h.get_by_label("Tool Library…").click();
+    let field = h.get_by_role_and_label(Role::TextInput, "Stepover").rect();
+    let note = h.get_by_label("2.54 mm from one pass to the next").rect();
+    assert!(
+        note.top() >= field.bottom() - 1.0 && note.left() >= field.left() - 12.0,
+        "the note is under its field: {note:?}, {field:?}"
+    );
+    let steps = undo_steps(&h);
+    type_into(&mut h, "Stepover", "8");
+    assert!(
+        h.query_by_label("0.508 mm from one pass to the next")
+            .is_some()
+    );
+    assert!(
+        h.query_by_label("2.54 mm from one pass to the next")
+            .is_none()
+    );
+    type_into(&mut h, "Stepover", "0.08");
+    assert!(
+        h.query_by_label("0.005 mm from one pass to the next")
+            .is_some(),
+        "0.08 % of 6.35 mm, as it is typed"
+    );
+    assert_eq!(undo_steps(&h), steps, "nothing is written while typing");
+    h.key_press(egui::Key::Escape);
     h.run();
+    assert!(
+        h.query_by_label("2.54 mm from one pass to the next")
+            .is_some()
+    );
+
+    // A Pocket's own stepover: empty takes the tool's, and says so.
+    open_operation(&mut h, "Panel");
+    open_group(&mut h, "Strategy");
+    let field = h.get_by_role_and_label(Role::TextInput, "Stepover");
+    let empty = field.value().unwrap_or_default().is_empty();
+    let shown = if empty {
+        "2.54 mm from one pass to the next"
+    } else {
+        ""
+    };
+    if empty {
+        assert!(h.query_by_label(shown).is_some(), "the tool's 40 %");
+    }
+    type_into(&mut h, "Stepover", "50");
+    assert!(
+        h.query_by_label("3.175 mm from one pass to the next")
+            .is_some()
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The smoke test's item 7, second half: a finding located at a tool's
+/// field shows under that field in the tool editor, in its tier's colour,
+/// as an operation's does. A plunge rate typed above the feed is
+/// `plunge_above_feed`, a warning at the plunge.
+#[test]
+fn a_tool_field_shows_the_warning_located_at_it() {
+    let (mut h, dir, _dialogs) = plaque("tool-warning");
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
+    h.run();
+    assert!(h.query_by_label_contains("plunges at").is_none());
+    let feed: f64 = h
+        .get_by_role_and_label(Role::TextInput, "Feed")
+        .value()
+        .unwrap_or_default()
+        .parse()
+        .expect("the plaque's end mill has a feed");
+    type_into(&mut h, "Plunge", &format!("{}", feed + 500.0));
+    h.key_press(egui::Key::Tab);
+    h.run();
+    common::settle(&mut h);
+    let line = h.get_by_label_contains("plunges at");
+    let field = h.get_by_role_and_label(Role::TextInput, "Plunge").rect();
+    assert!(
+        line.rect().top() >= field.bottom() - 1.0 && line.rect().left() >= field.left() - 1.0,
+        "the warning is under the Plunge field"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -1115,6 +1115,33 @@ pub fn boundary(op: &Operation) -> &[InstanceId] {
     }
 }
 
+/// The note beside a Pocket's Stepover row while its field holds `typed`
+/// (the smoke test's item 7): the distance between passes that percentage
+/// of its tool's diameter comes to, in the project's units
+/// ([`crate::tools::step_over_note`]); with the field empty, the tool's
+/// own stepover, which the Pocket then takes. `None` for any other row,
+/// and for a carve's floor stepover, which is a share of the cut's width
+/// on the floor and not of the diameter.
+#[must_use]
+pub fn step_over_note(
+    project: &Project,
+    strings: &Strings,
+    op: &Operation,
+    row: &Row,
+    typed: &str,
+) -> Option<String> {
+    if !matches!(op, Operation::Pocket(_)) || row.tool_default != Some(ToolDefault::StepOver) {
+        return None;
+    }
+    let tool = project.tools.iter().find(|t| t.id == *op.tool())?;
+    let units = project.display_units;
+    if typed.trim().is_empty() {
+        let fraction = tool.step_over_fraction?;
+        return crate::tools::between_passes(strings, fraction * tool.diameter_mm, units);
+    }
+    crate::tools::step_over_note(strings, tool, typed, units)
+}
+
 /// Why a row is not in use, and what its place says (capability 68a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Replaced {

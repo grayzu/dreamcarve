@@ -75,7 +75,7 @@ diameter and the tool number. A V-bit's row adds its angle, `6.35 mm ·
 | **Plunge** | The plunge rate, straight down | `plunge_mm_min` |
 | **RPM** | The spindle speed | `rpm` |
 | **Step-down** | The most each pass cuts deeper. An operation may set its own | `step_down_mm` |
-| **Stepover** | How far the bit moves over between passes that clear an area, as a percentage of its diameter | `step_over_fraction`: 40 % is 0.4 |
+| **Stepover** | How far the bit moves over between passes that clear an area, as a percentage of its diameter. Under the field the app says the distance that comes to, as you type: `8` reads **0.508 mm from one pass to the next** for a 6.35 mm bit, and `0.08` reads 0.005 mm, a slip that would make the job many times longer | `step_over_fraction`: 40 % is 0.4 |
 | **Tool number** | The bit's number on your machine, `T1`. Empty, the tool takes its place in the list | `number` |
 | **Vendor**, **Product id** | For your own reference, and how the library groups and searches tools | `vendor`, `product_id` |
 

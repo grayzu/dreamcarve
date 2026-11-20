@@ -488,7 +488,17 @@ folder are app preferences, kept outside the project.
     tapered ball nose with tip diameter, taper per side and flute length;
     its diameter is the cutting diameter),
     diameter, flutes, feed, plunge rate, RPM, step-down, stepover, tool
-    number, vendor and product id. A type's own fields follow the type:
+    number, vendor and product id. A **stepover** is a percentage of the
+    diameter, and `0.08 %` typed for 8 % is 0.005 mm between passes
+    (maintainer's smoke test, 2026-11-20: an 85-minute job that should
+    have taken 20), so under every stepover percentage that is a share of
+    a bit's diameter (here, in the library's pane, 64a, and a Pocket's
+    own, 68) a quiet line says the distance it comes to in the units
+    shown, *0.508 mm from one pass to the next*, from what is typed, as
+    it is typed; an empty Pocket stepover says its tool's. A finding
+    validation locates at one of the tool's fields (a plunge rate above
+    the feed, a stepover far too small) shows under that field in its
+    tier's colour, as an operation's does under its row (66). A type's own fields follow the type:
     a V-bit's *Angle*; a tapered ball nose's *Tip diameter*, *Taper per
     side* and *Flute length*. *Diameter* keeps its label for every type.
     Choosing *Tapered ball nose* writes the cutter with none of its three

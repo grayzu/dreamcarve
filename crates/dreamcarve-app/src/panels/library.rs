@@ -1218,6 +1218,7 @@ fn editing_pane(
                     focus_name,
                     focus: None,
                     marked,
+                    findings: &[],
                 },
             )
         });

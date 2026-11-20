@@ -504,6 +504,13 @@ fn render(
     // of which is the seat line when a tapered ball nose cuts it; an
     // alert in red with its glyph. The derived row has no field, so its
     // lines, which are sentences, take the row's whole width.
+    // A stepover's distance between passes, from what its field shows.
+    let live: Option<String> = ui.data(|d| d.get_temp(control_id(cx.op, slot.key()).with("live")));
+    if let Some(note) =
+        live.and_then(|typed| editor::step_over_note(cx.project, cx.strings, cx.op, row, &typed))
+    {
+        row::hint(ui, &note);
+    }
     let whole_width = matches!(row.kind, FieldKind::InlayDerived);
     for note in editor::notes(cx.project, cx.strings, cx.op, &slot) {
         if whole_width {
@@ -725,6 +732,9 @@ fn typed(
             )
         },
     );
+    // What the field shows now, for a note that follows the typing (a
+    // stepover's distance between passes), which the row draws under it.
+    ui.data_mut(|d| d.insert_temp(id.with("live"), output.text.clone()));
     let refused_id = id.with("refused");
     if let Some(text) = output.committed {
         commit(

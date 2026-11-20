@@ -630,6 +630,97 @@ pub fn set_field(
     Ok(next)
 }
 
+/// Decimal places a distance between passes shows, and one in the last
+/// of them: a thousandth of a millimetre, a tenth of a thou.
+const fn pass_decimals(units: Units) -> (usize, f64) {
+    match units {
+        Units::Mm => (3, 0.001),
+        Units::Inch => (4, 0.0001),
+    }
+}
+
+/// `distance_mm` between passes as a stepover's note says it in `units`
+/// (`0.508 mm from one pass to the next`); a distance too small for the figures
+/// shown is said as less than their last place, never as 0. `None` for a
+/// distance that is not above 0.
+#[must_use]
+pub fn between_passes(strings: &Strings, distance_mm: f64, units: Units) -> Option<String> {
+    if !(distance_mm.is_finite() && distance_mm > 0.0) {
+        return None;
+    }
+    let (decimals, least) = pass_decimals(units);
+    let shown = trimmed(units::to_display(distance_mm, units), decimals);
+    let unit = units::suffix(units);
+    Some(if shown == "0" {
+        strings.fmt(
+            StrKey::AppToolsStepOverNoteTiny,
+            &[("distance", &trimmed(least, decimals)), ("unit", unit)],
+        )
+    } else {
+        strings.fmt(
+            StrKey::AppToolsStepOverNote,
+            &[("distance", &shown), ("unit", unit)],
+        )
+    })
+}
+
+/// The note beside `tool`'s Stepover field while it holds `typed` (the
+/// smoke test's item 7): the distance between passes that percentage of
+/// the tool's diameter comes to, in `units`. `0.08 %` of a 6.35 mm bit
+/// reads `0.005 mm from one pass to the next`, where `8 %` reads `0.508 mm`. `None`
+/// while the field is empty or holds no percentage.
+#[must_use]
+pub fn step_over_note(strings: &Strings, tool: &Tool, typed: &str, units: Units) -> Option<String> {
+    if typed.trim().is_empty() {
+        return None;
+    }
+    let fraction = set_field(tool, ToolField::StepOver, typed, units)
+        .ok()?
+        .step_over_fraction?;
+    between_passes(strings, fraction * tool.diameter_mm, units)
+}
+
+/// The findings located at `tool`'s own fields, each with the field it is
+/// under, errors before warnings before hints, one a field: what the tool
+/// editor shows under that field, as the operation editor shows a located
+/// finding under its row. A value the tool still needs is left out: its
+/// field says *Required*, and the file's message is its tooltip (66b).
+#[must_use]
+pub fn field_status<'a>(
+    project: &Project,
+    findings: &'a [Finding],
+    tool: &Tool,
+) -> Vec<(ToolField, crate::project::FieldStatus<'a>)> {
+    let unset = unset_values(tool);
+    let mut found: Vec<(ToolField, crate::project::FieldStatus<'a>)> = Vec::new();
+    for tier in [
+        dc_job::Tier::Error,
+        dc_job::Tier::Warning,
+        dc_job::Tier::Hint,
+    ] {
+        for finding in findings.iter().filter(|f| f.tier == tier) {
+            let Some(path) = finding.field.as_deref() else {
+                continue;
+            };
+            let Some((id, Some(field))) = located(project, path) else {
+                continue;
+            };
+            let needed = unset.iter().any(|(name, _)| *name == field.file_name());
+            if id != tool.id || needed || found.iter().any(|(f, _)| *f == field) {
+                continue;
+            }
+            found.push((
+                field,
+                crate::project::FieldStatus {
+                    tier,
+                    message: &finding.message,
+                },
+            ));
+        }
+    }
+    found
+}
+
 /// The rates export needs that `tool` lacks, each with the file's message
 /// (`dc_project::Problem::ToolValueUnset`, the line `check` prints):
 /// feed, plunge rate, RPM, in that order. Empty when all three are set.

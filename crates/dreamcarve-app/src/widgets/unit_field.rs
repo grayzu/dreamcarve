@@ -110,6 +110,10 @@ pub(crate) struct FieldOutput {
     pub response: Response,
     /// The typed text, once, when the user leaves a field they changed.
     pub committed: Option<String>,
+    /// What the field shows this frame: the project's value, or what is
+    /// being typed over it. A note that follows the typing reads it (a
+    /// stepover's distance between passes).
+    pub text: String,
     /// Whether ⟲ was clicked.
     pub reset: bool,
 }
@@ -281,6 +285,7 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     let window_left = window_left(ui);
     let flushed = flush_asked(ui.ctx());
     let mut committed = None;
+    let shown = text.clone();
     if response.has_focus() && !window_left && !flushed {
         ui.data_mut(|d| {
             d.insert_temp(
@@ -406,6 +411,7 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     FieldOutput {
         response,
         committed,
+        text: shown,
         reset,
     }
 }
@@ -413,25 +419,54 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
 /// The 12-px message under a field in its column, in the error state:
 /// `circle-x`, then the file's message verbatim, wrapped to the field.
 pub fn validation_line(ui: &mut Ui, message: &str) {
+    status_line(ui, Tier::Error, message);
+}
+
+/// The 12-px message under a field in its column, in `tier`'s state: its
+/// glyph (`circle-x`, `triangle-alert` or `info`), then the file's
+/// message verbatim in the tier's text colour, wrapped to the field.
+pub fn status_line(ui: &mut Ui, tier: Tier, message: &str) {
     let palette = Palette::current(ui);
+    let (icon, colour) = match tier {
+        Tier::Error => (Icon::CircleX, palette.status_error.text),
+        Tier::Warning => (Icon::TriangleAlert, palette.status_warning.text),
+        Tier::Hint => (Icon::Info, palette.status_info.text),
+    };
     ui.add_space(4.0);
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let glyph = Icon::CircleX.galley(ui, 12.0, palette.status_error.text);
+        let glyph = icon.galley(ui, 12.0, colour);
         let (rect, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
-        ui.painter()
-            .galley(rect.min, glyph, palette.status_error.text);
+        ui.painter().galley(rect.min, glyph, colour);
         ui.add(
             egui::Label::new(
                 egui::RichText::new(message)
                     .text_style(TextStyle::Small)
-                    .color(palette.status_error.text),
+                    .color(colour),
             )
             .wrap()
             .selectable(false),
         );
     });
     ui.add_space(4.0);
+}
+
+/// A quiet 12-px note under a field in its column, in text.secondary with
+/// no glyph: what the value comes to (a stepover's distance between
+/// passes). It is not a finding, and does not look like one.
+pub fn quiet_line(ui: &mut Ui, text: &str) {
+    let palette = Palette::current(ui);
+    ui.add_space(2.0);
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(text)
+                .text_style(TextStyle::Small)
+                .color(palette.text_secondary),
+        )
+        .wrap()
+        .selectable(false),
+    );
+    ui.add_space(2.0);
 }
 
 /// An editor row: the label in its 112-px column, then `field` at the
