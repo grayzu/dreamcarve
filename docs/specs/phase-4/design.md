@@ -914,7 +914,16 @@ rebases, and none waits for another to start.
       the bottom (`−0.2 Screw holes, Cut out`).
     - `view::by_operation_key_lists_each_operation_colour`: one entry
       per enabled operation in list order, colour from the palette by
-      index, names from the file.
+      the operation's place in the project's list
+      (`operations::colour_at`, the one rule for an operation's colour),
+      names from the file; a disabled operation has no entry and moves
+      no other's colour.
+    - `scene::an_operation_has_one_colour_on_its_row_its_toolpaths_and_the_key`
+      and, on the draw list,
+      `viewport::layers::tests::every_run_draws_in_its_operations_colour_and_a_clearing_pass_lighter`:
+      on the sign and on an Inlay after an unticked operation, the row,
+      every tool run and the key's swatch share one colour, a clearing
+      pass's segments lighter.
     - `kittest::toolpaths_button_opens_the_popover_and_escape_closes_it`:
       absent on a project with no toolpath; present on the plaque; a
       click shows a node `Toolpaths` with the eight toggles; Escape

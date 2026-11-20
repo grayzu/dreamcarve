@@ -168,13 +168,10 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
         op,
         focus,
     };
-    let index = project
-        .operations
-        .iter()
-        .position(|o| o.id() == op.id())
-        .unwrap_or(0);
+    // The operation's one colour, its row's.
+    let colour = dc_app::operations::colour(project, op.id()).unwrap_or(0);
     let selected = matches!(app.selection(), Selection::Operation(id) if id == op.id());
-    header(ui, &cx, index, selected, out);
+    header(ui, &cx, colour, selected, out);
     let kind = Kind::of(op);
     let opening = opens_now(ui, op, &cx.located);
     crate::widgets::scroll::show(
@@ -270,7 +267,7 @@ fn rename_id(op: &Operation) -> Id {
 /// name selected; Enter or leaving it commits one undo step
 /// ([`editor::rename`]), Escape reverts. No enabled checkbox: that is the
 /// list row's.
-fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<Action>) {
+fn header(ui: &mut Ui, cx: &Cx<'_>, colour: usize, selected: bool, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let kind = Kind::of(cx.op);
     let name = cx.op.name();
@@ -289,7 +286,7 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<
         egui::pos2(rect.left() + f32::from(MARGIN_PX) + 8.0, rect.center().y),
         egui::vec2(theme::ICON_SMALL_PX, theme::ICON_SMALL_PX),
     );
-    op_glyph(ui.painter(), glyph, kind, palette.operation(index));
+    op_glyph(ui.painter(), glyph, kind, palette.operation(colour));
 
     // The worst located finding about the operation, at the right end.
     let worst = [Tier::Error, Tier::Warning, Tier::Hint]

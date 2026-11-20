@@ -706,12 +706,8 @@ impl App {
                 .iter()
                 .enumerate()
                 .find(|(_, o)| o.id() == id)?;
-            // The toolpath's colour once there is one, else the row's.
-            let colour = self
-                .scene
-                .operation(id)
-                .filter(|o| !o.runs.is_empty())
-                .map_or(index, |o| o.colour);
+            // The operation's one colour: its row's and its toolpath's.
+            let colour = crate::operations::colour_at(index);
             let targets = match draft {
                 Some(editing) => editing.targets().to_vec(),
                 None => op.targets().to_vec(),

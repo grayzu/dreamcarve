@@ -889,7 +889,15 @@ folder are app preferences, kept outside the project.
     which are hidden until the project has a toolpath, so a project fresh
     from a drawing shows only the drawing. The **colour mode** is the
     control itself: **By operation** (default; each operation its own
-    colour, repeating after eight, the same palette as `--preview`) or
+    colour, repeating after eight, the same palette as `--preview`; the
+    colour is the operation's place in the Operations list, so it is the
+    colour of its row's glyph, of every tool run of its toolpath, a
+    clearing pass lighter (70) and both boards of an Inlay, of its target
+    marks (67) and of its swatch in the key, and unticking an operation,
+    or one failing, moves no other operation's colour. `--preview` counts
+    a colour for each tool run it draws, so its file gives the same
+    operation another colour once a project has a clearing pass, a male
+    board or an unticked operation) or
     **By depth** (every cutting move coloured from pale at the stock top
     to dark at the deepest cut in the project). **Layers**, beside it,
     opens a popover under it, closed by a click elsewhere or Escape; View

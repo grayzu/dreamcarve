@@ -389,8 +389,9 @@ pub struct KeyEntry {
     pub id: OperationId,
     /// Its name, from the file.
     pub name: String,
-    /// The preview palette's index the Viewport draws its first run in
-    /// ([`crate::scene::SceneOperation::colour`]); the shell takes it
+    /// The palette index of its colour
+    /// ([`crate::scene::SceneOperation::colour`]): its row's, and the
+    /// one the Viewport draws every run of it in; the shell takes it
     /// modulo the palette's eight.
     pub colour: usize,
 }

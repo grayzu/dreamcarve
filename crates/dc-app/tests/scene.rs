@@ -686,3 +686,77 @@ fn selected_operation_targets_are_marked() {
         assert_eq!(harness.app.scene().style(id), ShapeStyle::Normal, "{name}");
     }
 }
+
+/// A quick-start fixture, opened and generated.
+fn generated(name: &str) -> Harness {
+    let mut harness = Harness::from_project(common::load_dcv(&common::fixture(name)));
+    harness.generate();
+    harness
+}
+
+/// Each row's colour with the colour the Scene draws its operation's
+/// toolpath in and the one the Layers key shows, by operation name.
+/// `None` where the operation is not in the Scene (it is unticked).
+fn colours(harness: &Harness) -> Vec<(String, usize, Option<usize>, Option<usize>)> {
+    let key = dc_app::view::operation_key(harness.app.scene());
+    dc_app::operations::rows(&harness.app)
+        .into_iter()
+        .map(|row| {
+            let scene = harness.app.scene().operation(&row.id).map(|o| o.colour);
+            let key = key.iter().find(|e| e.id == row.id).map(|e| e.colour);
+            (row.name, row.colour, scene, key)
+        })
+        .collect()
+}
+
+/// Capability 73 ("By operation: each operation its own colour"; slice
+/// D9): an operation has one colour, its row's, and its toolpaths and its
+/// swatch in the Layers key take it, however many tool runs it has. On
+/// the sign the Background V-Carve is two runs (the V-bit and a clearing
+/// pass), so counting a colour per run, as `--preview` does, gave every
+/// operation after it the next row's colour. Unticking the first
+/// operation moves no colour: the rest keep their rows'. On the tapered
+/// ball nose's project the first operation is unticked in the file, and
+/// the Inlay after it, several runs on two boards, is the second colour
+/// throughout.
+#[test]
+fn an_operation_has_one_colour_on_its_row_its_toolpaths_and_the_key() {
+    let mut harness = generated("sign.dcv");
+    let background = harness.app.scene().operations()[1].clone();
+    assert_eq!(background.name, "Background");
+    assert_eq!(background.runs.len(), 2, "the V-bit and a clearing pass");
+    let sign = colours(&harness);
+    assert_eq!(sign.len(), 5);
+    for (name, row, scene, key) in &sign {
+        assert_eq!(*scene, Some(*row), "{name}: its toolpaths");
+        assert_eq!(*key, Some(*row), "{name}: its swatch in the key");
+    }
+
+    let first = harness.app.project().operations[0].id().clone();
+    harness
+        .run(Command::SetOperationEnabled {
+            id: first,
+            enabled: false,
+        })
+        .unwrap();
+    harness.generate();
+    let unticked = colours(&harness);
+    assert_eq!(unticked[0].2, None, "an unticked operation draws nothing");
+    for ((name, row, scene, key), was) in unticked.iter().zip(&sign).skip(1) {
+        assert_eq!(*row, was.1, "{name}: its row keeps its colour");
+        assert_eq!(*scene, Some(*row), "{name}: and so do its toolpaths");
+        assert_eq!(*key, Some(*row), "{name}: and its swatch");
+    }
+
+    let harness = generated("dc-tbn.dcv");
+    let inlay = colours(&harness);
+    assert_eq!(inlay[0].2, None, "the V-Carve is unticked in the file");
+    assert_eq!(inlay[1].0, "DC inlay");
+    assert_eq!((inlay[1].1, inlay[1].2, inlay[1].3), (1, Some(1), Some(1)));
+    let runs = &harness.app.scene().operations()[0].runs;
+    assert!(
+        runs.iter().any(|r| r.run.board == dc_project::Board::Male) && runs.len() >= 3,
+        "both boards and a clearing pass: {} runs",
+        runs.len()
+    );
+}

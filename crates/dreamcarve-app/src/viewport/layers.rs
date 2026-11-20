@@ -18,7 +18,7 @@
 //! emitted motion.
 
 use dc_app::Scene;
-use dc_app::scene::{SceneOperation, ShapeStyle, StrokeKind, strokes};
+use dc_app::scene::{SceneOperation, SceneRun, ShapeStyle, StrokeKind, strokes};
 use dc_app::view::{DepthRamp, Visibility};
 use dc_app::viewport::arrows::{ArrowCache, ArrowMove, ArrowVisibility, moves_of};
 use dc_app::viewport::grid::Grid;
@@ -335,11 +335,13 @@ pub(crate) struct ToolpathLook<'a> {
     pub male_offset: Option<Vec2>,
 }
 
-/// Operation `op`'s toolpath buffer: its runs' rapids, then cuts (each in
-/// the run's preview colour), then tab marks, plunge marks, and start
-/// points with their ticks or a Drill's holes, as `look` asks; everything
-/// faded while `op` is stale. A male board run is drawn on the male
-/// board, moved by `look.male_offset` (display only).
+/// Operation `op`'s toolpath buffer: its runs' rapids, then cuts, then
+/// tab marks, plunge marks, and start points with their ticks or a
+/// Drill's holes, as `look` asks; everything faded while `op` is stale.
+/// Every run's cuts and marks are in the operation's one colour
+/// (`dc_app::operations::colour_at`, its row's; capability 73), a
+/// clearing pass's lighter (capability 70). A male board run is drawn on
+/// the male board, moved by `look.male_offset` (display only).
 #[must_use]
 pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segment> {
     let visibility = look.visibility;
@@ -347,7 +349,7 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
     let mut rapids = Vec::new();
     let mut cuts = Vec::new();
     let mut marks = Vec::new();
-    for (k, run) in op.runs.iter().enumerate() {
+    for run in op.runs.iter() {
         let offset = match run.run.board {
             Board::Female => Vec2::new(0.0, 0.0),
             Board::Male => match look.male_offset {
@@ -356,7 +358,7 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
             },
         };
         let on = |p: Point| p + offset;
-        let colour = Some(op.colour + k);
+        let tint = Tint::of(op, run);
         let mut last_plunge: Option<Point> = None;
         for stroke in strokes(&run.run.toolpath) {
             match stroke.kind {
@@ -370,7 +372,7 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
                     let mut push = |a: Point3, b: Point3| {
                         if xy(a).distance_to(xy(b)) > XY_EPS_MM {
                             let depth = look.ramp.map(|r| r.step(a.z.min(b.z)));
-                            let word = StyleWord::toolpath(StyleId::Cut, colour, depth, stale);
+                            let word = tint.word(StyleId::Cut, depth);
                             cuts.push(segment(on(xy(a)), on(xy(b)), 0.0, word));
                         }
                     };
@@ -403,8 +405,8 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
             }
         }
         if visibility.start_points {
-            let circle = StyleWord::toolpath(StyleId::Mark, colour, None, stale);
-            let tick = StyleWord::toolpath(StyleId::Tick, colour, None, stale);
+            let circle = tint.word(StyleId::Mark, None);
+            let tick = tint.word(StyleId::Tick, None);
             for start in &run.marks.start_points {
                 marks.push(ring(on(start.at), start.radius_mm, circle));
                 if let Some(direction) = start.direction {
@@ -443,20 +445,46 @@ const ARROW_ARM_PX: f64 = 6.0;
 /// The angle between a chevron's arm and its move, radians.
 const ARROW_HALF_ANGLE_RAD: f64 = 0.6;
 
+/// How a run's coloured segments draw: in its operation's colour
+/// (`dc_app::operations::colour_at`), faded while the operation is stale,
+/// lighter when the run is a clearing pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Tint {
+    pub colour: usize,
+    pub stale: bool,
+    pub lighter: bool,
+}
+
+impl Tint {
+    /// The tint of `run` of `op`.
+    pub(crate) fn of(op: &SceneOperation, run: &SceneRun) -> Self {
+        Self {
+            colour: op.colour,
+            stale: op.stale,
+            lighter: run.is_clearing(),
+        }
+    }
+
+    /// A segment of row `style` in the tint, at depth step `depth` when
+    /// it cuts.
+    fn word(self, style: StyleId, depth: Option<u8>) -> StyleWord {
+        StyleWord::toolpath(style, Some(self.colour), depth, self.stale).lighter(self.lighter)
+    }
+}
+
 /// One drawn run's arrows: its cache key, its moves as the pass reads
-/// them, its colour, whether it is stale, and where it is drawn relative
-/// to its board's space (a male board run's display offset).
+/// them, its tint, and where it is drawn relative to its board's space (a
+/// male board run's display offset).
 pub(crate) struct ArrowRun<'a> {
     pub key: u64,
     pub moves: &'a [ArrowMove],
-    pub colour: usize,
-    pub stale: bool,
+    pub tint: Tint,
     pub offset: Vec2,
 }
 
 /// The direction arrows of `runs` at `px_per_mm`: a chevron at the middle
 /// of each move [`dc_app::viewport::arrows`] places an arrow on, pointing
-/// the way the cut goes, in the run's colour. Cuts only (capability 72:
+/// the way the cut goes, in its operation's colour. Cuts only (capability 72:
 /// "Direction arrows along cuts").
 #[must_use]
 pub(crate) fn arrows(
@@ -476,7 +504,7 @@ pub(crate) fn arrows(
     let arm_mm = ARROW_ARM_PX / px_per_mm;
     let (sin, cos) = ARROW_HALF_ANGLE_RAD.sin_cos();
     for run in runs {
-        let word = StyleWord::toolpath(StyleId::Tick, Some(run.colour), None, run.stale);
+        let word = run.tint.word(StyleId::Tick, None);
         for arrow in &cache.placements(run.key, run.moves, px_per_mm, gate).cut {
             let [fx, fy, tx, ty] = *arrow;
             let (dx, dy) = (tx - fx, ty - fy);
@@ -546,8 +574,14 @@ mod tests {
 
     /// The quick-start plaque, opened in place.
     fn plaque() -> dc_app::App {
+        fixture("plaque.dcv")
+    }
+
+    /// `tests/fixtures/<name>`, opened in place.
+    fn fixture(name: &str) -> dc_app::App {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/plaque.dcv");
+            .join("../../tests/fixtures")
+            .join(name);
         let bytes = std::fs::read(&path).unwrap_or_default();
         let new = dc_app::App::new_project().unwrap_or_else(|e| panic!("{e}"));
         let mut app = dc_app::App::new(new, dc_app::Strings::english(), dc_app::Prefs::default());
@@ -682,6 +716,99 @@ mod tests {
             assert!(!stale && !segments.is_empty());
             assert!(segments.iter().all(|s| !s.style.stale()));
         }
+    }
+
+    /// Capabilities 73 and 70 (slice D9), on the Viewport's draw list:
+    /// every coloured segment of an operation's toolpath, whichever of
+    /// its tool runs it belongs to, carries the operation's colour, which
+    /// is its row's; a clearing pass's carry the lighter bit besides,
+    /// which the shader draws at 55 %. On the sign the Background V-Carve
+    /// is the second row and two runs, so its V-bit's lines and its
+    /// clearing rings are both the second colour, the rings lighter, and
+    /// the Lettering after it is the third: a colour per run made the
+    /// rings the third and the Lettering the fourth. The Inlay of the
+    /// tapered ball nose's project, the second row after an unticked
+    /// first, draws both boards in the second colour.
+    #[test]
+    #[allow(clippy::panic, reason = "test code reports failure by panicking")]
+    fn every_run_draws_in_its_operations_colour_and_a_clearing_pass_lighter() {
+        let zoom = band(4.0);
+        let drawn = |app: &dc_app::App| -> Vec<(String, u32, Vec<Segment>)> {
+            let visibility = app.view().visibility;
+            let look = ToolpathLook {
+                visibility: &visibility,
+                ramp: None,
+                tolerance_mm: tolerance_mm(zoom),
+                lod_mm: lod_mm(zoom),
+                male_offset: app.scene().board_offset(Board::Male),
+            };
+            let rows = dc_app::operations::rows(app);
+            app.scene()
+                .operations()
+                .iter()
+                .map(|op| {
+                    let row = rows
+                        .iter()
+                        .find(|r| r.id == op.id)
+                        .unwrap_or_else(|| panic!("{} has a row", op.name));
+                    let slot = u32::try_from(row.colour % 8).unwrap_or(0) + 1;
+                    (op.name.clone(), slot, toolpath(op, look))
+                })
+                .collect()
+        };
+
+        let mut sign = fixture("sign.dcv");
+        generate(&mut sign);
+        let operations = drawn(&sign);
+        assert_eq!(operations.len(), 5);
+        for (name, slot, segments) in &operations {
+            let coloured: Vec<&Segment> = segments
+                .iter()
+                .filter(|s| s.style.colour_slot() != 0)
+                .collect();
+            assert!(!coloured.is_empty(), "{name} draws cuts");
+            for segment in &coloured {
+                assert_eq!(
+                    segment.style.colour_slot(),
+                    *slot,
+                    "{name}: a segment in another row's colour"
+                );
+            }
+            let lighter = coloured.iter().filter(|s| s.style.is_lighter()).count();
+            if name == "Background" {
+                assert_eq!(*slot, 2, "the second row");
+                assert!(
+                    lighter > 0 && lighter < coloured.len(),
+                    "{name}: its clearing pass lighter, its V-bit's lines not: {lighter} of {}",
+                    coloured.len()
+                );
+            } else {
+                assert_eq!(lighter, 0, "{name} has no clearing pass");
+            }
+            assert!(
+                segments
+                    .iter()
+                    .filter(|s| s.style.colour_slot() == 0)
+                    .all(|s| !s.style.is_lighter()),
+                "{name}: only the operation's colour is lightened"
+            );
+        }
+
+        let mut inlay = fixture("dc-tbn.dcv");
+        generate(&mut inlay);
+        let operations = drawn(&inlay);
+        let [(name, slot, segments)] = operations.as_slice() else {
+            panic!("the Inlay alone is ticked: {}", operations.len());
+        };
+        assert_eq!((name.as_str(), *slot), ("DC inlay", 2));
+        let stock_width = f64::from(gpu_f32(inlay.project().stock.width_mm));
+        let on_male = |s: &&Segment| f64::from(s.a_mm[0]) > stock_width;
+        let coloured = || segments.iter().filter(|s| s.style.colour_slot() != 0);
+        assert!(coloured().any(|s| on_male(&s)) && coloured().any(|s| !on_male(&s)));
+        assert!(
+            coloured().all(|s| s.style.colour_slot() == 2),
+            "both boards in the Inlay's colour"
+        );
     }
 
     /// A closed path closes once, and the dash phase runs on along it.

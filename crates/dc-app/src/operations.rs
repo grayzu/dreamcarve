@@ -488,6 +488,33 @@ pub fn reorder(project: &Project, id: &OperationId, to: usize) -> Option<Command
         .then(|| Command::ReorderOperation { id: id.clone(), to })
 }
 
+/// The palette index of the colour of the operation at `position` in the
+/// project's list (capability 73, *By operation*: "each operation its own
+/// colour, repeating after eight"): the position itself, counting every
+/// operation, ticked or not. This is the one rule for an operation's
+/// colour: its row's glyph, its editor's header, every tool run of its
+/// toolpath on both boards (`scene::SceneOperation::colour`), its target
+/// marks and its swatch in the Layers key all read it, so they cannot
+/// differ. It depends on nothing but the list's order: unticking an
+/// operation, an operation that fails, or one with clearing passes moves
+/// no other operation's colour. The shell takes it modulo the palette's
+/// eight.
+#[must_use]
+pub const fn colour_at(position: usize) -> usize {
+    position
+}
+
+/// The palette index of operation `id`'s colour ([`colour_at`] its place
+/// in `project`'s list); `None` when the project has no such operation.
+#[must_use]
+pub fn colour(project: &Project, id: &OperationId) -> Option<usize> {
+    project
+        .operations
+        .iter()
+        .position(|o| o.id() == id)
+        .map(colour_at)
+}
+
 /// A row's status cell (`experience.md`, section 7, "Status cell").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -508,8 +535,9 @@ pub struct ListRow {
     pub id: OperationId,
     /// Its kind, for the glyph.
     pub kind: Kind,
-    /// Its place in the list, which picks its colour.
-    pub index: usize,
+    /// The palette index of its colour ([`colour`]): its glyph's, and its
+    /// toolpaths' on the Viewport.
+    pub colour: usize,
     /// Its name.
     pub name: String,
     /// Whether it is cut.
@@ -562,7 +590,7 @@ pub fn rows(app: &App) -> Vec<ListRow> {
             ListRow {
                 id: op.id().clone(),
                 kind,
-                index,
+                colour: colour_at(index),
                 name: op.name().to_owned(),
                 enabled: op.enabled(),
                 detail: strings.fmt(

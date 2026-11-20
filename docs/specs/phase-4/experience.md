@@ -500,6 +500,15 @@ as a line on the Viewport, never as text, never with a glyph. A V-Carve's
 clearing-pass floor rings draw in the operation's colour at 55 % alpha
 (spec 70: "lighter than the V-bit's lines").
 
+An operation's colour is its place in the Operations list, counting
+every operation, ticked or not (`dc_app::operations::colour_at`). Its
+row's glyph, its editor's header, every tool run of its toolpath on both
+boards, its target marks and its swatch in the Layers key read that one
+rule, so they are one colour, and it changes only when the list is
+reordered. The CLI's preview counts a colour per tool run instead, so
+the two pictures differ in which operation has which colour on a project
+with a clearing pass, a male board or an unticked operation.
+
 ### Depth ramp ("By depth")
 
 Five stops interpolated in linear sRGB, pale at the stock top to deep at

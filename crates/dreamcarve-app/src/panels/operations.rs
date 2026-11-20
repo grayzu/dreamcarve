@@ -323,7 +323,7 @@ fn lifted(ui: &Ui, at: egui::Pos2, row: &ListRow) {
         egui::pos2(rect.left() + 54.0, rect.center().y - ICON_PX / 2.0),
         egui::vec2(ICON_PX, ICON_PX),
     );
-    op_glyph(&painter, glyph, row.kind, palette.operation(row.index));
+    op_glyph(&painter, glyph, row.kind, palette.operation(row.colour));
     painter.text(
         egui::pos2(glyph.right() + 8.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -462,7 +462,7 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
         ui.painter(),
         glyph_rect,
         row.kind,
-        palette.operation(row.index),
+        palette.operation(row.colour),
     );
 
     // The status cell and the eye, from the right.

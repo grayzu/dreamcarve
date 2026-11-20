@@ -14,10 +14,12 @@
 //! Each enabled operation carries the runs of its stored result (slice
 //! 16): the generator's toolpaths as they came back from the worker, the
 //! marks [`dc_job::preview::marks`] finds in each (the ones `--preview`
-//! draws, acceptance 79), and each run's place in the preview's palette.
-//! A stale operation keeps its last result's runs, which the Viewport
-//! draws faded, until the new one lands (acceptance 87). The runs are
-//! shared, not copied, between Scenes while their result stands.
+//! draws, acceptance 79), and the operation's colour, which every run of
+//! it draws in ([`crate::operations::colour_at`]: one colour per
+//! operation, its row's). A stale operation keeps its last result's runs,
+//! which the Viewport draws faded, until the new one lands (acceptance
+//! 87). The runs are shared, not copied, between Scenes while their
+//! result stands.
 //!
 //! [`strokes`] reads a toolpath as the Viewport draws it: one stroke per
 //! move, a rapid, a cut or a plunge, with arcs kept; display code
@@ -54,7 +56,7 @@ use dc_geometry::{
     EPS_MM, Point, Point3, Polyline, Rect, Segment, Transform, Vec2, point_segment_distance_mm,
 };
 use dc_job::preview::{self, Marks};
-use dc_job::{EmitOp, MoveKind, Toolpath};
+use dc_job::{EmitOp, MoveKind, RunLabel, Toolpath};
 use dc_project::{
     Bitmap, BitmapId, Board, Grayscale, InstanceId, Operation, OperationId, Project, TabId,
 };
@@ -301,6 +303,15 @@ pub struct SceneRun {
     pub marks: Marks,
 }
 
+impl SceneRun {
+    /// Whether it is a clearing pass of a carve: drawn in the operation's
+    /// colour, lighter than the V-bit's lines (capability 70).
+    #[must_use]
+    pub const fn is_clearing(&self) -> bool {
+        matches!(self.run.label, RunLabel::Clearing(_))
+    }
+}
+
 /// An enabled operation's generation state and its last result's runs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneOperation {
@@ -311,12 +322,16 @@ pub struct SceneOperation {
     /// Its position in the project's list.
     pub index: usize,
     /// Whether its stored result is not the current snapshot's (or it has
-    /// none yet): drawn faded until the new one lands.
+    /// none yet): its runs, when it has any, are drawn faded until the
+    /// new one lands.
     pub stale: bool,
-    /// The preview palette's index of its first run: the runs of every
-    /// enabled operation before it, counted as `--preview` counts them
-    /// (`dc_job::preview::render`, one colour per run, repeating after
-    /// eight). Its `k`th run is colour `colour + k`.
+    /// The palette index of its colour
+    /// ([`crate::operations::colour_at`] its place in the project's
+    /// list, repeating after eight): its row's, and every run of it
+    /// draws in it, a clearing pass lighter ([`SceneRun::is_clearing`]),
+    /// on the stock and on the male board. It does not depend on the
+    /// other operations' runs or on whether they are ticked, where
+    /// `--preview` counts a colour per run (`dc_job::preview::render`).
     pub colour: usize,
     /// Its stored result's runs, in cut order; empty before the first
     /// result and after a generation error.
@@ -361,9 +376,9 @@ pub enum ShapeStyle {
 pub struct TargetMarks {
     /// The operation whose targets they are.
     pub op: OperationId,
-    /// Its place in the preview's palette: its toolpath's
-    /// ([`SceneOperation::colour`]) once it has runs, else its position
-    /// in the list, which is its row's.
+    /// The palette index of its colour
+    /// ([`crate::operations::colour_at`]): its row's and its toolpath's
+    /// ([`SceneOperation::colour`]).
     pub colour: usize,
     /// The marked instances, in the record's or the draft's order.
     pub targets: Vec<InstanceId>,
@@ -496,7 +511,6 @@ fn operations(
     generation: &Generation,
     previous: &[SceneOperation],
 ) -> Vec<SceneOperation> {
-    let mut colour = 0;
     project
         .operations
         .iter()
@@ -529,18 +543,16 @@ fn operations(
                 }
                 (None, None) => (Arc::from(Vec::new()), Arc::default()),
             };
-            let scene_op = SceneOperation {
+            SceneOperation {
                 id: op.id().clone(),
                 name: op.name().to_owned(),
                 index,
                 stale: !generation.is_current(op.id()),
-                colour,
+                colour: crate::operations::colour_at(index),
                 runs,
                 cuts,
                 result,
-            };
-            colour += scene_op.runs.len();
-            scene_op
+            }
         })
         .collect()
 }

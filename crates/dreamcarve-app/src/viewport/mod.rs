@@ -1301,7 +1301,8 @@ fn arrow_layer(
     let app = state.app;
     let visibility = app.view().visibility;
     let scene = app.scene();
-    let mut runs: Vec<(u64, &dc_job::Toolpath, usize, bool, dc_geometry::Vec2)> = Vec::new();
+    // Each run's key, toolpath, tint and display offset.
+    let mut runs: Vec<(u64, &dc_job::Toolpath, layers::Tint, dc_geometry::Vec2)> = Vec::new();
     if visibility.arrows {
         for id in &view.drawn {
             let Some(op) = scene.operation(id) else {
@@ -1313,8 +1314,7 @@ fn arrow_layer(
                     runs.push((
                         key((id, op.result_key(), k)),
                         &run.run.toolpath,
-                        op.colour + k,
-                        op.stale,
+                        layers::Tint::of(op, run),
                         offset,
                     ));
                 }
@@ -1325,7 +1325,7 @@ fn arrow_layer(
         camera.px_per_mm.to_bits(),
         visibility.cuts,
         runs.iter()
-            .map(|r| (r.0, r.2, r.3, r.4.x.to_bits(), r.4.y.to_bits()))
+            .map(|r| (r.0, r.2, r.3.x.to_bits(), r.3.y.to_bits()))
             .collect::<Vec<_>>(),
     ));
     let tolerance = layers::tolerance_mm(band);
@@ -1333,7 +1333,7 @@ fn arrow_layer(
     view.arrow_moves.retain(|k, _| keys.contains(k));
     view.arrows.retain(&keys);
     let mut moves = Vec::with_capacity(runs.len());
-    for (run_key, toolpath, _, _, _) in &runs {
+    for (run_key, toolpath, _, _) in &runs {
         let cached = view
             .arrow_moves
             .get(run_key)
@@ -1361,15 +1361,12 @@ fn arrow_layer(
         let arrow_runs: Vec<layers::ArrowRun<'_>> = runs
             .iter()
             .zip(&moves)
-            .map(
-                |((run_key, _, colour, stale, offset), m)| layers::ArrowRun {
-                    key: *run_key,
-                    moves: m.as_slice(),
-                    colour: *colour,
-                    stale: *stale,
-                    offset: *offset,
-                },
-            )
+            .map(|((run_key, _, tint, offset), m)| layers::ArrowRun {
+                key: *run_key,
+                moves: m.as_slice(),
+                tint: *tint,
+                offset: *offset,
+            })
             .collect();
         cached.key = Some(layer_key);
         cached.version = next;

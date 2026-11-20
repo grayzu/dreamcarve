@@ -200,8 +200,9 @@ fn depth_legend_is_in_project_units() {
 /// Capability 73 (`experience.md`, section 9, "Toolpath view popover"):
 /// the by-operation key lists one entry per enabled operation in list
 /// order, named as the file names it, in the colour the Viewport draws
-/// it: the preview palette's, by the operation's index in the Scene. A
-/// disabled operation has no entry and takes no colour.
+/// it: the palette's, by the operation's place in the project's list
+/// (`operations::colour_at`), which is its row's. A disabled operation
+/// has no entry, and the operations after it keep their colours.
 #[test]
 fn by_operation_key_lists_each_operation_colour() {
     let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
@@ -223,7 +224,8 @@ fn by_operation_key_lists_each_operation_colour() {
         assert_eq!(entry.colour, op.colour, "the colour the Viewport draws");
     }
 
-    // Disable the Panel pocket: it leaves the key, the rest close up.
+    // Disable the Panel pocket, the third row: it leaves the key, and
+    // the two after it keep the fourth and fifth colours.
     harness
         .run(Command::SetOperationEnabled {
             id: OperationId::new("op1"),
@@ -236,7 +238,7 @@ fn by_operation_key_lists_each_operation_colour() {
     assert!(!names.contains(&"Panel"), "{names:?}");
     assert_eq!(names.len(), 4);
     let colours: Vec<usize> = key.iter().map(|e| e.colour).collect();
-    assert_eq!(colours, [0, 1, 2, 3]);
+    assert_eq!(colours, [0, 1, 3, 4], "no colour moved");
 }
 
 /// Acceptance 81 (capability 73): toggling every visibility control, both

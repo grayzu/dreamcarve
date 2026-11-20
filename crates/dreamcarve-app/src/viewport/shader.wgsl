@@ -15,9 +15,9 @@
 //
 // The style word (renderer.rs, `StyleWord`) carries, besides the style
 // row, a toolpath's operation colour, its depth step and its stale flag:
-// the colour is the operation's, or with `by_depth` set and a depth step
-// present, the ramp texture's texel at that step; a stale segment draws
-// at 35 % alpha. A shape behind the marked operation's targets sets the
+// the colour is the operation's (at 55 % for a clearing pass, which sets
+// the lighter bit), or with `by_depth` set and a depth step present, the
+// ramp texture's texel at that step; a stale segment draws at 35 % alpha. A shape behind the marked operation's targets sets the
 // faded bit and draws at 40 % alpha.
 //
 // Project space is Y-up and so is clip space: the transform below scales
@@ -69,6 +69,7 @@ const DASHED: u32 = 1u;
 const FADES: u32 = 2u;
 const RING: u32 = 4u;
 const STALE_ALPHA: f32 = 0.35;
+const LIGHTER_ALPHA: f32 = 0.55;
 const FADED_ALPHA: f32 = 0.4;
 // The first operation colour row; renderer.rs writes the style count here.
 const OP_BASE: u32 = 0u;
@@ -157,6 +158,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let op = (word >> 18u) & 0xFu;
     if (op > 0u) {
         colour = styles[OP_BASE + op - 1u].colour;
+        if (((word >> 23u) & 1u) == 1u) {
+            colour = colour * LIGHTER_ALPHA;
+        }
     }
     if (((word >> 16u) & 1u) == 1u && camera.by_depth > 0.5) {
         colour = textureLoad(ramp, vec2<i32>(i32((word >> 8u) & 0xFFu), 0), 0);

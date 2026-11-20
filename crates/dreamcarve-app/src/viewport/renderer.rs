@@ -16,7 +16,8 @@
 //! colour, its depth step for *By depth* and whether it is stale. The
 //! shader picks the colour: the row's, else the operation's, else, when
 //! the camera uniform says *By depth* and the segment cuts, the ramp
-//! texture's texel at its step; a stale segment draws at 35 % alpha
+//! texture's texel at its step; a clearing pass's segment draws its
+//! operation's colour at 55 %; a stale segment draws at 35 % alpha
 //! (`experience.md`, section 13, item 91). Switching the colour mode so
 //! writes only the camera.
 //!
@@ -170,15 +171,16 @@ pub const OPERATION_COLOURS: usize = 8;
 /// depth* colours it), bit 17 when it is stale, and its operation's
 /// colour as index + 1 in bits 18–21 (0: the row's own colour). A shape
 /// sets bit 22 when it fades behind the marked operation's targets, and
-/// a target carries that operation's colour in bits 18–21.
+/// a target carries that operation's colour in bits 18–21. A clearing
+/// pass's segment sets bit 23: its operation's colour, lighter.
 /// `shader.wgsl` decodes the same bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StyleWord(u32);
 
 impl StyleWord {
     /// A toolpath segment of row `style` in operation colour `colour`
-    /// (the preview's run index; the palette repeats after eight), at
-    /// depth step `depth` when it cuts, faded when `stale`.
+    /// (`dc_app::operations::colour_at`; the palette repeats after
+    /// eight), at depth step `depth` when it cuts, faded when `stale`.
     #[must_use]
     pub fn toolpath(style: StyleId, colour: Option<usize>, depth: Option<u8>, stale: bool) -> Self {
         let mut word = style as u32;
@@ -193,6 +195,19 @@ impl StyleWord {
             word |= slot << 18;
         }
         Self(word)
+    }
+
+    /// The word of a clearing pass's segment when `lighter`: its
+    /// operation's colour at 55 % (capability 70: "in the operation's
+    /// colour, lighter than the V-bit's lines"; `experience.md`,
+    /// "Operation colours").
+    #[must_use]
+    pub const fn lighter(self, lighter: bool) -> Self {
+        if lighter {
+            Self(self.0 | (1 << 23))
+        } else {
+            self
+        }
     }
 
     /// A shape's outline of row `style` behind the marked operation's
@@ -240,6 +255,13 @@ impl StyleWord {
     #[must_use]
     pub const fn stale(self) -> bool {
         self.0 & (1 << 17) != 0
+    }
+
+    /// Whether it is a clearing pass's, drawn lighter.
+    #[cfg(test)]
+    #[must_use]
+    pub const fn is_lighter(self) -> bool {
+        self.0 & (1 << 23) != 0
     }
 }
 
@@ -1351,7 +1373,17 @@ mod tests {
         assert_eq!((word.bits() >> 8) & 0xFF, 200);
         assert_eq!((word.bits() >> 16) & 1, 1);
         assert!(word.stale());
-        assert_eq!((word.bits() >> 18) & 0xF, 2, "run 9 takes colour 2");
+        assert_eq!(
+            (word.bits() >> 18) & 0xF,
+            2,
+            "colour 9 is the palette's second"
+        );
+        assert!(!word.is_lighter());
+        let clearing = word.lighter(true);
+        assert!(clearing.is_lighter() && clearing.stale());
+        assert_eq!(clearing.colour_slot(), 2, "lighter keeps the colour");
+        assert_eq!(clearing.row(), StyleId::Cut as u32);
+        assert_eq!(word.lighter(false), word);
         let plain = StyleWord::from(StyleId::Shape);
         assert_eq!(plain.bits(), StyleId::Shape as u32);
         assert!(!plain.stale());
