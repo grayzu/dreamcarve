@@ -43,7 +43,7 @@ Over the list are three buttons:
 - **Duplicate** copies the selected operation below itself, with its
   shapes and settings, as `<name> (2)`.
 - **Delete** deletes the selected operation. Tabs you placed stay: they
-  belong to the part, not to the operation ([Tabs](tabs.md)).
+  belong to the part, not to the operation ([Tabs](tabs.md#in-the-app)).
 
 Reordering, ticking, duplicating and deleting are each one step for
 **Undo**: *Undo Reorder operations*, *Undo Disable “Panel”*, *Undo

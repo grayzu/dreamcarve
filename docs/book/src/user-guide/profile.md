@@ -58,7 +58,7 @@ or that choice is made.
 | | **Tool** | `tool` |
 | | **Side**: Outside, Inside, On line, Left, Right | `side` ([Side](#side)) |
 | | **Depth** | `depth_mm` ([Depth and passes](#depth-and-passes)) |
-| | **Tab request**, a switch, with **Place tabs** beside it | `tabs`; off is `null` ([Tabs](tabs.md)) |
+| | **Tab request**, a switch, with **Place tabs** beside it | `tabs`; off is `null` ([Tabs](tabs.md#in-the-app)) |
 | | **Placement**: Count or Distances; then **Count**, or **Distances** | `tabs.placement` |
 | **Depth** | **Step-down** | `step_down_mm`. Empty is `null`, the tool's |
 | | **Through-cut allowance** | `through_cut_allowance_mm` ([Cutting through](#cutting-through)) |

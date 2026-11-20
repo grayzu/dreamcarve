@@ -14,7 +14,7 @@ X 70, Y 18.
 
 The step panel lists what the project holds, in three sections.
 **Shapes** has a row for each outline of the drawing, **Tabs** lists the
-[placed tabs](tabs.md), and **Pictures** the
+[placed tabs](tabs.md#in-the-app), and **Pictures** the
 [pictures](importing.md#a-picture-on-the-stock).
 
 ![The Design step's list on the plaque with a copy of the square: an eye at the left of each row, crossed out on the island; a padlock on "square (2)", whose row is selected; a glyph for a closed outline, a circle or an open path; the name; a linked-copy mark on "square" and "square (2)"; and the number of operations that cut each shape](figures/app/place-list.png)

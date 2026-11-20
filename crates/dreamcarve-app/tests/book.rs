@@ -2179,3 +2179,178 @@ fn operation_editor_screenshots() {
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }
+
+/// The project's placed tabs: each one's id and where it is on the
+/// stock, mm.
+fn placed_tabs(h: &H) -> Vec<(String, dc_geometry::Point)> {
+    let tabs = h.state().app().scene().tabs();
+    tabs.iter()
+        .map(|tab| (tab.id.as_str().to_owned(), tab.at_mm))
+        .collect()
+}
+
+/// The labels of the Design step's tab rows, top to bottom.
+fn tab_rows(h: &H) -> Vec<String> {
+    h.query_all_by_role(Role::TreeItem)
+        .map(|n| n.accesskit_node().label().unwrap_or_default())
+        .filter(|label| label.starts_with("tab"))
+        .collect()
+}
+
+/// The chapter "Tabs" (`docs/book/src/user-guide/tabs.md`, "In the
+/// app"), on the plaque: *Place tabs* on the Cut out's request, a tab
+/// selected from its mark and from its row, its Properties, a drag along
+/// the outline, Delete, several tabs edited at once, and the Tab tool on
+/// two outlines, one of which no Profile cuts.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn tabs_screenshots() {
+    let out = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-tabs", &dialogs) else {
+        return;
+    };
+
+    // Place tabs: the request of four becomes four placed tabs, the
+    // request's switch goes off, and the cut is the same cut.
+    open_operation(&mut h, "Cut out");
+    settle(&mut h);
+    assert!(h.state().app().project().tabs.is_empty());
+    click_button(&mut h, "Place tabs");
+    settle(&mut h);
+    assert_eq!(undo_label(&h), "Place 4 tabs");
+    let dc_project::Operation::Profile(cut_out) = &h.state().app().project().operations[4] else {
+        panic!("the Cut out is a Profile");
+    };
+    assert!(
+        cut_out.tabs.is_none(),
+        "the request is placed, so it is gone"
+    );
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Place tabs")
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(painted(&h, "Est. 3 min 39 s"), "the same program");
+    let tabs = placed_tabs(&h);
+    assert_eq!(tabs.len(), 4);
+
+    // On the Design step they are listed under Tabs, by their outline.
+    go_to(&mut h, "Design");
+    assert!(h.query_by_label_contains("outline · 4 tabs").is_some());
+    assert_eq!(
+        tab_rows(&h),
+        [
+            "tab1  (82.85, 113.17)",
+            "tab2  (163.18, 62.15)",
+            "tab3  (87.15, 6.83)",
+            "tab4  (6.83, 57.85)"
+        ]
+    );
+
+    // A click on a tab's mark selects the tab, not the shape under it.
+    let (id, at) = tabs[0].clone();
+    let mark = common::on_screen(&h, at);
+    common::click_at(&mut h, mark, egui::Modifiers::NONE);
+    assert!(h.query_by_label(&format!("Properties · {id}")).is_some());
+    assert_eq!(
+        ["Width", "Height", "Position"].map(|label| field(&h, label)),
+        ["8", "3", "82.85, 113.17"]
+    );
+    assert!(
+        h.get_by_role_and_label(Role::TextInput, "Position")
+            .accesskit_node()
+            .is_disabled(),
+        "the position is read, not typed"
+    );
+    assert!(h.query_by_label("Crossed by: Cut out.").is_some());
+    shoot(&mut h, &out, "tabs-selected", Crop::Window);
+
+    // Its size and shape.
+    type_in(&mut h, "Width", "6");
+    assert_eq!(undo_label(&h), "Edit tab");
+    h.get_by_role_and_label(Role::RadioButton, "Smooth").click();
+    h.run();
+    assert_eq!(undo_label(&h), "Edit tab");
+    settle(&mut h);
+
+    // Dragged along its outline, it stays on the outline.
+    let from = common::on_screen(&h, at);
+    let to = common::on_screen(&h, dc_geometry::Point::new(at.x + 20.0, at.y + 3.0));
+    drag_with(&mut h, from, to, egui::Modifiers::NONE);
+    assert_eq!(undo_label(&h), "Move tab");
+    assert_eq!(tab_rows(&h)[0], "tab1  (102.85, 110)");
+
+    // Delete, from the key and from the button.
+    h.key_press(egui::Key::Delete);
+    h.run();
+    assert_eq!(undo_label(&h), "Delete tab");
+    assert_eq!(h.state().app().project().tabs.len(), 3);
+    undo(&mut h);
+    h.get_by_role_and_label(Role::TreeItem, "tab1  (102.85, 110)")
+        .click();
+    h.run();
+    click_button(&mut h, "Delete");
+    assert_eq!(h.state().app().project().tabs.len(), 3);
+    undo(&mut h);
+
+    // Several at once, from their rows.
+    h.get_by_role_and_label(Role::TreeItem, "tab2  (163.18, 62.15)")
+        .click();
+    h.run();
+    h.get_by_role_and_label(Role::TreeItem, "tab4  (6.83, 57.85)")
+        .click_modifiers(egui::Modifiers::SHIFT);
+    h.run();
+    assert!(h.query_by_label("Properties · 2 tabs").is_some());
+    type_in(&mut h, "Height", "4");
+    assert_eq!(undo_label(&h), "Edit 2 tabs");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    settle(&mut h);
+
+    // The Tab tool: each click on an outline adds a tab there, until
+    // Escape. The square is pocketed, not profiled, so a tab on it is
+    // crossed by no cut.
+    h.key_press(egui::Key::T);
+    h.run();
+    let on_the_outline = at_mm(&h, 10.0, 40.0);
+    common::click_at(&mut h, on_the_outline, egui::Modifiers::NONE);
+    assert_eq!(undo_label(&h), "Add tab");
+    let on_the_square = at_mm(&h, 70.0, 33.0);
+    common::click_at(&mut h, on_the_square, egui::Modifiers::NONE);
+    assert_eq!(h.state().app().project().tabs.len(), 6);
+    for tab in &h.state().app().project().tabs[4..] {
+        assert_eq!(
+            (
+                tab.width_mm.to_string().as_str(),
+                tab.height_mm.to_string().as_str(),
+                tab.shape
+            ),
+            ("8", "4", dc_project::TabShape::Rect),
+            "a new tab has the size and shape last given to a tab"
+        );
+    }
+    settle(&mut h);
+    assert!(h.query_by_label("Properties · tab6").is_some());
+    assert!(
+        h.query_by_label_contains("No enabled Profile crosses it")
+            .is_some()
+    );
+    assert_eq!(
+        problems(&h),
+        [
+            "warning: tab_not_crossed: tab `tab6` on `square` (instance `i4`, profile 0) is \
+          crossed by no enabled Profile operation, so it holds nothing; cut that outline \
+          with a Profile, or remove the tab (`dreamcarve tabs clear <dcv> --tab tab6`)"
+        ]
+    );
+    shoot(&mut h, &out, "tabs-tool", Crop::Window);
+
+    // Escape ends the tool: the next click selects, and adds nothing.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    common::click_at(&mut h, on_the_outline, egui::Modifiers::NONE);
+    assert_eq!(h.state().app().project().tabs.len(), 6);
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
