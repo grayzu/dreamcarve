@@ -437,6 +437,10 @@ struct Reach {
 /// a sliver, and its second nothing; the limit only bounds the work.
 const NEST_DEPTH: usize = 8;
 
+/// The finest step an arc is flattened in, radians ([`flatten_segment`]):
+/// it bounds an arc's pieces at `2π / 1e-6` whatever the tolerance.
+const MIN_FLATTEN_STEP_RAD: f64 = 1e-6;
+
 /// What a node of a floor's ring tree leaves uncut (#527): the points of
 /// `node` more than `reach.reach_mm` (half a step-over) from its rings and
 /// from every one of `children` (whose own rings and subtrees cut them),
@@ -815,7 +819,7 @@ fn flatten_segment(segment: Segment, tolerance_mm: f64) -> Vec<Point> {
         radius_mm / (radius_mm + tolerance_mm)
     };
     let half_rad = ratio.clamp(-1.0, 1.0).acos();
-    let step_rad = (2.0 * half_rad).clamp(1e-6, FRAC_PI_2);
+    let step_rad = (2.0 * half_rad).clamp(MIN_FLATTEN_STEP_RAD, FRAC_PI_2);
     let pieces = (sweep_rad.abs() / step_rad).ceil().max(1.0);
     // `pieces` is at least 1 and at most 2π / 1e-6.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

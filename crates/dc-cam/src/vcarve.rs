@@ -183,6 +183,11 @@ impl Carve<'_> {
 /// millimetre, below what the plug's seat can feel.
 const DEEPEN_MM: f64 = 0.01;
 
+/// A Z within this many units of the program's last decimal place of a
+/// value the program can write is that value: it is not raised to the
+/// next one.
+const ON_WRITTEN_GRID_UNITS: f64 = 1e-6;
+
 /// The open outer edge of a male Inlay's band (#448;
 /// `docs/specs/phase-3/design.md`, "Algorithms → Inlay", step 4). The
 /// carve's regions are still the surround, `band` less `design`, and its
@@ -1045,7 +1050,7 @@ fn written_depths(
         }
         let units = (z - zero_mm) / quantum_mm;
         // A value already on the grid, to its rounding, stays there.
-        let up = if (units - units.round()).abs() < 1e-6 {
+        let up = if (units - units.round()).abs() < ON_WRITTEN_GRID_UNITS {
             units.round()
         } else {
             units.ceil()

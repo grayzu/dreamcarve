@@ -39,7 +39,7 @@
 //! left of travel is counter-clockwise about its centre, on the right
 //! clockwise; nothing is copied from upstream's Y-down signs.
 
-use crate::entry::{EntryDomain, boundary_safety_mm};
+use crate::entry::{EntryDomain, ON_BOUNDARY_MM, boundary_safety_mm};
 use crate::error::{CamError, ShapeRef};
 use crate::toolpath::MoveKind;
 use crate::warning::{LeadDroppedReason, Warning};
@@ -104,8 +104,6 @@ impl<'a> DomainSpace<'a> {
     }
 }
 
-/// How far outside the domain a point still counts as on its edge, mm.
-const ON_BOUNDARY_MM: f64 = 1e-7;
 /// Lengths and angles below this are zero.
 const LEAD_EPS: f64 = 1e-9;
 

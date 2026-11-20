@@ -134,7 +134,12 @@ const MIN_HELIX_RADIUS_FRACTION: f64 = 0.05;
 const MIN_RAMP_RUN_FRACTION: f64 = 0.02;
 /// How far outside a region a point may be and still count as on it, mm:
 /// targets lie on the boundary, and flattening moves it by rounding only.
-const ON_BOUNDARY_MM: f64 = 1e-7;
+/// A lead's domain is an entry's, so its arcs are held to the same.
+pub(crate) const ON_BOUNDARY_MM: f64 = 1e-7;
+/// Two crossings of a line with a region's edges whose parameters along
+/// the line differ by no more than this are one: a line through a vertex
+/// meets both edges that end there.
+const SAME_CROSSING: f64 = 1e-12;
 
 /// Which side of the wall being cut the tool is on, for the helix sense.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1238,7 +1243,7 @@ impl Area {
                 .filter_map(|(a, b)| crossing_parameter(from, to, a, b)),
         );
         ts.sort_by(f64::total_cmp);
-        ts.dedup_by(|a, b| (*a - *b).abs() <= 1e-12);
+        ts.dedup_by(|a, b| (*a - *b).abs() <= SAME_CROSSING);
         let last = ts.len().saturating_sub(2);
         ts.windows(2).enumerate().all(|(i, w)| match w {
             [a, b] => self.contains_within(
@@ -1277,7 +1282,7 @@ impl Area {
             })
             .collect();
         ts.sort_by(f64::total_cmp);
-        ts.dedup_by(|a, b| (*a - *b).abs() <= 1e-12);
+        ts.dedup_by(|a, b| (*a - *b).abs() <= SAME_CROSSING);
         let mut best: Option<(f64, f64)> = None;
         for w in ts.windows(2) {
             let [min, max] = *w else { continue };

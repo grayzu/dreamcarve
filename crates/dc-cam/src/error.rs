@@ -1199,8 +1199,13 @@ fn internal_message(op: Option<&OperationId>, what: &str) -> String {
 /// user must reach is never shown short of it (#495); a value a hair
 /// above a thousandth stays on it.
 fn up_mm(mm: f64) -> f64 {
-    (mm * 1000.0 - 1e-6).ceil() / 1000.0
+    (mm * 1000.0 - ON_THOUSANDTH).ceil() / 1000.0
 }
+
+/// How far above a thousandth of a millimetre, in thousandths, a length
+/// may be and still be shown as that thousandth ([`up_mm`]): the noise of
+/// the arithmetic that made it.
+const ON_THOUSANDTH: f64 = 1e-6;
 
 fn with_stock_to_leave(stock_to_leave_mm: Option<f64>) -> String {
     stock_to_leave_mm.map_or_else(String::new, |a| {

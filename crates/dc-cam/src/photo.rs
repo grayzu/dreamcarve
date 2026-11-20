@@ -71,6 +71,11 @@ pub const MAX_PHOTO_MOVES: usize = 2_000_000;
 /// sample is moved onto its end rather than kept beside it.
 const MIN_SAMPLE_GAP_MM: f64 = 1e-3;
 
+/// A groove line whose direction has a component no larger than this
+/// does not move along that axis: it lies between the footprint's two
+/// edges on it or misses the footprint, and is not clipped against them.
+const ALONG_AXIS: f64 = 1e-12;
+
 /// One family of grooves ([`grooves`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Grooves {
@@ -620,7 +625,7 @@ impl Family {
             (base.x, self.u.x, min.x, max.x),
             (base.y, self.u.y, min.y, max.y),
         ] {
-            if d.abs() <= 1e-12 {
+            if d.abs() <= ALONG_AXIS {
                 if b < lo - EPS_MM || b > hi + EPS_MM {
                     return None;
                 }

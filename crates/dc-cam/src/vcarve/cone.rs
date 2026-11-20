@@ -37,6 +37,46 @@ const MAX_CELLS: f64 = 128.0;
 /// in.
 const WIDENING_PIECES: u32 = 16;
 
+/// The least side of a wall grid cell, mm: walls that span nothing, or
+/// none at all, still get a grid of cells with a size.
+const MIN_CELL_MM: f64 = 1e-3;
+
+/// A segment whose squared length, mm², is no more than this is a point:
+/// the nearest point on it is its start.
+const POINT_LENGTH_SQ_MM2: f64 = 1e-18;
+
+/// Two segments whose directions' cross product, mm², is no more than
+/// this are parallel for [`segment_distance`]: they cross nowhere, and
+/// the distance is between their ends.
+const PARALLEL_CROSS_MM2: f64 = 1e-18;
+
+/// A path and a wall whose directions' cross product, mm², is no more
+/// than this are parallel for [`Walls::excursion`]: the wall is not a
+/// crossing of the path, only its ends within the slack are.
+const EXCURSION_PARALLEL_CROSS_MM2: f64 = 1e-12;
+
+/// How far past a wall's ends, as a fraction of its length, a path's
+/// crossing still counts as on it: a path through a vertex crosses both
+/// walls that meet there.
+const WALL_END_SLACK: f64 = 1e-9;
+
+/// Two cuts of a path closer than this fraction of its length have no
+/// stretch between them for [`Walls::excursion`] to test.
+const MIN_STRETCH: f64 = 1e-12;
+
+/// A wall point bounds a disc tangent at `w` only when it is ahead of the
+/// tangent by more than this, relative to its distance from `w` plus
+/// 1 mm ([`Walls::ball_radius_mm`]).
+const AHEAD_OF_TANGENT: f64 = 1e-9;
+
+/// A divisor no larger than this is zero: the root it would give is left
+/// out ([`Walls::ball_radius_mm`]).
+const MIN_DIVISOR: f64 = 1e-300;
+
+/// Points of a loop closer than this, mm, are one, as the medial axis
+/// cleans its loops ([`clean_loop`]).
+const SAME_POINT_MM: f64 = 1e-9;
+
 /// The straight wall segments of a set of regions, bucketed in a uniform
 /// grid, with the flattened loops for the even-odd inside test.
 #[derive(Debug, Clone)]
@@ -182,7 +222,7 @@ impl Walls {
             max = min;
         }
         let extent_mm = (max.x - min.x).max(max.y - min.y);
-        let cell_mm = (extent_mm / MAX_CELLS).max(1e-3);
+        let cell_mm = (extent_mm / MAX_CELLS).max(MIN_CELL_MM);
         let columns = count_of(((max.x - min.x) / cell_mm).floor()) + 1;
         let rows = count_of(((max.y - min.y) / cell_mm).floor()) + 1;
         let mut grid = Self {
@@ -314,7 +354,7 @@ impl Walls {
         let foot = |a: Point, b: Point| {
             let ab: Vec2 = b - a;
             let length_sq = ab.dot(ab);
-            let t = if length_sq > 1e-18 {
+            let t = if length_sq > POINT_LENGTH_SQ_MM2 {
                 ((p - a).dot(ab) / length_sq).clamp(0.0, 1.0)
             } else {
                 0.0
@@ -361,7 +401,7 @@ impl Walls {
                 let d = Vec2::new(d0.x + e.x * t, d0.y + e.y * t);
                 let ahead = 2.0 * d.dot(u);
                 // A point at or behind `w`'s tangent bounds no disc.
-                (ahead > 1e-9 * (1.0 + d.length())).then(|| d.dot(d) / ahead)
+                (ahead > AHEAD_OF_TANGENT * (1.0 + d.length())).then(|| d.dot(d) / ahead)
             };
             // The stationary points of the ratio along the segment.
             let (eu, du) = (e.dot(u), d0.dot(u));
@@ -375,10 +415,10 @@ impl Walls {
             let disc = qb * qb - 4.0 * qa * qc;
             if disc >= 0.0 {
                 let q = -0.5 * (qb + qb.signum() * disc.sqrt());
-                if q.abs() > 1e-300 {
+                if q.abs() > MIN_DIVISOR {
                     ts.push(qc / q);
                 }
-                if qa.abs() > 1e-300 {
+                if qa.abs() > MIN_DIVISOR {
                     ts.push(q / qa);
                 }
             }
@@ -529,10 +569,11 @@ impl Walls {
             let (c, d) = (wall.a, wall.b);
             let cd = d - c;
             let denom = ab.cross(cd);
-            if denom.abs() > 1e-12 {
+            if denom.abs() > EXCURSION_PARALLEL_CROSS_MM2 {
                 let t = (c - a).cross(cd) / denom;
                 let u = (c - a).cross(ab) / denom;
-                if (-1e-9..=1.0 + 1e-9).contains(&u) && (0.0..=1.0).contains(&t) {
+                if (-WALL_END_SLACK..=1.0 + WALL_END_SLACK).contains(&u) && (0.0..=1.0).contains(&t)
+                {
                     cuts.push((t, Some(wall)));
                 }
             }
@@ -545,7 +586,7 @@ impl Walls {
         cuts.sort_by(|x, y| x.0.total_cmp(&y.0));
         let at = |t: f64| a + ab * t;
         let mid = cuts.windows(2).find_map(|w| match w {
-            [(s, _), (t, _)] if t - s > 1e-12 && !self.holds(at((s + t) / 2.0), slack_mm) => {
+            [(s, _), (t, _)] if t - s > MIN_STRETCH && !self.holds(at((s + t) / 2.0), slack_mm) => {
                 Some((s + t) / 2.0)
             }
             _ => None,
@@ -744,7 +785,7 @@ impl OpenEdgeWalls {
 fn segment_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
     let (ab, cd) = (b - a, d - c);
     let denom = ab.cross(cd);
-    if denom.abs() > 1e-18 {
+    if denom.abs() > PARALLEL_CROSS_MM2 {
         let t = (c - a).cross(cd) / denom;
         let u = (c - a).cross(ab) / denom;
         if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
@@ -760,7 +801,7 @@ fn segment_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
 pub(crate) fn point_segment(p: Point, a: Point, b: Point) -> f64 {
     let ab: Vec2 = b - a;
     let length_sq = ab.dot(ab);
-    let t = if length_sq > 1e-18 {
+    let t = if length_sq > POINT_LENGTH_SQ_MM2 {
         ((p - a).dot(ab) / length_sq).clamp(0.0, 1.0)
     } else {
         0.0
@@ -776,7 +817,7 @@ fn clean_loop<T: Copy>(points: Vec<(Point, T)>) -> Vec<(Point, T)> {
     let mut out: Vec<(Point, T)> = Vec::new();
     for (p, source) in points {
         if let Some(last) = out.last_mut()
-            && last.0.distance_to(p) < 1e-9
+            && last.0.distance_to(p) < SAME_POINT_MM
         {
             last.1 = source;
             continue;
@@ -784,7 +825,7 @@ fn clean_loop<T: Copy>(points: Vec<(Point, T)>) -> Vec<(Point, T)> {
         out.push((p, source));
     }
     while let (Some(&(first, _)), Some(&(last, _))) = (out.first(), out.last()) {
-        if out.len() >= 2 && first.distance_to(last) < 1e-9 {
+        if out.len() >= 2 && first.distance_to(last) < SAME_POINT_MM {
             out.pop();
         } else {
             break;
