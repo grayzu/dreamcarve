@@ -78,8 +78,8 @@ A field keeps what you type until you leave it, with Tab, Enter or a
 click elsewhere. Then the value is applied as one step, which Undo takes
 back in one go. Escape leaves the field and keeps the old value.
 
-Lengths and feed rates show in the project's units, set in the Project
-panel. Any length or rate field also takes a value with its own unit, as
+Lengths and feed rates show in the project's units, set on the Stock
+step. Any length or rate field also takes a value with its own unit, as
 the project file does: `1/4 in`, `1 1/4 in` or `6.35 mm` for a length,
 `60 in/min` or `1500 mm/min` for a feed rate. A number with no unit is in
 the project's units. The project file always stores millimetres, so
