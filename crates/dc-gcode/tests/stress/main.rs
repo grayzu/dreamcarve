@@ -42,10 +42,10 @@
 //! a failing seed becomes a named test, with its minimal design, once its
 //! bug is understood.
 //!
-//! What the sweep found is on #464. While #484 is open, the sweep still
-//! fails: seat failures with 60° and 90° bits away from a near touch
-//! (#484). Their reproductions are the ignored tests at the end of this
-//! file and in dc-cam's inlay tests.
+//! What the sweep found is on #464. Its seat failures with 60° and 90°
+//! bits away from a near touch were #484, closed since; the designs that
+//! reproduced them are the slow, ignored tests at the end of this file
+//! and tests in dc-cam's inlay tests.
 
 #![allow(
     clippy::panic,

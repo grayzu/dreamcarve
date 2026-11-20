@@ -215,14 +215,15 @@ spec, "Sub-phases". (3.4 was inserted on 2026-11-10 because preparing
 artwork is the hardest part of making an inlay; it renumbered the later
 sub-phases.)
 
-**Exit:** parity with PureCutCNC's V-carve tests; the phase 3 test parts
-cut: a lettered sign imported as SVG outlines, an inlay pair (female and
-male, cut and fitted, following Corbin's Fusion tutorial), a line-art
-inlay prepared with `image-prep` inside a drawn boundary, and a photo
+**Exit:** parity with PureCutCNC's V-carve tests; the five phase 3 test
+parts cut: a lettered sign imported as SVG outlines, an inlay pair (female
+and male, cut and fitted, following Corbin's Fusion tutorial), a line-art
+inlay prepared with `image-prep` inside a drawn boundary, a photo
 V-carve whose toolpath matches RasterCarve's test cases within the
-tolerance the spec states; `v0.3.0`.
+tolerance the spec states, and a carve and an inlay pair cut with a
+tapered ball nose after a coupon fit; `v0.3.0`.
 
-**Real cut:** yes, all four parts.
+**Real cut:** yes, all five parts.
 
 **Read first:** `src/engine/toolpaths/vcarve.ts`, the `v_carve_medial`
 operation kind in `src/types/project.ts`, related tests. Inlay has no

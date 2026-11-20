@@ -120,7 +120,7 @@ is no GUI in this phase.
  again (even-odd, as Pocket nests): the letter O carves the ring, and a
  rectangle with letters inside it carves the background and leaves the
  letters standing. Targets are closed outlines; an open path is skipped
- with `v_carve_target_open`; overlapping outlines are an error, as for
+ with `vcarve_target_open`; overlapping outlines are an error, as for
  Pocket. The tool must be a V-bit (`cutter: { "v_bit": { … } }`) with an
  included angle above 0° and below 180°; any other cutter is the error
  `v_carve_needs_v_bit`. The bit is an ideal point: no tip flat is
@@ -520,7 +520,7 @@ is no GUI in this phase.
 
 48. **Warnings and errors.** Every new code above is a stable snake\_case
  code with named parameters, printed as capability 25 says, and listed
- in the Warnings chapter: `v_carve_target_open`, `v_carve_needs_v_bit`,
+ in the Warnings chapter: `vcarve_target_open`, `v_carve_needs_v_bit`,
  `v_bit_cone_exceeded`, `clearing_needs_flat_depth`,
  `clearing_needs_end_mill`, `clearing_no_room`, `clearing_not_descending`,
  `countersink_needs_v_bit`, `countersink_mouth_exceeds_tool`,
@@ -1079,13 +1079,16 @@ Numbering continues from phase 2's 47.
  step-over fraction of 4 mm).
 51. **Clearing passes.** The same rectangle with `clearing: [ { "tool":
  "t2", … } ]`, a 3.175 mm end mill: export writes two runs, `op1
- (clearing t2)` then `op1`; the clearing run's footprint stays inside
+ (clearing t2)` then `op1` (so named in `check`'s summary and the
+ preview's legend; a program's comment cannot hold parentheses and reads
+ `<name> clearing t2`); the clearing run's footprint stays inside
  the 26 × 6 mm floor region and its depth is 2 mm; the V-Carve run's
  floor cutting at Z −2 (its floor rings and boundary trace; the corners'
  medial lines keep their stretch at Z −2 to the junction) lies only where
  the end mill could not reach (within 1.5875 mm of the floor boundary)
  and, at the recommended `step_over_fraction` 0.1, is under a third of
- the length it had in 50 (at 0.4 the trace alone is 40 % of it); the
+ the length it had in 50 (at 0.4 the trace alone, 64 mm, is over a
+ third of it, 36 %); the
  union of both runs' footprints at Z −2 still covers the floor within
  0.05 mm. A second pass with a 1.5 mm end mill after the first clears
  only the corners the first left; the two passes the other way round
@@ -1100,7 +1103,7 @@ Numbering continues from phase 2's 47.
  `v_bit_cone_exceeded` naming the shape and 10 mm; with
  `flat_depth_mm: 3` it exports. An end mill on a V-Carve is
  `v_carve_needs_v_bit`. An open polyline among the targets is skipped
- with `v_carve_target_open` and the closed targets are carved.
+ with `vcarve_target_open` and the closed targets are carved.
 53. **Start depth.** The 20 × 5 mm rectangle with `start_depth_mm: 4`
  inside a 60 × 30 mm Pocket 4 mm deep that runs before it: every cutting
  Z is 4 mm lower than in 48, the descent from the entry clearance above
@@ -1122,8 +1125,10 @@ Numbering continues from phase 2's 47.
 54. **Offset strategy.** The 6 mm square with `strategy: "offset"`,
  `step_over_mm: 0.5`, 90° bit: rings inset 0.5, 1, … 2.5 mm from the
  outline at Z −0.5, −1, … −2.5, each ring's depth equal to its inset
- within 0.01 mm; climb and conventional reverse every ring; the toolpath
- matches PureCutCNC's `v_carve` golden within 0.02 mm.
+ within 0.01 mm; climb and conventional reverse every ring. PureCutCNC's
+ one offset golden is another square, `vcarve-offset-square` (20 mm, the
+ 60° bit, `step_over_mm: 1`, `flat_depth_mm: 4`, as the design spec's
+ corpus lists): its rings match within 0.02 mm.
 55. **Countersink.** Four 3.175 mm circles with a 90°, 6.35 mm V-bit and
  `countersink: { "diameter_mm": 6 }`: each hole is one plunge at the
  centre to Z −3 at the plunge rate and a retract, as plain moves on
@@ -1137,8 +1142,10 @@ Numbering continues from phase 2's 47.
  6 mm mouth opens at the pocket floor), the rapid before it stops at
  the stock top plus `retract_mm`, the descent from there to Z −7 is at
  the plunge rate, and `check` is quiet; with `start_depth_mm: 0` it warns
- `start_depth_mismatch` naming the Pocket and the mouth would open 3 mm
- above the floor, so the chapter shows this case; with the Pocket
+ `start_depth_mismatch` naming the Pocket: each plunge then ends at
+ Z −3, so the mouth would open at the stock top, 4 mm above the floor,
+ and the tip stops 1 mm short of it, which is why the chapter shows this
+ case; with the Pocket
  disabled it is refused with `start_depth_uncleared` (changed after the
  security review).
 56. **Inlay female.** The star fixture (a four-point star 60 mm tip to tip
@@ -1164,7 +1171,8 @@ Numbering continues from phase 2's 47.
  does not, whatever the stock's thickness. With `clearing: [t2]` (a 3.175 mm end mill) the male's first run
  clears the surround's floor at Z −5 and its V-bit floor cutting shrinks
  as in 51. With a `cut_out` by the 3.175 mm end mill (4 tabs, #443) the
-     male's last run is the cut-out, `op1 (cut-out t2)`: every point of its
+     male's last run is the cut-out, `op1 (cut-out t2)` (named as 51's
+ runs are): every point of its
  tool-centre path is `1.155 + 1.5875` = 2.742 mm inside the band's
  edge, the mirrored star grown by 8 mm, within 0.01 mm (#461; the floor
  ring runs from 1.155 to 6.845 mm out, so its cutter stays at least its
@@ -1255,8 +1263,10 @@ artwork of the maintainer's is committed):
  the SVG-only codes.
 61b. **Visible geometry only.** `image-prep messy.svg` reports the hidden
  layer (1 object), the text, the image and the clip path as skipped or
- not convertible, each with its fix, and the output holds none of them:
- the hidden square's area is not in it.
+ not convertible, each with its fix. The output holds none of the hidden
+ layer, the text or the image: the hidden square's area is not in it.
+ The clip path is ignored, not its shapes: the clipped group's square is
+ imported whole, unclipped, as the warning says.
 61c. **Strokes become areas.** A 2 mm wide, 20 mm long line prepares to
  one piece of area 43.14 mm² (2 × 20 + π, within 0.05) with round caps,
  40.00 with butt caps and 44.00 with square caps (within 0.01); a
@@ -1363,14 +1373,17 @@ artwork of the maintainer's is committed):
  flatten tolerance); `check` prints `inlay_male_mirrored` at X = 55 mm.
 61n. **Boundary checks.** On the star: a boundary smaller than the star,
  or one passing through a tip, is `inlay_boundary_crosses_design` naming
- the nearest point; an open polyline, `inlay_boundary_open`; an instance
+ the point of the design farthest past the boundary and how far past it
+ lies; an open polyline, `inlay_boundary_open`; an instance
  that is also a target, `inlay_boundary_is_target`; an id the project does
  not have, `inlay_boundary_unknown`; a second boundary shape that holds no
  part of the design, `inlay_boundary_empty` (a warning that does not stop
  export); a boundary shape with a hole round the star's circle, the hole
  ignored with `inlay_boundary_hole_ignored` and the band cut through it as
- band; each located at `operations[i].boundary`. The same star with no
- boundary exports as before, byte for byte.
+ band; each located at the Inlay's `boundary` by the operation's id,
+ `operations[<id>].boundary`, and a check of one entry at that entry,
+ `operations[<id>].boundary[k]`. The same star with no boundary exports
+ as before, byte for byte.
 61o. **Several boundaries.** Two stars 120 mm apart, each with its own
  80 mm square boundary: the male's band is the two squares less the
  stars; a boundary that holds only one star is `inlay_boundary_crosses_design`
@@ -1391,9 +1404,12 @@ artwork of the maintainer's is committed):
  files are format 27.
 61r. **Safety re-derives from the instance.** A male program exported for
  a boundary and then checked against the same project with the boundary
- instance moved 5 mm, so that some cuts lie outside the new band, fails
- S17 and S9 (the open-edge end mill's cuts, the cut-out's ring); the
- program exported after the move passes. The check never calls a
+ instance moved 5 mm, so that some cuts lie outside the new band, fails:
+ a V-bit's program by S17 where the band's edge is a V wall, an end
+ mill's by S9 (the open edge's clearing pass, the cut-out's ring). A
+ program is one tool's run, so a male with a V wall and a cut-out fails
+ both rules, one in each of its programs; the programs exported after
+ the move pass. The check never calls a
  generator (S17's rule, unchanged).
 61s. **Bench stand-in.** The line-art inlay's synthetic fixture
  (`tests/fixtures/prep/compass-art.svg`, see Test parts), prepared with
@@ -1422,7 +1438,8 @@ analytically). The bits are the bench's: **Fine Detail**,
  `diameter_mm` 0.762 (no wider than the tip) are `tapered_ball_nose_range`
  at the field. With `flute_length_mm: null` and the tool used by a
  V-Carve, `check` lists `tool_value_unset` at
- `tools[0].cutter.tapered_ball_nose.flute_length_mm` and `export` refuses.
+ `tools[<id>].cutter.tapered_ball_nose.flute_length_mm` (the tool's id,
+ as 49l's `tools[t3]…`) and `export` refuses.
  A library holding the bit is version 3, and a version 2 library loads.
 61u. **Depth by the profile.** A 20 × 1.5 mm rectangle V-carved with the
  Ultra bit runs along its centreline at Z −3.500 (within 0.01 mm), every
@@ -1439,12 +1456,15 @@ analytically). The bits are the bench's: **Fine Detail**,
  heightfield); at `step_over_fraction` 0.4 the floor's ridge is
  0.116 mm (within 0.005) and `check` says so. With a 3.175 mm end mill's
  clearing pass, its footprint stays inside the 27.497 × 7.497 floor. A
- 6 mm square, `strategy: "offset"`, `step_over_mm: 0.2`, Ultra: ring `k`
- is inset `0.2 k` at the depth the profile gives (within 0.01).
+ 6 mm square, `strategy: "offset"`, `step_over_mm: 0.2`, Ultra, with
+ `flat_depth_mm: 10` (without one its centre would be carved 22.65 mm
+ deep, past the flutes, as in 61u): ring `k` is inset `0.2 k` at the
+ depth the profile gives (within 0.01).
 61w. **Corners.** A 20 × 20 mm square with the Ultra bit warns
  `tapered_corners_softened` once, counting 4 and naming the radius
  0.378 mm; the same square with corners rounded 0.5 mm does not warn.
- In a heightfield of a 90° wedge the carve's corner at Z −2 stands
+ At a 90° corner of that square (carved with `flat_depth_mm: 4`), on
+ the surface the program leaves, the carve's corner at Z −2 stands
  0.156 mm (Ultra) and 0.469 mm (Fine) back along the bisector from where a
  V-bit of the same taper would put it, within 0.01 mm, and the outline
  at Z 0 is the drawn one.
@@ -1611,7 +1631,10 @@ the tabs are cut.
 **Cut record:** partial cut, sub-phase 3.1, without the countersinks,
 on 2026-10-29
 ([#412](https://github.com/grayzu/dreamcarve/issues/412#issuecomment-6508098597)).
-The full cut, with the countersinks, is #429's.
+The full cut, with the countersinks, is #429's: the maintainer closed
+that issue as completed on 2026-10-30 and recorded no result on it, so
+the full cut's result (the countersinks' width across, their centring,
+the V walls) is still to be recorded here.
 
 | Item | Result |
 | --- | --- |
@@ -1685,7 +1708,25 @@ monogram reads "DC" the right way round, and a second pair cut in half
 shows about 1 mm of glue gap under the plug and the walls mated along
 their height.
 
-**Cut record:** not yet cut.
+**Cut record:** cut and signed off by the maintainer on 2026-11-10
+([#438](https://github.com/grayzu/dreamcarve/issues/438#issuecomment-6778878228)),
+with designs of their own in place of the "DC" letters, as the procedure
+above allows.
+
+| Item | Result |
+| --- | --- |
+| What was cut | Inlays of two of the maintainer's designs: "a basic pacman image and a more complex shark image" |
+| Controller | Not stated in the result; the issue set the check "on the Longmill MK3" |
+| Boards, bits and values | Not recorded |
+| Measurements | None recorded: no feeler-gauge check and no pair cut in half is reported |
+| Outcome | "Both came out acceptable so signing off as completed." Two photographs of the finished inlays are on the issue |
+
+Before the cut the issue records the sign-off criteria agreed on
+2026-11-02 and amended on 2026-11-02, 2026-11-03 and 2026-11-05, and the
+stress sweep that met them on `main` at `c6668e8` (2026-11-06): 400
+designs, 1508 pairs seated, no pair failing but at the very sharp
+corners the amended criteria excuse, the worst seat with the 60° and 90°
+bits 0.035 and 0.021 mm in millimetre programs.
 
 ### Line-art inlay
 

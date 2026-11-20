@@ -6461,8 +6461,9 @@ fn v_carve_op<'a>(project: &'a Project, id: &str) -> &'a dc_project::VCarveOp {
 /// V-bit's two carves and its countersinks (T3), and the 6.35 mm end mill's
 /// cut-out (T1). The countersink Drill, `op5`, is listed before the cut-out
 /// `op4` so that the V-bit is fitted once. `export` writes nothing unless
-/// every program passes the safety pass, S1 to S18 (S17 exact, #408; S18,
-/// #427), so its success is that check; each carve's own runs also pass the
+/// every program passes the safety pass, S1 to S19 (S17 exact, #408; S18,
+/// #427; S19 holds grooves, of which the sign has none), so its success is
+/// that check; each carve's own runs also pass the
 /// generator-side cone test (`assert_safe`), and each countersink is a
 /// plain plunge at its hole's centre to 3 mm below the background's
 /// 2.5 mm floor.
@@ -7985,8 +7986,9 @@ fn dc_boundary_fixture_is_the_frame_as_boundary() {
 const COMPASS_BAND_MM: f64 = 9.5;
 
 /// #605, acceptance 61s, the "Line-art inlay" test part: the compass
-/// (`tests/fixtures/prep/compass-regions.svg`, what `image-prep` returns in
-/// regions mode for `compass.svg`, until that command is built) with the
+/// (`tests/fixtures/prep/compass-regions.svg`, the committed copy of what
+/// `image-prep` returns in regions mode for `compass.svg`; the test below,
+/// `line_art_to_inlay_end_to_end`, runs the command itself) with the
 /// 96 × 84 mm oval, the second path of the drawing, as the Inlay's
 /// `boundary`. The stock and the male board are the test part's
 /// 130 × 100 × 12 mm (the acceptance text's "110 × 80 mm board" is the
@@ -8033,8 +8035,9 @@ const COMPASS_OVAL: &str = r##"  <ellipse id="oval" cx="48" cy="42" rx="48" ry="
 /// bare stroke (`svg_stroke_only_path`), which is expected: the boundary
 /// needs only its outline.
 ///
-/// The spec's 61k names `ring-cross.svg` and a circular boundary 8 mm
-/// beyond the pockets; the compass is the 61s test part and has the oval.
+/// The spec's 61k is this compass with its oval (decided in #601: its
+/// first text named `ring-cross.svg` and a circular boundary); the compass
+/// is also the 61s test part.
 #[test]
 fn line_art_to_inlay_end_to_end() {
     let dir = work_dir("line_art_to_inlay_end_to_end");
