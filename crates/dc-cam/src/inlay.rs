@@ -71,6 +71,7 @@ use crate::placed_tabs;
 use crate::profile::generate_profile_below;
 use crate::run::{RunLabel, ToolRun};
 use crate::stock::StockEdge;
+use crate::targets::target_profiles;
 use crate::vcarve::{
     self, Carve, Clearing, FloorRidges, OpenEdge, Targets, carve_regions, carve_regions_then,
     checked_bit, clearing, floor::Floor,
@@ -116,30 +117,16 @@ fn axis_x_mm(
     targets: &[InstanceId],
 ) -> Result<Option<f64>, CamError> {
     let mut bounds: Option<Rect> = None;
-    for instance_id in targets {
-        let instance = project
-            .instances
-            .iter()
-            .find(|i| &i.id == instance_id)
-            .ok_or_else(|| CamError::UnknownInstance {
-                op: op.clone(),
-                instance: instance_id.clone(),
-            })?;
-        let definition = project
-            .definitions
-            .get(&instance.definition)
-            .ok_or_else(|| CamError::UnknownDefinition {
-                instance: instance.id.clone(),
-                definition: instance.definition.clone(),
-            })?;
-        for polyline in definition.profiles.iter().filter(|p| p.is_closed()) {
-            let placed = instance.transform.apply_polyline(polyline)?;
-            if let Some(b) = placed.bounds() {
-                bounds = Some(match bounds {
-                    Some(all) => all.including(b.min).including(b.max),
-                    None => b,
-                });
-            }
+    for target in target_profiles(project, op, targets) {
+        let target = target?;
+        if !target.is_closed() {
+            continue;
+        }
+        if let Some(b) = target.transformed()?.bounds() {
+            bounds = Some(match bounds {
+                Some(all) => all.including(b.min).including(b.max),
+                None => b,
+            });
         }
     }
     Ok(bounds.map(|b| (b.min.x + b.max.x) / 2.0))

@@ -45,6 +45,7 @@ use crate::pocket::rest::Reference;
 use crate::profile::{crossing_error, region_outer};
 use crate::run::{RunLabel, ToolRun};
 use crate::sequence::{SequenceInput, sequence};
+use crate::targets::target_profiles;
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::Warning;
 use cone::{OpenEdgeWalls, Walls};
@@ -1298,49 +1299,23 @@ pub(crate) fn carve_regions_then(
     warnings: &mut Vec<Warning>,
 ) -> Result<Targets, CamError> {
     let mut shapes: Vec<(ShapeRef, Contour)> = Vec::new();
-    for instance_id in targets {
-        let instance = project
-            .instances
-            .iter()
-            .find(|i| &i.id == instance_id)
-            .ok_or_else(|| CamError::UnknownInstance {
+    for target in target_profiles(project, op, targets) {
+        let target = target?;
+        if !target.is_closed() {
+            warnings.push(Warning::VCarveTargetOpen {
                 op: op.clone(),
-                instance: instance_id.clone(),
-            })?;
-        let definition = project
-            .definitions
-            .get(&instance.definition)
-            .ok_or_else(|| CamError::UnknownDefinition {
-                instance: instance.id.clone(),
-                definition: instance.definition.clone(),
-            })?;
-        for (profile, polyline) in definition.profiles.iter().enumerate() {
-            let shape = ShapeRef {
-                instance: instance.id.clone(),
-                instance_name: instance.name.clone(),
-                profile,
-            };
-            if !polyline.is_closed() {
-                warnings.push(Warning::VCarveTargetOpen {
-                    op: op.clone(),
-                    shape,
-                });
-                continue;
-            }
-            let contour = instance
-                .transform
-                .apply_polyline(polyline)
-                .and_then(|placed| match then {
-                    Some(then) => then.apply_polyline(&placed),
-                    None => Ok(placed),
-                })
-                .and_then(Contour::new)
-                .map_err(|source| CamError::InvalidTarget {
-                    shape: shape.clone(),
-                    source,
-                })?;
-            shapes.push((shape, contour));
+                shape: target.shape,
+            });
+            continue;
         }
+        let contour = target.placed_then(|placed| {
+            let moved = match then {
+                Some(then) => then.apply_polyline(&placed),
+                None => Ok(placed),
+            };
+            moved.and_then(Contour::new)
+        })?;
+        shapes.push((target.shape, contour));
     }
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
     let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;

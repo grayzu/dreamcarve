@@ -41,6 +41,7 @@ use crate::error::{CamError, ShapeRef, at};
 use crate::passes::pass_z_mm;
 use crate::sequence::{SequenceInput, plan, sequence};
 use crate::tabs::LapRates;
+use crate::targets::target_profiles;
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
 use dc_geometry::{Point, Point3, as_circle};
@@ -541,42 +542,14 @@ pub(crate) fn circles_of(
     targets: &[InstanceId],
 ) -> Result<Vec<TargetCircle>, CamError> {
     let mut out = Vec::new();
-    for instance_id in targets {
-        let instance = project
-            .instances
-            .iter()
-            .find(|i| &i.id == instance_id)
-            .ok_or_else(|| CamError::UnknownInstance {
-                op: op_id.clone(),
-                instance: instance_id.clone(),
-            })?;
-        let definition = project
-            .definitions
-            .get(&instance.definition)
-            .ok_or_else(|| CamError::UnknownDefinition {
-                instance: instance.id.clone(),
-                definition: instance.definition.clone(),
-            })?;
-        for (profile, polyline) in definition.profiles.iter().enumerate() {
-            let shape = ShapeRef {
-                instance: instance.id.clone(),
-                instance_name: instance.name.clone(),
-                profile,
-            };
-            let circle = if polyline.is_closed() {
-                let placed = instance
-                    .transform
-                    .apply_polyline(polyline)
-                    .map_err(|source| CamError::InvalidTarget {
-                        shape: shape.clone(),
-                        source,
-                    })?;
-                as_circle(&placed, project.flatten_tolerance_mm)
-            } else {
-                None
-            };
-            out.push((shape, circle));
-        }
+    for target in target_profiles(project, op_id, targets) {
+        let target = target?;
+        let circle = if target.is_closed() {
+            as_circle(&target.placed()?, project.flatten_tolerance_mm)
+        } else {
+            None
+        };
+        out.push((target.shape, circle));
     }
     Ok(out)
 }

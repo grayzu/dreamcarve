@@ -42,6 +42,7 @@ mod run;
 mod sequence;
 mod stock;
 mod tabs;
+mod targets;
 mod toolpath;
 pub mod vcarve;
 mod warning;

@@ -39,6 +39,7 @@ use crate::tabs::{
     LapRates, Least, PathEnds, PathTabs, Reduced, Request, TabCut, Tabs, check_size,
     coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
 };
+use crate::targets::target_profiles;
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::{OpenPathReason, TabOnCornerReason, Warning};
 use dc_geometry::{
@@ -2897,63 +2898,29 @@ fn resolve_shapes(
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<(ShapeRef, Contour)>, CamError> {
     let mut shapes = Vec::new();
-    for instance_id in targets {
-        let instance = project
-            .instances
-            .iter()
-            .find(|i| &i.id == instance_id)
-            .ok_or_else(|| CamError::UnknownInstance {
-                op: op.clone(),
-                instance: instance_id.clone(),
-            })?;
-        let definition = project
-            .definitions
-            .get(&instance.definition)
-            .ok_or_else(|| CamError::UnknownDefinition {
-                instance: instance.id.clone(),
-                definition: instance.definition.clone(),
-            })?;
-        for (profile, polyline) in definition.profiles.iter().enumerate() {
-            let shape = ShapeRef {
-                instance: instance.id.clone(),
-                instance_name: instance.name.clone(),
-                profile,
+    for target in target_profiles(project, op, targets) {
+        let target = target?;
+        if !target.is_closed() {
+            let Some(open) = open.as_deref_mut() else {
+                warnings.push(Warning::OpenPathSkipped {
+                    shape: target.shape,
+                    reason: OpenPathReason::NoSide,
+                });
+                continue;
             };
-            if !polyline.is_closed() {
-                let Some(open) = open.as_deref_mut() else {
-                    warnings.push(Warning::OpenPathSkipped {
-                        shape,
-                        reason: OpenPathReason::NoSide,
-                    });
-                    continue;
-                };
-                let placed = instance
-                    .transform
-                    .apply_polyline(polyline)
-                    .map_err(|source| CamError::InvalidTarget {
-                        shape: shape.clone(),
-                        source,
-                    })?;
-                if placed.length_mm() <= EPS_MM {
-                    warnings.push(Warning::OpenPathSkipped {
-                        shape,
-                        reason: OpenPathReason::NoLength,
-                    });
-                    continue;
-                }
-                open.push((shape, placed));
+            let placed = target.placed()?;
+            if placed.length_mm() <= EPS_MM {
+                warnings.push(Warning::OpenPathSkipped {
+                    shape: target.shape,
+                    reason: OpenPathReason::NoLength,
+                });
                 continue;
             }
-            let contour = instance
-                .transform
-                .apply_polyline(polyline)
-                .and_then(Contour::new)
-                .map_err(|source| CamError::InvalidTarget {
-                    shape: shape.clone(),
-                    source,
-                })?;
-            shapes.push((shape, contour));
+            open.push((target.shape, placed));
+            continue;
         }
+        let contour = target.contour()?;
+        shapes.push((target.shape, contour));
     }
     Ok(shapes)
 }

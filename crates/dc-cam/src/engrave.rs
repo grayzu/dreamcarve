@@ -26,6 +26,7 @@ use crate::passes::pass_z_mm;
 use crate::profile::containment_pairs;
 use crate::sequence::{SequenceInput, sequence};
 use crate::tabs::segment_kind;
+use crate::targets::target_profiles;
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, Point3, Polyline, nest};
@@ -153,44 +154,17 @@ fn resolve_targets(
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<(ShapeRef, Polyline)>, CamError> {
     let mut paths = Vec::new();
-    for instance_id in &op.targets {
-        let instance = project
-            .instances
-            .iter()
-            .find(|i| &i.id == instance_id)
-            .ok_or_else(|| CamError::UnknownInstance {
+    for target in target_profiles(project, &op.id, &op.targets) {
+        let target = target?;
+        let placed = target.placed()?;
+        if !has_two_distinct_points(&placed) {
+            warnings.push(Warning::EngravePathDegenerate {
                 op: op.id.clone(),
-                instance: instance_id.clone(),
-            })?;
-        let definition = project
-            .definitions
-            .get(&instance.definition)
-            .ok_or_else(|| CamError::UnknownDefinition {
-                instance: instance.id.clone(),
-                definition: instance.definition.clone(),
-            })?;
-        for (profile, polyline) in definition.profiles.iter().enumerate() {
-            let shape = ShapeRef {
-                instance: instance.id.clone(),
-                instance_name: instance.name.clone(),
-                profile,
-            };
-            let placed = instance
-                .transform
-                .apply_polyline(polyline)
-                .map_err(|source| CamError::InvalidTarget {
-                    shape: shape.clone(),
-                    source,
-                })?;
-            if !has_two_distinct_points(&placed) {
-                warnings.push(Warning::EngravePathDegenerate {
-                    op: op.id.clone(),
-                    shape,
-                });
-                continue;
-            }
-            paths.push((shape, placed));
+                shape: target.shape,
+            });
+            continue;
         }
+        paths.push((target.shape, placed));
     }
     Ok(paths)
 }
