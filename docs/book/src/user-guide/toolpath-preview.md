@@ -66,9 +66,15 @@ program's coordinates, measured from the origin: `X 64.2  Y 51.8`.
 The control at the Viewport's top right, which appears once the project
 has a toolpath, chooses how the cuts are coloured.
 
-**By operation**, the default, gives each operation its own colour, the
-same one its row and its glyph have. There are eight colours; a ninth
-operation takes the first again.
+**By operation**, the default, gives each tool run its own colour, as
+the command line's preview does. An operation that is one cut with one
+tool has one colour, and while every operation is like that it is the
+colour of its row's glyph. An operation with clearing passes, or an
+Inlay's second board, takes a colour for each run, and an operation that
+is turned off takes none, so the operations after it differ from their
+rows ([Operations in the app](operations.md#the-list)). The **Layers**
+key shows the colours as drawn. There are eight colours; the ninth run
+takes the first again.
 
 **By depth** colours every cut by how deep it is, from pale at the top of
 the stock to dark at the deepest cut in the project:

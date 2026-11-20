@@ -29,6 +29,27 @@ plywood with a 3.175 mm end mill:
 }
 ```
 
+## In the app
+
+Select the circles, then choose **Add ▸ Bore** on the Operations step
+([Operations in the app](operations.md#adding-an-operation)). The menu
+offers **Bore** only when every selected shape is a circle.
+
+![The plaque's Screw holes Bore in the Inspector: Targets 4 shapes, Tool 1/8 end mill (T2), Depth 12 mm; the Depth group open with Pitch showing "tool's: 2 mm", Stock to leave 0 mm and Through-cut allowance 0.2 mm; the Strategy group open with Direction Climb; and the Heights group open with Safe Z 15 mm; on the Viewport the four holes carry blue circles](figures/app/op-bore.png)
+
+The editor's rows, and the field of the project file each one sets:
+
+| Group | Row | Field |
+| --- | --- | --- |
+| **Setup** | **Targets** | `targets` |
+| | **Tool** | `tool` |
+| | **Depth** | `depth_mm` |
+| **Depth** | **Pitch** | `pitch_mm`. Empty is `null`, the tool's step-down ([Pitch](#pitch)) |
+| | **Stock to leave** | `stock_to_leave_mm` ([Finishing](#finishing)) |
+| | **Through-cut allowance** | `through_cut_allowance_mm` |
+| **Strategy** | **Direction**: Climb, Conventional | `direction` |
+| **Heights** | **Safe Z** | `safe_z_mm` |
+
 ## Settings
 
 | Field | Meaning |

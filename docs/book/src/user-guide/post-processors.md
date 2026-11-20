@@ -19,6 +19,69 @@ checked against that controller's own documentation or source code; see
 [Controllers compared](#controllers-compared). The motion is the same on
 all six: only the dialect lines differ.
 
+## In the app
+
+In the app the post-processor is the **Post-processor** group of the
+**Export** step. It is closed to begin with, and its header says which
+controller the project uses and the programs' extension: `grblHAL v4
+(latest) · .nc`. Click the header to open it.
+
+A project made in the app starts with grblHAL, as `init` starts one.
+
+| Row | What it sets | In the project file |
+| --- | --- | --- |
+| **Controller** | Which of the six bundled post-processors writes the programs. Each is listed with its latest version, `LinuxCNC v2 (latest)` | `id`, `definition_version` |
+| **File extension** | The extension of the program files, without the dot | `file_extension` |
+| **Spindle control** | **Automatic**: the program starts and stops the spindle. **Manual**: it pauses for you to switch a router on and off ([Manual spindle control](#manual-spindle-control)) | `spindle_control` |
+| **Spin-up dwell** | Seconds to wait after the spindle starts, so that it reaches speed before it cuts | `spindle_on_dwell_s` |
+| **Tool change** | **One program per tool**, or **One program with M6**, on a controller that has `M6` ([Projects with more than one tool](#projects-with-more-than-one-tool)) | `tool_change_mode` |
+| **Decimals, mm** and **Decimals, inch** | Decimal places the program writes | `decimal_places` |
+| **Canned drill cycles** | Write Drill operations as the controller's drilling cycles ([Canned cycles](#canned-cycles)) | `use_canned_cycles` |
+
+A setting the chosen controller does not have is not offered. On
+grblHAL, **Canned drill cycles** reads *Not offered: grblHAL has no
+canned cycles.* On every controller but grblHAL, **Tool change** lists
+**One program per tool** only.
+
+These are settings of the project. They are saved with it, and each
+change is one step for Undo.
+
+### Switching controller
+
+Choose another **Controller** and the project switches to its latest
+version. Your settings are kept by the rule `export --post` follows
+([Switching keeps your settings](#switching-keeps-your-settings)):
+
+- a setting still at the old controller's default takes the new one's
+  default;
+- a setting you changed is kept;
+- unless the new controller cannot use it. Then it is reset, and a line
+  under **Controller** says so, in the words `export --post` prints.
+
+![The Post-processor group after switching a project that used one program with M6 from grblHAL to LinuxCNC: Controller LinuxCNC v2 (latest), under it in amber "Reset tool_change_mode "m6" → "separate_programs": post-processor linuxcnc has no M6 tool change.", File extension ngc, Spindle control Automatic, Spin-up dwell 3 s, Tool change One program per tool, Decimals 3 and 4, and a Canned drill cycles tick box](figures/app/post-processor-switched.png)
+
+Here the file extension went from `nc` to LinuxCNC's `ngc`, because `nc`
+was grblHAL's default, and the tool change mode was reset, because
+LinuxCNC's definition has no `M6`. **Canned drill cycles** is now a tick
+box, since LinuxCNC has them.
+
+The switch is one step for Undo, which puts back the old controller with
+every setting it had. The programs are worked out again for the new
+controller, and so are the checks: read the Warnings drawer after a
+switch, since what was right for one controller can be an error on
+another.
+
+A project that uses an older version of its post-processor says so under
+**Controller**, with the version it uses and the latest. Choose the
+controller again to move to the latest
+([Versions](#versions) says what changed in each).
+
+The **Heights** group, under this one, holds the heights the
+post-processor writes: the clearance height, the tool-change height,
+which is greyed with the reason on a controller without `G53`, and the
+park point
+([Heights: clearance, tool change and park](#heights-clearance-tool-change-and-park)).
+
 ## In the project
 
 The project does not hold the definition itself. Its `post_processor`

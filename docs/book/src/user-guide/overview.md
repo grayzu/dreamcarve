@@ -29,8 +29,9 @@ steps in its rail:
 2. **Stock**: type the material's thickness, and say where work zero is.
 3. **Tools**: add the bits from your [tool library](tool-library.md), or
    make them.
-4. **Operations**: select shapes, **Add** an operation, and set its depth.
-   The Viewport shows the toolpath as you go.
+4. **Operations**: select shapes, **Add** an operation, and set its depth
+   ([Operations in the app](operations.md)). The Viewport shows the
+   toolpath as you go.
 5. **Export**: read the warnings, then **Export G-code**.
 
 Then air cut, and cut.
@@ -316,12 +317,22 @@ than the limit of 268435456 bytes`. A Fusion 360 tool library is at most
 
 ## Chapters
 
+- [The app](the-app.md): the window, the five steps, selecting and
+  editing.
 - [The project file](project-file.md): every field of `.dcv`.
+- [Importing drawings and pictures](importing.md): starting a project in
+  the app, or adding to one.
 - [Importing DXF](importing-dxf.md): entities, units, layers and stitching.
+- [Placing shapes](placing-shapes.md): moving, resizing, turning,
+  copying, hiding, locking and deleting shapes in the app.
+- [Stock, origin and heights](stock-and-origin.md): the material, work
+  zero, and how high the bit travels.
 - [Preparing artwork](preparing-artwork.md): the checks `init` prints, and
   `image-prep` for logos and line art to inlay.
 - [Shapes, holes, and islands](shapes-and-holes.md): how DreamCarve decides
   what is a part and what is a hole.
+- [Operations in the app](operations.md): the Operations step, the
+  editor, targets, and values the tool gives.
 - [Profile operation](profile.md): side, depth, passes, direction, entry,
   leads, corner relief.
 - [Tabs](tabs.md): holding the part in place.

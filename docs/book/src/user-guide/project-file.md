@@ -302,10 +302,11 @@ Profile cuts only open ones.
 | `definition` | The id of the definition it places. |
 | `transform` | Six numbers `[a, b, c, d, e, f]` that move a point (x, y) to (a·x + c·y + e, b·x + d·y + f). `[1, 0, 0, 1, e, f]` moves the shape by `e` in X and `f` in Y. |
 | `name` | Shown in messages. |
-| `visible`, `locked` | For the future editor. This build ignores them. |
+| `visible`, `locked` | For the app: whether the shape is drawn, and whether it can be moved ([Placing shapes](placing-shapes.md#hiding-and-locking)). Neither changes a cut. |
 | `z_top_mm`, `z_bottom_mm` | The feature's top and bottom, mm above the material bottom, for future operations. `null` means not set, which is how `init` writes them. This build does not use them, but when both are set, `z_bottom_mm` above `z_top_mm` is an error. |
 
-To move a shape on the stock, change `e` and `f`.
+To move a shape on the stock, change `e` and `f`. In the app, drag it or
+type its **X** and **Y** ([Placing shapes](placing-shapes.md)).
 
 ## `tools`
 

@@ -27,53 +27,183 @@ somewhere else.
 
 ## In the app
 
-**Project ▸ Tool Library…** opens the library in a sheet with two panes.
-The app and the `dreamcarve tools` commands read and write the same file.
+The app keeps tools in two places, as the command line does. The
+**Tools** step holds the tools of the open project, which are saved in
+its file. The **Tool Library** is yours, shared by every project. The app
+and the `dreamcarve tools` commands read and write the same library file.
 
-- **The list.** The tools are grouped by vendor, with *No vendor* last.
-  Click a group's header to close or open it. The search field matches
-  name, vendor, product id and diameter, and the type filter narrows the
-  list to one kind of cutter. A red dash marks a feed, plunge rate or RPM
-  that is not set, and a ✓ marks a tool already in the open project.
-- **Editing.** Select a row to edit that tool in the right pane. There is
-  no Edit button. The fields are the ones the Tools step shows for a
-  project tool. A field is saved to the library when you leave it. There
-  is no undo for library edits, but *Revert changes* puts the selected
-  tool back the way it was when you opened the sheet. A value the library
-  cannot take, such as a diameter of 0 or a name another tool already
-  has, leaves the field marked with the reason, and the file is not
-  changed. Editing a library tool never changes a project's copy of it.
-- **Units.** The `mm` / `in` switch in the header picks the units the
-  sheet shows and the units you type in. The app remembers it. It does
-  not change the project's units, and the file always stores
-  millimetres.
-- **New tool, Duplicate, Delete.** *New tool* adds an end mill named
-  `tool<n>` with a 6.35 mm diameter, 2 flutes and no feed, plunge rate or
-  RPM. Type those in yourself, because the app never invents them.
-  *Duplicate* adds a copy of the selected tool below it, named
-  `<name> (2)`. *Delete* removes the ticked tools, or the selected tool
-  when none is ticked. It names them and asks first, because a deletion
-  cannot be undone. Projects keep their copies.
-- **Add to project.** Tick rows and press *Add N tools to project*. The
-  sheet closes, and the status bar says what was added. The
-  project gets copies under new ids, as `tools add` makes them, and you
-  can undo that in one step.
-- **Import… and Export library….** *Import…* reads a Fusion `.tools` or
-  `.json` library or a DreamCarve library, then shows a review in the
-  sheet before anything is written. The review counts the file's tools as
-  `tools import` would: **New**, **Already in your library**, **Changed**
-  and **Skipped** (with the reason each is skipped). It also lists every
-  tool with its status. A tool is *Changed* when it came from this file
-  before and the file's version now differs from yours, for example
-  because you edited it. Only then does the review offer a choice. **Keep
-  mine** (the default) adds the file's version beside yours under a new
-  name, as `tools import` does. **Replace with imported** overwrites yours
-  and keeps its id, as `tools import --replace` does. *Import N tools*
-  writes the library and returns to the list with a line saying what was
-  imported. That line's *Details* shows the review again. *Back* (or
-  Escape) leaves the library as it was. *Export library…* writes the
-  whole library to one file. Use it to keep a backup or to take your
-  tools to another computer.
+### The Tools step
+
+The Tools step lists the project's tools. Click one to edit it in the
+Inspector; there is no Edit button.
+
+![The Tools step with a new tool selected: three tools in the list, the new one marked with a red dot; in the Inspector Name "60 degree V-bit", Type V-bit, an empty Angle field over "Type the included angle to make this tool a V-bit", Diameter 6.35 mm, Flutes 2, Feed, Plunge and RPM outlined in red and saying Required, and Save to library at the foot](figures/app/tools-editor.png)
+
+A tool's row has a glyph for its type, its name, and under it the
+diameter and the tool number. A V-bit's row adds its angle, `6.35 mm ·
+60°`. At the right:
+
+- a **red dot** means the tool has a value still to set. Hold the pointer
+  on it to see which;
+- a blue **hint** mark means no operation uses the tool yet. It stops
+  nothing.
+
+| Button | Does |
+| --- | --- |
+| **New tool** | Adds an end mill named `tool<n>`, 6.35 mm across with 2 flutes, and nothing else set. Its name is selected, so type the name you want and press Enter |
+| **Add from library…** | Opens the Tool Library, to tick tools and copy them in |
+| **Duplicate** | Copies the selected tool below itself as `<name> (2)` |
+| **Delete** | Deletes the selected tool. It is off while an operation uses the tool |
+| **Tool Library…**, at the foot of the panel | Opens the Tool Library, as **Project ▸ Tool Library…** does |
+
+### A tool's fields
+
+| Field | What it is | In the project file |
+| --- | --- | --- |
+| **Name** | What the lists, the operations' **Tool** rows and the program's comments call the tool | `name` |
+| **Type** | End mill, Ball nose, V-bit, Engraver, Drill or Tapered ball nose | `cutter` |
+| **Angle** | A V-bit's **included** angle, as V-bits are sold. Only a V-bit has it | `cutter.v_bit.included_angle_deg` |
+| **Tip diameter**, **Taper per side**, **Flute length** | A tapered ball nose's three numbers ([Tapered ball nose](tapered-ball-nose.md#in-the-app)). Only that type has them | `cutter.tapered_ball_nose` |
+| **Diameter** | The cutting diameter, for every type | `diameter_mm` |
+| **Flutes** | The number of cutting edges | `flutes` |
+| **Feed** | The feed rate along a cut | `feed_mm_min` |
+| **Plunge** | The plunge rate, straight down | `plunge_mm_min` |
+| **RPM** | The spindle speed | `rpm` |
+| **Step-down** | The most each pass cuts deeper. An operation may set its own | `step_down_mm` |
+| **Stepover** | How far the bit moves over between passes that clear an area, as a percentage of its diameter | `step_over_fraction`: 40 % is 0.4 |
+| **Tool number** | The bit's number on your machine, `T1`. Empty, the tool takes its place in the list | `number` |
+| **Vendor**, **Product id** | For your own reference, and how the library groups and searches tools | `vendor`, `product_id` |
+
+**Feed**, **Plunge** and **RPM** start empty and say **Required**. The
+app never fills them in: a feed that is wrong for your bit and material
+can break the bit or start a fire. Type the values your bit's maker
+gives, or your own tested ones. Nothing can be exported while a tool an
+operation uses lacks one.
+
+Choosing **V-bit** in **Type** does not change the tool at once. The
+**Angle** field appears and asks for the included angle, and the tool
+becomes a V-bit when you type it. The angle decides how deep a carve
+goes, so DreamCarve will not assume one. Escape leaves the tool as it
+was. Every other type is taken as soon as you choose it.
+
+Each field you leave is one step for **Undo**, *Undo Edit tool “60 degree
+V-bit”*.
+
+### Saving a tool to the library
+
+**Save to library**, at the foot of the tool's editor, copies the project
+tool into your library, and the status bar says where: *Saved “60 degree
+V-bit” to the library as lt1*. Saving a tool the library already holds
+changes nothing, and says *“60 degree V-bit” is already in the library as
+lt1*.
+
+The two copies are separate from then on. Editing one never changes the
+other.
+
+### The Tool Library sheet
+
+**Tool Library…** on the Tools step, or **Project ▸ Tool Library…**,
+opens the library in a sheet with two panes: the list at the left, and
+the selected tool's fields at the right.
+
+![The Tool Library after an import: "Imported 13 tools from sample.tools. 10 skipped." with Details; a search field and the type filter over New tool, Duplicate and Delete; the table's columns Name, Type, Ø, Tip, Angle, Flutes, Feed, Plunge, RPM and Product; five drills with a red dash for their feed; and the selected row, a tapered ball nose with Ø 6.35, Tip 0.762 and Angle 6.7°/side, whose fields are in the pane at the right](figures/app/library-sheet.png)
+
+The tools are grouped by vendor, with **No vendor** last. Click a group's
+header to close or open it.
+
+| Column | Shows |
+| --- | --- |
+| The box at the left | Tick it to choose the tool for **Add to project** or **Delete** |
+| **Name**, **Type** | The tool's name and its type |
+| **Ø** | The **cutting diameter**, for every type: 6.35 for a 1/4 in tapered ball nose, never its tip |
+| **Tip** | A tapered ball nose's tip diameter. Empty for every other type |
+| **Angle** | A V-bit's included angle, `90°`, or a tapered ball nose's angle per side, `6.7°/side`. The two are different measures, so the column says which it holds |
+| **Flutes**, **Feed**, **Plunge**, **RPM** | As in the tool's fields |
+| **Product** | The product id |
+| A ✓ at the right | The tool is already in the open project |
+
+A **red dash** in a cell is a value the tool still needs: a feed, plunge
+rate or RPM, or a tapered ball nose's tip or taper. It is never a
+number. A library tool may lack values; the dash says what an operation
+will ask for.
+
+- **Search** matches the name, the vendor, the product id, the diameter
+  and a tapered ball nose's tip: `0.762` finds the bit above. Groups with
+  no match are hidden.
+- The **type filter** beside it, **All types** to begin with, lists one
+  type of cutter only.
+- The **mm** / **in** switch in the header sets the units the sheet shows
+  and takes. In inches the 6.35 mm bit reads 0.25. It does not change the
+  project's units, and the library file always stores millimetres. The
+  app remembers it.
+
+### Editing a library tool
+
+Select a row to edit that tool in the right pane. The fields are the ones
+of [A tool's fields](#a-tools-fields), with the same **Required** marks. A
+field is saved to the library file when you leave it.
+
+- Library edits are not in the **Edit** menu's history. **Revert
+  changes**, under the fields, puts the selected tool back the way it was
+  when you opened the sheet.
+- A value the library cannot take, such as a diameter of 0 or a name
+  another tool already has, leaves the field marked with the reason, and
+  the file is not changed.
+- Editing a library tool never changes a project's copy of it.
+
+**New tool** adds an end mill named `tool<n>`, as on the Tools step.
+**Duplicate** adds a copy of the selected tool below it, named `<name>
+(2)`. **Delete** removes the ticked tools, or the selected tool when none
+is ticked. It names them and asks first, because a deletion from the
+library cannot be undone. Projects keep their copies.
+
+### Adding tools to a project
+
+Tick the rows you want and click the green button at the bottom right,
+which counts them: **Add 1 tool to project**. The sheet closes, and the
+status bar says *Added 1 tool from the library*.
+
+The project gets its own copy of each tool, as `dreamcarve tools add`
+makes one, and the whole addition is one step for Undo. A ✓ at the right
+of a row marks a tool the open project already has.
+
+### Importing a library
+
+**Import…** reads a Fusion 360 `.tools` or `.json` library
+([Getting the file out of Fusion](#getting-the-file-out-of-fusion)), or a
+DreamCarve library written by **Export library…**. Nothing is written
+yet: the panes are replaced by a **review** of what the file holds.
+
+![The import review of sample.tools: 13 New, 0 Already in your library, 0 Changed, 10 Skipped; the file's tools grouped by vendor with Type, Ø, Tip, Angle, Feed and a Status column reading New; three drills with a red dash for their feed; Back at the bottom left and Import 13 tools at the bottom right](figures/app/library-import-review.png)
+
+The four counts are the ones `dreamcarve tools import` prints:
+
+| Count | Means |
+| --- | --- |
+| **New** | Tools the library does not have |
+| **Already in your library** | The same tools, imported before. They are left alone |
+| **Changed** | Tools that came from this file before and now differ from yours, because the file changed or you edited yours |
+| **Skipped** | Tools DreamCarve has no cutter for, each listed with its reason ([What is skipped](#what-is-skipped)) |
+
+Each tool is listed with its **Status**. A red dash is a value the file
+does not give; DreamCarve does not make one up
+([Unset feeds](#unset-feeds)).
+
+When any tool is **Changed**, the review offers a choice:
+
+- **Keep mine**, the default, adds the file's version beside yours under
+  a new name, as `tools import` does.
+- **Replace with imported** overwrites yours and keeps its id, as `tools
+  import --replace` does.
+
+**Import 13 tools** writes the library and goes back to the list, with a
+line saying what happened: *Imported 13 tools from sample.tools. 10
+skipped.* Its **Details** shows the review again. **Back**, or Escape,
+leaves the library as it was. When every tool in the file is already in
+your library the button reads **Nothing to import**.
+
+**Export library…** writes the whole library to one file. Use it to keep
+a backup or to take your tools to another computer.
 
 ## Commands
 

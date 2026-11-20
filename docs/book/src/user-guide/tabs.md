@@ -13,11 +13,105 @@ project keeps its tabs in one list, `tabs`, after the operations. A tab
 moves with its shape: move, rotate, mirror or scale the instance and the
 tab goes with it.
 
-You place tabs with `dreamcarve tabs place`, look at them with `tabs
-list`, and remove them with `tabs clear`. `init` writes the coaster's four
+In the app you place tabs with **Place tabs** or the **Tab tool**, and
+drag them where you want them ([In the app](#in-the-app)). From the
+command line you place tabs with `dreamcarve tabs place`, look at them
+with `tabs list`, and remove them with `tabs clear`. `init` writes the coaster's four
 tabs as a [tab request](#tab-requests) on its Profile, which is cut as the
 tabs it places. The first `tabs` command that saves the project writes
 them as placed tabs.
+
+## In the app
+
+In the app a tab is something you can see, select and drag. Tabs are
+drawn on the Viewport as heavy white marks across the cut, as long as the
+tab is wide, and listed under **Tabs** on the **Design** step, grouped by
+the outline they are on.
+
+There are two ways to make them.
+
+### Place tabs
+
+A new Profile has a **Tab request** in its Setup: the switch is on, with
+a **Count** of 4. The request is cut as the tabs it describes, and they
+are worked out again whenever the shape or the operation changes.
+
+**Place tabs**, beside the switch, turns the request into placed tabs,
+which then stay where they are until you move them:
+
+1. On the **Operations** step, select the Profile.
+2. In **Setup**, set **Placement** to **Count** and type the count, or to
+   **Distances** and type where each tab goes, measured along the bit's
+   path from its start, separated by commas.
+3. Open **Corners and tabs** to set the **Tab width**, **Tab height** and
+   **Tab shape**, and whether to put tabs **On holes** and to **Avoid
+   corners** ([Tab requests](#tab-requests) says what each does).
+4. Click **Place tabs**.
+
+On the plaque's `Cut out` this places four tabs, *Undo Place 4 tabs*. The
+**Tab request** switch goes off, since the request is now placed, and the
+program is the same program: the estimated time does not change. It is
+what `dreamcarve tabs place` does for that operation
+([Placing tabs](#placing-tabs)).
+
+To start again, delete the tabs, turn **Tab request** back on, and place
+them again.
+
+### A tab's Properties
+
+Click a tab's mark on the Viewport, or its row on the Design step. A
+click on a mark selects the tab, not the shape under it.
+
+![The Design step of the plaque with a tab selected: under Tabs, "outline · 4 tabs" and the four tabs with where they are, tab1 selected; on the Viewport tab1's mark at the top of the cut-out in the accent colour and the other three in white; in the Inspector "Properties · tab1", Width 8 mm, Height 3 mm, Shape Rect, Position 82.85, 113.17, "Crossed by: Cut out." and a Delete button](figures/app/tabs-selected.png)
+
+| Row | What it is | In the project file |
+| --- | --- | --- |
+| **Width** | How long the tab is along the outline | `width_mm` |
+| **Height** | How high the tab's top stands above the bottom of the stock | `height_mm` |
+| **Shape** | **Rect**, with square shoulders, or **Smooth**, a ramp up and down | `shape` |
+| **Position** | Where the tab is on the stock. It is not typed: drag the tab | `x_mm`, `y_mm` |
+| **Crossed by** | The enabled Profiles that rise over the tab | |
+
+Shift-click another tab's row, or its mark, to select several. The
+Properties then set them all at once, *Undo Edit 2 tabs*.
+
+### Moving and deleting
+
+**Drag** a tab's mark along the cut. It stays on its outline, and lands
+at the point of the outline nearest the pointer when you let go. A drag
+is one step for Undo, *Undo Move tab*.
+
+Press **Delete** with tabs selected, or click **Delete** in their
+Properties, to remove them. Deleting a shape deletes the tabs on it.
+
+A tab belongs to its shape. Move, turn or resize the shape on the Design
+step and its tabs go with it.
+
+### The Tab tool
+
+The **Tab tool** adds one tab at a time, where you click. It is the
+second button at the Viewport's top left, and the T key.
+
+1. Click the **Tab tool**, or press T.
+2. Click an outline where you want a tab. Each click adds one, *Undo Add
+   tab*, and selects it.
+3. Press Escape, or T again, when you are done.
+
+A new tab has the width, height and shape you last gave a tab, so set one
+tab as you want them and the rest follow.
+
+![The plaque with the Tab tool on and two tabs added with it: a fifth tab on the cut-out's left side, and "tab6" on the square, selected; the list shows "outline · 5 tabs" and "square · 1 tab"; the Inspector says of tab6 "No enabled Profile crosses it, so nothing is left there; it is drawn hollow."; the status bar counts 1 warning](figures/app/tabs-tool.png)
+
+A tab holds something only where a Profile cuts through. The square in
+the picture is a pocket, so no Profile crosses the tab on it: the tab
+does nothing, is drawn hollow, and has the warning `tab_not_crossed`
+([Which cuts rise over a tab](#which-cuts-rise-over-a-tab)). Delete it,
+or cut that outline with a Profile.
+
+The Tab tool, and a drag, put a tab's **Position** on the outline you
+drew. **Place tabs** puts it on the bit's path, half a bit outside the
+outline. Both are cut the same way: a tab is cut at the point of its
+outline nearest its Position.
 
 ## Placing tabs
 

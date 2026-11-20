@@ -17,6 +17,106 @@ the synthetic picture `tests/fixtures/photo/gradient.png`: black at its
 left edge to white at its right, with a white 8 × 8 pixel block in its
 dark half and a black one in its light half.
 
+## In the app
+
+A project made with **New from picture…** already has a Photo V-Carve of
+its picture and a 60° V-bit, 6.35 mm across, named `Set me`. It opens on
+the **Stock** step, because five values are still missing, and DreamCarve
+guesses none of them:
+
+| Step | Set | This chapter's example |
+| --- | --- | --- |
+| **Stock** | **Thickness** | 12 |
+| **Tools**, the V-bit | **Feed**, **Plunge**, **RPM** | 1000, 300, 18000 |
+| **Operations**, the Photo V-Carve | **Max depth** | 1.5 |
+
+Those are the example values of [Adding one by hand](#adding-one-by-hand),
+for a 60° 6.35 mm V-bit. Use your own bit's angle, and feeds that suit
+your machine and wood.
+
+![The Operations step of a project made from a picture, before the max depth is set: the picture on the stock with no grooves, the Photo V-Carve's row marked with a red cross, and in the Inspector Picture landscape, Tool Set me (T1) with "cone height 5.49 mm", and Max depth outlined in red and saying Required](figures/app/photo-required.png)
+
+### Adding one to a project
+
+To carve a picture you added to another project:
+
+1. The project needs a V-bit. Add it on the **Tools** step first
+   ([The Tools step](tool-library.md#the-tools-step)).
+2. Select the picture, from its row on the **Design** step.
+3. On the **Operations** step, click **Add** and choose **Photo
+   V-Carve**.
+
+The menu greys **Photo V-Carve** out with *A Photo V-Carve needs a
+picture* while the project has none. With several pictures and not
+exactly one of them selected, it says *Select the picture to carve*.
+
+The new operation is named `Photo V-Carve 1` and takes the project's
+first V-bit. With no V-bit in the project its **Tool** row reads **No
+tool**, which is an error until you pick one.
+
+### The editor
+
+![The same Photo V-Carve with Max depth 1.5: the Depth and Strategy groups open in the Inspector, blue grooves at 22.5° across the picture on the Viewport with a circle at the start of each, and the status bar reading "Photo V-Carve · 63 grooves 1.732 mm wide, to 1.500 mm"](figures/app/photo-editor.png)
+
+A Photo V-Carve has no **Targets**: it carves one picture, whole. The
+rows are the settings of the table under [Settings](#settings), under the
+app's labels:
+
+| Group | Row | In the project file |
+| --- | --- | --- |
+| **Setup** | **Picture** | `image` |
+| | **Tool** | `tool`. The list offers the project's V-bits only |
+| | **Max depth** | `max_depth_mm` |
+| **Depth** | **Start depth** | `start_depth_mm` |
+| | **Start plane cleared externally** | `start_plane_cleared_externally` |
+| | **Invert** | `invert` |
+| | **Through-cut allowance** | `through_cut_allowance_mm` |
+| **Strategy** | **Strategy**: **Raster** or **Hatch** | `strategy` |
+| | **Line angle** | `line_angle_deg` |
+| | **Line spacing**, as a percentage | `line_spacing_fraction`: 110 % is 1.1 |
+| | **Sample** | `sample_mm` |
+| **Heights** | **Safe Z** | `safe_z_mm` |
+| | **Stepover retract** | `stepover_retract_mm` |
+
+Under the **Tool** row the app shows the V-bit's **cone height**, the
+deepest it can carve at its full width: 5.49 mm for this bit. **Max
+depth** may not be more.
+
+### What the Viewport shows
+
+The picture is drawn on the stock where it will be carved, and the
+grooves over it:
+
+- Each **line** is one groove: the path of the V-bit's point. The lines
+  are the same width however deep the groove is. They are not a
+  rendering of the carved board.
+- The **circle** at one end of each line, as wide as the bit, is where
+  that groove starts. The grooves are cut alternately each way, so the
+  circles alternate from one edge of the picture to the other.
+- The status bar's message is the carve in one line: `Photo V-Carve · 63
+  grooves 1.732 mm wide, to 1.500 mm`. That is the count of grooves, a
+  groove's width at the max depth, and the max depth. A click on it
+  opens the full note in the Warnings drawer, the one
+  [`check` prints](#what-check-prints).
+
+To see the depths, click **By depth** at the Viewport's top right:
+
+![The grooves coloured by depth with the Inspector closed: pale over the sky and the sun, dark blue over the hills, and a legend from +5 safe Z through 0 stock top to −1.27 Photo V-Carve](figures/app/photo-by-depth.png)
+
+Each groove is now pale where it is shallow and dark where it is deep,
+so the picture shows again in the grooves: dark where the picture is
+dark. If the wrong parts are dark, you want **Invert**
+([Dark and light wood](#dark-and-light-wood)).
+
+The legend's lowest number is the deepest the bit goes in this carve.
+Here it is −1.27, not −1.5: nothing in this picture is quite black, so
+no groove reaches the max depth. A picture that uses the whole range
+from black to white carves the whole depth.
+
+Choosing **Hatch** adds the second set of grooves across the first, 138
+here in place of 63, and about doubles the estimated time in the status
+bar.
+
 ## Adding one by hand
 
 `init` on a picture writes a Photo V-Carve for it:

@@ -51,6 +51,44 @@ except in an open sheet.
 The table is generated from the app's own shortcut table, so it always
 matches the build it documents.
 
+## What the selection shortcuts act on
+
+"The selection" in the table is the selected shapes. Some of the keys
+reach further, and some less far:
+
+- **Delete**, **H**, **Shift H**, **L**, **F2**, **Shift F** and the
+  **arrow keys** act on a selected picture as they do on a shape.
+  **Delete** also deletes the selected tabs.
+- **Ctrl D** and the rotate and flip keys act on shapes only. A picture
+  is not duplicated, turned or flipped.
+- **F2** with an operation selected, and no shape, renames the operation
+  in the Inspector's header.
+- None of them acts on the Tools or Operations lists. Those have their
+  own **Duplicate** and **Delete** buttons.
+- **Ctrl A** selects every shape that is not hidden. It does not select
+  pictures or tabs.
+- **Ctrl 1** to **Ctrl 5**, like the file and undo shortcuts, work while
+  you are typing in a field.
+
+## With the mouse
+
+These are held while you click or drag on the Viewport. They are not in
+the table because they have no command of their own.
+
+| Hold | While you | To |
+| --- | --- | --- |
+| Shift | Click a shape, a tab or a row | Add it to the selection |
+| Ctrl (⌘ on macOS) | Click a shape or a row | Add it, or take it out |
+| Shift | Drag the rotate handle | Turn in steps of 15° |
+| Alt (⌥) | Drag a corner handle | Stretch the shape without keeping its proportions |
+| Alt (⌥) | Drag a box while editing an operation's targets | Take the shapes out of the targets |
+| Space, or the middle button | Drag | Pan the Viewport |
+
+While you edit an operation's targets, **Enter** is **Done** and
+**Escape** is **Cancel**. While a name is being edited, in the list or in
+the Inspector's header, **Enter** keeps the new name and **Escape** the
+old one.
+
 ## Moving through the window
 
 Tab moves the keyboard focus through the window from top left to bottom

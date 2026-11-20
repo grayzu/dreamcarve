@@ -134,6 +134,48 @@ dc-tbn.dcv:67:30: error: tools[t3].cutter.tapered_ball_nose.taper_angle_deg is n
 exception: `diameter_mm` is required for every tool, so a tapered ball
 nose without one cannot be written at all.
 
+### In the app
+
+Make the tool on the **Tools** step, or in the **Tool Library** to keep
+it for other projects: click **New tool**, then choose **Tapered ball
+nose** in **Type**. The type is taken at once, and three fields appear
+under it:
+
+![A tapered ball nose just made on the Tools step: Type Tapered ball nose; Tip diameter, Taper per side and Flute length outlined in red and saying Required; Diameter 6.35 mm; Feed, Plunge and RPM saying Required too; and a red dot on the tool's row](figures/app/tools-tapered-unset.png)
+
+| Field | What to type | In the file |
+| --- | --- | --- |
+| **Tip diameter** | The ball's diameter: twice the tip radius vendors usually give. 0.762 for an R 0.381 mm tip | `tip_diameter_mm` |
+| **Taper per side** | The taper in degrees **per side**, as tapered bits are sold. Do not double it | `taper_angle_deg` |
+| **Flute length** | How far up the bit the flutes go | `flute_length_mm` |
+| **Diameter** | The **cutting diameter**, where the taper becomes a cylinder: 6.35 for a 1/4 in bit. Not the tip | `diameter_mm` |
+
+Each of the three says **Required** until you type it, as the feed,
+plunge rate and RPM do. DreamCarve fills none of them in: a wrong taper
+or tip cuts the wrong shape. If the maker gives no taper, measure it
+([Measuring the taper](#measuring-the-taper)).
+
+So that a tapered ball nose's two diameters and its angle are not
+misread, the app says which is which wherever it lists the tool:
+
+- The Tools step's row reads `6.35 mm · tip 0.762 mm · 6.7°/side`.
+- In the Tool Library, **Ø** is the cutting diameter, **Tip** has a
+  column of its own, and **Angle** reads `6.7°/side`, where a V-bit's
+  reads `60°` ([The Tool Library sheet](tool-library.md#the-tool-library-sheet)).
+
+A V-Carve's and an Inlay's **Tool** row offer the project's tapered ball
+noses with its V-bits. A Photo V-Carve's offers V-bits only. Under the
+row the app shows the bit's **cutting height**, the deepest its flank may
+cut, where a V-bit shows its cone height:
+
+![The tapered ball nose test part with its Inlay in the Inspector: Tool "0.762 mm tip tapered ball nose" with "one bit for both boards · cutting height 19.05 mm" under it, Inlay depth 6, Glue gap 0.85, Plug depth 2, Board thickness 19; and under Depth, Derived: "male start plane 5.15 mm · band floor 7.15 mm below the board top", "flank engagement 7.15 mm of the tapered ball nose's 19.05 mm cutting height" and "seat: moves 0.55 mm per 0.5° of taper, 0.76 mm per 0.05 mm of tip radius; test-fit before gluing"](figures/app/tapered-inlay.png)
+
+For an Inlay, open the **Depth** group to see the **Derived** lines. The
+second compares how much of the flank the cut engages with the cutting
+height. The third is [the seat line](#the-seat-line): how far the plug's
+seat moves if the bit's real taper or tip differs from what you typed. It
+is the reason to cut a test coupon before the real boards.
+
 ### Measuring the taper
 
 Catalogue numbers are rounded, and a bit's real cut differs from them

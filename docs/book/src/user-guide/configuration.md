@@ -2,7 +2,9 @@
 
 DreamCarve keeps a small amount of per-user configuration outside your
 projects: defaults for new projects, your machine's rapid rate for the
-run-time estimate, and your [tool library](tool-library.md). A project
+run-time estimate, your [tool library](tool-library.md), and what the
+app remembers between sessions ([The app's
+preferences](#the-apps-preferences)). A project
 file never depends on it: everything a project exports with is in the
 `.dcv`, so a project exports the same on any machine.
 
@@ -73,6 +75,102 @@ so a project that `check` would reject is never written.
 never changes a program: the same project exports the same bytes with any
 `[estimate]`, or none. A bad value in the file still stops them, with
 nothing written (see [Mistakes in the file](#mistakes-in-the-file)).
+
+## The app's preferences
+
+The app reads `config.toml` for one thing: `[estimate]`, for the
+estimated times it shows. It does not read `[export]`: a project made in
+the app starts with one program per tool, and you choose otherwise on the
+Export step. What the app itself remembers from one session to the next
+is in a second file, `gui.toml`, in the same config directory:
+
+| | `gui.toml` |
+| --- | --- |
+| macOS | `~/Library/Application Support/dreamcarve/gui.toml` |
+| Linux and others | `$XDG_CONFIG_HOME/dreamcarve/gui.toml`, or `~/.config/dreamcarve/gui.toml` when `XDG_CONFIG_HOME` is not set |
+| Windows | `%APPDATA%\dreamcarve\gui.toml` |
+
+`DREAMCARVE_CONFIG_DIR` moves it with everything else. `dreamcarve
+config path` does not list it.
+
+The app writes the file itself, when a preference changes and when it
+closes. You never need to edit it. This is what it holds:
+
+| In the file | Remembers |
+| --- | --- |
+| `theme` | The [appearance](#appearance): `"dark"`, `"light"` or `"system"` |
+| `[window]` | The window's size and place on the screen |
+| `[panels]` | The widths of the step panel and the Inspector, and whether the step panel shows |
+| `[sections]` | Which groups you left open: in the operation editor, for each kind of operation, and on the Export step |
+| `[visibility]`, `colour` | The **Layers** ticks, and **By operation** or **By depth** |
+| `recent` | The last ten projects you opened, for the start screen and **File ▸ Open Recent** |
+| `[export_dirs]` | The folder each project was last exported to |
+| `[tab]` | The size and shape of the last tab you set, which the Tab tool gives a new tab |
+| `library_units` | The Tool Library sheet's **mm** or **in** |
+
+A file after a short session looks like this:
+
+```toml
+theme = "system"
+colour = "by_depth"
+recent = ["/Users/you/cnc/plaque/plaque.dcv"]
+
+[panels]
+left_width = 312.0
+left_open = true
+right_width = 328.0
+right_open = true
+
+[sections]
+"operation.pocket.depth" = true
+
+[visibility]
+cuts = true
+rapids = true
+plunges = true
+arrows = false
+start_points = true
+tab_marks = true
+grid = true
+extents = false
+only_selected = false
+
+[export_dirs]
+
+[tab]
+width_mm = 8.0
+height_mm = 3.0
+shape = "rect"
+```
+
+None of this is part of a project, and none of it changes a program:
+`gui.toml` is how you look at your work, not the work.
+
+**It is safe to delete.** Close the app and delete `gui.toml`: the next
+start uses the defaults (a dark window of 1280 × 800, every group
+closed, no recent files) and writes a new file. Your projects, your tool
+library and `config.toml` are not touched.
+
+The app is also forgiving about this file, where it is strict about
+`config.toml`. A `gui.toml` it cannot read, or one written by another
+version of DreamCarve with a key this one does not know, never stops the
+app from starting: what cannot be read is left at its default.
+
+### Appearance
+
+The app is dark until you choose otherwise. Click **Appearance** in the
+rail, or choose **View ▸ Appearance**:
+
+![The Appearance menu open from the rail, beside the Export step: System, Light and Dark, with a tick on Dark](figures/app/appearance-menu.png)
+
+| Choice | The app is |
+| --- | --- |
+| **System** | Light or dark as your operating system is, and it follows when the system changes |
+| **Light** | Light |
+| **Dark** | Dark. This is what a new installation uses |
+
+The choice applies at once and is written to `gui.toml` as `theme`.
+[The app](the-app.md#appearance) has a picture of the light appearance.
 
 ## Estimated run time
 

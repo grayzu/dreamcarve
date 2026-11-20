@@ -39,6 +39,46 @@ bit's centre on it without an entry or tabs, use [Engrave](engrave.md).
 This is the Profile `init` writes, with `depth_mm` and
 `through_cut_allowance_mm` set for 11.8 mm stock.
 
+## In the app
+
+Select the shapes, then choose **Add ▸ Profile** on the Operations step
+([Operations in the app](operations.md#adding-an-operation)). The new
+Profile is the one above, with its **Depth** still to set: outside the
+line, climb, a 15° ramp, and a request for four tabs.
+
+![The plaque's Cut out Profile in the Inspector: Targets outline, Tool 1/4 end mill (T1), Side Outside, Depth 12 mm, Tab request on with Place tabs beside it, Placement Count and Count 4; the Depth group open with Step-down showing "tool's: 4 mm" and Through-cut allowance 0.2 mm; and the closed groups Strategy "Climb, start auto, last pass off", Entry and leads "Ramp 15°, lead", Corners and tabs, Order "Full depth first" and Heights "Safe Z 15 mm"; on the Viewport the orange cut runs round the outline with four white tab marks](figures/app/op-profile.png)
+
+The editor's rows, and the field of the project file each one sets. A row
+indented under a switch or a choice shows only while that switch is on
+or that choice is made.
+
+| Group | Row | Field |
+| --- | --- | --- |
+| **Setup** | **Targets** | `targets` |
+| | **Tool** | `tool` |
+| | **Side**: Outside, Inside, On line, Left, Right | `side` ([Side](#side)) |
+| | **Depth** | `depth_mm` ([Depth and passes](#depth-and-passes)) |
+| | **Tab request**, a switch, with **Place tabs** beside it | `tabs`; off is `null` ([Tabs](tabs.md#in-the-app)) |
+| | **Placement**: Count or Distances; then **Count**, or **Distances** | `tabs.placement` |
+| **Depth** | **Step-down** | `step_down_mm`. Empty is `null`, the tool's |
+| | **Through-cut allowance** | `through_cut_allowance_mm` ([Cutting through](#cutting-through)) |
+| **Strategy** | **Direction**: Climb, Conventional | `direction` ([Direction](#direction)) |
+| | **Start point**: Auto, First vertex, Near a point | `start` ([Start point](#start-point)) |
+| | **Start on the view**, **Start X**, **Start Y** | `start.near`: click **Pick on the view** and then the Viewport, or type the point |
+| | **Last pass**, a switch | `last_pass`; off is `null` ([Last pass](#last-pass)) |
+| | **Stock to leave**, **Last pass depth**, **Reverse last pass** | `last_pass.stock_to_leave_mm`, `thickness_mm`, `reverse` |
+| **Entry and leads** | **Entry**: Plunge, Ramp, Helix | `entry` ([Entry](#entry)) |
+| | **Ramp angle**; or **Helix diameter**, a percentage of the bit's, and **Helix angle** | `entry.ramp.angle_deg`; `entry.helix.diameter_fraction`, `angle_deg` |
+| | **Lead**, a switch | `lead`; off is `null` ([Leads](#leads)) |
+| | **Lead radius**, **Lead sweep**, **Lead out**, **Overcut** | `lead.radius_mm`, `sweep_deg`, `lead_out`, `overcut_mm` |
+| **Corners and tabs** | **Corner relief**: None, Dogbone, T-bone | `corner_relief` ([Corner relief](#corner-relief)) |
+| | **Tab width**, **Tab height**, **Tab shape** (Rect, Smooth), **On holes**, **Avoid corners** | `tabs.width_mm`, `height_mm`, `shape`, `on_holes`, `avoid_corners` |
+| **Order** | **Machining order**: Full depth first, Pass first | `machining_order` ([Machining order](#machining-order)) |
+| **Heights** | **Safe Z** | `safe_z_mm` |
+
+The operation's `name` is in the editor's header, and `enabled` is the
+tick box on its row in the list.
+
 ## Settings
 
 | Field | Meaning |

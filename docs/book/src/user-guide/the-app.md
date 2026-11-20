@@ -97,6 +97,7 @@ it. The Inspector's **Properties** show its **X**, **Y**, **W** and
 **H**, and its header has the **Arrange** buttons (rotate, flip). A
 hidden shape cannot be selected. A locked one can, but it cannot be
 moved, resized, rotated or flipped; operations still cut it.
+[Placing shapes](placing-shapes.md) is the chapter on all of this.
 
 The selection stays when you change step, which is how an operation gets
 its shapes: select them, then **Add** on the Operations step.
@@ -188,7 +189,7 @@ The project file is the one the command line reads and writes
 ([The project file](project-file.md)). Nothing about the window is in it:
 panel sizes, recent files, the appearance and what the Viewport shows are
 the app's own preferences, kept in `gui.toml` beside `config.toml`
-([Configuration](configuration.md#where-it-lives)).
+([Configuration](configuration.md#the-apps-preferences)).
 
 ## Appearance
 
