@@ -106,63 +106,33 @@ pub struct DrillToolpath {
 /// Generates the Drill toolpath for `op` in `project`, in project space
 /// (Y-up, mm, stock bottom at Z = 0, safe Z at `thickness + op.safe_z_mm`).
 ///
-/// Every closed profile of every target instance, placed by its
-/// transform, whose outline is a circle within the project's flatten
-/// tolerance is a hole; anything else warns
-/// [`Warning::DrillTargetNotCircle`] and is skipped. A hole narrower than
-/// the tool by more than the flatten tolerance is skipped with
-/// [`Warning::DrillHoleTooSmall`], since a Drill never moves sideways and
-/// the hole would come out the tool's size (maintainer decision
-/// 2026-10-24); with `op.allow_tool_wider_than_hole` it is drilled anyway
-/// and warns [`Warning::DrillToolWiderThanHole`]. With no hole left the
-/// toolpath is empty and [`Warning::DrillNoHoles`] says so. Each hole is
-/// drilled from the stock top to `depth_mm` (S1 with the operation's
-/// through-cut allowance):
+/// Every closed target profile whose placed outline is a circle within
+/// the project's flatten tolerance is a hole, drilled at its centre to
+/// `op.depth_mm` below the stock top in one plunge or in pecks per
+/// `op.cycle`, ending at safe Z; a countersink plunges once, to the depth
+/// its mouth and the V-bit's angle give below its start plane. Holes are
+/// visited by [`crate::sequence`](fn@crate::sequence). The result carries
+/// one [`DrillHole`] per hole, in cut order, for the emitter's canned
+/// cycles. A target that is no circle, a hole narrower than the tool
+/// (unless `op.allow_tool_wider_than_hole`) and a hole no narrower than a
+/// countersink's mouth are skipped with a [`Warning`]. The rules are in
+/// `docs/specs/phase-2/design.md`, "Algorithms → Drill" and "Drill holes
+/// narrower than the tool", and `docs/specs/phase-3/design.md`,
+/// "Algorithms → Countersink".
 ///
-/// - the tool arrives at safe Z and rapids down to the retract plane
-///   `min(safe Z, top + retract_mm)` (a negative `retract_mm` is raised to
-///   the top with [`Warning::DrillRetractBelowStockTop`]);
-/// - it plunges at the tool's plunge rate, in one plunge for a simple
-///   cycle or in pecks of the peck depth (the operation's, else the tool's
-///   step-down), waiting `dwell_s` at the bottom of every plunge as a
-///   [`crate::MoveKind::Dwell`] move. Pecks count from the retract plane,
-///   as a controller's `G83`/`G73` counts them from `R` (#153): peck `k`
-///   ends at `max(bottom, retract plane − k·peck)`, so the first removes
-///   the peck less the retract height (nothing, if the retract height is
-///   the larger), the last may be shorter, and none cuts more than a peck
-///   below the depth already drilled;
-/// - between pecks it rapids up to the retract plane and back down to
-///   [`PECK_REENTRY_MM`] above the depth reached (full retract), or up by
-///   the chip-break gap (capped at the retract plane), and feeds on from
-///   there; every rapid down ends in air already cut (S15);
-/// - it ends with a rapid to safe Z, where the `G98` return of a canned
-///   cycle puts it.
+/// # Errors
 ///
-/// Holes are visited by [`crate::sequence`](fn@crate::sequence): nearest neighbour from the
-/// first hole in drawing order, ties by drawing order, linked at safe Z.
-/// A peck that reaches the bottom from the retract plane drills the hole
-/// in one plunge, with [`Warning::DrillPeckDeeperThanHole`].
-///
-/// A countersink (format 21) plunges once at each circle's centre, from
-/// the same retract plane above the stock top, to `diameter_mm / (2 ·
-/// tan(α/2))` below its start plane, `start_depth_mm` below the stock top;
-/// `depth_mm` is not used. A circle at least as wide as the mouth is
-/// skipped with [`Warning::CountersinkMouthNotWiderThanHole`], and the
-/// narrower-hole rule above does not apply. Its holes are recorded as
-/// [`CannedKind::Expanded`]. It fails without a toolpath when the tool is
-/// not a V-bit with an angle in (0°, 180°), the mouth is not above 0 or
-/// is wider than the bit, the start depth is not from 0 to the stock
-/// thickness, the start plane below the stock top is neither cleared by
-/// an earlier Pocket or V-Carve floor ([`dc_project::cleared_start_plane`])
-/// nor vouched for,
-/// or the flanks would engage past the cone.
-///
-/// Fails without a toolpath when the plunge rate, the stock thickness, the
-/// depth, or a peck's step-down is missing; when the depth passes the
-/// stock bottom plus allowance; when the chip-break gap is not positive or
-/// the dwell is negative; when an id does not resolve or a target cannot
-/// be placed; or when the cutter would leave the stock
-/// ([`CamError::OffStock`]).
+/// No toolpath is returned when:
+/// - an id does not resolve or a target cannot be placed;
+/// - the plunge rate, the stock thickness, the depth or a peck's
+///   step-down is unset, or the depth passes the stock bottom plus
+///   allowance;
+/// - the chip-break gap is not positive or the dwell is negative;
+/// - a countersink's tool is not a V-bit with an angle in (0°, 180°), its
+///   mouth is not above 0 or is wider than the bit, its start depth is
+///   out of range or its start plane uncleared, or its flanks would
+///   engage past the cone;
+/// - the cutter would leave the stock ([`CamError::OffStock`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_drill(
     project: &Project,

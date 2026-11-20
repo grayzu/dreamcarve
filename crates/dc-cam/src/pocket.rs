@@ -87,70 +87,32 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// Generates the Pocket toolpath for `op` in `project`, in project space
 /// (Y-up, mm, stock bottom at Z = 0, safe Z at `thickness + op.safe_z_mm`).
 ///
-/// Each target instance's closed profiles are placed and nested; each
-/// region is a pocket and its holes are islands, and a region inside an
-/// island is a pocket of its own, cut after the pocket around it. The
-/// tool-centre region is the pocket inset by the tool radius plus
-/// `op.stock_to_leave_mm` ([`rings::inset_region`]), so the footprint stays the
-/// stock to leave off every wall and island; where it is empty the shape is
-/// skipped with
-/// [`Warning::PocketNoRoom`], and an island closer to the wall or
-/// another island than the tool's diameter plus twice the stock to leave warns
-/// [`Warning::PocketIslandTooClose`]. With the offset strategy each
-/// tool-centre region's rings step in by `diameter × step_over_fraction`
-/// ([`RingTree`]); per depth pass they are cut innermost first, with the
-/// wall and island rings last, first, or not at all per `op.wall_pass`,
-/// each ring starting at its point nearest the previous ring's end and
-/// running per [`ring_is_ccw`]. With the raster strategy each tool-centre
-/// region is crossed by lines at the raster angle, one step-over apart and
-/// alternating in direction ([`raster::raster_lines`]), whatever
-/// `op.direction`; the wall and island rings follow (or precede) them as
-/// for offset. [`sequence`] orders and links the rings and lines
-/// (stay-down links inside the cleared tool-centre area, else a retract to
-/// safe Z).
+/// Each closed target profile is placed and nested: a region is a pocket,
+/// its holes are islands. The pocket, inset by the tool radius plus
+/// `op.stock_to_leave_mm`, is cleared in depth passes by offset rings or
+/// raster lines per `op.strategy`, with the wall rings per `op.wall_pass`,
+/// each reached by the operation's entry; [`sequence`] orders and links
+/// them. With `op.rest_of` it cuts only what the referenced Pocket's tool
+/// left, read from the project and never from a toolpath (S14). With
+/// `op.corner_relief` it notches the corners the round tool cannot reach.
+/// What cannot be cut as asked is skipped with a [`Warning`]. The rules
+/// are in `docs/specs/phase-2/design.md`, "Algorithms → Pocket", "Entry"
+/// and "Corner relief".
 ///
-/// With `op.rest_of` set the operation is rest machining: from the
-/// referenced Pocket's tool radius and stock to leave, read from `project` and
-/// never from its toolpath (S14), [`rest::left_by`] gives the material it
-/// left, and the tool-centre region keeps only the centres within this
-/// tool's radius of it ([`rest::rest_centre`]); rings or lines are then
-/// built on that as on any tool-centre region, less the root rings that
-/// would sweep only cleared area ([`rest::in_air`], #167). When nothing is
-/// left that this tool reaches the operation warns
-/// [`Warning::RestOfClearsNothing`] and has no cutting move. The
-/// reference must be an enabled Pocket with the same targets listed before
-/// `op` ([`CamError::RestOfInvalid`]).
+/// # Errors
 ///
-/// Fails without a toolpath when a rate, the step-down or the step-over is
-/// missing, when the stock to leave is negative ([`CamError::InvalidStockToLeave`]),
-/// when the depth goes below the stock bottom plus allowance, when
-/// the raster angle is outside [0, 180) ([`CamError::InvalidRasterAngle`]),
-/// when targets cross, when an id does not resolve, when the cutter is not
-/// a flat end mill, when the cutter would leave the stock
-/// ([`CamError::OffStock`]) or its footprint, descents included, would
-/// leave the pocket's material (S9, [`CamError::OffMaterial`]), and when
-/// the entry's angle or helix fraction is out of range
-/// ([`CamError::InvalidEntry`]).
-///
-/// Each ring's or line's pass starts with the operation's entry (design
-/// step 9, [`entry`]): a helix or zigzag ramp placed once per ring or line
-/// in the tool-centre region its pass cuts, from safe Z on the first pass
-/// and from the previous pass Z after; where it does not fit the entry
-/// falls back to a ramp, then a plunge ([`Warning::EntryFallback`],
-/// [`Warning::HelixDiameterReduced`]). A ring or line reached by a
-/// stay-down link skips its descent.
-///
-/// With `op.corner_relief` a dogbone or T-bone notch is cut in every
-/// corner the round tool cannot reach, the pocket's corners and the
-/// concave corners of its islands, sized to the wall the stock to leave
-/// leaves, stepping down at the tool's step-down (the `relief` module):
-/// from the wall or island ring of each pass as it turns the corner,
-/// with no lift, or with stock to leave (or for a corner some pass has no
-/// ring for) in a separate pass after the main passes; S9 then allows
-/// each notch its corner's lobe.
-/// A tool with no step-down skips it ([`Warning::ReliefSkipped`]);
-/// corners it cannot relieve warn [`Warning::ReliefCornerTooTight`]
-/// or [`Warning::ReliefCornerNotCut`].
+/// No toolpath is returned when:
+/// - an id does not resolve, a target cannot be placed, or targets cross;
+/// - the cutter is not a flat end mill;
+/// - a rate, the step-down, the step-over, the stock thickness or the
+///   depth is unset, or the depth passes the stock bottom plus allowance;
+/// - the stock to leave is negative, the raster angle is outside
+///   [0, 180), or the entry is out of range;
+/// - `op.rest_of` is not an enabled Pocket with the same targets listed
+///   before `op` ([`CamError::RestOfInvalid`]);
+/// - the cutter would leave the stock ([`CamError::OffStock`]) or its
+///   footprint, descents included, the pocket's material (S9,
+///   [`CamError::OffMaterial`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_pocket(
     project: &Project,

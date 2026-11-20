@@ -172,149 +172,31 @@ enum Offset {
 /// Generates the Profile toolpath for `op` in `project`, in project space
 /// (Y-up, mm, stock bottom at Z = 0, safe Z at `thickness + op.safe_z_mm`).
 ///
-/// Each target instance's closed profiles are placed by its transform,
-/// nested into parts and holes, offset by the tool radius per `op.side`, and
-/// oriented per [`traversal_is_ccw`]. Each tool-centre contour becomes one
-/// [`CutBlock`] per depth pass (a straight plunge at the plunge rate, then
-/// one lap at the feed rate ending at the start; arc segments stay arcs),
-/// and [`sequence`] orders and links the blocks by `op.machining_order`:
-/// shapes are visited nearest-neighbour from the first shape in drawing
-/// order, with every hole cut before its outer contour and every part
-/// inside another part's hole before that hole, at every nesting depth, so
-/// a part is freed only by its last contour. Between shapes the tool
-/// retracts to safe Z; between passes of one contour it plunges straight
-/// from the previous pass.
+/// Each closed target profile is placed, nested into parts and holes,
+/// offset by the tool radius per `op.side` and cut in depth passes, which
+/// [`sequence`] orders and links. An On line Profile cuts open paths too,
+/// and a Left or Right one cuts nothing else. The project's placed tabs
+/// and the operation's tab request, entry, lead, corner relief, last pass
+/// and start point shape each pass; what cannot be cut as asked is
+/// skipped or reduced with a [`Warning`]. The rules are in
+/// `docs/specs/phase-1/design.md`, "Algorithms → Profile contour", and
+/// `docs/specs/phase-2/design.md`, "Algorithms" (from "Entry" to
+/// "Sequence") and addenda A8 (last pass) and A9 (start point).
 ///
-/// Every placed tab of [`Project::tabs`] on an outline `op` cuts (#105,
-/// ADR-0005) is cut round: every pass below the tab's top rises over its
-/// span (`width + diameter` along the tool-centre contour, centred on the
-/// contour's point nearest the tab), and a placed tab on a hole warns
-/// [`Warning::TabOnHole`], unless it holds the slug: its `holds_slug`
-/// says so (#302), or, unset as a format 14 file leaves it, it sits on
-/// this Profile's contour round the hole, where only placing tabs asked
-/// for on holes puts one (#300).
-/// A tab request (`op.tabs`) is placed first, as
-/// `dreamcarve tabs place` places it (#109): per contour, none on a hole
-/// unless `on_holes`, and on a contour whose spans would cover more than
-/// half of it the most that cover at most half (a part's outline at
-/// least one; a hole may get none), with
-/// [`Warning::TabsCoverMostOfContour`]; placed tabs are cut as placed, and
-/// warn the same when they cover more than half. Overlapping spans merge
-/// with [`Warning::TabsOverlap`], and a tab top no pass reaches, or one
-/// above the stock top, gives [`Warning::TabsOutsideCutRange`].
+/// # Errors
 ///
-/// With `op.entry` a ramp or helix (design spec, "Algorithms → Entry"),
-/// each pass reaches its depth at the contour start without a plunge:
-/// Inside and Outside place the zigzag or helix in the waste domain
-/// beside the wall ([`entry::plan_at_wall`]), the waste less every other
-/// region's kerf and, below the tab top, less the tabs; On line ramps back
-/// and forth along the path itself ([`entry::along_path`]). The first pass
-/// descends from safe Z, later ones from the previous pass Z at the
-/// contour start, where the previous lap ended. A contour without a lead
-/// whose entry would plunge below the tab top at its start, under or
-/// beside a tab, starts instead in the middle of the longest stretch
-/// between tabs where it does not (#176), on every pass; the tabs stay at
-/// their distances from the original start. An entry that does not fit
-/// falls back to a ramp, then a plunge, with
-/// [`Warning::EntryFallback`]; so does a contour whose start no
-/// stretch frees.
-///
-/// With `op.lead` (design spec, "Algorithms → Lead-in and lead-out"),
-/// Inside and Outside contours are re-seamed where an arc tangent to them
-/// fits in the waste domain away from corners (the `lead` module): each
-/// pass descends at the arc's far end, its staging point, cuts the arc,
-/// the lap from the arrival, the overcut and the exit arc at the feed
-/// rate, and retracts. Below the tab top the arcs keep off the tabs, and
-/// the tabs stay where they were along the outline. A lead that fits only
-/// smaller warns [`Warning::LeadShrunk`]; one that does not fit, an
-/// exit that does not fit, and any lead on an On line Profile warn
-/// [`Warning::LeadDropped`].
-///
-/// With `op.corner_relief`, a dogbone or T-bone notch is cut in each
-/// corner the round tool cannot reach (Inside: the hole's corners;
-/// Outside: the part's concave corners), stepping down at the tool's
-/// step-down among the shape's own passes, each level after the pass that
-/// opened the column it plunges in and none after the pass that frees the
-/// shape, whose levels are cut from inside its lap (the `relief` module,
-/// #189, #193); On line warns
-/// [`Warning::ReliefSkipped`].
-///
-/// With `op.last_pass` (#284, design spec addendum A8; VCarve's "Last
-/// Pass Stock to leave") every pass but the last cuts each closed shape's
-/// stock path, its tool-centre path offset `stock_to_leave_mm` farther
-/// into the waste, and the last pass cuts the shape's own path at full
-/// depth, after the usual passes to `depth − thickness_mm` when a
-/// thickness is set, the other way round when `reverse`. The tabs are laid
-/// on the shape's path and carried onto the stock path widened by the
-/// stock to leave; entries, leads and waste domains are planned per path; every
-/// relief level is cut from the last pass. A drawing the stock passes
-/// cannot follow is refused ([`CamError::BandNarrowerThanStockToLeave`],
-/// [`CamError::ShapeNarrowerThanStockToLeave`]), and a last pass On line, or
-/// out of range, is [`CamError::LastPassNeedsSide`] or
-/// [`CamError::InvalidLastPass`]. A Left or Right Profile (#311) takes a
-/// last pass too: each open path's stock path is its offset by
-/// `r + a` to the same side, ending square on the same end normals, so
-/// no pass cuts past an end and the last pass takes the stock to leave off up
-/// to each; the twin runs the way its path does, ramps along itself, and
-/// carries the tabs as a closed shape's twin does. `reverse` runs the
-/// last pass from the path's other end, where the earlier passes end.
-/// The last pass never goes straight down through the stock to leave (#339,
-/// `last_pass_block`): it descends as one more earlier pass would, on
-/// the stock path where the pass before ended, by the entry (a ramp
-/// along that path), and steps across the stock to leave onto its own path. The
-/// stock paths must follow the line (`last_pass::open_twins`,
-/// [`CamError::ShapeNarrowerThanStockToLeave`]) and keep `r + a` from every
-/// other line and kept strip ([`CamError::StockToLeaveCutsIntoKeptSide`]).
-///
-/// An On line Profile also cuts open paths (#175, as VCarve's Profile
-/// "On" an open vector): each pass runs the path from its first vertex to
-/// its last (conventional) or from its last to its first (climb, #242), with
-/// the ramp along it and its tabs placed from its first vertex as drawn,
-/// then retracts; it has no lead, no relief and frees nothing. Inside and
-/// Outside skip open paths ([`Warning::OpenPathSkipped`]), as they
-/// have no side.
-///
-/// A Left or Right Profile (#207, as VCarve's Profile to the left or right
-/// of an open vector) cuts open paths only, each offset by the tool radius
-/// to that side looking from its first vertex to its last
-/// ([`offset_open`]: round on the outside of a turn, trimmed on the
-/// inside, ending square on the normals through the path's ends), and
-/// skips closed targets with [`Warning::SideNeedsOpenPath`]. A path whose
-/// offset vanishes warns [`Warning::ToolTooLarge`]. Direction is the
-/// milling mode (#287): climb keeps the part on the right of travel, so
-/// Left climb runs from the end beside the first vertex and Right climb
-/// from the end beside the last; conventional is the reverse. Ramp and
-/// tabs are On line's, along the offset path; it has no lead or relief
-/// and frees nothing. A cut that comes within the radius of another of its
-/// lines, or of the strip a line keeps, fails with
-/// [`CamError::CutsIntoKeptSide`]; D6's overlap warning, whose condition
-/// that is, does not apply.
-///
-/// Open paths Inside and Outside, shapes the tool cannot fit, and
-/// duplicate shapes (closed, or open paths drawn twice either way, #221)
-/// are skipped with a [`Warning`]. Shapes in different
-/// regions whose tool paths cut into each other give
-/// [`Warning::ToolpathsOverlap`], in cut order; an open path cut On
-/// line is a shape of its own unless it lies in a region's material
-/// (#206, the `overlap` module). Fails without a toolpath when a feed, plunge rate, or
-/// step-down is missing, when the depth goes below the stock bottom plus
-/// allowance, when targets cross, when an id does not resolve, when the
-/// cutter would leave the stock ([`CamError::OffStock`]), when an entry's
-/// angle or helix fraction is out of range ([`CamError::InvalidEntry`]),
-/// when a lead's radius, sweep or overcut is ([`CamError::InvalidLead`]),
-/// when an Inside path would come closer than the tool radius, or an On
-/// line path closer than its diameter, to another line of its region, a
-/// band narrower than the tool ([`CamError::BandNarrowerThanTool`], #192,
-/// #199; a contour with no path at all is [`Warning::ToolTooLarge`]
-/// and skipped; an open path a region holds is compared with that
-/// region's lines and its other open paths away from where they meet,
-/// #210; an On line line is also compared with its own stretches far
-/// along it, #221, so a hairpin or a narrow neck is refused),
-/// when an On line part is nowhere as wide as the tool, so the cut
-/// removes it whole ([`CamError::PartNarrowerThanTool`], #223),
-/// when an On line Profile asks for a helix
-/// ([`CamError::HelixNeedsWasteSide`]), or when a descent or lead arc
-/// would leave its waste domain ([`CamError::OffMaterial`], a defect).
+/// No toolpath is returned when:
+/// - an id does not resolve, or a target cannot be placed or crosses
+///   another;
+/// - a rate, the step-down, the stock thickness or the depth is unset, or
+///   the depth passes the stock bottom plus allowance;
+/// - an Inside or Outside cut has a cutter that is not a flat end mill;
+/// - the entry, lead, tab request or last pass is out of range, or is
+///   not one its side can have;
+/// - a band or part is narrower than the tool or the stock to leave, or a
+///   Left or Right cut comes within the radius of what it keeps;
+/// - the cutter would leave the stock ([`CamError::OffStock`]) or, a
+///   defect, a descent or lead arc its waste ([`CamError::OffMaterial`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_profile(
     project: &Project,
