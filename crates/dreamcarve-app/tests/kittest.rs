@@ -1039,6 +1039,23 @@ fn floating_controls_never_cover_the_stock_at_fit() {
     );
     let readout = h.get_by_label_contains("X 85.0").rect();
     assert!(!readout.intersects(stock), "the read-out {readout:?}");
+    // Nor the origin's label, under the stock's bottom-left corner (row
+    // D5 of the worklog: the read-out lay over the `0,0`).
+    let origin_label = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        text_rects(h, "0,0")
+            .into_iter()
+            .next()
+            .expect("the origin's label")
+    };
+    let origin = origin_label(&h);
+    assert!(
+        pane.contains_rect(origin),
+        "the origin's label is on the pane: {origin:?}"
+    );
+    assert!(
+        !readout.expand(2.0).intersects(origin),
+        "the read-out {readout:?} covers the origin's label {origin:?}"
+    );
     let plain_width = stock.width();
     assert!(
         plain_width > 0.75 * pane.width(),
@@ -1080,6 +1097,51 @@ fn floating_controls_never_cover_the_stock_at_fit() {
         stock.width(),
         pane.width()
     );
+
+    // A square stock, which the pane's height limits: Fit puts its bottom
+    // at the bottom inset, and its origin, at its bottom-left corner,
+    // over where the read-out floats. The read-out, with the cursor and
+    // the Z range in it, stays clear of the origin's label.
+    h.get_by_role_and_label(Role::RadioButton, "By operation")
+        .click();
+    h.run();
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    go_to(&mut h, "Stock");
+    let mut square = h.state().app().project().stock.clone();
+    square.width_mm = 120.0;
+    square.height_mm = 120.0;
+    h.state_mut()
+        .app_mut()
+        .run(Command::SetStock(square))
+        .unwrap();
+    h.run();
+    let visibility = dc_app::Visibility {
+        extents: true,
+        ..h.state().app().view().visibility
+    };
+    h.state_mut().app_mut().set_visibility(visibility);
+    h.get_by_role_and_label(Role::Button, "Fit").click();
+    h.run();
+    let over = common::on_screen(&h, dc_geometry::Point::new(60.0, 60.0));
+    h.event(egui::Event::PointerMoved(over));
+    h.run();
+    let pane = h.state().layout().viewport;
+    let stock = stock_rect(&h);
+    assert!(
+        stock.height() > 0.8 * pane.height(),
+        "the pane's height limits the stock: {stock:?} in {pane:?}"
+    );
+    let readout = h.get_by_label_contains("X 60.0").rect();
+    let origin = origin_label(&h);
+    assert!(
+        readout.left() < origin.right() && origin.left() < readout.right(),
+        "the origin's label {origin:?} is over the read-out's place {readout:?}"
+    );
+    assert!(
+        pane.contains_rect(origin) && !readout.expand(2.0).intersects(origin),
+        "the read-out {readout:?} covers the origin's label {origin:?}"
+    );
+    assert!(!readout.intersects(stock), "the read-out {readout:?}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

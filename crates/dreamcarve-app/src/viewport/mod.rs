@@ -1462,7 +1462,11 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
         );
     }
     painter.text(
-        origin + egui::vec2(-4.0, 4.0),
+        origin
+            + egui::vec2(
+                -controls::ORIGIN_LABEL_OFFSET_PX,
+                controls::ORIGIN_LABEL_OFFSET_PX,
+            ),
         egui::Align2::RIGHT_TOP,
         state.app.strings().get(StrKey::AppViewportOrigin),
         TextStyle::Small.resolve(ui.style()),

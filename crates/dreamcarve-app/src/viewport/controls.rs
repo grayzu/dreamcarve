@@ -73,16 +73,22 @@ const INSET_PX: f32 = theme::FLOAT_INSET_PX;
 /// The gap between the top-right pill and the legend under it, px.
 pub(super) const LEGEND_GAP_PX: f32 = 8.0;
 
+/// How far under and left of the origin its label starts, px.
+pub(super) const ORIGIN_LABEL_OFFSET_PX: f32 = 4.0;
+
 /// The room Fit leaves round the stock for the floating controls, px: the
-/// pills along the top, the read-out along the bottom, and at each side
-/// the origin's label and a locked shape's padlock.
+/// pills along the top, the read-out along the bottom under the origin's
+/// label, and at each side the origin's label and a locked shape's
+/// padlock.
 pub const FIT_INSETS: Insets = Insets {
     left_px: 40.0,
     // The inset, a pill, the inset.
     top_px: 60.0,
     right_px: 40.0,
-    // The inset, the read-out, the inset.
-    bottom_px: 52.0,
+    // The origin's label, the read-out, the inset: the read-out floats
+    // at the pane's bottom left, where the origin of a stock fitted to
+    // the pane's height is, and it must not cover the `0,0`.
+    bottom_px: 64.0,
 };
 
 /// The ways Fit can stand clear of what floats over a pane whose right
@@ -561,11 +567,19 @@ mod tests {
     use super::*;
 
     /// Fit's insets are the floating controls' room: a pill and its two
-    /// insets along the top, the read-out and its two along the bottom.
+    /// insets along the top; the origin's label, the read-out and its inset
+    /// along the bottom.
     #[test]
     fn fit_insets_hold_the_pills() {
+        // The room under the stock for the origin's `0,0`: the label
+        // hangs 4 px under the origin, a 12-px line is 16 px, and 4 px
+        // stand between it and the read-out.
+        let origin_label_px = ORIGIN_LABEL_OFFSET_PX + 16.0 + 4.0;
         assert!((FIT_INSETS.top_px - f64::from(INSET_PX + PILL_PX + INSET_PX)).abs() < 1e-9);
-        assert!((FIT_INSETS.bottom_px - f64::from(INSET_PX + READOUT_PX + INSET_PX)).abs() < 1e-9);
+        assert!(
+            (FIT_INSETS.bottom_px - f64::from(origin_label_px + READOUT_PX + INSET_PX)).abs()
+                < 1e-9
+        );
     }
 
     /// In a wide pane both top pills show whole; at the Viewport's least
@@ -615,7 +629,7 @@ mod tests {
         assert!(
             narrow
                 .iter()
-                .all(|way| (way.bottom_px - 300.0).abs() < 1e-9)
+                .all(|way| (way.bottom_px - 312.0).abs() < 1e-9)
         );
     }
 }

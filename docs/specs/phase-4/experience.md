@@ -932,7 +932,8 @@ Controls:
     Neither showing, there is no pill.
 
   They ease to 60 % while a drag is under way (section 8). Fit keeps the
-  stock clear of them: 60 px at the top, 52 px at the bottom and 40 px at
+  stock clear of them: 60 px at the top, 64 px at the bottom (the
+  read-out and, over it, the origin's `0,0`) and 40 px at
   each side, more where the Warnings drawer or an Inspector lies over
   the card. Where the pane is too narrow for both top pills, *Layers* is
   its icon alone (the Viewport at its least width, 520 px), and in a
