@@ -322,7 +322,7 @@ fn finding(ui: &mut Ui, row: &Row, out: &mut Vec<Action>) {
         egui::vec2(ui.available_width(), height + 2.0 * pad.y),
         Sense::click(),
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.name));
     if response.hovered() {
         ui.painter().rect_filled(
             rect.shrink2(egui::vec2(4.0, 0.0)),

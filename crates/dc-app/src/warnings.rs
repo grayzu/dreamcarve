@@ -18,8 +18,11 @@
 //!
 //! Tiers follow PureCutCNC's `src/engine/toolpaths/warningCodes.ts`
 //! (`warningSeverity`): tiers at presentation, codes in the engine. The
-//! tier is [`dc_job::Tier`]'s; `check` labels a hint `warning`, as the
-//! panel's text does.
+//! tier is [`dc_job::Tier`]'s. The hint tier is the app's own (capability
+//! 76): `check` has two labels and prints a hint as a `warning:` line, so
+//! a row's [`Row::line`] and [`copy_text`], which are `check`'s text, say
+//! `warning` for a hint, and everything the drawer itself says of the row
+//! ([`Row::level`], [`Row::name`], [`counts`]) says hint.
 //!
 //! Deduplication is `build`'s: [`dc_job::generate_operation`] leaves out
 //! the warnings validation already reports (`clearing_not_descending`,
@@ -91,8 +94,14 @@ pub struct Row {
     /// The shape it is about.
     pub shape: Option<ShapeRef>,
     /// The whole line as `check` prints it; a carve note's lines, one
-    /// per board, joined by newlines.
+    /// per board, joined by newlines. `check` labels a hint `warning`.
     pub line: String,
+    /// The row's name for assistive tools: what the drawer shows of it,
+    /// in `check`'s order but in the drawer's words, `hint: unused_tool:
+    /// tool …`. Its tier is the drawer's ([`Row::level`]), so a hint reads
+    /// as a hint, and it carries no file position; a carve note's is its
+    /// [`Row::line`].
+    pub name: String,
     /// The carve note's facts, for a carve note; `None` for every other
     /// row.
     pub note: Option<CarveNote>,
@@ -214,10 +223,33 @@ impl Location<'_> {
     }
 }
 
+/// The drawer's word for `level`: a row's chip, and the tier its name
+/// starts with.
+#[must_use]
+pub const fn level_word(level: Level) -> StrKey {
+    match level {
+        Level::Error => StrKey::AppWarningsLevelError,
+        Level::Warning => StrKey::AppWarningsLevelWarning,
+        Level::Hint => StrKey::AppWarningsLevelHint,
+        Level::Note => StrKey::AppWarningsLevelNote,
+    }
+}
+
+/// A row's [`Row::name`]: `level`'s word, the code when it has one, and
+/// `message`.
+fn row_name(strings: &Strings, level: Level, code: Option<&str>, message: &str) -> String {
+    let word = strings.get(level_word(level));
+    match code {
+        Some(code) => format!("{word}: {code}: {message}"),
+        None => format!("{word}: {message}"),
+    }
+}
+
 /// Every row in `check`'s order: the notes, the errors, the warnings
 /// (hints among them), then the carve notes.
 fn rows(app: &App) -> Vec<Row> {
     let location = Location::of(app);
+    let strings = app.strings();
     let notes = app.notes().iter().map(|note| Row {
         level: Level::Note,
         code: None,
@@ -226,6 +258,7 @@ fn rows(app: &App) -> Vec<Row> {
         op: None,
         shape: None,
         line: format!("{}: note: {note}", location.name),
+        name: row_name(strings, Level::Note, None, note),
         note: None,
     });
     let findings = app.findings();
@@ -242,6 +275,12 @@ fn rows(app: &App) -> Vec<Row> {
         op: finding.op.clone(),
         shape: finding.shape.clone(),
         line: location.describe(label, finding),
+        name: row_name(
+            strings,
+            Level::from(finding.tier),
+            finding.code.as_deref(),
+            &finding.message,
+        ),
         note: None,
     });
     // `check` prints the carves only when the build was not stopped.
@@ -283,7 +322,8 @@ fn carve_row(strings: &Strings, facts: &CarveFacts) -> Row {
         field: None,
         op: Some(facts.op.clone()),
         shape: None,
-        line: text,
+        line: text.clone(),
+        name: text,
         note: Some(carve_note(strings, facts)),
     }
 }
@@ -578,6 +618,9 @@ pub fn counts(app: &App) -> Counts {
 /// What *Copy* puts on the clipboard (capability 76): [`lines`], then
 /// `check`'s count line (`plaque.dcv: 0 error(s), 6 warning(s)`, hints
 /// counted as warnings as `check` counts them), each ending in a newline.
+/// It is `check`'s text and not the drawer's: `check` has no hint tier,
+/// so a row the drawer calls a hint is a `warning:` line here
+/// (acceptance 82), which the button's tooltip says.
 #[must_use]
 pub fn copy_text(app: &App) -> String {
     let counts = counts(app);

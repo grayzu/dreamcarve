@@ -2359,7 +2359,7 @@ fn tabs_screenshots() {
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }
 
-/// Clicks the Warnings drawer's row reading `line`: the one of that text
+/// Clicks the Warnings drawer's row named `line` (`Row::name`): the one of that name
 /// that is not in the step panel.
 fn click_drawer_row(h: &mut H, line: &str) {
     let panel = h.state().layout().step_panel;
@@ -2476,7 +2476,7 @@ fn warnings_screenshots() {
     // the project once the value is put right.
     let row = drawer_row(&h, "plunge_above_feed");
     assert_eq!(row.field.as_deref(), Some("tools[t1].plunge_mm_min"));
-    click_drawer_row(&mut h, &row.line);
+    click_drawer_row(&mut h, &row.name);
     assert_eq!(h.state().step(), dc_app::steps::Step::Tools);
     assert_eq!(field(&h, "Name"), "1/4 end mill");
     assert!(h.state().warnings_open(), "the drawer stays open");

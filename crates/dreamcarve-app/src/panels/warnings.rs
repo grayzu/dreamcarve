@@ -13,11 +13,14 @@
 //! first, each with its tier glyph and word, its code in mono linking to
 //! the code's entry in the Warnings chapter, the message, and the field
 //! it is about. Clicking a row selects the operation or the shape it
-//! names; a row on an operation's field opens the operation in the editor
+//! names, and is named for assistive tools as the drawer words it
+//! (`warnings::Row::name`: a hint is a hint, where `check`'s line for it
+//! says `warning`); a row on an operation's field opens the operation in the editor
 //! with that field focused (#539), and a row on a tool's, the stock's or
 //! an output setting's field opens its step with that field focused.
 //! *Copy* puts
-//! `check`'s text on the clipboard. Each group is named above its rows
+//! `check`'s text on the clipboard, and its tooltip says that `check`
+//! prints a hint as a warning. Each group is named above its rows
 //! only when there are two or more (#616). An operation's carve note is
 //! the last row of its group, its facts laid out as labelled lines under
 //! a board's sub-heading (#620). The drawer has no Regenerate
@@ -67,30 +70,16 @@ const DEFAULT_PX: f32 = 240.0;
 /// Its least height, px.
 const MIN_PX: f32 = 120.0;
 
-/// The tier's glyph, colour and word.
+/// The tier's glyph, colour and word (`warnings::level_word`: the word a
+/// row's name starts with, so the chip and the name agree).
 fn tier(level: Level, palette: &Palette) -> (Icon, egui::Color32, StrKey) {
-    match level {
-        Level::Error => (
-            Icon::CircleX,
-            palette.status_error.text,
-            StrKey::AppWarningsLevelError,
-        ),
-        Level::Warning => (
-            Icon::TriangleAlert,
-            palette.status_warning.text,
-            StrKey::AppWarningsLevelWarning,
-        ),
-        Level::Hint => (
-            Icon::Info,
-            palette.status_info.text,
-            StrKey::AppWarningsLevelHint,
-        ),
-        Level::Note => (
-            Icon::Info,
-            palette.text_secondary,
-            StrKey::AppWarningsLevelNote,
-        ),
-    }
+    let (icon, colour) = match level {
+        Level::Error => (Icon::CircleX, palette.status_error.text),
+        Level::Warning => (Icon::TriangleAlert, palette.status_warning.text),
+        Level::Hint => (Icon::Info, palette.status_info.text),
+        Level::Note => (Icon::Info, palette.text_secondary),
+    };
+    (icon, colour, warnings::level_word(level))
 }
 
 /// The drawer's title: `Warnings · 1 error · 3 warnings · 1 hint`.
@@ -319,7 +308,8 @@ fn header(ui: &mut Ui, state: &FrameState<'_>, counts: Counts, out: &mut Vec<Act
         }
         if button(
             ui,
-            ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppWarningsCopy)),
+            ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppWarningsCopy))
+                .tooltip(strings.get(StrKey::AppWarningsCopyHelp)),
         )
         .clicked()
         {
@@ -385,7 +375,7 @@ fn draw_note(
     let height = (NOTE_LINE_PX * lines as f32 + 12.0).max(ROW_PX);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.name));
     row_surface(ui, rect, response.hovered(), stripe);
     if state.note_target.is_some() && state.note_target == row.op.as_ref() {
         response.scroll_to_me(Some(egui::Align::Center));
@@ -510,7 +500,7 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
     let height = ROW_PX.max(message.size().y + under_px + (ROW_PX - line_px));
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.name));
     row_surface(ui, rect, response.hovered(), stripe);
     // What the row names is selected, and the step that edits it opens:
     // an operation's field in its editor, a shape on Design, a tool or a

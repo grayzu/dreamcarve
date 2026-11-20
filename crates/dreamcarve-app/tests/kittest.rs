@@ -2854,7 +2854,7 @@ fn warnings_drawer_selects_and_copies() {
         .flat_map(|g| g.rows)
         .find(|r| r.code.as_deref() == Some("drill_hole_too_small"))
         .expect("the plaque's holes are too small for its drill");
-    h.get_by_label(&row.line).click();
+    h.get_by_label(&row.name).click();
     h.run();
     assert_eq!(Some(h.state().app().selection().clone()), row.selection());
 
@@ -2883,6 +2883,71 @@ fn warnings_drawer_selects_and_copies() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Capability 76 and acceptance 82 (slice D9): a hint is the drawer's
+/// third tier, told by its code, and `check`, which has no such tier,
+/// prints it as a `warning:` line; *Copy* is `check`'s text. Both hold on
+/// the plaque, whose `Set me` tool no operation uses. The drawer's row
+/// for it says *hint* wherever it names its tier: its chip, the drawer's
+/// title and its accessible name, which used to be `check`'s line and so
+/// read `warning: unused_tool: …` under a chip saying *hint*. *Copy*
+/// still writes that line and counts it with the warnings, as `check`
+/// does, and its tooltip says so.
+#[test]
+fn a_hint_reads_as_a_hint_in_the_drawer_and_as_a_warning_in_copy() {
+    let dir = scratch("warnings-hint");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_generation(&mut h, "the plaque");
+    h.get_by_label("Warnings").click();
+    h.run();
+
+    assert!(
+        h.query_by_label("Warnings · 1 hint").is_some(),
+        "the title counts it as a hint"
+    );
+    let rows: Vec<String> = h
+        .query_all_by_role(Role::Button)
+        .filter_map(|node| node.accesskit_node().label())
+        .filter(|label| label.contains("unused_tool"))
+        .collect();
+    assert_eq!(rows.len(), 1, "one row about the unused tool: {rows:?}");
+    assert!(
+        rows[0].starts_with("hint: unused_tool: tool `t1` (`Set me`)"),
+        "the row names its tier as the drawer does: {}",
+        rows[0]
+    );
+    assert!(
+        h.query_by_label_contains("warning: unused_tool").is_none(),
+        "nothing in the drawer calls it a warning"
+    );
+
+    let copied = dc_app::warnings::copy_text(h.state().app());
+    let line = copied
+        .lines()
+        .find(|line| line.contains("unused_tool"))
+        .expect("Copy lists it");
+    assert!(
+        line.contains(": warning: unused_tool: tool `t1` (`Set me`)"),
+        "as check prints it: {line}"
+    );
+    assert!(
+        copied.ends_with("plaque.dcv: 0 error(s), 1 warning(s)\n"),
+        "and counts it, as check does: {copied}"
+    );
+    h.get_by_label("Copy").hover();
+    wait_for_tooltip(&mut h);
+    assert!(
+        h.query_by_label_contains("a hint as a warning").is_some(),
+        "Copy's tooltip says what its text is"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// The Export step's panel: the card the plan, the blocking findings and
 /// the result are drawn in.
 fn export_panel(h: &Harness<'_, dreamcarve_app::Shell>) -> egui::Rect {
@@ -2906,7 +2971,7 @@ fn in_export_step_containing(h: &Harness<'_, dreamcarve_app::Shell>, text: &str)
         .count()
 }
 
-/// Clicks the Warnings drawer's row whose line is `line`. On the Export
+/// Clicks the Warnings drawer's row named `line` (`Row::name`). On the Export
 /// step a finding that blocks export is listed in the step's panel too,
 /// under the same name: the drawer's is the one outside the panel.
 fn click_drawer_row(h: &mut Harness<'_, dreamcarve_app::Shell>, line: &str) {
@@ -4300,7 +4365,7 @@ fn warnings_row_focuses_its_field() {
         .flat_map(|g| g.rows)
         .find(|r| r.field.as_deref() == Some("operations[op4].depth_mm"))
         .expect("validation locates the unset depth");
-    click_drawer_row(&mut h, &row.line);
+    click_drawer_row(&mut h, &row.name);
     assert_eq!(
         h.state()
             .app()
@@ -6038,7 +6103,7 @@ fn warnings_row_opens_the_step_that_owns_it() {
             .flat_map(|g| g.rows)
             .find(|r| r.field.as_deref() == Some(field))
             .unwrap_or_else(|| panic!("a row about {field}"))
-            .line
+            .name
     };
     // The rail's Warnings button opens the drawer.
     h.get_by_label_contains("Warnings: 2 errors").click();
@@ -6122,7 +6187,7 @@ fn warnings_row_focuses_a_tools_a_stocks_and_a_settings_field() {
             .flat_map(|g| g.rows)
             .find(|r| r.field.as_deref() == Some(field))
             .unwrap_or_else(|| panic!("a row about {field}"))
-            .line;
+            .name;
         // The drawer lists more rows than it shows at once.
         h.get_by_label(&line).scroll_to_me();
         h.run();
