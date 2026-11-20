@@ -144,7 +144,8 @@ Decisions made while wiring, for the maintainer to confirm:
 | Slice | What | Status |
 | --- | --- | --- |
 | E1 | Book chapters and the quick start "From SVG to G-code in the app", with screenshots from the build (#550) | doing |
-| E2 | macOS bundle and the phase 4 audit (#551) | todo |
+| E2 | A local macOS bundle: `tools/bundle-macos.sh` writes `target/bundle/DreamCarve.app` (unsigned, no icon, this Mac's architecture). The phase 4 audit follows E1 | doing |
+| E4 | For the release slice (#551), not done here: the signed and notarised bundles on three platforms through cargo-dist; an app icon; opening a double-clicked `.dcv` on macOS, which arrives as an Apple Event the app does not read yet; the licence texts for the app's crates | owner |
 | E3 | Bench check in the app and the `v0.4.0` tag | owner |
 
 ### F. Review plan, stage 2
