@@ -779,7 +779,6 @@ impl OpenEdgeWalls {
     }
 }
 
-/// Distance, mm, from `p` to the segment `a`–`b`.
 /// The distance between segments `a`–`b` and `c`–`d`, mm: 0 where they
 /// cross or touch.
 fn segment_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
@@ -798,6 +797,7 @@ fn segment_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
         .min(point_segment(d, a, b))
 }
 
+/// Distance, mm, from `p` to the segment `a`–`b`.
 pub(crate) fn point_segment(p: Point, a: Point, b: Point) -> f64 {
     let ab: Vec2 = b - a;
     let length_sq = ab.dot(ab);

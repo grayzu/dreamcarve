@@ -1193,8 +1193,6 @@ fn internal_message(op: Option<&OperationId>, what: &str) -> String {
     )
 }
 
-/// The words [`CamError::EndSegmentHasNoRoom`] adds for a last pass
-/// stock to leave: none without one.
 /// `mm` rounded up to the thousandth a message shows, so a length the
 /// user must reach is never shown short of it (#495); a value a hair
 /// above a thousandth stays on it.
@@ -1207,6 +1205,8 @@ fn up_mm(mm: f64) -> f64 {
 /// the arithmetic that made it.
 const ON_THOUSANDTH: f64 = 1e-6;
 
+/// The words [`CamError::EndSegmentHasNoRoom`] adds for a last pass
+/// stock to leave: none without one.
 fn with_stock_to_leave(stock_to_leave_mm: Option<f64>) -> String {
     stock_to_leave_mm.map_or_else(String::new, |a| {
         format!(" and its {a} mm last pass stock to leave")
