@@ -1170,3 +1170,58 @@ fn import_sheet_resizes_and_keeps_its_size() {
     assert_eq!(file.sizes.get("import.height"), Some(&560.0));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The smoke test's leftover (G5; capability 66, "Help is universal"): a
+/// control that is not typed into shows its row's help itself, not only
+/// its label. Each of the Export step's Boards ticks and the Import
+/// drawing sheet's Units dropdown is described with the help, and shows
+/// it on the help line of its panel while it has the keyboard.
+#[test]
+fn boards_ticks_and_the_sheets_units_show_their_help() {
+    let strings = dc_app::Strings::english();
+    let dir = scratch("choice-help");
+    let inlay = copy_fixture("dc.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(inlay), &dialogs),
+        1280.0,
+        800.0,
+    );
+    common::settle(&mut h);
+    go_to(&mut h, "Export");
+    common::settle(&mut h);
+    let help = strings.get(dc_app::StrKey::ExportBoardsHelp);
+    for board in ["Female board", "Male board"] {
+        let tick = h.get_by_role_and_label(Role::CheckBox, board);
+        assert_eq!(
+            tick.accesskit_node().description().as_deref(),
+            Some(help),
+            "{board} is described with the Boards help"
+        );
+        h.get_by_role_and_label(Role::CheckBox, board).focus();
+        h.run();
+        let (text, _) = help_line(&h, "Boards").expect("the Boards help line");
+        assert!(text.ends_with(help), "{text}");
+    }
+
+    // The Import drawing sheet's Units dropdown.
+    go_to(&mut h, "Design");
+    h.input_mut()
+        .dropped_files
+        .push(std::sync::Arc::new(Dropped(common::fixture(
+            "dxf/layers.dxf",
+        ))));
+    h.run();
+    let help = strings.get(dc_app::StrKey::AppImportUnitsHelp);
+    let units = h.get_by_role_and_label(Role::ComboBox, "Units");
+    assert_eq!(
+        units.accesskit_node().description().as_deref(),
+        Some(help),
+        "Units is described with its help"
+    );
+    h.get_by_role_and_label(Role::ComboBox, "Units").focus();
+    h.run();
+    let (text, _) = help_line(&h, "Units").expect("the Units help line");
+    assert!(text.ends_with(help), "{text}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

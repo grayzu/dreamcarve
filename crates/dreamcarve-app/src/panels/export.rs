@@ -829,26 +829,24 @@ fn destination(
 
 /// A tick per board, with an Inlay (#498): this export only.
 fn boards(ui: &mut Ui, strings: &Strings, export: &Export, out: &mut Vec<Action>) {
+    let name = strings.get(StrKey::ExportBoards);
+    let help = strings.get(StrKey::ExportBoardsHelp);
     ui.horizontal(|ui| {
-        row::label(
-            ui,
-            strings.get(StrKey::ExportBoards),
-            strings.get(StrKey::ExportBoardsHelp),
-            None,
-        );
+        row::label(ui, name, help, None);
+        // The row's help is each tick's too: its tooltip, and the help
+        // line while it has the keyboard, as a typed field has its own.
+        let _ = crate::widgets::help::take(ui, name);
         let mut ticked = export.boards;
-        checkbox(
-            ui,
-            "export.female",
-            &mut ticked.female,
-            strings.get(StrKey::ExportFemale),
-        );
-        checkbox(
-            ui,
-            "export.male",
-            &mut ticked.male,
-            strings.get(StrKey::ExportMale),
-        );
+        for (salt, on, board) in [
+            ("export.female", &mut ticked.female, StrKey::ExportFemale),
+            ("export.male", &mut ticked.male, StrKey::ExportMale),
+        ] {
+            let tick = checkbox(ui, salt, on, strings.get(board));
+            if tick.has_focus() {
+                let _ = crate::widgets::help::focused(ui, name, help);
+            }
+            let _ = tick.on_hover_text(help);
+        }
         if ticked != export.boards {
             out.push(Action::Export(Request::SetBoards(ticked)));
         }
