@@ -12,8 +12,10 @@
 //! to grayscale, 16-bit samples, transparency) is listed as the Warnings
 //! panel will list it. The footer's one primary button, *Add picture* or
 //! *Create project*, is disabled with the reason as its tooltip until a
-//! size is typed, and while the file or the size is refused; the reason
-//! also stands under the size.
+//! size is typed, and while the file or the size is refused. A refused
+//! size marks its field and a file that cannot be read marks the File
+//! row, each with the error glyph whose tooltip says why
+//! ([`crate::widgets::problem`]); no message is written under either.
 //!
 //! The model is `dc_app::import::PictureImport`, which decoded the file
 //! once when the shell opened the sheet; nothing here decodes. The
@@ -25,6 +27,7 @@
 use std::path::{Path, PathBuf};
 
 use dc_app::import::{PictureImport, PictureSide, Purpose};
+use dc_app::problems::Problems;
 use dc_app::{StrKey, Strings};
 use dc_import::ImageFormat;
 use dc_job::Tier;
@@ -238,8 +241,14 @@ fn header(ui: &mut Ui, strings: &Strings, purpose: Purpose, out: &mut Vec<Action
     );
 }
 
-/// The file's path and *Choose…*.
+/// The file's path and *Choose…*. A file that cannot be read has the
+/// error glyph after its path, the importer's message its tooltip.
 fn file_row(ui: &mut Ui, strings: &Strings, sheet: &Sheet, out: &mut Vec<Action>) {
+    let unreadable = sheet
+        .model
+        .blocked(strings)
+        .filter(|_| sheet.model.pixels().is_none())
+        .map(|reason| Problems::said(strings, Tier::Error, &reason));
     ui.horizontal(|ui| {
         row::label(
             ui,
@@ -251,6 +260,18 @@ fn file_row(ui: &mut Ui, strings: &Strings, sheet: &Sheet, out: &mut Vec<Action>
             let choose = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppImportChoose));
             if button(ui, choose).clicked() {
                 out.push(Action::PictureSheet(Request::Choose));
+            }
+            if let Some(problems) = &unreadable {
+                let (slot, _) = ui.allocate_exact_size(
+                    egui::Vec2::splat(crate::widgets::problem::GLYPH_PX),
+                    Sense::hover(),
+                );
+                let _ = crate::widgets::problem::glyph(
+                    ui,
+                    egui::Id::unique("add_picture.file.problem"),
+                    slot.center(),
+                    problems,
+                );
             }
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 // Cut at its start: the file's name is at its end.
@@ -333,6 +354,11 @@ fn preview(ui: &mut Ui, sheet: &Sheet) {
 fn size(ui: &mut Ui, strings: &Strings, units: Units, sheet: &mut Sheet) {
     let footprint = sheet.model.footprint_mm();
     let readable = sheet.model.pixels().is_some();
+    // A size the importer refuses (too large, too small for the pixels).
+    let size_refused = sheet
+        .model
+        .blocked(strings)
+        .filter(|_| readable && sheet.model.size().is_some());
     let mut middles = [0.0_f32; 2];
     for (side, middle) in [PictureSide::Width, PictureSide::Height]
         .into_iter()
@@ -367,19 +393,29 @@ fn size(ui: &mut Ui, strings: &Strings, units: Units, sheet: &mut Sheet) {
                     })
             });
         let value = value_mm.map_or_else(String::new, |mm| dc_app::units::field_text(mm, units));
+        // What is wrong at this side: the text it refused, and, on the
+        // side the size was typed in, a size the importer refuses. The
+        // field is marked; nothing is written under it.
         let refused = sheet
             .refused
             .as_ref()
             .filter(|(at, _)| *at == side)
             .map(|(_, reason)| reason.clone());
+        let problems = match (&refused, &size_refused) {
+            (Some(reason), _) => Problems::refused(strings, reason),
+            (None, Some(reason)) if sheet.model.side() == side => {
+                Problems::said(strings, Tier::Error, reason)
+            }
+            _ => Problems::none(),
+        };
         let label = strings.get(key);
         let (label_response, output) = field_row(ui, label, strings.get(help), |ui| {
             ui.set_max_width((ui.available_width() - LINK_COLUMN_PX).max(0.0));
-            let output = unit_field(
+            unit_field(
                 ui,
                 UnitField {
                     enabled: readable,
-                    tier: refused.as_ref().map(|_| Tier::Error),
+                    problems: Some(&problems),
                     ..UnitField::new(
                         egui::Id::unique(("add_picture_size", name)),
                         label,
@@ -387,11 +423,7 @@ fn size(ui: &mut Ui, strings: &Strings, units: Units, sheet: &mut Sheet) {
                         dc_app::units::suffix(units),
                     )
                 },
-            );
-            if let Some(reason) = &refused {
-                crate::widgets::unit_field::validation_line(ui, reason);
-            }
-            output
+            )
         });
         *middle = label_response.rect.center().y;
         let _ = output.response.labelled_by(label_response.id);
@@ -409,20 +441,20 @@ fn size(ui: &mut Ui, strings: &Strings, units: Units, sheet: &mut Sheet) {
         strings.get(StrKey::AppPictureProportions),
         readable,
     );
-    // Why *Add picture* is disabled: a hint until a size is typed, an
-    // error for a file or a size that is refused.
-    if let Some(reason) = sheet.model.blocked(strings) {
-        if readable && sheet.model.size().is_none() {
-            row::hint(ui, &reason);
-        } else if sheet.refused.is_none() {
-            row::message(ui, Tier::Error, &reason);
-        }
+    // What to do next, until a size is typed: a note, not a problem. A
+    // size that is refused marks its field, and a file that cannot be
+    // read marks the File row.
+    if let Some(reason) = sheet.model.blocked(strings)
+        && readable
+        && sheet.model.size().is_none()
+    {
+        row::hint(ui, &reason);
     }
 }
 
 /// What was typed in the `side` field: a length sets that side, and the
 /// other follows; an emptied field forgets the size when it was this
-/// side's; anything else is refused under the field.
+/// side's; anything else is refused, and marks the field.
 fn commit(sheet: &mut Sheet, side: PictureSide, typed: &str, units: Units) {
     if typed.trim().is_empty() {
         if sheet.model.side() == side {

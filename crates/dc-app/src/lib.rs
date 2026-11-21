@@ -18,6 +18,7 @@ pub mod onboarding;
 pub mod operations;
 pub mod pictures;
 pub mod prefs;
+pub mod problems;
 pub mod project;
 pub mod properties;
 pub mod scene;

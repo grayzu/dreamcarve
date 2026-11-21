@@ -28,6 +28,7 @@ use dc_project::{
 use crate::app::App;
 use crate::command::Command;
 use crate::error::CommandError;
+use crate::problems::Problems;
 use crate::strings::{StrKey, Strings};
 use crate::units;
 
@@ -197,11 +198,20 @@ impl Field {
                     .is_some_and(|rest| rest.starts_with('.')))
     }
 
-    /// The message to show under the field: the first error located on
-    /// it, else the first warning, else the first hint.
+    /// The field's worst problem: the first error located on it, else
+    /// the first warning, else the first hint. What decides whether an
+    /// unset value is required; [`Field::problems`] is what the field
+    /// shows.
     #[must_use]
     pub fn status(self, findings: &[Finding]) -> Option<FieldStatus<'_>> {
         status(findings, |path| self.locates(path))
+    }
+
+    /// Everything wrong at the field, most severe first: its outline and
+    /// glyph, and what its tooltip lists.
+    #[must_use]
+    pub fn problems(self, strings: &Strings, findings: &[Finding]) -> Problems {
+        problems(strings, findings, |path| self.locates(path))
     }
 
     /// The field's text for `project`: the value in the display units with
@@ -410,7 +420,7 @@ impl Choice {
         }
     }
 
-    /// The message to show under the row, as for [`Field::status`]. A
+    /// The row's worst problem, as for [`Field::status`]. A
     /// finding on any of the origin's or the reference's own fields is
     /// one of these rows'.
     #[must_use]
@@ -419,6 +429,27 @@ impl Choice {
             path == self.path() || (self == Self::Post && path == "post_processor")
         })
     }
+}
+
+impl Choice {
+    /// Everything wrong at the row, most severe first, as for
+    /// [`Field::problems`].
+    #[must_use]
+    pub fn problems(self, strings: &Strings, findings: &[Finding]) -> Problems {
+        problems(strings, findings, |path| {
+            path == self.path() || (self == Self::Post && path == "post_processor")
+        })
+    }
+}
+
+/// Every finding `locates` accepts, as a field's problems.
+fn problems(strings: &Strings, findings: &[Finding], locates: impl Fn(&str) -> bool) -> Problems {
+    Problems::found(
+        strings,
+        findings
+            .iter()
+            .filter(|f| f.field.as_deref().is_some_and(&locates)),
+    )
 }
 
 /// A field's validation state: the file's message and how much it matters.
@@ -690,7 +721,7 @@ pub fn offers(project: &Project) -> Offers {
 /// The tool-change modes the dropdown lists: one program per tool
 /// always, one program with `M6` where the definition has it, and the
 /// project's own mode even where it does not, so a hand-edited file shows
-/// what it holds (with the file's error under it).
+/// what it holds (marked with the file's error).
 #[must_use]
 pub fn tool_change_modes(project: &Project) -> Vec<ToolChangeMode> {
     let mut modes = vec![ToolChangeMode::SeparatePrograms];

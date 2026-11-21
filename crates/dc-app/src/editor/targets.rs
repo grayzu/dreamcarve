@@ -56,7 +56,7 @@ pub struct RowSummary {
     pub names: String,
     /// A target carries an error or a warning (an open path under a
     /// Pocket, a non-circle under a Drill): the row shows the warning
-    /// glyph, and the message is under it.
+    /// glyph, and the message is the row's problem.
     pub warning: bool,
 }
 

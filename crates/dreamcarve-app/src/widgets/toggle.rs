@@ -17,6 +17,16 @@ const SIZE: egui::Vec2 = egui::vec2(36.0, 20.0);
 /// The gap between the track's edge and the knob, px.
 const KNOB_INSET_PX: f32 = 3.0;
 
+/// The pill of a switch whose response is `response`, and its corner
+/// radius: what a problem's outline goes round
+/// ([`crate::widgets::problem::mark`]).
+pub(crate) fn pill_of(response: &Response) -> (egui::Rect, f32) {
+    (
+        egui::Rect::from_center_size(response.rect.center(), SIZE),
+        theme::pill(SIZE.y),
+    )
+}
+
 /// Draws a switch that is `on`, named `name`; `clicked` is the flip.
 pub(crate) fn toggle(ui: &mut Ui, on: bool, name: &str) -> Response {
     let palette = Palette::current(ui);

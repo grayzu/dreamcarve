@@ -8,12 +8,15 @@
 //! (`docs/specs/phase-4/experience.md`, sections 3
 //! and 7): the 112-px label column whose hover shows the field's help
 //! with its `.dcv` field name in JetBrains Mono ("Help affordance"), and
-//! the inline validation message under the field: glyph then the file's
-//! message, 12 px, in the status's text colour ("Inline validation
-//! message"). Every state has an outline, a glyph and a message, never
-//! colour alone (section 13, items 53 and 54).
+//! the notes under a row, which are not problems: what a value comes to,
+//! why an option is missing ([`hint`]), an Inlay's derived lines
+//! ([`line`], [`derived`]). A problem takes no line under its field: it
+//! is the field's outline and glyph, with the details in the glyph's
+//! tooltip, the help line and the Warnings drawer
+//! ([`crate::widgets::problem`]; "Field problem"). Every state has an
+//! outline and a glyph, never colour alone (section 13, items 53 and
+//! 54).
 
-use dc_job::Tier;
 use eframe::egui::{self, Rect, Response, RichText, Sense, Stroke, TextStyle, Ui};
 
 use crate::shell::theme::{self, Palette};
@@ -161,21 +164,22 @@ pub(crate) fn path(ui: &mut Ui, path: &str) {
     let _ = response.on_hover_text(path);
 }
 
-/// The validation message under a field at the label column's right,
-/// `tier`'s glyph then `text`, wrapped to the field's width.
-pub(crate) fn message(ui: &mut Ui, tier: Tier, text: &str) {
+/// A derived note under a field (an Inlay's board left under the band):
+/// the line [`hint`] draws, in the error colour with its glyph while
+/// `alert`, since what it derives is out of range. The line is there
+/// either way, so it moves no row; a problem takes none.
+pub(crate) fn derived(ui: &mut Ui, alert: bool, text: &str) {
+    if !alert {
+        hint(ui, text);
+        return;
+    }
     let palette = Palette::current(ui);
-    let (icon, colours) = match tier {
-        Tier::Error => (Icon::CircleX, palette.status_error),
-        Tier::Warning => (Icon::TriangleAlert, palette.status_warning),
-        Tier::Hint => (Icon::Info, palette.status_info),
-    };
     note(
         ui,
         FIELD_COLUMN_PX,
-        icon,
-        colours.stroke,
-        colours.text,
+        Icon::CircleX,
+        palette.status_error.stroke,
+        palette.status_error.text,
         text,
     );
 }

@@ -2189,3 +2189,225 @@ fn redesign_smoke() {
     park_pointer(&mut h);
     shoot_in(&mut h, &out, "08-export-blocked", &looks);
 }
+
+/// Where the field-problem pictures are committed.
+fn problems_dir() -> PathBuf {
+    common::repo_root().join("docs/specs/phase-4/review/field-problems")
+}
+
+/// Types `text` over what the text field `label` holds and leaves it
+/// with Tab.
+fn type_over(h: &mut H, label: &str, text: &str) {
+    h.get_by_role_and_label(Role::TextInput, label).focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text(text.to_owned()));
+    h.run();
+    h.key_press(egui::Key::Tab);
+    h.run();
+    settle(h);
+}
+
+/// Rests the pointer at `at` until a tooltip there has had time to show.
+fn rest_at(h: &mut H, at: egui::Pos2) {
+    h.event(egui::Event::PointerMoved(at));
+    for _ in 0..10 {
+        h.step();
+    }
+    h.run();
+}
+
+/// The centre of the problem glyph whose name starts with `start`.
+fn glyph_named(h: &H, start: &str) -> egui::Pos2 {
+    h.query_all(egui_kittest::kittest::by().predicate(|node| {
+        node.label().is_some_and(|name| name.starts_with(start))
+            && matches!(node.role(), Role::Button | Role::Image)
+    }))
+    .next()
+    .unwrap_or_else(|| panic!("no glyph named {start}…"))
+    .rect()
+    .center()
+}
+
+/// What a field's problem looks like now that it takes no line (the
+/// maintainer's review, 2026-11-20; `experience.md`, section 7, "Field
+/// problem"), written into `docs/specs/phase-4/review/field-problems/`,
+/// dark and light at 1×: an error field and a warning field in one
+/// panel; a hint on a dropdown beside an error; the tooltip open on an
+/// error's glyph; a field with two problems, its tooltip open; a refused
+/// entry with its tooltip; the help line showing the focused field's
+/// problem; the drawer opened from a glyph, its row selected; a tool
+/// picker and a Targets row marked; the Tool Library's editing pane; and
+/// an import sheet with a problem field.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review field_problems -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed field-problem pictures; run by hand"]
+fn field_problems_review() {
+    let out = problems_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    let dir = scratch("review-field-problems");
+
+    // 01: the tool editor with an error field (the RPM an operation
+    // needs, unset) and a warning field (a plunge above the feed).
+    let Some(mut h) = window(&dir, Some(fixture("plaque.dcv")), 1280.0, 800.0) else {
+        return;
+    };
+    let mut tool = h.state().app().project().tools[1].clone();
+    tool.plunge_mm_min = Some(5000.0);
+    tool.feed_mm_min = Some(1000.0);
+    tool.rpm = None;
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateTool(tool))
+        .unwrap();
+    settle(&mut h);
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "01-error-and-warning-fields", &looks);
+
+    // 02: the tooltip open on the error's glyph.
+    let glyph = glyph_named(&h, "error: ");
+    rest_at(&mut h, glyph);
+    shoot_in(&mut h, &out, "02-error-glyph-tooltip", &looks);
+
+    // 03: the help line, the Plunge field having the keyboard.
+    park_pointer(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Plunge").focus();
+    h.run();
+    shoot_in(&mut h, &out, "03-help-line-shows-the-problem", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 04: the drawer opened from the warning's glyph, its row selected.
+    let glyph = glyph_named(&h, "warning: plunge_above_feed");
+    common::click_at(&mut h, glyph, egui::Modifiers::NONE);
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "04-drawer-opened-from-a-glyph", &looks);
+    click(&mut h, "Close the Warnings drawer");
+
+    // 05: a field with two problems, its tooltip open: a count of 0 the
+    // file holds, typed over with what is no count.
+    open_operation(&mut h, "Cut out");
+    type_over(&mut h, "Count", "0");
+    type_over(&mut h, "Count", "a few");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let glyph = h
+        .query_all(egui_kittest::kittest::by().predicate(|node| {
+            node.label().is_some_and(|name| name.contains('\n')) && node.role() == Role::Button
+        }))
+        .next()
+        .expect("the count's glyph names both")
+        .rect()
+        .center();
+    rest_at(&mut h, glyph);
+    shoot_in(&mut h, &out, "05-two-problems-tooltip", &looks);
+
+    // 06: a tool picker and a Targets row marked: a Bore with no tool
+    // chosen and no target.
+    park_pointer(&mut h);
+    let dc_project::Operation::Bore(mut bore) = h
+        .state()
+        .app()
+        .project()
+        .operations
+        .iter()
+        .find(|op| op.name() == "Screw holes")
+        .unwrap()
+        .clone()
+    else {
+        panic!("Screw holes is a Bore");
+    };
+    bore.targets.clear();
+    bore.tool = dc_project::ToolId::new("gone");
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateOperation(
+            dc_project::Operation::Bore(bore),
+        ))
+        .unwrap();
+    settle(&mut h);
+    open_operation(&mut h, "Screw holes");
+    open_every_group(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "06-operation-rows-marked", &looks);
+
+    // 07: a refused entry and its tooltip, on the Stock step.
+    go_to(&mut h, "Stock");
+    type_over(&mut h, "Width", "wide");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let glyph = glyph_named(&h, "error: ");
+    rest_at(&mut h, glyph);
+    shoot_in(&mut h, &out, "07-refused-entry-tooltip", &looks);
+    drop(h);
+
+    // 08: a hint on a dropdown beside an error: a project on an older
+    // version of its post-processor, and a file name no file can have.
+    let work = scratch("review-field-problems-older");
+    let older = copy_fixture("plaque.dcv", &work);
+    let text = std::fs::read_to_string(&older).unwrap();
+    std::fs::write(
+        &older,
+        text.replace("\"definition_version\": 4", "\"definition_version\": 3"),
+    )
+    .unwrap();
+    let mut h = window(&work, Some(older), 1280.0, 800.0).unwrap();
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    h.get_by_role_and_label(Role::Button, "Post-processor")
+        .click();
+    h.run();
+    type_over(&mut h, "File name", " ");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "08-hint-dropdown-and-error", &looks);
+    let glyph = glyph_named(&h, "hint: ");
+    rest_at(&mut h, glyph);
+    shoot_in(&mut h, &out, "09-hint-glyph-tooltip", &looks);
+    drop(h);
+
+    // 10: the Tool Library's editing pane, a tool that still needs its
+    // values: each field marked, no line under any.
+    write_library(&dir);
+    let mut h = window(&dir, Some(fixture("plaque.dcv")), 1280.0, 800.0).unwrap();
+    click(&mut h, "Project");
+    click(&mut h, "Tool Library…");
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "Fine Detail")
+        .scroll_to_me();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "Fine Detail")
+        .click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "10-library-editing-pane", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 11: the Import drawing sheet, a DXF that declares no units: the
+    // Units dropdown in the error state, and a join tolerance refused.
+    go_to(&mut h, "Design");
+    h.input_mut()
+        .dropped_files
+        .push(std::sync::Arc::new(Dropped(fixture("dxf/no_units.dxf"))));
+    h.run();
+    type_over(&mut h, "Join tolerance", "tight");
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "11-import-sheet-problem-fields", &looks);
+    let glyph = glyph_named(&h, "error: ");
+    rest_at(&mut h, glyph);
+    shoot_in(&mut h, &out, "12-import-sheet-tooltip", &looks);
+}

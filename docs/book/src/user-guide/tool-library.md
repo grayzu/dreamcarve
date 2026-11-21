@@ -37,7 +37,7 @@ and the `dreamcarve tools` commands read and write the same library file.
 The Tools step lists the project's tools. Click one to edit it in the
 Inspector; there is no Edit button.
 
-![The Tools step with a new tool selected: three tools in the list, the new one marked with a red dot; in the Inspector Name "60 degree V-bit", Type V-bit, an empty Angle field over "Type the included angle to make this tool a V-bit", Diameter 6.35 mm, Flutes 2, Feed, Plunge and RPM outlined in red and saying Required, and Save to library at the foot](figures/app/tools-editor.png)
+![The Tools step with a new tool selected: three tools in the list, the new one marked with a red dot; in the Inspector Name "60 degree V-bit", Type V-bit, an Angle field outlined in red that says Required, Diameter 6.35 mm, Flutes 2, Feed, Plunge and RPM outlined in red and saying Required, Save to library, and at the foot of the Inspector, since the keyboard is in the Angle field, "Type the included angle to make this tool a V-bit" above the field's help](figures/app/tools-editor.png)
 
 A tool's row has a glyph for its type, its name, and under it the
 diameter and the tool number. A V-bit's row adds its angle, `6.35 mm ·
@@ -165,8 +165,9 @@ field is saved to the library file when you leave it.
   changes**, under the fields, puts the selected tool back the way it was
   when you opened the sheet.
 - A value the library cannot take, such as a diameter of 0 or a name
-  another tool already has, leaves the field marked with the reason, and
-  the file is not changed.
+  another tool already has, leaves the field outlined in red with a
+  circled cross inside it, and the file is not changed. Rest the pointer
+  on the cross to read the reason.
 - Editing a library tool never changes a project's copy of it.
 
 **New tool** adds an end mill named `tool<n>`, as on the Tools step.

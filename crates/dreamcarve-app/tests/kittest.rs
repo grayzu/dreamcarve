@@ -2238,13 +2238,30 @@ fn drop_of_png_opens_the_picture_sheet() {
     // The height typed instead: the width follows.
     type_in(&mut h, "Height", "20");
     assert_eq!(field_value(&h, "Width"), "40");
-    // Not a length: refused under the field, and the size stays.
+    // Not a length: refused, and the size stays. The refusal draws no
+    // line under the field ("Field problem"): the field's glyph is named
+    // with it, and it names what was typed.
     type_in(&mut h, "Width", "wide");
+    let refusal = dc_app::units::parse_length_mm("wide", dc_project::Units::Mm)
+        .unwrap_err()
+        .to_string();
+    assert!(refusal.contains("wide"), "{refusal}");
+    let sheet = h.get_by_role(Role::Dialog);
     assert!(
-        h.get_by_role(Role::Dialog)
-            .query_by_label_contains("wide")
-            .is_some(),
+        sheet.query_by_label(&refusal).is_none(),
+        "no line under the field"
+    );
+    assert!(
+        sheet.query_by_label(&format!("error: {refusal}")).is_some(),
         "the refusal names what was typed"
+    );
+    assert!(
+        sheet
+            .get_by_role_and_label(Role::TextInput, "Width")
+            .accesskit_node()
+            .description()
+            .is_some_and(|d| d.starts_with(&format!("error: {refusal}"))),
+        "and describes the field"
     );
     type_in(&mut h, "Width", "100");
     assert_eq!(field_value(&h, "Height"), "50");
@@ -2314,10 +2331,18 @@ fn drop_of_png_opens_the_picture_sheet() {
     let refusal = dc_import::bitmap::import(b"not a picture", dc_import::ImageFormat::Png)
         .unwrap_err()
         .to_string();
+    // The importer's message is the File row's glyph, after the path it
+    // is about; no line of the sheet carries it.
     let sheet = h.get_by_role(Role::Dialog);
     assert!(
-        sheet.query_by_label(&refusal).is_some(),
-        "the importer's message: {refusal}"
+        sheet.query_by_label(&refusal).is_none(),
+        "no line carries the importer's message"
+    );
+    let glyph = sheet.get_by_label(&format!("error: {refusal}")).rect();
+    let file = sheet.get_by_label("File").rect();
+    assert!(
+        file.y_range().contains(glyph.center().y),
+        "the importer's message is the File row's glyph: {glyph:?} beside {file:?}"
     );
     assert!(
         sheet
@@ -4717,6 +4742,9 @@ fn clearing_list_adds_and_drags() {
     );
     assert_eq!(clearing_tools(&h, "op2"), ["t3", "t2"], "dragged above");
     assert_eq!(undo_steps(&h), steps + 2, "one step");
+    // The warning takes no line under the list ("Field problem"): the
+    // field it is located at, the second pass's tool picker, carries its
+    // glyph, named with the finding as the drawer words it.
     let warning = h
         .state()
         .app()
@@ -4724,11 +4752,25 @@ fn clearing_list_adds_and_drags() {
         .iter()
         .find(|f| f.code.as_deref() == Some("clearing_not_descending"))
         .expect("validation warns")
-        .message
         .clone();
     assert!(
-        h.query_by_label(&warning).is_some(),
-        "the warning shows under the list"
+        h.query_by_label(&warning.message).is_none(),
+        "no line under the list carries the warning"
+    );
+    let words = format!("warning: clearing_not_descending: {}", warning.message);
+    let glyph = h.get_by_role_and_label(Role::Button, &words).rect();
+    let field = warning.field.as_deref().expect("it names a field");
+    assert!(
+        field.ends_with(".tool"),
+        "located at a pass's tool: {field}"
+    );
+    let pickers: Vec<egui::Rect> = h
+        .query_all_by_role_and_label(Role::ComboBox, "Tool")
+        .map(|node| node.rect())
+        .collect();
+    assert!(
+        pickers.iter().any(|picker| picker.contains(glyph.center())),
+        "the glyph {glyph:?} is inside a pass's tool picker: {pickers:?}"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -5098,20 +5140,42 @@ fn tools_tab_holds_v_bit_until_an_angle_is_typed() {
     let before = h.state().app().project().clone();
     let steps = undo_steps(&h);
 
-    // Held: nothing changes, and the angle field asks.
+    // Held: nothing changes, and the angle field asks. It draws no line
+    // under itself ("Field problem"): it shows *Required*, its glyph and
+    // its description say what to type, and so does the help line at the
+    // Inspector's foot, since the held field has the keyboard.
+    let asks = format!("error: {required}");
     choose_v_bit(&mut h);
     assert_eq!(h.state().app().project(), &before, "no project change");
     assert_eq!(undo_steps(&h), steps);
-    assert!(h.query_by_label(required).is_some(), "the field asks");
     assert!(
-        h.query_by_role_and_label(Role::TextInput, "Angle")
-            .is_some()
+        h.query_by_label(required).is_none(),
+        "no line under the field"
+    );
+    let angle = h.get_by_role_and_label(Role::TextInput, "Angle");
+    assert_eq!(angle.accesskit_node().placeholder(), Some("Required"));
+    assert!(
+        angle
+            .accesskit_node()
+            .description()
+            .is_some_and(|d| d.starts_with(&asks)),
+        "the field asks, in its description"
+    );
+    assert!(h.query_by_label(&asks).is_some(), "and by its glyph");
+    assert!(
+        h.query_all_by_role(Role::Label).any(|node| {
+            let node = node.accesskit_node();
+            node.label()
+                .or_else(|| node.value())
+                .is_some_and(|name| name.starts_with(&asks) && name.contains("\nAngle: "))
+        }),
+        "and on the help line, before the angle's help"
     );
 
     // Left empty: discarded.
     h.key_press(egui::Key::Escape);
     h.run();
-    assert!(h.query_by_label(required).is_none(), "the hold is dropped");
+    assert!(h.query_by_label(&asks).is_none(), "the hold is dropped");
     assert!(
         h.query_by_role_and_label(Role::TextInput, "Angle")
             .is_none()
@@ -5141,7 +5205,7 @@ fn tools_tab_holds_v_bit_until_an_angle_is_typed() {
         }
     );
     assert_eq!(undo_steps(&h), steps + 1, "one undo step");
-    assert!(h.query_by_label(required).is_none());
+    assert!(h.query_by_label(&asks).is_none());
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -6780,8 +6844,9 @@ fn wait_for_tooltip(h: &mut Harness<'_, dreamcarve_app::Shell>) {
 
 /// Asserts the text field `label` shows the required-field look
 /// (functional 66b; `experience.md`, section 7, "required (unset)"):
-/// *Required* as its placeholder, no line under it carrying `message`, and
-/// `message` as its tooltip.
+/// *Required* as its placeholder, no line under it carrying `message`,
+/// `message` in its accessible description after its tier's word, and
+/// `message` in its tooltip.
 fn assert_required(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str, message: &str) {
     use egui_kittest::kittest::NodeT as _;
     let field = h.get_by_role_and_label(Role::TextInput, label);
@@ -6805,7 +6870,11 @@ fn assert_required(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str, mess
         .to_string();
     let glyphs: Vec<egui::Rect> = text_rects(h, &circle_x)
         .into_iter()
-        .filter(|glyph| frame.y_range().contains(glyph.center().y))
+        // On its line and in its frame: the tooltip of the field asked
+        // before this one may still be open, with its own small glyph.
+        .filter(|glyph| {
+            frame.y_range().contains(glyph.center().y) && glyph.center().x > frame.left()
+        })
         .collect();
     assert_eq!(
         glyphs.len(),
@@ -6820,6 +6889,11 @@ fn assert_required(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str, mess
     assert!(
         h.query_by_label(message).is_none(),
         "no line under {label} carries the message"
+    );
+    let described = field.accesskit_node().description().unwrap_or_default();
+    assert!(
+        described.starts_with(&format!("error: {message}")),
+        "{label} is described with the message: {described}"
     );
     h.get_by_role_and_label(Role::TextInput, label).hover();
     wait_for_tooltip(h);

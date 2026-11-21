@@ -60,10 +60,12 @@ version. Your settings are kept by the rule `export --post` follows
 - a setting still at the old controller's default takes the new one's
   default;
 - a setting you changed is kept;
-- unless the new controller cannot use it. Then it is reset, and a line
-  under **Controller** says so, in the words `export --post` prints.
+- unless the new controller cannot use it. Then it is reset, and
+  **Controller** is outlined in amber with a warning triangle inside
+  it. Rest the pointer on the triangle to read what was reset, in the
+  words `export --post` prints.
 
-![The Export step after switching a project set to One program for all tools from grblHAL to LinuxCNC: in the Post-processor group, Controller LinuxCNC v2 (latest), under it in amber "Reset tool_change_mode "m6" → "separate_programs": post-processor linuxcnc has no M6 tool change.", File extension ngc, Spindle control Automatic, Spin-up dwell 3 s, Decimals 3 and 4, and a Canned drill cycles tick box; under the groups, Programs is back at One program per tool](figures/app/post-processor-switched.png)
+![The Export step after switching a project set to One program for all tools from grblHAL to LinuxCNC: in the Post-processor group, Controller LinuxCNC v2 (latest) outlined in amber with a warning triangle inside it, the pointer on the triangle and its tooltip reading "warning", then "Reset tool_change_mode "m6" → "separate_programs": post-processor linuxcnc has no M6 tool change.", File extension ngc, Spindle control Automatic, Spin-up dwell 3 s, Decimals 3 and 4, and a Canned drill cycles tick box; under the groups, Programs is back at One program per tool](figures/app/post-processor-switched.png)
 
 Here the file extension went from `nc` to LinuxCNC's `ngc`, because `nc`
 was grblHAL's default, and **Programs** was reset to **One program per
@@ -76,8 +78,10 @@ controller, and so are the checks: read the Warnings drawer after a
 switch, since what was right for one controller can be an error on
 another.
 
-A project that uses an older version of its post-processor says so under
-**Controller**, with the version it uses and the latest. Choose the
+A project that uses an older version of its post-processor says so at
+**Controller**: the dropdown is outlined in blue with an information
+mark inside it, whose tooltip gives the version the project uses and
+the latest. Choose the
 controller again to move to the latest
 ([Versions](#versions) says what changed in each).
 

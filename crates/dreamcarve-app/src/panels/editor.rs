@@ -8,9 +8,12 @@
 //! with no row not shown. The shell walks `dc_app::editor::fields`'s table
 //! with one renderer per field kind ([`render`]'s `match`, which the
 //! compiler keeps exhaustive); nothing here is per operation kind. Every
-//! field shows its unit, commits when left, shows the file's located
-//! message under itself, and shows its help with its `.dcv` field name on
-//! hover of its label.
+//! field shows its unit, commits when left, and shows its help with its
+//! `.dcv` field name on hover of its label. What is wrong at a row (the
+//! findings located on it, the refusal of what was typed) takes no line:
+//! its control carries the outline and the glyph of the worst
+//! ([`crate::widgets::problem`]), and the details are in the glyph's
+//! tooltip, the help line and the Warnings drawer.
 //!
 //! Setup's Targets row is one line (slice 27, #619; capability 67): the
 //! `target` glyph, the count and the names ([`targets::row_summary`]), a
@@ -54,6 +57,7 @@
 
 use dc_app::editor::{self, FieldKind, Group, Row, Slot, fields, summary, targets};
 use dc_app::operations::Kind;
+use dc_app::problems::Problems;
 use dc_app::{App, Command, Selection, StrKey, Strings};
 use dc_job::Tier;
 use dc_project::{InstanceId, Operation, OperationId, Project, Tool, ToolKind};
@@ -65,11 +69,12 @@ use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
 use crate::widgets::checkbox::checkbox as check_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::op_glyph::op_glyph;
+use crate::widgets::problem::{self, Place};
 use crate::widgets::row::{self, GAP_PX};
 use crate::widgets::section::{Header, section_with};
 use crate::widgets::segmented::segmented;
 use crate::widgets::toggle::toggle;
-use crate::widgets::unit_field::{HEIGHT_PX, Required, UnitField, field as unit_field};
+use crate::widgets::unit_field::{HEIGHT_PX, UnitField, field as unit_field};
 
 /// The panel's content margin, px (`experience.md`, section 3).
 const MARGIN_PX: i8 = 16;
@@ -139,7 +144,7 @@ pub(super) struct Cx<'a> {
     app: &'a App,
     pub(super) strings: &'a Strings,
     pub(super) project: &'a Project,
-    located: editor::Located<'a>,
+    pub(super) located: editor::Located<'a>,
     /// Every finding, for a derived row's reason.
     findings: &'a [dc_job::Finding],
     selected: &'a [InstanceId],
@@ -356,12 +361,12 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, colour: usize, selected: bool, out: &mut Vec
             let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape))
                 || crate::shell::focus::escape_left_widget(ui.ctx());
             if !escaped {
-                commit(
-                    ui,
-                    field_id.with("refused"),
-                    editor::rename(cx.op, &text),
-                    out,
-                );
+                // A name the file refuses is said in the status bar, as a
+                // shape's is: the header has no row for it.
+                match editor::rename(cx.op, &text) {
+                    Ok(command) => out.extend(command.map(Action::run)),
+                    Err(e) => out.push(Action::Refused(e.to_string())),
+                }
             }
         } else {
             ui.data_mut(|d| d.insert_temp(field_id, (text, false)));
@@ -410,9 +415,6 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, colour: usize, selected: bool, out: &mut Vec
         kind_galley,
         palette.text_secondary,
     );
-    if let Some(reason) = ui.data(|d| d.get_temp::<String>(field_id.with("refused"))) {
-        row::message(ui, Tier::Error, &reason);
-    }
 }
 
 /// The id of the control at `key` (a row's key path, a clearing pass's
@@ -421,7 +423,8 @@ pub(super) fn control_id(op: &Operation, key: &str) -> Id {
     Id::unique(("dc.editor.field", op.id().as_str(), key))
 }
 
-/// Pushes `result`'s command, or keeps its refusal under the row.
+/// Pushes `result`'s command, or keeps its refusal for the row's control
+/// to mark itself with ([`refusal`]).
 pub(super) fn commit(
     ui: &Ui,
     refused_id: Id,
@@ -439,9 +442,20 @@ pub(super) fn commit(
     }
 }
 
-/// One row among `siblings`, its group's rows: its renderer, then the
-/// message under it (the refusal of what was typed, else the file's
-/// located message).
+/// What is wrong at the control whose refusals are kept at `refused_id`:
+/// the reason it refused what was typed, then `located`, the findings on
+/// it.
+pub(super) fn refusal(ui: &Ui, cx: &Cx<'_>, refused_id: Id, located: Problems) -> Problems {
+    match ui.data(|d| d.get_temp::<String>(refused_id)) {
+        Some(reason) => Problems::refused(cx.strings, &reason).with(located),
+        None => located,
+    }
+}
+
+/// One row among `siblings`, its group's rows: its renderer, marked with
+/// what is wrong at it (the refusal of what was typed, the findings
+/// located on it), then its notes. A problem draws no line, so the row
+/// is as tall with one as without.
 fn render(
     ui: &mut Ui,
     cx: &Cx<'_>,
@@ -452,19 +466,31 @@ fn render(
     let slot = Slot::of(row);
     let indent = row.indented_among(siblings.iter().copied());
     let refused_id = control_id(cx.op, slot.key()).with("refused");
-    let refused: Option<String> = ui.data(|d| d.get_temp(refused_id));
+    let refused = ui.data(|d| d.get_temp::<String>(refused_id)).is_some();
     let status = cx.located.status(row);
-    let tier = refused
-        .as_ref()
-        .map(|_| Tier::Error)
-        .or(status.map(|s| s.tier));
+    // A block marks what is located on it and not on one of the fields
+    // inside it, which mark themselves (a clearing pass's tool).
+    let located = if row.kind.is_block() {
+        let keys = crate::panels::clearing::keys(cx, row);
+        cx.located.problems_but(cx.strings, cx.op, row, &keys)
+    } else {
+        cx.located.problems(cx.strings, row)
+    };
+    let mut problems = refusal(ui, cx, refused_id, located);
+    // Nothing to derive a countersink's depth from: validation's reason
+    // is the read-only field's problem.
+    if matches!(row.kind, FieldKind::CountersinkDepth)
+        && let Some(Err(why)) = editor::derived(cx.project, cx.strings, cx.findings, cx.op, row)
+    {
+        problems = problems.with(Problems::said(cx.strings, Tier::Error, &why));
+    }
     let focused = cx.focus == Some(row.key);
     let offered = editor::offered_for(cx.project, cx.op, row);
     // An unset value with an error or a warning on it, and no default of
     // the tool's or the stock's, is required (capability 66b): *Required*
-    // in the field and the message its tooltip, not a line under it.
-    let required = status.filter(|s| {
-        refused.is_none()
+    // in the field, the message among its problems.
+    let required = status.is_some_and(|s| {
+        !refused
             && s.tier != Tier::Hint
             && typed_kind(row.kind)
             && slot.value_text(cx.project, cx.op).is_empty()
@@ -473,30 +499,11 @@ fn render(
     let response = ui
         .horizontal(|ui| {
             nest(ui, indent);
-            control(
-                ui,
-                cx,
-                &slot,
-                &offered,
-                tier,
-                required.map(|s| s.message),
-                focused,
-                out,
-            )
+            control(ui, cx, &slot, &offered, &problems, required, focused, out)
         })
         .inner;
-    let status = status.filter(|_| required.is_none());
-    match row.kind {
-        FieldKind::ClearingList => crate::panels::clearing::list(ui, cx, row, out),
-        // Nothing to derive it from: validation's message in place of the
-        // number.
-        FieldKind::CountersinkDepth => {
-            if let Some(Err(why)) = editor::derived(cx.project, cx.strings, cx.findings, cx.op, row)
-            {
-                row::message(ui, Tier::Error, &why);
-            }
-        }
-        _ => {}
+    if matches!(row.kind, FieldKind::ClearingList) {
+        crate::panels::clearing::list(ui, cx, row, out);
     }
     // The lines under it (`editor::notes`): under a tool picker a V-bit's
     // cone height or a tapered ball nose's cutting height (#685), the
@@ -515,10 +522,8 @@ fn render(
     for note in editor::notes(cx.project, cx.strings, cx.op, &slot) {
         if whole_width {
             row::line(ui, note.alert, &note.text);
-        } else if note.alert {
-            row::message(ui, Tier::Error, &note.text);
         } else {
-            row::hint(ui, &note.text);
+            row::derived(ui, note.alert, &note.text);
         }
     }
     if matches!(row.kind, FieldKind::PointPick)
@@ -531,21 +536,6 @@ fn render(
             response.scroll_to_me(Some(egui::Align::Center));
         }
         ui.data_mut(|d| d.remove::<(OperationId, String)>(focus_id()));
-    }
-    match refused {
-        Some(reason) => row::message(ui, Tier::Error, &reason),
-        // A block shows every message located on it, its items' among
-        // them (a clearing list's `clearing_not_descending`).
-        None if row.kind.is_block() => {
-            for status in cx.located.all(row) {
-                row::message(ui, status.tier, status.message);
-            }
-        }
-        None => {
-            if let Some(status) = status {
-                row::message(ui, status.tier, status.message);
-            }
-        }
     }
 }
 
@@ -573,9 +563,13 @@ pub(super) fn nest(ui: &mut Ui, indent: bool) {
 }
 
 /// The control of `slot`, by its kind: what a row of the operation and a
-/// row of a clearing pass both draw, after [`nest`]. `offered` is what a tool picker lists;
-/// `required`, the file's message while a typed field is an unset
-/// required value.
+/// row of a clearing pass both draw, after [`nest`]. `offered` is what a
+/// tool picker lists; `problems`, what is wrong at the control, which
+/// each kind marks itself with (the outline and the glyph: inside a
+/// field or a dropdown, beside a control that has no inside); `required`,
+/// whether a typed field is an unset required value. Each control takes
+/// the help its label offered: its tooltip, and the panel's help line
+/// while it has the keyboard.
 #[allow(
     clippy::too_many_arguments,
     reason = "one renderer's inputs, each read by some kind of row"
@@ -585,8 +579,8 @@ pub(super) fn control(
     cx: &Cx<'_>,
     slot: &Slot<'_>,
     offered: &[&Tool],
-    tier: Option<Tier>,
-    required: Option<&str>,
+    problems: &Problems,
+    required: bool,
     focused: bool,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
@@ -595,31 +589,9 @@ pub(super) fn control(
     // boundary) is disabled, and says why where its field would be.
     if let Some(why) = editor::replaced(cx.op, slot.row) {
         label(ui, cx, slot);
-        return Some(replaced(ui, cx, slot, id, why, tier));
+        return Some(replaced(ui, cx, slot, id, why, problems));
     }
-    let response = control_of(ui, cx, slot, offered, tier, required, focused, out);
-    // A control that is not a text field takes the help its label
-    // offered here: its tooltip, and the panel's help line while it has
-    // the keyboard. A text field took it as it drew.
-    response.map(|r| crate::widgets::help::control(ui, r, cx.strings.get(slot.row.label)))
-}
-
-/// [`control`]'s control, before its help.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one renderer's inputs, each read by some kind of row"
-)]
-fn control_of(
-    ui: &mut Ui,
-    cx: &Cx<'_>,
-    slot: &Slot<'_>,
-    offered: &[&Tool],
-    tier: Option<Tier>,
-    required: Option<&str>,
-    focused: bool,
-    out: &mut Vec<Action>,
-) -> Option<egui::Response> {
-    let id = control_id(cx.op, slot.key());
+    let name = cx.strings.get(slot.row.label);
     match slot.row.kind {
         FieldKind::Length
         | FieldKind::Rate
@@ -629,25 +601,25 @@ fn control_of(
         | FieldKind::Seconds
         | FieldKind::LengthList => {
             label(ui, cx, slot);
-            typed(ui, cx, slot, id, tier, required, focused, out)
+            typed(ui, cx, slot, id, problems, required, focused, out)
         }
-        FieldKind::SwitchedLength => switched_length(ui, cx, slot, id, tier, focused, out),
-        FieldKind::Choice(options) => choice(ui, cx, slot, id, options, out),
-        FieldKind::Checkbox => checkbox(ui, cx, slot, out),
-        FieldKind::Toggle(_) => switch(ui, cx, slot, out),
-        FieldKind::ToolPicker => tool_picker(ui, cx, slot, id, offered, out),
-        FieldKind::PicturePicker => picture_picker(ui, cx, slot.row, id, out),
-        FieldKind::BoundaryPicker => boundary_picker(ui, cx, slot.row, id, out),
+        FieldKind::SwitchedLength => switched_length(ui, cx, slot, id, problems, focused, out),
+        FieldKind::Choice(options) => choice(ui, cx, slot, id, options, problems, out),
+        FieldKind::Checkbox => checkbox(ui, cx, slot, problems, out),
+        FieldKind::Toggle(_) => switch(ui, cx, slot, problems, out),
+        FieldKind::ToolPicker => tool_picker(ui, cx, slot, id, offered, problems, out),
+        FieldKind::PicturePicker => picture_picker(ui, cx, slot.row, id, problems, out),
+        FieldKind::BoundaryPicker => boundary_picker(ui, cx, slot.row, id, problems, out),
         FieldKind::InstanceList => {
             // Setup's Targets row: one line (capability 67).
             label(ui, cx, slot);
-            Some(targets_row(ui, cx, slot, out))
+            Some(targets_row(ui, cx, slot, problems, out))
         }
         FieldKind::ClearingList => {
             // The list itself is under the row.
             label(ui, cx, slot);
             let palette = Palette::current(ui);
-            Some(
+            let intro = problem::with_room(ui, problems, |ui| {
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(cx.strings.get(StrKey::EditorClearingIntro))
@@ -656,38 +628,54 @@ fn control_of(
                     )
                     .wrap()
                     .selectable(false),
-                ),
-            )
+                )
+            });
+            Some(problem::mark(
+                ui,
+                intro,
+                name,
+                problems,
+                None,
+                Place::Beside,
+            ))
         }
-        FieldKind::TabRequest => tab_request(ui, cx, slot.row, out),
-        FieldKind::EarlierPocket => earlier_pocket(ui, cx, slot.row, id, out),
-        FieldKind::PointPick => point_pick_button(ui, cx, slot.row),
+        FieldKind::TabRequest => tab_request(ui, cx, slot.row, problems, out),
+        FieldKind::EarlierPocket => earlier_pocket(ui, cx, slot.row, id, problems, out),
+        FieldKind::PointPick => point_pick_button(ui, cx, slot.row, problems),
         FieldKind::CountersinkDepth => {
             label(ui, cx, slot);
-            derived(ui, cx, slot.row, id)
+            Some(derived(ui, cx, slot.row, id, problems))
         }
-        // The label; the derived lines are drawn under it.
+        // The label; the derived lines are drawn under it. What is
+        // located on the row marks the label.
         FieldKind::InlayDerived => {
-            label(ui, cx, slot);
-            None
+            let label = label(ui, cx, slot);
+            Some(problem::mark(
+                ui,
+                label,
+                name,
+                problems,
+                None,
+                Place::Beside,
+            ))
         }
     }
 }
 
 /// The label with its help and the `.dcv` field name (a clearing pass's
 /// with its index, `clearing[1].tool`).
-fn label(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>) {
+fn label(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>) -> egui::Response {
     row::label(
         ui,
         cx.strings.get(slot.row.label),
         cx.strings.get(slot.row.help),
         Some(slot.key()),
-    );
+    )
 }
 
 /// A typed field: the unit field, its placeholder the tool's value while
-/// `null`, and ⟲ while it has its own; while `required` (the file's
-/// message), the required-field look.
+/// `null`, and ⟲ while it has its own; while `required`, the
+/// required-field look. `problems` are the field's own to show.
 #[allow(
     clippy::too_many_arguments,
     reason = "one renderer's inputs, each read by some kind of row"
@@ -697,8 +685,8 @@ fn typed(
     cx: &Cx<'_>,
     slot: &Slot<'_>,
     id: Id,
-    tier: Option<Tier>,
-    required: Option<&str>,
+    problems: &Problems,
+    required: bool,
     focused: bool,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
@@ -718,12 +706,9 @@ fn typed(
         ui,
         UnitField {
             placeholder: &placeholder,
-            tier,
+            problems: Some(problems),
             reset,
-            required: required.map(|message| Required {
-                placeholder: cx.strings.get(StrKey::EditorRequired),
-                message,
-            }),
+            required: required.then(|| cx.strings.get(StrKey::EditorRequired)),
             ..UnitField::new(
                 id,
                 name,
@@ -753,15 +738,15 @@ fn typed(
 /// A row that is not in use (`editor::replaced`; capability 68a): a
 /// disabled field with the reason in its place (*Set by the boundary*)
 /// and the whole of it as the tooltip. It writes nothing. A value a
-/// hand-edited file still holds shows greyed, with validation's message
-/// under the row as for any other.
+/// hand-edited file still holds shows greyed, marked with validation's
+/// message as any other field is.
 fn replaced(
     ui: &mut Ui,
     cx: &Cx<'_>,
     slot: &Slot<'_>,
     id: Id,
     why: editor::Replaced,
-    tier: Option<Tier>,
+    problems: &Problems,
 ) -> egui::Response {
     let value = slot.value_text(cx.project, cx.op);
     unit_field(
@@ -770,7 +755,7 @@ fn replaced(
             enabled: false,
             disabled_reason: Some(cx.strings.get(why.help)),
             placeholder: cx.strings.get(why.note),
-            tier,
+            problems: Some(problems),
             ..UnitField::new(
                 id,
                 cx.strings.get(slot.row.label),
@@ -788,15 +773,19 @@ fn replaced(
 
 /// A derived value (S18; slice 12, #541): a read-only field showing
 /// `derived: 5.5` in its unit, never typed. When there is nothing to
-/// derive it from (the tool is not a V-bit), nothing: [`render`] draws
-/// validation's message under the label in place of the number.
-fn derived(ui: &mut Ui, cx: &Cx<'_>, row: &Row, id: Id) -> Option<egui::Response> {
-    let text = editor::derived(cx.project, cx.strings, cx.findings, cx.op, row)?.ok()?;
-    let output = unit_field(
+/// derive it from (the tool is not a V-bit), the field is empty and
+/// marked with validation's reason, which [`render`] put among
+/// `problems`.
+fn derived(ui: &mut Ui, cx: &Cx<'_>, row: &Row, id: Id, problems: &Problems) -> egui::Response {
+    let text = editor::derived(cx.project, cx.strings, cx.findings, cx.op, row)
+        .and_then(Result::ok)
+        .unwrap_or_default();
+    unit_field(
         ui,
         UnitField {
             enabled: false,
             disabled_reason: Some(cx.strings.get(StrKey::EditorDerivedReadOnly)),
+            problems: Some(problems),
             ..UnitField::new(
                 id,
                 cx.strings.get(row.label),
@@ -804,8 +793,8 @@ fn derived(ui: &mut Ui, cx: &Cx<'_>, row: &Row, id: Id) -> Option<egui::Response
                 editor::unit_suffix(row, cx.project.display_units),
             )
         },
-    );
-    Some(output.response)
+    )
+    .response
 }
 
 /// A length with an off switch for `null` (a V-Carve's flat depth): the
@@ -818,7 +807,7 @@ fn switched_length(
     cx: &Cx<'_>,
     slot: &Slot<'_>,
     id: Id,
-    tier: Option<Tier>,
+    problems: &Problems,
     focused: bool,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
@@ -842,10 +831,20 @@ fn switched_length(
         }
     }
     if !on {
-        return Some(switch);
+        // Off, the switch is all there is to mark.
+        let shape = crate::widgets::toggle::pill_of(&switch);
+        let name = cx.strings.get(slot.row.label);
+        return Some(problem::mark(
+            ui,
+            switch,
+            name,
+            problems,
+            Some(shape),
+            Place::Beside,
+        ));
     }
     ui.add_space(GAP_PX);
-    typed(ui, cx, slot, id, tier, None, focused, out)
+    typed(ui, cx, slot, id, problems, false, focused, out)
 }
 
 /// A choice: segmented for two to four options whose labels fit 56 px
@@ -856,10 +855,12 @@ fn choice(
     slot: &Slot<'_>,
     id: Id,
     options: &[editor::ChoiceOption],
+    problems: &Problems,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     label(ui, cx, slot);
     let row = slot.row;
+    let name = cx.strings.get(row.label);
     let labels: Vec<&str> = options.iter().map(|o| cx.strings.get(o.label)).collect();
     let current = slot.choice(cx.op);
     let fits = (2..=4).contains(&labels.len())
@@ -877,17 +878,28 @@ fn choice(
     let refused_id = id.with("refused");
     let mut picked = None;
     let response = if fits {
-        let shown = ui.scope(|ui| {
-            segmented(
-                ui,
-                id,
-                &labels,
-                current.unwrap_or(labels.len()),
-                ui.available_width(),
-            )
+        // A pill control has no inside: its glyph stands beside it.
+        let shown = problem::with_room(ui, problems, |ui| {
+            ui.scope(|ui| {
+                segmented(
+                    ui,
+                    id,
+                    &labels,
+                    current.unwrap_or(labels.len()),
+                    ui.available_width(),
+                )
+            })
         });
         picked = shown.inner;
-        Some(shown.response)
+        let shape = (shown.response.rect, theme::pill(HEIGHT_PX));
+        Some(problem::mark(
+            ui,
+            shown.response,
+            name,
+            problems,
+            Some(shape),
+            Place::Beside,
+        ))
     } else {
         let selected = current
             .and_then(|i| labels.get(i))
@@ -897,7 +909,7 @@ fn choice(
         let response = egui::ComboBox::from_id_salt(id)
             .icon(crate::widgets::icon::combo_chevron)
             .truncate()
-            .selected_text(selected)
+            .selected_text(problem::dropdown_text(ui, selected, width, problems))
             .width(width)
             .show_ui(ui, |ui| {
                 for (i, label) in labels.iter().enumerate() {
@@ -907,8 +919,8 @@ fn choice(
                 }
             })
             .response
-            .accessible_name(cx.strings.get(row.label));
-        Some(response)
+            .accessible_name(name);
+        Some(dropdown_mark(ui, response, (name, selected), problems))
     };
     if let Some(index) = picked {
         commit(ui, refused_id, slot.choose(cx.project, cx.op, index), out);
@@ -916,21 +928,49 @@ fn choice(
     response
 }
 
-/// A checkbox, its label to its right; hovering it shows the help.
+/// A dropdown's finish: its help, and the mark of `problems` (the
+/// outline, and the glyph inside it before the chevron, where `chosen`,
+/// its text, was cut for it).
+fn dropdown_mark(
+    ui: &Ui,
+    dropdown: egui::Response,
+    (name, chosen): (&str, &str),
+    problems: &Problems,
+) -> egui::Response {
+    let shape = (dropdown.rect, theme::CONTROL_RADIUS_PX);
+    let place = problem::in_dropdown(ui);
+    let marked = problem::mark(ui, dropdown, name, problems, Some(shape), place);
+    problem::dropdown_whole(ui, marked, chosen)
+}
+
+/// A checkbox, its label to its right; hovering it shows the help. Its
+/// problem's glyph stands beside it, and the outline goes round its box.
 fn checkbox(
     ui: &mut Ui,
     cx: &Cx<'_>,
     slot: &Slot<'_>,
+    problems: &Problems,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let palette = Palette::current(ui);
     let row = slot.row;
     let mut on = slot.checked(cx.op);
-    let response = check_box(ui, slot.key(), &mut on, cx.strings.get(row.label));
+    let response = problem::with_room(ui, problems, |ui| {
+        check_box(ui, slot.key(), &mut on, cx.strings.get(row.label))
+    });
     let help = cx.strings.get(row.help);
     if response.has_focus() {
         let _ = crate::widgets::help::focused(ui, cx.strings.get(row.label), help);
     }
+    let shape = crate::widgets::checkbox::box_of(&response, true);
+    let response = problem::mark(
+        ui,
+        response,
+        cx.strings.get(row.label),
+        problems,
+        Some(shape),
+        Place::Beside,
+    );
     let response = response.on_hover_ui(|ui| {
         ui.label(egui::RichText::new(help).text_style(TextStyle::Body));
         ui.label(
@@ -950,16 +990,19 @@ fn checkbox(
     Some(response)
 }
 
-/// A feature's switch; its settings are the rows under its key.
+/// A feature's switch; its settings are the rows under its key. Its
+/// problem's glyph stands beside it.
 fn switch(
     ui: &mut Ui,
     cx: &Cx<'_>,
     slot: &Slot<'_>,
+    problems: &Problems,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     label(ui, cx, slot);
     let on = slot.switched(cx.op);
-    let response = toggle(ui, on, cx.strings.get(slot.row.label));
+    let name = cx.strings.get(slot.row.label);
+    let response = toggle(ui, on, name);
     if response.clicked() {
         commit(
             ui,
@@ -968,7 +1011,15 @@ fn switch(
             out,
         );
     }
-    Some(response)
+    let shape = crate::widgets::toggle::pill_of(&response);
+    Some(problem::mark(
+        ui,
+        response,
+        name,
+        problems,
+        Some(shape),
+        Place::Beside,
+    ))
 }
 
 /// Under a tool picker: the chosen tool's note, a V-bit's cone height
@@ -989,9 +1040,10 @@ fn tab_request(
     ui: &mut Ui,
     cx: &Cx<'_>,
     row: &Row,
+    problems: &Problems,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
-    let response = switch(ui, cx, &Slot::of(row), out);
+    let response = switch(ui, cx, &Slot::of(row), problems, out);
     let requested = matches!(cx.op, Operation::Profile(p) if p.tabs.is_some());
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let spec = ButtonSpec::new(
@@ -1013,12 +1065,13 @@ fn tab_request(
 
 /// `rest_of`: none, or one of the earlier enabled Pockets, in a dropdown.
 /// A file's `rest_of` that is not one of them (a later Pocket, written by
-/// hand) shows as chosen, by name, with validation's message under it.
+/// hand) shows as chosen, by name, marked with validation's message.
 fn earlier_pocket(
     ui: &mut Ui,
     cx: &Cx<'_>,
     row: &Row,
     id: Id,
+    problems: &Problems,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     label(ui, cx, &Slot::of(row));
@@ -1039,7 +1092,7 @@ fn earlier_pocket(
     let response = egui::ComboBox::from_id_salt(id)
         .icon(crate::widgets::icon::combo_chevron)
         .truncate()
-        .selected_text(selected)
+        .selected_text(problem::dropdown_text(ui, &selected, width, problems))
         .width(width)
         .show_ui(ui, |ui| {
             if ui.selectable_label(current.is_empty(), none).clicked() {
@@ -1064,18 +1117,24 @@ fn earlier_pocket(
             out,
         );
     }
-    Some(response)
+    Some(dropdown_mark(
+        ui,
+        response,
+        (cx.strings.get(row.label), &selected),
+        problems,
+    ))
 }
 
 /// A Photo V-Carve's Picture row (capability 67): a dropdown of the
 /// project's pictures, the one carved shown as chosen. A picture the
-/// project no longer has shows by the id the file still names, with
-/// validation's message under the row, so the row never reads as empty.
+/// project no longer has shows by the id the file still names, marked
+/// with validation's message, so the row never reads as empty.
 fn picture_picker(
     ui: &mut Ui,
     cx: &Cx<'_>,
     row: &Row,
     id: Id,
+    problems: &Problems,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     label(ui, cx, &Slot::of(row));
@@ -1087,7 +1146,7 @@ fn picture_picker(
     let response = egui::ComboBox::from_id_salt(id)
         .icon(crate::widgets::icon::combo_chevron)
         .truncate()
-        .selected_text(selected)
+        .selected_text(problem::dropdown_text(ui, &selected, width, problems))
         .width(width)
         .show_ui(ui, |ui| {
             for (picture, name) in &offered {
@@ -1109,7 +1168,12 @@ fn picture_picker(
             out,
         );
     }
-    Some(response)
+    Some(dropdown_mark(
+        ui,
+        response,
+        (cx.strings.get(row.label), &selected),
+        problems,
+    ))
 }
 
 /// An Inlay's Boundary row (capability 68; phase 3's capability 49f): a
@@ -1118,14 +1182,15 @@ fn picture_picker(
 /// shown as chosen. Choosing a shape makes it the boundary alone; with
 /// two or more such shapes selected on the drawing, *Selected shapes*
 /// takes them all, for a band drawn by several. A listed shape the
-/// project no longer has shows by its id, with validation's message under
-/// the row. The shapes are asked for only while the list is open: the
+/// project no longer has shows by its id, marked with validation's
+/// message. The shapes are asked for only while the list is open: the
 /// question nests each shape's outlines.
 fn boundary_picker(
     ui: &mut Ui,
     cx: &Cx<'_>,
     row: &Row,
     id: Id,
+    problems: &Problems,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     label(ui, cx, &Slot::of(row));
@@ -1136,7 +1201,7 @@ fn boundary_picker(
     let response = egui::ComboBox::from_id_salt(id)
         .icon(crate::widgets::icon::combo_chevron)
         .truncate()
-        .selected_text(selected)
+        .selected_text(problem::dropdown_text(ui, &selected, width, problems))
         .width(width)
         .show_ui(ui, |ui| {
             let none = cx.strings.get(StrKey::EditorBoundaryNone);
@@ -1175,13 +1240,23 @@ fn boundary_picker(
             out,
         );
     }
-    Some(response)
+    Some(dropdown_mark(
+        ui,
+        response,
+        (cx.strings.get(row.label), &selected),
+        problems,
+    ))
 }
 
 /// A point row's *Start on the view*: arms the Viewport, whose next click
 /// sets the point (one click, as the park point's pick); clicked again,
 /// or Escape, disarms it.
-fn point_pick_button(ui: &mut Ui, cx: &Cx<'_>, row: &Row) -> Option<egui::Response> {
+fn point_pick_button(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    row: &Row,
+    problems: &Problems,
+) -> Option<egui::Response> {
     label(ui, cx, &Slot::of(row));
     let mine = (cx.op.id().clone(), row.key.to_owned());
     let armed = point_pick(ui.ctx()).as_ref() == Some(&mine);
@@ -1196,7 +1271,15 @@ fn point_pick_button(ui: &mut Ui, cx: &Cx<'_>, row: &Row) -> Option<egui::Respon
     if response.clicked() {
         arm_point_pick(ui.ctx(), (!armed).then_some(mine));
     }
-    Some(response)
+    let shape = (response.rect, theme::CONTROL_RADIUS_PX);
+    Some(problem::mark(
+        ui,
+        response,
+        cx.strings.get(row.label),
+        problems,
+        Some(shape),
+        Place::Beside,
+    ))
 }
 
 /// A tool type's glyph (section 6).
@@ -1337,12 +1420,19 @@ fn tool_picker(
     slot: &Slot<'_>,
     id: Id,
     offered: &[&Tool],
+    problems: &Problems,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     label(ui, cx, slot);
     let row = slot.row;
     let palette = Palette::current(ui);
     let current = slot.tool(cx.project, cx.op);
+    // The room a problem's glyph takes before the chevron.
+    let glyph_px = if problems.is_empty() {
+        0.0
+    } else {
+        problem::GLYPH_PX + 6.0
+    };
     let text = current.map_or_else(
         || cx.strings.get(StrKey::EditorToolNone).to_owned(),
         |t| tool_text(cx.strings, cx.project, t),
@@ -1385,7 +1475,7 @@ fn tool_picker(
         palette.text_primary,
     );
     job.wrap = egui::text::TextWrapping::truncate_at_width(
-        (rect.right() - 10.0 - chevron.size().x - 6.0 - x).max(0.0),
+        (rect.right() - 10.0 - chevron.size().x - 6.0 - glyph_px - x).max(0.0),
     );
     let name = ui.painter().layout_job(job);
     ui.painter().galley(
@@ -1458,7 +1548,18 @@ fn tool_picker(
             ui.close();
         }
     });
-    Some(response)
+    let place = Place::Inside {
+        from_right_px: 10.0 + theme::ICON_SMALL_PX + 6.0 + problem::GLYPH_PX / 2.0,
+        fill: palette.surface_sunken,
+    };
+    Some(problem::mark(
+        ui,
+        response,
+        cx.strings.get(row.label),
+        problems,
+        Some((rect, theme::CONTROL_RADIUS_PX)),
+        place,
+    ))
 }
 
 /// Setup's Targets row (capability 67; `experience.md`, section 7,
@@ -1466,8 +1567,16 @@ fn tool_picker(
 /// row's end with every name in its tooltip, a `triangle-alert` when a
 /// target carries a warning, and at the right end the pencil (*Edit
 /// targets*) and `⋯` (*Use selection*, *Add selection*). A double-click
-/// on the summary enters target editing too.
-fn targets_row(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>, out: &mut Vec<Action>) -> egui::Response {
+/// on the summary enters target editing too. What is located on the row
+/// (a kind's `drill_target_not_circle`, the refusal of a selection)
+/// outlines the summary and puts its glyph where the triangle stands.
+fn targets_row(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    slot: &Slot<'_>,
+    problems: &Problems,
+    out: &mut Vec<Action>,
+) -> egui::Response {
     let palette = Palette::current(ui);
     let strings = cx.strings;
     let op = cx.op;
@@ -1497,7 +1606,10 @@ fn targets_row(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>, out: &mut Vec<Action>)
     );
     left += theme::ICON_SMALL_PX + 6.0;
     let mut right = rect.right();
-    if summary.warning {
+    if !problems.is_empty() {
+        // The row's own glyph, drawn by its mark, takes the place.
+        right -= problem::GLYPH_PX + 4.0;
+    } else if summary.warning {
         let alert =
             Icon::TriangleAlert.galley(ui, theme::ICON_SMALL_PX, palette.status_warning.stroke);
         right -= theme::ICON_SMALL_PX;
@@ -1531,6 +1643,25 @@ fn targets_row(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>, out: &mut Vec<Action>)
     if response.double_clicked() {
         out.push(Action::EditTargets(op.id().clone()));
     }
+    let response = problem::mark(
+        ui,
+        response,
+        cx.strings.get(slot.row.label),
+        problems,
+        // The summary has no frame of its own: the outline stands a
+        // little off its glyph and its text, short of the pencil.
+        Some((
+            Rect::from_min_max(
+                egui::pos2(rect.left() - 6.0, rect.top()),
+                egui::pos2(rect.right() + 2.0, rect.bottom()),
+            ),
+            theme::CONTROL_RADIUS_PX,
+        )),
+        Place::Inside {
+            from_right_px: 2.0 + problem::GLYPH_PX / 2.0,
+            fill: theme::NONE,
+        },
+    );
     let response = if summary.names.is_empty() {
         response
     } else {

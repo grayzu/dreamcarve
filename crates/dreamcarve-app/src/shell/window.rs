@@ -402,6 +402,10 @@ pub(crate) enum Action {
     /// Open the Warnings drawer at this operation's carve note (the
     /// status bar's message cell, capability 76a).
     ShowNote(dc_project::OperationId),
+    /// Open the Warnings drawer at this finding's row, selected and
+    /// scrolled into view (a click on a field's problem glyph, capability
+    /// 66): the reverse of a row's trip to its field.
+    ShowFinding(dc_app::warnings::RowKey),
     /// Stop generation (the status bar's *Stop*).
     StopGeneration,
     /// Regenerate every operation (the status bar's *Regenerate all*,
@@ -593,6 +597,12 @@ pub struct Shell {
     warnings_open: bool,
     /// The carve note the drawer scrolls to in the next frame it draws.
     note_target: Option<dc_project::OperationId>,
+    /// The drawer row a field's problem glyph opened the drawer at: it
+    /// shows selected until a row is clicked or the drawer closes.
+    finding: Option<dc_app::warnings::RowKey>,
+    /// Whether the drawer scrolls to [`Self::finding`] in the next frame
+    /// it draws: once, when the glyph is clicked.
+    finding_scroll: bool,
     /// Where the keyboard focus was after the last frame (#548).
     focus: focus::Shown,
     /// Whether `gui.toml` is there and could not be read
@@ -702,6 +712,8 @@ impl Shell {
             worker,
             warnings_open: false,
             note_target: None,
+            finding: None,
+            finding_scroll: false,
             focus: focus::Shown::default(),
             prefs_held: unread.is_some(),
             prefs_touched: false,
@@ -1608,6 +1620,8 @@ impl Shell {
                 op,
                 field,
             } => {
+                // The user is at a row of their own choosing now.
+                self.finding = None;
                 let owner = selection.as_ref().and_then(steps::owner);
                 if let Some(selection) = selection {
                     self.app.select(selection);
@@ -1644,7 +1658,15 @@ impl Shell {
                     (None, _, None) => {}
                 }
             }
-            Action::ToggleWarnings => self.warnings_open = !self.warnings_open,
+            Action::ToggleWarnings => {
+                self.warnings_open = !self.warnings_open;
+                self.finding = None;
+            }
+            Action::ShowFinding(row) => {
+                self.warnings_open = true;
+                self.finding = Some(row);
+                self.finding_scroll = true;
+            }
             Action::ShowNote(op) => {
                 self.warnings_open = true;
                 self.note_target = Some(op);
@@ -2095,6 +2117,11 @@ pub(crate) struct FrameState<'a> {
     pub warnings_open: bool,
     /// The operation whose carve note the drawer scrolls to this frame.
     pub note_target: Option<&'a dc_project::OperationId>,
+    /// The drawer row a field's problem glyph opened the drawer at,
+    /// drawn selected.
+    pub finding: Option<&'a dc_app::warnings::RowKey>,
+    /// Whether the drawer scrolls to [`Self::finding`] this frame.
+    pub finding_scroll: bool,
     /// The estimates' settings, for the status bar's total and an
     /// operation row's hover (capability 78).
     pub estimate: &'a EstimateConfig,
@@ -2176,6 +2203,8 @@ impl eframe::App for Shell {
         } else {
             None
         };
+        let finding_scroll = self.warnings_open && std::mem::take(&mut self.finding_scroll);
+        let finding = self.finding.clone();
         let cells = dc_app::status::cells(
             &self.app,
             &dc_app::status::Inputs {
@@ -2202,6 +2231,8 @@ impl eframe::App for Shell {
             tool: panels::tools::selected(&ctx, self.app.project()),
             warnings_open: self.warnings_open,
             note_target: note_target.as_ref(),
+            finding: finding.as_ref(),
+            finding_scroll,
             estimate: &self.estimate,
             setup_sheet: self.setup_sheet.is_some(),
             export: &self.export,
@@ -2285,6 +2316,10 @@ impl eframe::App for Shell {
                 done.instructions,
                 &mut actions,
             );
+        }
+        // A field's problem glyph was clicked: the drawer, at its row.
+        if let Some(row) = crate::widgets::problem::take_opened(&ctx) {
+            actions.push(Action::ShowFinding(row));
         }
         self.focus = focus::finish(ui, regions);
 

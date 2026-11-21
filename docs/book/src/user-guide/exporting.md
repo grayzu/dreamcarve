@@ -46,8 +46,9 @@ heading for each group when there is more than one.
 
 **Click a row** to go to what it is about. The app opens the step that
 owns it: an operation's field in its editor, a tool in the Tools step, a
-shape on the Design step, a stock or output setting in its step. In an
-operation's editor the same message also shows under the field.
+shape on the Design step, a stock or output setting in its step. The
+field itself carries the problem's mark, and resting the pointer on the
+mark shows the same message.
 
 **Copy** puts the whole list on the clipboard, as `dreamcarve check`
 prints it, which is the form to paste into a bug report.

@@ -72,14 +72,14 @@ has a heading, `Panel · Pocket`, when there is more than one group.
 
 | The row is about | The app opens |
 | --- | --- |
-| A value of an operation | The Operations step, with the operation in the Inspector and the keyboard in that field. The same message is under the field |
+| A value of an operation | The Operations step, with the operation in the Inspector and the keyboard in that field. The same message is on the line at the foot of the Inspector, and in the tooltip of the mark inside the field |
 | A value of a tool | The Tools step, with the tool in the Inspector and the keyboard in that field |
 | A tool as a whole (`unused_tool`) | The Tools step, with the tool in the Inspector |
 | A shape | The Design step, with the shape selected |
 | The stock or the origin | The Stock step, with the keyboard in the field |
 | An output setting | The Export step, with the setting's group open and the keyboard in the field |
 
-![After a click on the warning's row: the Tools step with the 1/4 end mill in the Inspector, the keyboard in its Plunge field, which reads 5000 mm/min under a Feed of 1500, a warning mark with a 1 on the tool's row in the list, and the drawer still open over the Viewport](figures/app/warnings-go-to.png)
+![After a click on the warning's row: the Tools step with the 1/4 end mill in the Inspector, the keyboard in its Plunge field, which reads 5000 mm/min under a Feed of 1500 and is outlined in amber with a warning triangle inside it; at the foot of the Inspector the warning's message above the Plunge field's help; a warning mark with a 1 on the tool's row in the list, and the drawer still open over the Viewport](figures/app/warnings-go-to.png)
 
 The drawer stays open while you fix things, and follows the project: put
 the plunge rate right and its row goes.

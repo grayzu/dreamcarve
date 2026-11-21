@@ -6,9 +6,10 @@
 //! "Sheets"): a 560-px sheet over a scrim that names the file and the
 //! shapes it holds (closed and open, the layers, the units read from the
 //! file), and, for a DXF, the importer's options as `dreamcarve init`
-//! takes them: the units (required when the file declares none, with the
-//! importer's message under the dropdown and *Add* disabled), the join
-//! tolerance and a layer list to tick, in which a layer of entities the
+//! takes them: the units (required when the file declares none: the
+//! dropdown in the error state, the importer's message its glyph's
+//! tooltip, and *Add* disabled), the join tolerance and a layer list to
+//! tick, in which a layer of entities the
 //! importer does not read is listed greyed. An SVG has no options. A
 //! preview thumbnail draws the drawing alone, fitted to it through the
 //! Viewport camera's one Y flip, with no stock outline, origin or
@@ -26,6 +27,7 @@
 use std::path::{Path, PathBuf};
 
 use dc_app::import::{DrawingFormat, DrawingImport, Preview, Purpose};
+use dc_app::problems::Problems;
 use dc_app::{Camera, StrKey, Strings};
 use dc_geometry::{Point, Vec2 as MmVec2};
 use dc_job::Tier;
@@ -334,9 +336,14 @@ fn options(ui: &mut Ui, strings: &Strings, display_units: Units, sheet: &mut She
     let model = &mut sheet.model;
     let units_label = strings.get(StrKey::AppImportUnits);
     let mut chosen = model.units();
-    // Required and unset: the error state, outline and glyph and message
-    // (`experience.md`, section 7).
+    // Required and unset: the error state, the outline and the glyph
+    // whose tooltip is the importer's message (`experience.md`, section
+    // 7, "Field problem").
     let missing = model.units_required() && model.units().is_none();
+    let unset = match (missing, model.blocked()) {
+        (true, Some(reason)) => Problems::said(strings, Tier::Error, &reason),
+        _ => Problems::none(),
+    };
     ui.horizontal(|ui| {
         let label = row::label(
             ui,
@@ -352,10 +359,13 @@ fn options(ui: &mut Ui, strings: &Strings, display_units: Units, sheet: &mut She
             ),
             (None, None) => strings.get(StrKey::AppImportUnitsChoose).to_owned(),
         };
+        let width = ui.available_width();
         let dropdown = egui::ComboBox::from_id_salt("import_units")
             .icon(crate::widgets::icon::combo_chevron)
-            .width(ui.available_width())
-            .selected_text(selected)
+            .width(width)
+            .selected_text(crate::widgets::problem::dropdown_text(
+                ui, &selected, width, &unset,
+            ))
             .show_ui(ui, |ui| {
                 if let Some(declared) = model.declared_units() {
                     let from_file = strings.fmt(
@@ -370,21 +380,14 @@ fn options(ui: &mut Ui, strings: &Strings, display_units: Units, sheet: &mut She
             })
             .response
             .labelled_by(label.id);
-        if missing {
-            let palette = Palette::current(ui);
-            ui.painter().rect_stroke(
-                dropdown.rect,
-                theme::CONTROL_RADIUS_PX,
-                Stroke::new(1.0, palette.status_error.stroke),
-                StrokeKind::Inside,
-            );
-        }
+        let shape = (dropdown.rect, theme::CONTROL_RADIUS_PX);
+        let place = crate::widgets::problem::in_dropdown(ui);
+        let marked =
+            crate::widgets::problem::mark(ui, dropdown, units_label, &unset, Some(shape), place);
+        let _ = crate::widgets::problem::dropdown_whole(ui, marked, &selected);
     });
     if chosen != model.units() {
         model.set_units(chosen);
-    }
-    if let (true, Some(reason)) = (missing, model.blocked()) {
-        row::message(ui, Tier::Error, &reason);
     }
     ui.add_space(4.0);
 
@@ -394,7 +397,12 @@ fn options(ui: &mut Ui, strings: &Strings, display_units: Units, sheet: &mut She
         || !model.join_tolerance_mm().is_finite())
     .then(|| model.blocked())
     .flatten();
-    let message = sheet.refused.clone().or(refused_by_importer);
+    // What the field refused, or the importer refuses of the tolerance.
+    let problems = match (&sheet.refused, refused_by_importer) {
+        (Some(reason), _) => Problems::refused(strings, reason),
+        (None, Some(reason)) => Problems::said(strings, Tier::Error, &reason),
+        (None, None) => Problems::none(),
+    };
     ui.horizontal(|ui| {
         row::label(
             ui,
@@ -412,7 +420,7 @@ fn options(ui: &mut Ui, strings: &Strings, display_units: Units, sheet: &mut She
                 placeholder: "",
                 enabled: true,
                 disabled_reason: None,
-                tier: message.as_ref().map(|_| Tier::Error),
+                problems: Some(&problems),
                 reset: None,
                 required: None,
             },
@@ -427,9 +435,6 @@ fn options(ui: &mut Ui, strings: &Strings, display_units: Units, sheet: &mut She
             }
         }
     });
-    if let Some(message) = message {
-        row::message(ui, Tier::Error, &message);
-    }
 }
 
 /// The layers to tick, each with what it holds; a layer of nothing the

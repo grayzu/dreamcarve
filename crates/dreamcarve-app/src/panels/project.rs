@@ -13,7 +13,8 @@
 //! (`dc_app::project::Group::summary`).
 //! Every row edits the project in place and applies when it is left, one
 //! undo step, with no OK or Cancel (`experience.md`, section 1); every
-//! field shows the file's validation message under itself. What each row
+//! field is marked with what validation says of it, and draws no line
+//! for it (section 7, "Field problem"). What each row
 //! writes, its text and its message come from `dc_app::project`; this
 //! module only draws them and hands the commands to the window.
 //!
@@ -22,6 +23,7 @@
 //! state is the window's view state, kept in egui's memory so the
 //! Viewport reads it without the panel holding project data.
 
+use dc_app::problems::Problems;
 use dc_app::project::{self, Choice, Field, FieldStatus, Group, Offer, OriginPreset};
 use dc_app::{Command, StrKey, Strings};
 use dc_job::{Finding, Tier};
@@ -33,11 +35,12 @@ use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::checkbox::checkbox;
 use crate::widgets::icon::Icon;
+use crate::widgets::problem::{self, Place};
 use crate::widgets::row::{self, GAP_PX};
 use crate::widgets::section::{Header, section_with};
 use crate::widgets::segmented::segmented;
 use crate::widgets::toggle::toggle;
-use crate::widgets::unit_field::{Required, UnitField, field as unit_field};
+use crate::widgets::unit_field::{UnitField, field as unit_field};
 
 /// The panel's content margin, px (`experience.md`, section 3).
 const MARGIN_PX: i8 = 16;
@@ -273,8 +276,9 @@ fn group(
     })
 }
 
-/// A typed field's row: the label, the field, and under it the message
-/// that the field refused the text or the file's message on it.
+/// A typed field's row: the label and the field, marked with what is
+/// wrong at it (the reason it refused the text, the findings located on
+/// it), which takes no line.
 fn field_row(
     ui: &mut Ui,
     cx: &Cx<'_>,
@@ -301,22 +305,19 @@ fn switched_field_row(
     let refused_id = id.with("refused");
     let refused: Option<String> = ui.data(|d| d.get_temp(refused_id));
     let status = field.status(cx.findings);
-    let tier = refused
-        .as_ref()
-        .map(|_| Tier::Error)
-        .or(status.map(|s| s.tier));
+    let found = field.problems(cx.strings, cx.findings);
+    let problems = match &refused {
+        Some(reason) => Problems::refused(cx.strings, reason).with(found),
+        None => found,
+    };
     let label = cx.strings.get(field.label());
     let value = field.text(cx.project);
     // An unset value with an error on it (the stock thickness on a new
-    // project) is required: *Required* in the field, the message its
-    // tooltip, no line under it (functional 66b; slice 26, #618).
+    // project) is required: *Required* in the field, the message among
+    // its problems (functional 66b; slice 26, #618).
     let required = status
         .filter(|s| refused.is_none() && value.is_empty() && s.tier == Tier::Error)
-        .map(|s| Required {
-            placeholder: cx.strings.get(StrKey::EditorRequired),
-            message: s.message,
-        });
-    let status = status.filter(|_| required.is_none());
+        .map(|_| cx.strings.get(StrKey::EditorRequired));
     let focused = enabled && take_focus(ui, |path| field.locates(path));
     if focused {
         ui.memory_mut(|m| m.request_focus(id));
@@ -334,7 +335,7 @@ fn switched_field_row(
                 placeholder: "",
                 enabled,
                 disabled_reason,
-                tier,
+                problems: Some(&problems),
                 reset: None,
                 required,
             },
@@ -354,15 +355,12 @@ fn switched_field_row(
             }
         }
     });
-    match (refused, status) {
-        (Some(reason), _) => row::message(ui, Tier::Error, &reason),
-        (None, Some(status)) => row::message(ui, status.tier, status.message),
-        (None, None) => {}
-    }
 }
 
-/// A chosen row: the label, `add`'s control, and the file's message.
-fn choice_row(ui: &mut Ui, cx: &Cx<'_>, choice: Choice, add: impl FnOnce(&mut Ui)) {
+/// A chosen row: the label and `add`'s control, which marks itself with
+/// the problems it is handed: the findings located on the row.
+fn choice_row(ui: &mut Ui, cx: &Cx<'_>, choice: Choice, add: impl FnOnce(&mut Ui, &Problems)) {
+    let problems = choice.problems(cx.strings, cx.findings);
     let row = ui.horizontal(|ui| {
         row::label(
             ui,
@@ -370,26 +368,40 @@ fn choice_row(ui: &mut Ui, cx: &Cx<'_>, choice: Choice, add: impl FnOnce(&mut Ui
             cx.strings.get(choice.help()),
             Some(choice.path()),
         );
-        add(ui);
+        add(ui, &problems);
     });
     // A Warnings row about it brings it into view: it has no text to
     // type into.
     if take_focus(ui, |path| path == choice.path()) {
         row.response.scroll_to_me(Some(egui::Align::Center));
     }
-    if let Some(status) = choice.status(cx.findings) {
-        row::message(ui, status.tier, status.message);
-    }
 }
 
-/// A dropdown of `options` with `current` ticked: the option picked, if
-/// another, and the dropdown's response for its hover text.
+/// A dropdown's finish: the help its label offered, and the mark of
+/// `problems` (the outline, and the glyph inside it before the chevron,
+/// where `chosen`, its text, was cut for it).
+fn dropdown_mark(
+    ui: &Ui,
+    dropdown: egui::Response,
+    (name, chosen): (&str, &str),
+    problems: &Problems,
+) -> egui::Response {
+    let shape = (dropdown.rect, theme::CONTROL_RADIUS_PX);
+    let place = problem::in_dropdown(ui);
+    let marked = problem::mark(ui, dropdown, name, problems, Some(shape), place);
+    problem::dropdown_whole(ui, marked, chosen)
+}
+
+/// A dropdown of `options` with `current` ticked, marked with
+/// `problems`: the option picked, if another, and the dropdown's response
+/// for its hover text.
 fn dropdown<T: Copy + PartialEq>(
     ui: &mut Ui,
     id: &str,
     name: &str,
     current: T,
     options: &[(T, String)],
+    problems: &Problems,
 ) -> (Option<T>, egui::Response) {
     let selected = options
         .iter()
@@ -401,7 +413,7 @@ fn dropdown<T: Copy + PartialEq>(
     let response = egui::ComboBox::from_id_salt(id)
         .icon(crate::widgets::icon::combo_chevron)
         .truncate()
-        .selected_text(selected)
+        .selected_text(problem::dropdown_text(ui, &selected, width, problems))
         .width(width)
         .show_ui(ui, |ui| {
             for (value, label) in options {
@@ -412,7 +424,7 @@ fn dropdown<T: Copy + PartialEq>(
         })
         .response
         .accessible_name(name);
-    let response = crate::widgets::help::control(ui, response, name);
+    let response = dropdown_mark(ui, response, (name, &selected), problems);
     (picked.filter(|p| *p != current), response)
 }
 
@@ -434,7 +446,12 @@ fn fit_row(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
     let margin: String = ui
         .data(|d| d.get_temp(id))
         .unwrap_or_else(|| project::fit_margin_text(units));
-    let refused: Option<String> = ui.data(|d| d.get_temp(refused_id));
+    // A margin *Fit to shapes* refused marks its field.
+    let problems = ui
+        .data(|d| d.get_temp::<String>(refused_id))
+        .map_or_else(Problems::none, |reason| {
+            Problems::refused(cx.strings, &reason)
+        });
     let label = cx.strings.get(StrKey::ProjectStockMargin);
     let fit = cx.strings.get(StrKey::ProjectStockFit);
     ui.horizontal(|ui| {
@@ -454,7 +471,7 @@ fn fit_row(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
                 placeholder: "",
                 enabled: true,
                 disabled_reason: None,
-                tier: refused.as_ref().map(|_| Tier::Error),
+                problems: Some(&problems),
                 reset: None,
                 required: None,
             },
@@ -478,9 +495,6 @@ fn fit_row(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
             }
         }
     });
-    if let Some(reason) = refused {
-        row::message(ui, Tier::Error, &reason);
-    }
 }
 
 fn origin(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
@@ -498,7 +512,7 @@ fn origin(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
         StrKey::ProjectOriginTitle,
         (fields, &[Choice::OriginXy, Choice::OriginZ]),
         |ui| {
-            choice_row(ui, cx, Choice::OriginXy, |ui| {
+            choice_row(ui, cx, Choice::OriginXy, |ui, problems| {
                 let options: Vec<(OriginPreset, String)> = OriginPreset::ALL
                     .iter()
                     .map(|p| (*p, cx.strings.get(p.label()).to_owned()))
@@ -509,6 +523,7 @@ fn origin(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
                     cx.strings.get(Choice::OriginXy.label()),
                     preset,
                     &options,
+                    problems,
                 ) {
                     out.extend(project::set_origin_xy(cx.project, picked).map(Action::run));
                 }
@@ -516,26 +531,33 @@ fn origin(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
             for field in fields {
                 field_row(ui, cx, *field, true, None, out);
             }
-            choice_row(ui, cx, Choice::OriginZ, |ui| {
+            choice_row(ui, cx, Choice::OriginZ, |ui, problems| {
                 let options = [
                     cx.strings.get(StrKey::ProjectOriginTop),
                     cx.strings.get(StrKey::ProjectOriginBottom),
                 ];
                 let selected = usize::from(cx.project.origin.z == OriginZ::StockBottom);
-                let width = ui.available_width();
-                let shown = ui.scope(|ui| {
-                    segmented(
-                        ui,
-                        Id::unique("project.origin.z"),
-                        &options,
-                        selected,
-                        width,
-                    )
+                // A pill control has no inside: its glyph is beside it.
+                let shown = problem::with_room(ui, problems, |ui| {
+                    let width = ui.available_width();
+                    ui.scope(|ui| {
+                        segmented(
+                            ui,
+                            Id::unique("project.origin.z"),
+                            &options,
+                            selected,
+                            width,
+                        )
+                    })
                 });
-                let _ = crate::widgets::help::control(
+                let shape = (shown.response.rect, theme::pill(theme::CONTROL_PX));
+                let _ = problem::mark(
                     ui,
                     shown.response,
                     cx.strings.get(Choice::OriginZ.label()),
+                    problems,
+                    Some(shape),
+                    Place::Beside,
                 );
                 let picked = shown.inner;
                 let z = match picked {
@@ -649,7 +671,7 @@ fn post(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Action>)
         |ui| {
             controller(ui, state, cx, out);
             field_row(ui, cx, Field::FileExtension, true, None, out);
-            choice_row(ui, cx, Choice::SpindleControl, |ui| {
+            choice_row(ui, cx, Choice::SpindleControl, |ui, problems| {
                 let options = [
                     (
                         SpindleControl::Automatic,
@@ -667,6 +689,7 @@ fn post(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Action>)
                     cx.strings.get(Choice::SpindleControl.label()),
                     current,
                     &options,
+                    problems,
                 ) {
                     out.extend(project::set_spindle_control(cx.project, picked).map(Action::run));
                 }
@@ -681,8 +704,10 @@ fn post(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Action>)
 }
 
 /// The Controller list: the six bundled definitions at their latest
-/// version, a note when the project is on an older one, and what the last
-/// switch reset.
+/// version. That the project is on an older one (a hint) and what the
+/// last switch reset (warnings) are the dropdown's problems, with what
+/// validation locates on it: its outline and glyph, the words in its
+/// tooltip. They are the window's own, with no row in the drawer.
 fn controller(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Action>) {
     let posts = project::posts().unwrap_or_default();
     let current = cx.project.post_processor.id.as_str();
@@ -700,14 +725,34 @@ fn controller(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Ac
             (p.id, label)
         })
         .collect();
-    choice_row(ui, cx, Choice::Post, |ui| {
+    // What the last switch reset, then the older version, after what
+    // validation says of the row.
+    let mut own = Problems::none();
+    for message in project::reset_messages(cx.strings, cx.project, state.app.last_resets()) {
+        own = own.with(Problems::said(cx.strings, Tier::Warning, &message));
+    }
+    if let Some(latest) = project::newer_version(cx.project) {
+        let version = cx.project.post_processor.definition_version.to_string();
+        let older = cx.strings.fmt(
+            StrKey::ProjectPostOlder,
+            &[("version", &version), ("latest", &latest.to_string())],
+        );
+        own = own.with(Problems::said(cx.strings, Tier::Hint, &older));
+    }
+    choice_row(ui, cx, Choice::Post, |ui, problems| {
+        let problems = problems.clone().with(own);
         let width = ui.available_width();
         let mut picked = None;
         let name = cx.strings.get(Choice::Post.label());
         let combo = egui::ComboBox::from_id_salt("project.post.id")
             .icon(crate::widgets::icon::combo_chevron)
             .truncate()
-            .selected_text(project::post_label(cx.strings, cx.project))
+            .selected_text(problem::dropdown_text(
+                ui,
+                &project::post_label(cx.strings, cx.project),
+                width,
+                &problems,
+            ))
             .width(width)
             .show_ui(ui, |ui| {
                 for (id, label) in &options {
@@ -718,29 +763,15 @@ fn controller(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Ac
             })
             .response
             .accessible_name(name);
-        let _ = crate::widgets::help::control(ui, combo, name);
+        let chosen = project::post_label(cx.strings, cx.project);
+        let _ = dropdown_mark(ui, combo, (name, &chosen), &problems);
         if let Some(id) = picked {
             out.extend(project::switch_post(cx.project, id).map(Action::run));
         }
     });
-    if let Some(latest) = project::newer_version(cx.project) {
-        let version = cx.project.post_processor.definition_version.to_string();
-        row::message(
-            ui,
-            Tier::Hint,
-            &cx.strings.fmt(
-                StrKey::ProjectPostOlder,
-                &[("version", &version), ("latest", &latest.to_string())],
-            ),
-        );
-    }
-    let resets = state.app.last_resets();
-    if resets.is_empty() {
-        row::hint(ui, cx.strings.get(StrKey::ProjectPostKeeps));
-    }
-    for message in project::reset_messages(cx.strings, cx.project, resets) {
-        row::message(ui, Tier::Warning, &message);
-    }
+    // What a switch keeps: a note, there whatever the last switch did, so
+    // the rows under it never move.
+    row::hint(ui, cx.strings.get(StrKey::ProjectPostKeeps));
 }
 
 /// **Programs** (capability 77): how a project that cuts with several
@@ -765,13 +796,18 @@ pub(crate) fn programs(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action
         })
     };
     let current = cx.project.post_processor.tool_change_mode;
-    choice_row(ui, cx, Choice::ToolChangeMode, |ui| {
+    choice_row(ui, cx, Choice::ToolChangeMode, |ui, problems| {
         let mut picked = None;
         let width = ui.available_width();
         let combo = egui::ComboBox::from_id_salt("export.programs")
             .icon(crate::widgets::icon::combo_chevron)
             .truncate()
-            .selected_text(label_of(current))
+            .selected_text(problem::dropdown_text(
+                ui,
+                label_of(current),
+                width,
+                problems,
+            ))
             .width(width)
             .show_ui(ui, |ui| {
                 for mode in [ToolChangeMode::SeparatePrograms, ToolChangeMode::M6] {
@@ -788,7 +824,7 @@ pub(crate) fn programs(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action
             })
             .response
             .accessible_name(name);
-        let _ = crate::widgets::help::control(ui, combo, name);
+        let _ = dropdown_mark(ui, combo, (name, label_of(current)), problems);
         if let Some(mode) = picked.filter(|mode| *mode != current) {
             out.extend(project::set_tool_change_mode(cx.project, mode).map(Action::run));
         }
@@ -820,14 +856,16 @@ fn canned_cycles(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
         );
         return;
     }
-    choice_row(ui, cx, Choice::CannedCycles, |ui| {
+    choice_row(ui, cx, Choice::CannedCycles, |ui, problems| {
         let mut checked = on;
         let name = cx.strings.get(Choice::CannedCycles.label());
         let ticked = ui
             .scope(|ui| checkbox(ui, "project.canned_cycles", &mut checked, ""))
             .inner
             .accessible_name(name);
-        if crate::widgets::help::control(ui, ticked, name).changed() {
+        // A checkbox has no inside: the glyph is beside it.
+        let shape = crate::widgets::checkbox::box_of(&ticked, false);
+        if problem::mark(ui, ticked, name, problems, Some(shape), Place::Beside).changed() {
             out.extend(project::set_canned_cycles(cx.project, checked).map(Action::run));
         }
     });

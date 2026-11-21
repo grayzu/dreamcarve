@@ -46,8 +46,9 @@ An SVG has no options. A DXF has three:
 ![The Add drawing to project sheet on plaque.dxf: "DXF · 9 closed, 1 open, 7 layers · units from the file: mm", the Units and Join tolerance options, a list of ticked layers with their counts, a preview, and the button Add 10 shapes](figures/app/import-dxf-sheet.png)
 
 - **Units**: taken from the file when it says what they are. A DXF that
-  does not say cannot be imported until you choose millimetres or inches;
-  DreamCarve will not guess, since a wrong guess is a part 25 times too
+  does not say cannot be imported until you choose millimetres or inches:
+  **Units** is outlined in red until you do, and the mark inside it says
+  why. DreamCarve will not guess, since a wrong guess is a part 25 times too
   big or too small.
 - **Join tolerance**: how close two line ends must be to count as joined
   into one outline. The default is 0.01 mm. Raise it for a drawing whose

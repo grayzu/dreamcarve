@@ -197,7 +197,9 @@ folder are app preferences, kept outside the project.
     done and which need attention, and one accent button moves on.
     Panels edit the project in place: a change applies as it is made and
     is undone from the Edit menu, never through OK/Cancel forms.
-    Validation is inline, under the field (60, 66). Modal windows are
+    Validation is inline, at the field and never under it: a problem
+    is the field's outline and glyph, and its words are a hover or a
+    click away (60, 66). Modal windows are
     kept for the few things that are modal (open, save, import, export,
     the Tool Library) and use the same panel idiom inside. Rounded cards
     on a dark backdrop, one accent, one icon set, a consistent spacing
@@ -449,16 +451,22 @@ folder are app preferences, kept outside the project.
     otherwise), and park point, which can be typed or clicked on the
     Viewport. **Tolerances**, folded away: flatten tolerance and arc-fit
     tolerance (off switch for `null`). Each field validates as the file
-    does and shows the validation message under itself.
+    does and is marked with what validation says of it, as an operation's
+    field is (66, "A field's problem"): no message is laid out under it,
+    so no row of the step moves when a problem comes or goes.
 61. **Fit stock to shapes** sizes the stock to the visible shapes plus a
     margin the user types (default `init`'s), keeping the origin preset;
     shapes do not move relative to each other. **Centre on stock** moves
     the selection so its bounding box is centred on the stock.
 62. **Post-processor** (on the Export step; `03-stock-origin.svg`).
-    A list of the six bundled definitions with their latest version and a
-    note when the project is on an older version. Picking another keeps
-    the user's settings the new one can use, as `export --post` does
-    (capability 27), and says which were reset. The settings below it are
+    A list of the six bundled definitions with their latest version.
+    While the project is on an older version the dropdown is marked with
+    a hint that says so and how to upgrade (66, "A field's problem").
+    Picking another keeps the user's settings the new one can use, as
+    `export --post` does (capability 27), and says which were reset: the
+    dropdown is marked with a warning for each. Neither is a line under
+    the row, and neither is a finding of the project, so neither has a
+    row in the drawer. The settings below it are
     the project's post-processor settings (capability 2): file extension,
     spindle control (automatic or manual), spin-up dwell, decimal places
     for mm and inch, and canned cycles (offered only where the definition
@@ -498,8 +506,9 @@ folder are app preferences, kept outside the project.
     shown, *0.508 mm between passes*, from what is typed, as
     it is typed; an empty Pocket stepover says its tool's. A finding
     validation locates at one of the tool's fields (a plunge rate above
-    the feed, a stepover far too small) shows under that field in its
-    tier's colour, as an operation's does under its row (66). A type's own fields follow the type:
+    the feed, a stepover far too small) marks that field with its tier's
+    outline and glyph, as an operation's row is marked (66, "A field's
+    problem"); the stepover's distance is a note and keeps its line. A type's own fields follow the type:
     a V-bit's *Angle*; a tapered ball nose's *Tip diameter*, *Taper per
     side* and *Flute length*. *Diameter* keeps its label for every type.
     Choosing *Tapered ball nose* writes the cutter with none of its three
@@ -510,8 +519,9 @@ folder are app preferences, kept outside the project.
     and RPM fields are empty,
     never prefilled: the app invents no feed (principle 5). An unset feed,
     plunge rate or RPM, and an unset tip, taper or flute length of a
-    tapered ball nose, shows the required-field look (66b), not a
-    paragraph under the field. The list's actions, in this order:
+    tapered ball nose, shows the required-field look (66b). A value a
+    field refuses is said in the status bar, and the field keeps what it
+    had. The list's actions, in this order:
     - **New tool** makes a tool from scratch, for a bit that is in no
       library: an end mill named `tool<n>`, where `<n>` is the number the
       tool takes (its position in the list, or the next free number when
@@ -586,8 +596,9 @@ folder are app preferences, kept outside the project.
     so the file is written; the mark says what an operation will need).
     A field commits on leave
     and writes the library file at once, through the same staged write
-    the CLI uses; a write that fails leaves the field marked with the
-    reason. Library edits are not project changes: they are not in the
+    the CLI uses; a write that fails, and a value the field refuses,
+    leave the field marked with the reason as its problem (66, "A
+    field's problem"), with no line under it. Library edits are not project changes: they are not in the
     Edit menu's history, and they never change a project's copy of the
     tool. While the sheet is open, *Revert changes* in the pane's footer
     puts the selected tool back as it was when the sheet opened. *New
@@ -674,9 +685,9 @@ folder are app preferences, kept outside the project.
     The editor shows every setting of the kind's record (68): nothing is
     hidden and nothing is added; the review moved fields, it did not drop
     them. Every field shows its
-    unit, validates on leave, shows the file's validation message under
-    itself (or, for an unset required value, the required-field look,
-    66b), and has help. **Help is universal** (maintainer's smoke test,
+    unit, validates on leave, is marked with what is wrong at it (below,
+    "A field's problem"; an unset required value adds the required-field
+    look, 66b), and has help. **Help is universal** (maintainer's smoke test,
     2026-11-20): every field of the app, here and on the Stock, Tools and
     Export steps, in the Properties, the Tool Library and the sheets,
     says what it does, its unit, the values it takes and what leaving it
@@ -690,8 +701,51 @@ folder are app preferences, kept outside the project.
     and whose default comes from the tool (step-down, stepover, pitch)
     shows that default as grey placeholder text, `tool's: 3 mm`, and clears
     back to it with its ⟲ button. Warnings and errors that `check` locates
-    at a field (capability 25) are shown under that field as well as in the
-    Warnings drawer. The editor never offers a setting the generator ignores
+    at a field (capability 25) mark that field as well as being rows of
+    the Warnings drawer.
+
+    **A field's problem** (maintainer's review, 2026-11-20: "warnings
+    and errors text should not take up UI space"). What is wrong at a
+    field is every finding located at it and, when the field refused
+    what was typed, the reason. None of it is laid out in the panel:
+    no line under the field, here or in any step, Inspector or sheet,
+    so a row is as tall with a problem as without and nothing under it
+    moves when a problem comes or goes. The field shows it two ways:
+    its **outline** in the status colour, and the status **glyph**
+    (`circle-x`, `triangle-alert`, `info`: `experience.md`, section 7,
+    "Field problem") inside the field at its right, before the unit, or
+    before a dropdown's chevron; a control with no inside (a checkbox, a
+    switch, a pill control) has the outline round its own shape and the
+    glyph beside it. Where a field has more than one problem the most
+    severe sets the outline and the glyph. The details are in four
+    places:
+    - the **tooltip** of the glyph, and of the field: every problem,
+      most severe first, each its severity's word, its message as the
+      drawer words it (76: names beside ids) and its code in the mono
+      face where it has one. For a refused entry it says why and what
+      the field takes;
+    - the field's **accessible description**, the same words, before
+      its help;
+    - the **help line** at the foot of the field's panel, while the
+      field has the keyboard: the problems, most severe first, each
+      with its glyph in its status colour, then the field's ordinary
+      help. A hover cannot be reached by keyboard; this can;
+    - the **Warnings drawer**: a click on the glyph opens it with the
+      finding's row selected and scrolled into view, the reverse of the
+      trip from a row to its field (76). The glyph of a field with
+      several problems opens at the most severe that is a finding. A
+      refused entry is not a finding of the project and has no row: its
+      glyph is not a button.
+
+    Notes that are not problems keep their lines: a stepover's distance
+    between passes, a tool's cutting height under its picker, an
+    Inlay's derived lines (which turn red in place when what they
+    derive is out of range), *Set by the boundary*, the names an export
+    will write. So do an operation's and a tool's row marks, the rail's,
+    the status bar's counts, the drawer, and the Export step's list of
+    what blocks it, which is the step's own.
+
+    The editor never offers a setting the generator ignores
     for that kind, and never hides one it reads. The carve summary `check`
     prints for an operation (*check says…*) is not in the editor: it is a
     note in the Warnings drawer and the status bar (76a).
@@ -722,15 +776,16 @@ folder are app preferences, kept outside the project.
     `circle-x` glyph inside the field before the unit, and *Required* as
     its placeholder text. The file's message (*tools[t1].feed_mm_min is
     not set…*, *tools[t3].cutter.tapered_ball_nose.flute_length_mm is not
-    set…*) is the field's tooltip and a row in the Warnings drawer; it
+    set…*) is the field's problem (66), in its tooltip, its description
+    and the help line, and a row in the Warnings drawer; it
     is not written under the field, and no dialog asks for it. A tool's
     values are marked from `Tool::unset_values()`, in the tool editor (63)
     and the library's pane (64a) alike, from the moment the tool is made;
     the drawer lists them once an enabled operation uses the tool, as
     `check` does. A tool's `diameter_mm` is always in the file, so it is
-    never marked. Every other validation error (a
-    value out of range, a depth past the thickness) keeps its message
-    under the field, as 66 says.
+    never marked. Every other validation error located at a field (a
+    value out of range) marks it the same way without the placeholder,
+    as 66 says: *Required* is the one thing an unset value adds.
 67. **Targets** (`15-targets.svg`; reworked by the review, 2026-11-10).
     Targets are shown on the drawing, not as a list in the editor.
     - **Highlight.** While an operation is selected, its targets are
@@ -847,12 +902,12 @@ folder are app preferences, kept outside the project.
     reason as its tooltip, and writes nothing. Choosing *None* enables
     them again, the margin empty and required (the male needs one once
     it has no boundary). A hand-edited file that has a boundary and a
-    margin shows the margin's value greyed in its disabled row with
-    `inlay_margin_ignored` under it; choosing the boundary again clears
-    it. The closed Depth group's summary names the boundary and leaves
+    margin shows the margin's value greyed in its disabled row, marked
+    with `inlay_margin_ignored` (66, "A field's problem"); choosing the
+    boundary again clears it. The closed Depth group's summary names the boundary and leaves
     out the margin and the rounding. The boundary's
-    own errors (`inlay_boundary_crosses_design` and the rest) show under
-    the row. A shape that is deleted leaves the list. The Viewport draws
+    own errors (`inlay_boundary_crosses_design` and the rest) mark the
+    row's dropdown. A shape that is deleted leaves the list. The Viewport draws
     the boundary dashed on the male board, mirrored with the design, as
     `--preview` does. One tool,
     one clearing list and one cut-out serve both boards, so the same bit
@@ -1022,13 +1077,18 @@ folder are app preferences, kept outside the project.
     operation, a tool, a shape or a picture by its id alone (`operation
     `op4` cuts off the stock`) is shown with the name before the id
     (`operation `Cut out` (`op4`)`), and an empty id as *(none chosen)*,
-    wherever the app shows a finding: the drawer, the line under a field,
-    a row's hover, the Export step's list. The text itself is the
+    wherever the app shows a finding: the drawer, a field's tooltip,
+    description and help line (66), a row's hover, the Export step's
+    list. The text itself is the
     engine's and the CLI's, and *Copy* writes it unchanged. Clicking a row selects the operation
     and scrolls to the field, or selects the shape; a row about a field of
     a tool, the stock or an output setting opens its step (50) with the
     tool selected and the field focused, its group opened; the row's code links to
-    its entry in the Warnings chapter. Rows group by operation, project-level
+    its entry in the Warnings chapter. The trip runs the other way too: a
+    click on a field's problem glyph (66) opens the drawer with that
+    finding's row selected (a list's selected row: `accent.soft` and the
+    accent bar) and scrolled into view; the row stays selected until a
+    row is clicked or the drawer closes. Rows group by operation, project-level
     rows (thickness unset, tool-change height on a post without `G53`,
     `tool_change_avoidable`) first, under a heading naming the group
     (*Project*, *Panel · Pocket*). When every row belongs to one group the
@@ -1275,7 +1335,8 @@ byte-identical output with the program's header date pinned (`--date`).
 64. **Import DXF** (55). Importing `fixtures/plaque.dxf` into an empty
     project adds the shapes `init` would, named by layer, selected, as one
     undo step; a DXF with no `$INSUNITS` disables the *Add drawing to
-    project* sheet's *Add shapes* button until units are chosen, with the
+    project* sheet's *Add shapes* button until units are chosen, the
+    Units dropdown marked with the
     importer's message (the CLI's, less its `--units` hint, which names a
     flag the sheet does not have); ticking one layer imports that layer
     only; the unread-entity warning appears once in the Warnings drawer.
@@ -1349,11 +1410,11 @@ byte-identical output with the program's header date pinned (`--date`).
     (65), with the same targets and `(2)` in its name.
 75. **Clearing passes** (70). Adding two passes with a 6.35 mm and a
     3.175 mm end mill writes the `clearing` list in that order; dragging
-    the smaller above the larger shows `clearing_not_descending` under the
-    list, as `check` reports it.
+    the smaller above the larger marks the pass's tool picker with
+    `clearing_not_descending`, as `check` reports it.
 76. **Inlay, both boards** (68, 68a, 72, 77). The lettered inlay fixture
     (one file, #498) shows the Inlay's values once and a Male board group;
-    with the male thickness cleared, `inlay_male_board_unset` sits under
+    with the male thickness cleared, `inlay_male_board_unset` marks
     the field, the male board on the Viewport is empty, and the Export
     step lists the female board's programs only. With it set again the
     male board shows the design mirrored with the band, floor rings,
@@ -1510,8 +1571,8 @@ slices carry them.
     show with a summary of its values; a group holding a located warning
     opens; every field of 68 is shown exactly once (acceptance 73's table
     is unchanged). A tool with no feed shows *Required* and the glyph in
-    the Feed field and no message line under it, and its tooltip is the
-    file's message.
+    the Feed field and no message line under it, and its tooltip and
+    its accessible description are the file's message.
 98. **Targets** (67). Selecting the plaque's Pocket draws its two targets
     in its colour and fades the rest, and marks their tree rows; target
     editing adds the square on a click and removes the island on a second
@@ -1581,6 +1642,27 @@ slices carry them.
     34, 64, 65, 99), four of them places where the two specs ask for
     different things. **Open:** the maintainer's decision on those six
     and sign-off, recorded in that README.
+105. **A field's problem** (60, 63, 64a, 66, 66b, 76). Through the
+    accessibility tree: an error located at an operation's field (a tab
+    count of 0), a warning at a tool's (`plunge_above_feed`) and a hint
+    on the Controller dropdown (a project on an older version) each show
+    no message in the layout, the field's outline in its status colour,
+    the status glyph on the field's line, named with the problem, and
+    the problem at the head of the field's accessible description; the
+    tooltip of the field and of the glyph says the message, with the
+    code for a finding that has one. A refused entry is marked the same
+    way and its glyph opens no drawer. A field with two problems has one
+    glyph naming both, most severe first. A click on a finding's glyph
+    opens the drawer with its row selected and in view. While the field
+    has the keyboard the help line at its panel's foot shows the problem
+    before the help. Every text field of the tool editor, the Stock step
+    and an operation's editor is where it was and as tall as it was with
+    a problem as without; so are the Import drawing sheet and the Tool
+    Library's editing pane. One row of each kind of control (text field,
+    dropdown, pill control, checkbox, switch) keeps its place and height
+    when marked, its glyph inside the field or the dropdown (clear of
+    the chevron) or beside the control, inside the row. The pictures are
+    `docs/specs/phase-4/review/field-problems/`.
 
 ## Safety requirements
 

@@ -11,12 +11,19 @@
 //! types lives in egui's memory while the field has focus; it commits on
 //! leaving the field by any means (Tab, Enter, a click anywhere, the
 //! window losing the focus, a command's key) and Escape restores the
-//! value, so an edit is one undo step. The outline takes the
-//! validation tier's colour; the message under the field is the caller's
-//! ([`validation_line`] in a field column, [`crate::widgets::row::message`]
-//! beside a label). A tool-derived field shows the tool's value as grey
-//! placeholder text while empty, and a ⟲ inside its right end while it
-//! holds a value of its own.
+//! value, so an edit is one undo step. A tool-derived field shows the
+//! tool's value as grey placeholder text while empty, and a ⟲ inside its
+//! right end while it holds a value of its own.
+//!
+//! What is wrong at the field ([`UnitField::problems`]: the findings
+//! located at it, the reason it refused what was typed) takes no room in
+//! the layout (section 7, "Field problem"): the outline takes the worst
+//! tier's stroke and that tier's glyph stands inside the field before the
+//! unit ([`crate::widgets::problem`]). Hovering the glyph or the field
+//! shows every problem, the field's accessible description says the
+//! same, the panel's help line shows them while the field has the
+//! keyboard, and a click on the glyph opens the Warnings drawer at the
+//! finding.
 //!
 //! One form for every panel: the Stock and Export steps (#536), the tool
 //! editor (#537), the placement fields (#534) and the operation editor
@@ -24,11 +31,11 @@
 //!
 //! An unset value the file needs before export (functional spec, 66b;
 //! section 7, "required (unset)"; slice 26, #618) is [`UnitField::required`]:
-//! the error outline, `circle-x` inside the field before the unit,
-//! *Required* as the placeholder, and the file's message as the tooltip,
-//! with no message line under it.
+//! *Required* as the placeholder, with the file's message among the
+//! field's problems, so the error outline and `circle-x` inside the field
+//! before the unit, as for any other problem.
 
-use dc_job::Tier;
+use dc_app::problems::Problems;
 use eframe::egui::{
     self, Align, Align2, Id, Key, Layout, Margin, Rect, Response, Sense, Stroke, StrokeKind,
     TextEdit, TextStyle, Ui, UiBuilder,
@@ -46,7 +53,8 @@ const RESET_PX: f32 = 24.0;
 /// Inner padding, px.
 const PADDING_PX: f32 = 10.0;
 /// What is kept in view under a field as it takes the
-/// keyboard, px: a line of note under it.
+/// keyboard, px: a line of note under it (a stepover's distance between
+/// passes, which is not a problem and stays in the layout).
 const REVEAL_PX: f32 = 24.0;
 
 /// A field to draw.
@@ -66,24 +74,18 @@ pub(crate) struct UnitField<'a> {
     pub enabled: bool,
     /// Why not, shown on hover when disabled.
     pub disabled_reason: Option<&'a str>,
-    /// The validation state, which colours the outline.
-    pub tier: Option<Tier>,
+    /// What is wrong at the field, most severe first: the outline and
+    /// the glyph inside the field are the worst's, and the rest is in
+    /// the tooltip, the accessible description and the help line.
+    pub problems: Option<&'a Problems>,
     /// The ⟲ button's tooltip, when the field shows one (a tool-derived
     /// field holding a value of its own).
     pub reset: Option<&'a str>,
     /// The required-field look (functional 66b), while the value is unset
-    /// and the file needs it: the placeholder (*Required*) and the file's
-    /// message, its tooltip. The caller draws no message under the field.
-    pub required: Option<Required<'a>>,
-}
-
-/// An unset required value's placeholder and message.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Required<'a> {
-    /// *Required*, from the string table.
-    pub placeholder: &'a str,
-    /// The file's message (`tools[t1].feed_mm_min is not set…`).
-    pub message: &'a str,
+    /// and the file needs it: the placeholder, *Required* from the string
+    /// table. The file's message (`tools[t1].feed_mm_min is not set…`) is
+    /// one of [`UnitField::problems`].
+    pub required: Option<&'a str>,
 }
 
 impl<'a> UnitField<'a> {
@@ -99,7 +101,7 @@ impl<'a> UnitField<'a> {
             placeholder: "",
             enabled: true,
             disabled_reason: None,
-            tier: None,
+            problems: None,
             reset: None,
             required: None,
         }
@@ -234,14 +236,15 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
         UNIT_PX.max(width + 4.0)
     };
     let reset_px = if spec.reset.is_some() { RESET_PX } else { 0.0 };
-    // The required look's glyph, before the unit (section 7).
-    let glyph_px = if spec.required.is_some() {
-        theme::ICON_SMALL_PX + 2.0
+    // The problem's glyph, before the unit (section 7).
+    let problems = spec.problems.filter(|problems| !problems.is_empty());
+    let glyph_px = if problems.is_some() {
+        crate::widgets::problem::GLYPH_PX + 2.0
     } else {
         0.0
     };
-    let tier = spec.required.map_or(spec.tier, |_| Some(Tier::Error));
-    let placeholder_text = spec.required.map_or(spec.placeholder, |r| r.placeholder);
+    let tier = problems.and_then(Problems::worst);
+    let placeholder_text = spec.required.unwrap_or(spec.placeholder);
     // One line of text, centred in the control. The text edit is the
     // control's whole height, so a click anywhere in the frame lands in
     // it and assistive tools are given the field, not a line of it.
@@ -337,8 +340,7 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     if ui.is_rect_visible(rect) {
         let hovered = spec.enabled && (frame_response.hovered() || response.hovered());
         let outline = match tier {
-            Some(Tier::Error) => palette.status_error.stroke,
-            Some(Tier::Warning) => palette.status_warning.stroke,
+            Some(tier) => crate::widgets::problem::stroke(palette, tier),
             _ if !spec.enabled => palette.border_default,
             _ if response.has_focus() => palette.focus_ring,
             _ if hovered => palette.border_strong,
@@ -369,18 +371,17 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
                 colour,
             );
         }
-        if spec.required.is_some() {
-            let glyph = Icon::CircleX.galley(ui, theme::ICON_SMALL_PX, palette.status_error.stroke);
-            let right = rect.right() - PADDING_PX - unit_px - reset_px;
-            ui.painter().galley(
-                egui::pos2(
-                    right - glyph.size().x - 2.0,
-                    rect.center().y - glyph.size().y / 2.0,
-                ),
-                glyph,
-                palette.status_error.stroke,
-            );
-        }
+    }
+    // The glyph of the worst problem, inside the field before the unit:
+    // its tooltip lists them, and its click opens the drawer at the
+    // finding.
+    if let Some(problems) = problems {
+        let right = rect.right() - PADDING_PX - unit_px - reset_px;
+        let centre = egui::pos2(
+            right - 2.0 - crate::widgets::problem::GLYPH_PX / 2.0,
+            rect.center().y,
+        );
+        let _ = crate::widgets::problem::glyph(ui, spec.id.with("problem"), centre, problems);
     }
     // The help line takes its room at the panel's foot in the frame
     // after the field takes the keyboard: the field, and a line of note
@@ -394,36 +395,43 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
             ui.scroll_to_rect(kept, None);
         }
     }
-    if let Some(help) = &help
-        && ui.memory(|m| m.has_focus(spec.id))
-        && crate::widgets::help::focused(ui, spec.name, help)
-    {
-        ui.data_mut(|d| d.insert_temp(reveal_id, true));
+    if ui.memory(|m| m.has_focus(spec.id)) {
+        // The problem first, then the help: both on the panel's help
+        // line, which is where a keyboard user reads what a hover shows.
+        let wrong = problems
+            .is_some_and(|problems| crate::widgets::help::problems(ui, spec.name, problems));
+        let helped = help
+            .as_ref()
+            .is_some_and(|help| crate::widgets::help::focused(ui, spec.name, help));
+        if wrong || helped {
+            ui.data_mut(|d| d.insert_temp(reveal_id, true));
+        }
     }
-    let response = match (spec.enabled, spec.disabled_reason, spec.required) {
-        (false, Some(reason), _) => {
-            frame_response.on_hover_text(reason);
-            response.on_disabled_hover_text(reason)
-        }
-        // What the file says of the unset value, then what the field is,
-        // each a tooltip of its own.
-        (true, _, Some(required)) => {
-            frame_response.on_hover_text(required.message);
-            let response = response.on_hover_text(required.message);
-            match help {
-                Some(help) => response.on_hover_text(help),
-                None => response,
-            }
-        }
-        (true, _, None) => match help {
-            Some(help) => {
-                frame_response.on_hover_text(&help);
-                response.on_hover_text(help)
-            }
-            None => response,
-        },
-        _ => response,
+    // The tooltips: what is wrong, then why the field is disabled or what
+    // it is, each a tooltip of its own; the same words describe the field
+    // for assistive tools.
+    let none = Problems::none();
+    let problems = problems.unwrap_or(&none);
+    let said = match (spec.enabled, spec.disabled_reason) {
+        (false, Some(reason)) => Some(reason),
+        (false, None) => None,
+        (true, _) => help.as_deref(),
     };
+    let _ = crate::widgets::problem::hover(frame_response, problems, said);
+    let response = if spec.enabled {
+        crate::widgets::problem::hover(response, problems, said)
+    } else {
+        let response = if problems.is_empty() {
+            response
+        } else {
+            response.on_disabled_hover_ui(|ui| crate::widgets::problem::tooltip(ui, problems))
+        };
+        match said {
+            Some(reason) => response.on_disabled_hover_text(reason),
+            None => response,
+        }
+    };
+    crate::widgets::problem::set_description(ui, spec.id, problems, said);
     FieldOutput {
         response,
         committed,
@@ -432,44 +440,10 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     }
 }
 
-/// The 12-px message under a field in its column, in the error state:
-/// `circle-x`, then the file's message verbatim, wrapped to the field.
-pub fn validation_line(ui: &mut Ui, message: &str) {
-    status_line(ui, Tier::Error, message);
-}
-
-/// The 12-px message under a field in its column, in `tier`'s state: its
-/// glyph (`circle-x`, `triangle-alert` or `info`), then the file's
-/// message verbatim in the tier's text colour, wrapped to the field.
-pub fn status_line(ui: &mut Ui, tier: Tier, message: &str) {
-    let palette = Palette::current(ui);
-    let (icon, colour) = match tier {
-        Tier::Error => (Icon::CircleX, palette.status_error.text),
-        Tier::Warning => (Icon::TriangleAlert, palette.status_warning.text),
-        Tier::Hint => (Icon::Info, palette.status_info.text),
-    };
-    ui.add_space(4.0);
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let glyph = icon.galley(ui, 12.0, colour);
-        let (rect, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
-        ui.painter().galley(rect.min, glyph, colour);
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(message)
-                    .text_style(TextStyle::Small)
-                    .color(colour),
-            )
-            .wrap()
-            .selectable(false),
-        );
-    });
-    ui.add_space(4.0);
-}
-
 /// A quiet 12-px note under a field in its column, in text.secondary with
 /// no glyph: what the value comes to (a stepover's distance between
-/// passes). It is not a finding, and does not look like one.
+/// passes). It is not a problem, and does not look like one: a problem
+/// takes no line (section 7, "Field problem").
 pub fn quiet_line(ui: &mut Ui, text: &str) {
     let palette = Palette::current(ui);
     ui.add_space(2.0);

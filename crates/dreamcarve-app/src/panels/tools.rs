@@ -36,6 +36,7 @@
 //! the field a Warnings row asked for ([`open_field`]) are view state,
 //! kept in egui's memory.
 
+use dc_app::problems::Problems;
 use dc_app::tools::{self, KindChoice, KindSwitch, RowMark, ToolField};
 use dc_app::{Command, CommandError, StrKey, Strings};
 use dc_project::{Project, Tool, ToolId, ToolKind, Units};
@@ -48,9 +49,7 @@ use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::icon::Icon;
 use crate::widgets::row::{surface, surface_rect};
-use crate::widgets::unit_field::{
-    Required, UnitField, field as unit_field, quiet_line, row, status_line, validation_line,
-};
+use crate::widgets::unit_field::{UnitField, field as unit_field, quiet_line, row};
 
 /// A list row's height, px (section 3).
 const ROW_PX: f32 = theme::LIST_ROW_PX;
@@ -234,7 +233,12 @@ pub(crate) fn list(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 pub(crate) fn editor_card(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, out: &mut Vec<Action>) {
     let strings = state.app.strings();
     let units = state.app.project().display_units;
-    let findings = tools::field_status(state.app.project(), state.app.warnings(), tool);
+    let findings = tools::field_problems(
+        state.app.project(),
+        state.app.strings(),
+        state.app.warnings(),
+        tool,
+    );
     header(ui, tool);
     crate::widgets::scroll::show(
         ui,
@@ -509,7 +513,7 @@ fn editor(
     strings: &Strings,
     units: Units,
     tool: &Tool,
-    findings: &[(ToolField, dc_app::project::FieldStatus<'_>)],
+    findings: &[(ToolField, Problems)],
     out: &mut Vec<Action>,
 ) {
     let held = pending_v_bit(ui).as_ref() == Some(&tool.id)
@@ -572,14 +576,15 @@ pub(crate) struct ToolFields<'a> {
     /// The field to focus and scroll to this frame: the one a Warnings
     /// row is about (capability 76).
     pub focus: Option<ToolField>,
-    /// A field marked with why its last change did not take, shown under
-    /// it in the error state (a library write that failed, 64a).
+    /// A field marked with why its last change did not take: the field
+    /// in the error state, the reason its problem (a library write that
+    /// failed, 64a).
     pub marked: Option<(ToolField, &'a str)>,
-    /// The findings located at the tool's fields (`tools::field_status`),
-    /// each shown under its field in its tier's colour, as an operation's
-    /// are under its rows. A library tool has none: validation is the
-    /// project's.
-    pub findings: &'a [(ToolField, dc_app::project::FieldStatus<'a>)],
+    /// What is wrong at each of the tool's fields
+    /// (`tools::field_problems`): the field's outline and glyph, as an
+    /// operation's row has them. A library tool has none: validation is
+    /// the project's.
+    pub findings: &'a [(ToolField, Problems)],
 }
 
 /// A change the rows made this frame.
@@ -613,10 +618,11 @@ fn field_id(salt: Id, field: ToolField) -> Id {
 /// with its unit. A value the tool still needs (`FieldRow::required`: a
 /// rate, a tapered ball nose's tip, taper or flute length) is empty,
 /// never prefilled, with the required-field look and the file's message
-/// as its tooltip (66b). While the tool's switch to V-bit is held, a
-/// V-bit's rows are drawn and its *Angle* field shows empty and in the
-/// error state, with the line that says what to type; a typed angle makes
-/// the switch, and leaving it empty discards it (#581).
+/// as its problem (66b). While the tool's switch to V-bit is held, a
+/// V-bit's rows are drawn and its *Angle* field shows empty and required,
+/// what to type its problem, which the help line shows since the field
+/// has the keyboard; a typed angle makes the switch, and leaving it
+/// empty discards it (#581). No problem draws a line under its field.
 pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
     let ToolFields {
         salt,
@@ -650,31 +656,36 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
         let is_marked = marked.is_some_and(|(f, _)| f == field);
         let holding = held && field == ToolField::Angle;
         // A marked field says why its last change did not take, and the
-        // held V-bit's angle what to type: each a line under the field.
+        // held V-bit's angle what to type: each the field's problem.
         let line = match marked {
             Some((_, reason)) if is_marked => Some(reason),
             _ if holding => Some(angle_required),
             _ => None,
         };
         // A value the tool still needs is required (functional 66b; slice
-        // 26, #618; #685): *Required* in the field and the file's message
-        // its tooltip, not a line under it.
-        let required = row_spec
-            .required
-            .as_deref()
-            .filter(|_| line.is_none() && value.is_empty())
-            .map(|message| Required {
-                placeholder: strings.get(StrKey::EditorRequired),
-                message,
-            });
-        let error = line.or(row_spec.required.as_deref());
+        // 26, #618; #685): *Required* in the field, the file's message
+        // its problem.
+        let required = (holding
+            || (row_spec.required.is_some() && line.is_none() && value.is_empty()))
+        .then(|| strings.get(StrKey::EditorRequired));
         // What validation says of the field (a plunge above the feed, a
-        // stepover far too small), under it, when nothing above speaks.
+        // stepover far too small, a value an operation needs), each with
+        // its row in the drawer; then what only the editor knows: the
+        // write that failed, the angle to type, and a value the tool
+        // needs that no operation asks for yet.
         let found = findings
             .iter()
             .find(|(f, _)| *f == field)
-            .map(|(_, status)| *status)
-            .filter(|_| error.is_none());
+            .map(|(_, problems)| problems.clone())
+            .unwrap_or_default();
+        let own = line.or(row_spec
+            .required
+            .as_deref()
+            .filter(|_| found.is_empty() && value.is_empty()));
+        let problems = match own {
+            Some(message) => Problems::said(strings, dc_job::Tier::Error, message).with(found),
+            None => found,
+        };
         if focus == Some(field) {
             ui.memory_mut(|m| m.request_focus(id));
         }
@@ -683,18 +694,11 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
                 ui,
                 UnitField {
                     placeholder: hint,
-                    tier: error
-                        .map(|_| dc_job::Tier::Error)
-                        .or(found.map(|status| status.tier)),
+                    problems: Some(&problems),
                     required,
                     ..UnitField::new(id, name, value, row_spec.unit)
                 },
             );
-            if let (Some(message), None) = (error, required) {
-                validation_line(ui, message);
-            } else if let Some(status) = found {
-                status_line(ui, status.tier, status.message);
-            }
             // A stepover's distance between passes, from what is typed.
             if field == ToolField::StepOver
                 && let Some(note) = tools::step_over_note(strings, tool, &output.text, units)

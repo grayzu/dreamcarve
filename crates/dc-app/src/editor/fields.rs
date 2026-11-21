@@ -1148,8 +1148,8 @@ fn not_countersink(record: &Value) -> bool {
 
 /// Whether a Drill's `allow_tool_wider_than_hole` is read: by every cycle
 /// but a countersink, whose bit is wider than its hole by design. A
-/// countersink that sets it anyway shows the row, with validation's
-/// `countersink_ignores_tool_width` under it, so it can be cleared.
+/// countersink that sets it anyway shows the row, marked with
+/// validation's `countersink_ignores_tool_width`, so it can be cleared.
 fn tool_width_read(record: &Value) -> bool {
     not_countersink(record) || get(record, "allow_tool_wider_than_hole") == Some(&Value::Bool(true))
 }

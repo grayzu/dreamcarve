@@ -170,6 +170,36 @@ fn region(h: &H, crop: Crop) -> egui::Rect {
 fn shoot(h: &mut H, dir: &Path, name: &str, crop: Crop) {
     settle(h);
     park_pointer(h);
+    capture(h, dir, name, crop);
+}
+
+/// [`shoot`] with the pointer resting on the problem glyph whose name
+/// holds `words`, so the picture shows the glyph's tooltip: a field's
+/// problem is not written in the layout ("Field problem"), and a reader
+/// of the book sees its words where the app shows them.
+fn shoot_problem(h: &mut H, dir: &Path, name: &str, crop: Crop, words: &str) {
+    settle(h);
+    let glyph = h
+        .query_all(egui_kittest::kittest::by().predicate(|node| {
+            matches!(node.role(), Role::Button | Role::Image)
+                && node.label().is_some_and(|label| label.contains(words))
+        }))
+        .next()
+        .unwrap_or_else(|| panic!("{name}: no problem glyph says `{words}`"))
+        .rect()
+        .center();
+    h.event(egui::Event::PointerMoved(glyph));
+    // egui shows a tooltip after half a second, at 0.1 s a frame.
+    for _ in 0..10 {
+        h.step();
+    }
+    h.run();
+    capture(h, dir, name, crop);
+    park_pointer(h);
+}
+
+/// Writes the window as it stands as `dir/name.png`, cropped to `crop`.
+fn capture(h: &mut H, dir: &Path, name: &str, crop: Crop) {
     let crop = region(h, crop);
     let image = h.render().expect("the window renders");
     let (width, height) = (image.width(), image.height());
@@ -1403,9 +1433,14 @@ fn tools_screenshots() {
     h.get_by_label("V-bit").click();
     h.run();
     settle(&mut h);
+    // The Angle field asks: no line under it, its glyph and the help
+    // line at the Inspector's foot say what to type.
+    let asks = "error: Type the included angle to make this tool a V-bit";
+    assert!(h.query_by_label(asks).is_some());
     assert!(
         h.query_by_label("Type the included angle to make this tool a V-bit")
-            .is_some()
+            .is_none(),
+        "no line under the field"
     );
     assert_eq!(
         h.state().app().project().tools[2].cutter,
@@ -1958,26 +1993,38 @@ fn operations_screenshots() {
         problems(&h),
         [format!("warning: step_down_above_diameter: {warning}")]
     );
+    // The warning marks its field, and its words are the glyph's
+    // tooltip; no line under the field carries them.
     assert!(
-        h.query_by_label(warning).is_some(),
-        "the warning is under its field"
+        h.query_by_label(warning).is_none(),
+        "no line under the field"
     );
-    shoot(
+    assert!(
+        h.query_by_label(&format!("warning: step_down_above_diameter: {warning}"))
+            .is_some(),
+        "the warning's glyph is in its field"
+    );
+    shoot_problem(
         &mut h,
         &out,
         "operations-field-warning",
         Crop::ViewportAndInspector,
+        "step_down_above_diameter",
     );
     undo(&mut h);
 
-    // A value out of range is kept, and is an error under its field.
+    // A value out of range is kept, and is an error at its field.
     open_group(&mut h, "Entry and leads");
     type_in(&mut h, "Helix angle", "60");
     settle(&mut h);
     let error = "operations[op3].entry.helix.angle_deg is 60, expected an angle greater than \
                  0 and at most 45 degrees";
     assert_eq!(problems(&h), [format!("error: {error}")]);
-    assert!(h.query_by_label(error).is_some());
+    assert!(h.query_by_label(error).is_none(), "no line under the field");
+    assert!(
+        h.query_by_label(&format!("error: {error}")).is_some(),
+        "the error's glyph is in its field"
+    );
     undo(&mut h);
     settle(&mut h);
     assert!(problems(&h).is_empty());
@@ -2706,7 +2753,14 @@ fn post_processor_screenshots() {
             .is_some(),
         "LinuxCNC has canned cycles, so the tick is offered"
     );
-    shoot(&mut h, &out, "post-processor-switched", Crop::StepPanel);
+    shoot_problem(
+        &mut h,
+        &out,
+        "post-processor-switched",
+        // The tooltip opens over the Viewport, past the step panel.
+        Crop::Window,
+        "Reset tool_change_mode",
+    );
     h.get_by_role_and_label(Role::ComboBox, "Programs")
         .scroll_to_me();
     h.run();

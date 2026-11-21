@@ -223,7 +223,10 @@ what to press next.
   a button takes `surface.hover` on its pill.
   No cursor, no Z range and no Toolpaths button: they float on the
   Viewport. No stock size: the Stock step's summary line shows it.
-- **Warnings drawer.** A card over the bottom of the Viewport's card,
+- **Warnings drawer.** (A field's problem glyph opens it at the
+  finding's row, which is then a selected list row, `accent.soft` with
+  the accent bar, scrolled into view: section 7, "Field problem".)
+  A card over the bottom of the Viewport's card,
   240 px high and 8 px in from its edges, `surface.panel` with a
   hairline and the one shadow; never a window. The Viewport keeps its
   size under it, and its read-out and Fit stand clear of it. A grab
@@ -365,7 +368,7 @@ Type scale (px at 1×; line height 1.4 unless noted):
 | Field value | Inter (tnum) | 13 | Regular | text.primary | `Body` |
 | Unit suffix | Inter | 12 | Regular | text.secondary | `Small` |
 | Placeholder (`tool's: 3 mm`) | Inter | 13 | Regular, italic by colour only | text.disabled | `Body` |
-| Row second line (tool, size), help line, validation line | Inter | 12 | Regular | text.secondary / status | `Small` |
+| Row second line (tool, size), help line, a problem's words on the help line | Inter | 12 | Regular | text.secondary / status | `Small` |
 | Status bar | Inter (tnum) | 12 | Regular | text.secondary | `Small` |
 | Warning code, file name, G-code, `.dcv` field name in a tooltip | JetBrains Mono | 12 | Regular | text.primary | `Monospace` |
 | Cursor coordinates, depth-legend labels, Viewport labels | Inter (tnum) | 12 | Regular | text.secondary | `Small` |
@@ -424,8 +427,9 @@ field backgrounds. Never used without a glyph or a word.
 | status.info (hint) | `#2A6CC4` / `#2A6CC4` / `#2A6CC414` | `#78B0F5` / `#78B0F5` / `#78B0F51F` | `info` outline, or a 6-px dot in a count | custom |
 | status.success | `#1F7F43` / `#1F7F43` / none | `#5FD08A` / `#5FD08A` / none | `circle-check` | custom |
 
-The light warning *text* is darker than its stroke so the message under a
-field passes 4.5:1 while the outline and triangle keep the amber the eye
+The light warning *text* is darker than its stroke so a warning's words
+(on the help line, in a tooltip, in the drawer) pass 4.5:1 while the
+outline and triangle keep the amber the eye
 expects (`#D98A1E` is 2.8:1 on panel, so it is never used for text). The
 dark success green is yellower than the accent (`#5FD08A` against
 `#2AD79A`), so *done* does not read as *selected*.
@@ -606,9 +610,10 @@ Shared state language (applies to every control below):
 | focus | 2-px `focus.ring` outline outside the control, 2 px offset, following its shape (a pill's ring is a pill); a field being typed in turns its own outline `focus.ring` and shows the caret |
 | active (pressed / open) | `surface.active` wash; dropdown chevron rotates |
 | disabled | fill unchanged, outline → `border.default`, text → text.disabled, no hover; a tooltip gives the reason when the spec names one (tool-change Z on a post without `G53`) |
-| error | outline → status.error stroke; a 12-px message under the field with `circle-x`; the unit suffix stays grey |
-| warning | outline → status.warning stroke; message with `triangle-alert` |
-| required (unset) | outline → status.error stroke; `circle-x` 16 px inside the field's right end, before the unit; placeholder *Required* in text.disabled; **no message line**; the file's message is the tooltip (functional 66b) |
+| error | outline → status.error stroke; `circle-x` 16 px inside the field's right end, before the unit; **no message line** ("Field problem", below); the unit suffix stays grey |
+| warning | outline → status.warning stroke; `triangle-alert` in the same place |
+| hint | outline → status.info stroke; `info` in the same place |
+| required (unset) | the error state, with the placeholder *Required* in text.disabled; the file's message is the field's problem (functional 66b) |
 | dimmed-but-editable | the operation with no targets (spec 59) and a disabled operation's row: text.secondary everywhere, controls fully live; never the disabled look |
 
 Controls:
@@ -749,11 +754,46 @@ Controls:
   content keeps 16 px from its edges and its list rows 8. A card inside a
   card is `surface.raised` with a 1-px `border.default` outline at a
   10-px radius.
-- **Inline validation message.** 12 px, under the field, 4 px gap, glyph
-  then text, in the status's text colour; the file's message verbatim
-  (`inlay_male_board_unset`'s message, not its code). The code appears in
-  the Warnings drawer, not here. One message per field; errors win over
-  warnings.
+- **Field problem.** A problem takes no room: nothing is laid out
+  under a field for it, in a step, an Inspector or a sheet, so a row is
+  a control tall with a problem as without and nothing under it moves
+  (maintainer's review, 2026-11-20). What is wrong at a field is every
+  finding located at it and the reason it refused what was typed, most
+  severe first; the most severe sets what shows:
+  - the **outline** in the status's stroke, in place of `border.default`
+    (it wins over the hover and typing outlines; the focus ring outside
+    the control still shows);
+  - the status **glyph**, 16 px in the status's stroke, inside the
+    field at its right end: before the unit and the ⟲ of a text field,
+    before the chevron of a dropdown or a picker on a patch of the
+    control's own fill so no text shows through it, at the right end of
+    the Targets row's summary. A control with no inside has the outline
+    round its own shape (a checkbox's box, a switch's pill, a pill
+    control's track) and the glyph 8 px to its right on its first
+    line; a pill control that fills its row gives up 24 px for it. The
+    glyph's hit area is 24 × 24.
+
+  The words are never in the layout. Hovering the glyph or the field
+  for 500 ms shows them as a tooltip, wrapped at the tooltip's 320 px:
+  for each problem a 12-px line of its glyph and its severity's word
+  (*error*, *warning*, *hint*) in the status's text colour, its message
+  in 13 px as the drawer words it, and its code in JetBrains Mono in
+  text.secondary where it has one; the field's help follows as a second
+  tooltip. The same words, a line a problem, lead the field's
+  accessible description and name the glyph. While the field has the
+  keyboard they are on the help line (below). A glyph whose field has a
+  finding of the project is a button: it shows its status tint and the
+  hand cursor under the pointer, and a click opens the Warnings drawer
+  with the finding's row selected and scrolled into view. It is not a
+  Tab stop: Tab goes from field to field. The glyph of a refused entry
+  alone, which is no finding and has no row, is a picture, not a
+  button.
+
+  A note that is not a problem keeps its 12-px line under its field in
+  text.secondary: what a value comes to (a stepover's *0.508 mm between
+  passes*, a tool's cutting height), why an option is missing, the
+  names an export will write. An Inlay's derived lines stay too, and
+  turn status.error in place when what they derive is out of range.
 - **Help affordance.** The wireframes' "?" circle is replaced. Every
   field of the app has help: what it does, its unit, the values it takes
   (validation's own limits) and what leaving it empty means. It shows in
@@ -761,12 +801,16 @@ Controls:
   tooltip, with the `.dcv` field name in JetBrains Mono on a second
   line; the label's underline (1 px dotted, text.disabled) appears on
   hover to say it has help; hovering the *field* shows the same help (a
-  required field's tooltip is the file's message, with the help as a
+  field with a problem shows the problem first, with the help as a
   second tooltip under it). And while a field has the keyboard, its help
   is the **help line** at the foot of the panel that holds it, the step
   panel's, the Inspector's or a sheet's: a hairline, then `info` 16 px
   in text.secondary, the field's label in 13-px Medium and the help in
-  12-px text.secondary, wrapped to the panel, 10 px above and below. The
+  12-px text.secondary, wrapped to the panel, 10 px above and below.
+  A focused field's problems come first on it, most severe first, 6 px
+  apart: each its status glyph, 16 px in the status's stroke, and its
+  message in 12 px in the status's text colour. It is where a keyboard
+  user reads what a hover shows, and it costs a panel no row. The
   line is pinned: the panel's content scrolls above it, and it takes its
   room only while a field of that panel is focused, so a panel with no
   field in use loses nothing. `circle-help` is kept only in sheet
@@ -1135,14 +1179,18 @@ Controls:
   faint and never carry information on their own).
 - Focus is always visible: the 2-px ring at 5.4:1 (light) / 9.6:1 (dark)
   against panels, outside the control so no control shrinks.
+- A field's problem is reachable without the pointer: its words are
+  the field's accessible description and the glyph's name, and the help
+  line shows them while the field has the keyboard (section 7, "Field
+  problem").
 - Every action has a keyboard path: menus list every shortcut (spec 54);
   lists take arrow keys; sheets trap Tab; Escape closes the innermost
   transient thing.
 - Hit sizes: no interactive element smaller than 24 × 24 px (checkboxes
   and 16-px icons sit in 26-px hit rows; the eye and lock in a 24-px
   square). Dividers accept 8 px of pointer slop either side.
-- Colour is never the only signal: errors have a filled glyph and a
-  message; warnings a triangle; operations have their glyph and name
+- Colour is never the only signal: errors have a filled glyph and
+  words; warnings a triangle; operations have their glyph and name
   beside their colour; selection has handles and a bar, not only a tint;
   locked shapes carry the padlock; open paths carry the `spline` glyph
   and are drawn dashed.
@@ -1272,7 +1320,9 @@ is a bug).
   `segmented` (a pill track with `n` segments, equal until a label would
   be cut; also the pill tabs),
   `row` (a list row's surface: hover wash, selected fill and accent
-  bar; an editor row's label, wrapped to two lines, and its message),
+  bar; an editor row's label, wrapped to two lines, and its notes),
+  `problem` (a field's problem: the outline, the glyph inside or beside
+  a control, its tooltip, and the click that opens the drawer),
   `section` (the disclosure header: the chevron, the title, the closed
   summary and the trailing status glyph; `CollapsingState` animates the
   body), `scroll` (a scrolling list's fades), `toggle` (egui has no
@@ -1301,7 +1351,10 @@ is a bug).
   end, and the tooltip shows the whole.
 - **Tooltips.** `response.on_hover_text` with `interaction.tooltip_delay
   0.5` and `tooltip_grace_time 0.2`; the field help tooltip is a
-  `on_hover_ui` with two labels (Body, then Monospace).
+  `on_hover_ui` with two labels (Body, then Monospace), and a field's
+  problem tooltip an `on_hover_ui` called before it, so it stacks above
+  the help. `on_hover_ui` does not describe a widget for assistive
+  tools, so the problem's words are set as the node's description.
 - **Animation.** `style.animation_time 0.15`; disclosure uses
   `CollapsingState`'s built-in `animate_bool`; washes use
   `ctx.animate_value_with_time(id, target, 0.1)`. Reduced motion sets
@@ -1456,8 +1509,9 @@ follows.
 51. A chip is a 24-px pill with 12-px text; a status chip has its glyph
     and its tint.
 52. A field is `surface.sunken` with a `border.default` outline.
-53. A field that refused what was typed has the error outline and the
-    message under it with `circle-x`.
+53. A field that refused what was typed has the error outline and
+    `circle-x` inside it, with no message line; hovering either says
+    why.
 54. An unset required field has the error outline, `circle-x` inside it
     and *Required*, with no message line.
 55. A `null` that takes the tool's value shows `tool's: 4 mm` as a grey
@@ -1584,7 +1638,7 @@ follows.
 | Raised 3-D frames around panels and the canvas | Borderless cards on the backdrop, 8 px apart, no rule under a title |
 | Grid over the whole canvas, black background, crosshair cursor | Grid on the stock only, paper-coloured stage, arrow cursor, coordinates in the read-out at the pane's bottom left |
 | Lines that scale with zoom until the picture is a blob | Screen-constant stroke widths |
-| Red text as the only sign of an error | Outline + filled glyph + message |
+| Red text as the only sign of an error | Outline + filled glyph, and the words on hover, on the help line and in the drawer |
 | Radio-button groups for Climb / Conventional | A segmented control |
 | A spinner dialog during generation | Spinners in rows, faded stale toolpaths, *Generating 2 of 5…* in the status bar |
 | Confirm dialogs on Delete | Delete, toast, Undo |
@@ -1597,7 +1651,7 @@ follows.
 | A text badge where a glyph would do (`open`) | A shape glyph with a tooltip |
 | A list of target names with ✕ buttons | Targets highlighted on the drawing, edited in a mode on the drawing |
 | Every setting of an operation in one long open form | Setup first; the rest in closed sections that summarise their values |
-| A paragraph of validation text under a required field | *Required* in the field, the message in its tooltip and the drawer |
+| A line of validation text under a field, pushing the rows under it down | The field's outline and glyph; the message in its tooltip, on the help line while it is focused, and in the drawer |
 | A wall of CLI prose in a panel (*check says*, the export report) | Labelled facts, a status line, a file list, details on demand |
 | A floating options card covering the drawing | A popover from the Viewport's *Layers* button that closes when done |
 | A dialog that repeats what the status bar shows (warnings, totals) | Show it once, where it lives |

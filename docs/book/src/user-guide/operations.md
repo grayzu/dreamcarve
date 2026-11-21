@@ -176,15 +176,26 @@ in grey: **Step-down** reads `tool's: 4 mm`, a Pocket's **Stepover**
 this operation its own; a small arrow then appears in the field, **Use
 the tool's value**, which empties it again.
 
-![The Panel pocket with a step-down of 8 typed: the Step-down field outlined in amber with the arrow that goes back to the tool's value, and under it "operation `Panel` (`op3`) cuts 8 mm per pass, deeper than the 6.35 mm diameter of tool `1/4 end mill`; passes that deep can break the bit, so use a step-down of at most 6.35 mm"; a warning mark in the editor's header](figures/app/operations-field-warning.png)
+![The Panel pocket with a step-down of 8 typed: the Step-down field outlined in amber, with the arrow that goes back to the tool's value and a warning triangle inside it; the pointer rests on the triangle, and its tooltip reads "warning", then "operation `Panel` (`op3`) cuts 8 mm per pass, deeper than the 6.35 mm diameter of tool `1/4 end mill`; passes that deep can break the bit, so use a step-down of at most 6.35 mm", then the code step_down_above_diameter; a warning mark in the editor's header](figures/app/operations-field-warning.png)
 
 ## Problems at a field
 
-A warning or an error that is about one value is shown under that value,
-as above, in amber for a warning and red for an error. The group that
-holds it opens by itself, the editor's header and the operation's row
-carry the mark, and the same line is in the
-[Warnings drawer](warnings.md#in-the-app).
+A warning or an error that is about one value marks that value's field,
+as above: the field is outlined in amber for a warning and red for an
+error, with a small mark inside it at the right, a triangle or a circled
+cross. Nothing is written under the field, so the rows do not move when
+a problem comes or goes. To read what is wrong:
+
+- rest the pointer on the mark, or on the field. A tooltip gives the
+  message, and the code of a warning;
+- click in the field, or Tab to it. The line at the foot of the
+  Inspector shows the message, above the field's help;
+- click the mark. The [Warnings drawer](warnings.md#in-the-app) opens
+  with that row selected.
+
+The group that holds the field opens by itself, and the editor's header
+and the operation's row carry the mark too. A field with more than one
+problem shows the worst, and its tooltip lists them all.
 
 The app keeps a value that is out of range, so that you can see what you
 typed, and says what is allowed:
@@ -194,8 +205,9 @@ error: operations[op3].entry.helix.angle_deg is 60, expected an angle greater th
 ```
 
 An error stops export until it is fixed. Text that is not a number is
-not kept: the field goes back to the value it had, outlined in red, with
-the reason under it, and the project is unchanged.
+not kept: the field goes back to the value it had, outlined in red with
+the circled cross, whose tooltip says why and what the field takes, and
+the project is unchanged.
 
 Some problems belong to the whole operation, not to one field: a cut
 deeper than the stock allows, or a shape too small for the bit. Those

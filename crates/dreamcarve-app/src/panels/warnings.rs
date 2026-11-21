@@ -21,7 +21,11 @@
 //! an output setting's field opens its step with that field focused.
 //! *Copy* puts
 //! `check`'s text on the clipboard, and its tooltip says that `check`
-//! prints a hint as a warning. Each group is named above its rows
+//! prints a hint as a warning. A click on a field's problem glyph opens
+//! the drawer at the finding's row, the reverse trip: the row is scrolled
+//! into view once and drawn selected (`accent.soft` with the accent bar,
+//! as a list's selected row is) until a row is clicked or the drawer
+//! closes (capability 66). Each group is named above its rows
 //! only when there are two or more (#616). An operation's carve note is
 //! the last row of its group, its facts laid out as labelled lines under
 //! a board's sub-heading (#620). The drawer has no Regenerate
@@ -501,8 +505,25 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
     let height = ROW_PX.max(message.size().y + under_px + (ROW_PX - line_px));
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.name));
-    row_surface(ui, rect, response.hovered(), stripe);
+    // The row a field's glyph opened the drawer at: selected, and brought
+    // into view the once.
+    let selected = state.finding.is_some_and(|key| *key == row.key());
+    if selected {
+        response
+            .widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, true, &row.name));
+        crate::widgets::row::surface(
+            ui,
+            rect.shrink2(egui::vec2(INSET_PX, 0.0)),
+            true,
+            response.hovered(),
+        );
+        if state.finding_scroll {
+            response.scroll_to_me(Some(egui::Align::Center));
+        }
+    } else {
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.name));
+        row_surface(ui, rect, response.hovered(), stripe);
+    }
     // What the row names is selected, and the step that edits it opens:
     // an operation's field in its editor, a shape on Design, a tool or a
     // setting in its own step.

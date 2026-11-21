@@ -94,6 +94,25 @@ pub(crate) fn checkbox(
     response
 }
 
+/// The box of a labelled checkbox whose response is `response`, and its
+/// corner radius: what a problem's outline goes round
+/// ([`crate::widgets::problem::mark`]). A box with no label is centred.
+pub(crate) fn box_of(response: &Response, labelled: bool) -> (Rect, f32) {
+    let rect = response.rect;
+    let left = if labelled {
+        rect.left()
+    } else {
+        rect.center().x - BOX_PX / 2.0
+    };
+    (
+        Rect::from_min_size(
+            egui::pos2(left, rect.center().y - BOX_PX / 2.0),
+            egui::Vec2::splat(BOX_PX),
+        ),
+        theme::MARK_RADIUS_PX,
+    )
+}
+
 /// The 16-px box in `rect`: `accent.fill` with a tick in text.on-accent
 /// when `checked` (`accent.hover` under the pointer), else a
 /// `border.strong` outline (`text.secondary` on hover); disabled, the

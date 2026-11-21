@@ -132,6 +132,14 @@ A value DreamCarve will not guess (the stock's thickness, a cut depth, a
 tool's feed, plunge rate and spindle speed) shows **Required** in a red
 outline until you type it. The app never fills one in.
 
+A field with a problem is outlined in the problem's colour (red for an
+error, amber for a warning, blue for a hint) and has a small mark
+inside it at the right. The message is not written under the field.
+Rest the pointer on the mark to read it, or put the keyboard in the
+field and read it on the line at the foot of the panel; click the mark
+to open the [Warnings drawer](warnings.md#in-the-app) at that
+message.
+
 Lengths and feeds are shown in the project's units, millimetres or
 inches, set on the Stock step or from the status bar. A field also takes
 a value with its own unit, such as `1/4 in` in a millimetre project.

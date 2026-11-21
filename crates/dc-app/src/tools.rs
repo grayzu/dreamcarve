@@ -680,11 +680,11 @@ pub fn step_over_note(strings: &Strings, tool: &Tool, typed: &str, units: Units)
     between_passes(strings, fraction * tool.diameter_mm, units)
 }
 
-/// The findings located at `tool`'s own fields, each with the field it is
-/// under, errors before warnings before hints, one a field: what the tool
-/// editor shows under that field, as the operation editor shows a located
-/// finding under its row. A value the tool still needs is left out: its
-/// field says *Required*, and the file's message is its tooltip (66b).
+/// The worst finding located at each of `tool`'s own fields, errors
+/// before warnings before hints, one a field. A value the tool still
+/// needs is left out: its field says *Required* (66b).
+/// [`field_problems`] is every finding at each field, which the tool
+/// editor marks the field with.
 #[must_use]
 pub fn field_status<'a>(
     project: &Project,
@@ -719,6 +719,38 @@ pub fn field_status<'a>(
         }
     }
     found
+}
+
+/// Everything wrong at each of `tool`'s own fields, most severe first:
+/// every finding validation locates there, a value the tool still needs
+/// among them once an operation uses the tool (the field then shows
+/// *Required* too, 66b). What the tool editor marks each field with: the
+/// outline and glyph of the worst, the rest in the glyph's tooltip, and
+/// the glyph's click opens the drawer at the finding.
+#[must_use]
+pub fn field_problems(
+    project: &Project,
+    strings: &Strings,
+    findings: &[Finding],
+    tool: &Tool,
+) -> Vec<(ToolField, crate::problems::Problems)> {
+    let at = |finding: &Finding| {
+        let (id, field) = located(project, finding.field.as_deref()?)?;
+        (id == tool.id).then_some(field).flatten()
+    };
+    let mut fields: Vec<ToolField> = Vec::new();
+    for field in findings.iter().filter_map(at) {
+        if !fields.contains(&field) {
+            fields.push(field);
+        }
+    }
+    fields
+        .into_iter()
+        .map(|field| {
+            let here = findings.iter().filter(|f| at(f) == Some(field));
+            (field, crate::problems::Problems::found(strings, here))
+        })
+        .collect()
 }
 
 /// The rates export needs that `tool` lacks, each with the file's message

@@ -57,6 +57,7 @@ pub use fields::{ChoiceOption, FieldKind, Group, Row, StockDefault, ToolDefault,
 use crate::app::App;
 use crate::command::Command;
 use crate::error::CommandError;
+use crate::problems::Problems;
 use crate::project::FieldStatus;
 use crate::strings::{StrKey, Strings};
 use crate::units;
@@ -557,8 +558,8 @@ pub fn set_tool(op: &Operation, row: &Row, tool: &ToolId) -> Result<Option<Comma
 /// (#685), a Photo V-Carve the V-bits alone. A tapered ball nose whose
 /// values are still unset is offered, as a tool with no feed is: its
 /// fields say what it needs ([`crate::tools::required`]). A file's tool
-/// of another type still shows as chosen, with validation's message
-/// under the row.
+/// of another type still shows as chosen, marked with validation's
+/// message.
 #[must_use]
 pub fn offered_tools<'p>(project: &'p Project, op: &Operation) -> Vec<&'p Tool> {
     let Some(mut probe) = CarvingProbe::of(project, op) else {
@@ -974,7 +975,7 @@ pub fn rename(op: &Operation, typed: &str) -> Result<Option<Command>, CommandErr
 /// enabled Pockets before it in the list, in list order, by id and name.
 /// Never `op` itself or a Pocket after it, which validation refuses
 /// (`rest_of_invalid`); empty for any other kind. One whose targets differ
-/// is offered, and validation says so under the row, as a hand-edited file
+/// is offered, and validation says so at the row, as a hand-edited file
 /// is told.
 #[must_use]
 pub fn earlier_pockets(project: &Project, op: &Operation) -> Vec<(OperationId, String)> {
@@ -1089,8 +1090,8 @@ pub fn set_picture(
 /// or a locked shape is offered too, as neither flag stops an operation
 /// cutting; so is a shape another operation cuts. Whether the design lies
 /// inside the shape is not asked here: a boundary that crosses the design
-/// is accepted, as a hand-edited file's is, and carries validation's
-/// message under the row. Empty for any other kind.
+/// is accepted, as a hand-edited file's is, and the row is marked with
+/// validation's message. Empty for any other kind.
 #[must_use]
 pub fn offered_boundaries(project: &Project, op: &Operation) -> Vec<(InstanceId, String)> {
     let Operation::Inlay(inlay) = op else {
@@ -1225,7 +1226,7 @@ pub fn boundary_of_selection(
 /// Targets row words them (`2 shapes · left, right`). A listed id the
 /// project no longer has shows as the id (`i9 · not in the project`), so
 /// the row never reads as empty while the file holds a value; validation
-/// says so under it (`inlay_boundary_unknown`). `None` for another kind.
+/// says so at it (`inlay_boundary_unknown`). `None` for another kind.
 #[must_use]
 pub fn boundary_text(project: &Project, strings: &Strings, op: &Operation) -> Option<String> {
     let Operation::Inlay(inlay) = op else {
@@ -1412,7 +1413,7 @@ const CODE_ROWS: &[(&str, &str)] = &[
 ];
 
 /// The findings located on an operation's rows, matched once
-/// ([`fields::row_for`]), for the editor to draw under each row and count
+/// ([`fields::row_for`]), for the editor to mark each row with and count
 /// on each closed group's header.
 #[derive(Debug, Clone, Default)]
 pub struct Located<'a> {
@@ -1447,16 +1448,16 @@ impl<'a> Located<'a> {
         Self { found }
     }
 
-    /// The message under `row`: the first error located on it, else the
-    /// first warning, else the first hint.
+    /// The worst finding at `row`: the first error located on it, else
+    /// the first warning, else the first hint.
     #[must_use]
     pub fn status(&self, row: &Row) -> Option<FieldStatus<'a>> {
         self.all(row).into_iter().next()
     }
 
     /// Every message located on `row`, errors first, then warnings, then
-    /// hints, each tier in the findings' order: what a block row (a
-    /// clearing list) shows under itself, its items' findings among them
+    /// hints, each tier in the findings' order: for a block row (a
+    /// clearing list), its items' findings among them
     /// (`clearing_not_descending` at `clearing[1].tool`).
     #[must_use]
     pub fn all(&self, row: &Row) -> Vec<FieldStatus<'a>> {
@@ -1472,6 +1473,60 @@ impl<'a> Located<'a> {
                     })
             })
             .collect()
+    }
+
+    /// Everything wrong at `row` ([`Located::all`]) as its field shows it:
+    /// the outline and glyph of the worst, the rest in the tooltip.
+    #[must_use]
+    pub fn problems(&self, strings: &Strings, row: &Row) -> Problems {
+        Problems::found(
+            strings,
+            self.found
+                .iter()
+                .filter(|(r, _)| r.key == row.key)
+                .map(|(_, f)| *f),
+        )
+    }
+
+    /// What is wrong at the field at `key` of operation `op` itself (a
+    /// clearing pass's `clearing[1].tool`): the findings whose field is
+    /// exactly that path, for the control drawn there.
+    #[must_use]
+    pub fn problems_at(&self, strings: &Strings, op: &Operation, key: &str) -> Problems {
+        let path = format!("operations[{}].{key}", op.id());
+        Problems::found(
+            strings,
+            self.found
+                .iter()
+                .filter(|(_, f)| f.field.as_deref() == Some(path.as_str()))
+                .map(|(_, f)| *f),
+        )
+    }
+
+    /// What is wrong at the block `row` and not at one of the fields
+    /// drawn inside it (`keys`, each an item's key path): what the
+    /// block's own row marks, so a finding is marked once, where it is.
+    #[must_use]
+    pub fn problems_but(
+        &self,
+        strings: &Strings,
+        op: &Operation,
+        row: &Row,
+        keys: &[String],
+    ) -> Problems {
+        let paths: Vec<String> = keys
+            .iter()
+            .map(|key| format!("operations[{}].{key}", op.id()))
+            .collect();
+        Problems::found(
+            strings,
+            self.found
+                .iter()
+                .filter(|(r, f)| {
+                    r.key == row.key && !f.field.as_ref().is_some_and(|field| paths.contains(field))
+                })
+                .map(|(_, f)| *f),
+        )
     }
 
     /// What a closed group's header shows: the worst tier of the findings
@@ -1491,7 +1546,7 @@ impl<'a> Located<'a> {
     }
 }
 
-/// The message under `row` ([`Located::status`]).
+/// The worst finding at `row` ([`Located::status`]).
 #[must_use]
 pub fn status<'a>(
     findings: &'a [Finding],

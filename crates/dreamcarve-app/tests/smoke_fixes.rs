@@ -634,9 +634,11 @@ fn a_stepover_field_says_its_distance_as_it_is_typed() {
 }
 
 /// The smoke test's item 7, second half: a finding located at a tool's
-/// field shows under that field in the tool editor, in its tier's colour,
-/// as an operation's does. A plunge rate typed above the feed is
-/// `plunge_above_feed`, a warning at the plunge.
+/// field marks that field in the tool editor, as an operation's row is
+/// marked. A plunge rate typed above the feed is `plunge_above_feed`, a
+/// warning at the plunge: its glyph is inside the Plunge field, named
+/// with the finding, and no line under the field carries the message
+/// (the maintainer's review, 2026-11-20; "Field problem").
 #[test]
 fn a_tool_field_shows_the_warning_located_at_it() {
     let (mut h, dir, _dialogs) = plaque("tool-warning");
@@ -655,11 +657,25 @@ fn a_tool_field_shows_the_warning_located_at_it() {
     h.key_press(egui::Key::Tab);
     h.run();
     common::settle(&mut h);
-    let line = h.get_by_label_contains("plunges at");
-    let field = h.get_by_role_and_label(Role::TextInput, "Plunge").rect();
+    let glyph = h.get_by_label_contains("plunges at").rect();
+    let field = h.get_by_role_and_label(Role::TextInput, "Plunge");
     assert!(
-        line.rect().top() >= field.bottom() - 1.0 && line.rect().left() >= field.left() - 1.0,
-        "the warning is under the Plunge field"
+        // The field's node is its text; its frame runs on to the unit.
+        field.rect().y_range().contains(glyph.center().y)
+            && glyph.center().x > field.rect().center().x
+            && glyph.center().x < field.rect().right() + 32.0,
+        "the warning's glyph is inside the Plunge field: {glyph:?} in {:?}",
+        field.rect()
+    );
+    assert!(
+        field.accesskit_node().description().is_some_and(|d| d
+            .starts_with("warning: plunge_above_feed: ")
+            && d.contains("plunges at")),
+        "and the field is described with it"
+    );
+    assert!(
+        h.query_all_by_label_contains("plunges at").count() == 1,
+        "no line under the field repeats it"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }

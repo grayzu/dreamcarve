@@ -37,10 +37,11 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
 use dc_app::export::{Boards, ExportResult, Options, Ready};
+use dc_app::problems::Problems;
 use dc_app::project as project_model;
 use dc_app::status::counted;
 use dc_app::{App, SnapshotId, StrKey, Strings};
-use dc_job::{EstimateConfig, ProgramSplit, Tier};
+use dc_job::{EstimateConfig, ProgramSplit};
 use dreamcarve_shell::{StagedFile, commit_all};
 use eframe::egui::{self, Align, Id, Layout, Sense, TextStyle, Ui};
 
@@ -801,12 +802,19 @@ fn destination(
     });
     let stem = strings.get(StrKey::ExportStem);
     let valid = valid_stem(export.stem.trim());
+    // A name no file can have marks the field; nothing is written under
+    // it but the names it will give, which is a note.
+    let problems = if valid {
+        Problems::none()
+    } else {
+        Problems::refused(strings, strings.get(StrKey::ExportStemEmpty))
+    };
     ui.horizontal(|ui| {
         row::label(ui, stem, strings.get(StrKey::ExportStemHelp), None);
         let typed = unit_field(
             ui,
             UnitField {
-                tier: (!valid).then_some(Tier::Error),
+                problems: Some(&problems),
                 ..UnitField::new(Id::unique("export.stem"), stem, &export.stem, "")
             },
         );
@@ -814,9 +822,7 @@ fn destination(
             out.push(Action::Export(Request::SetStem(stem)));
         }
     });
-    if !valid {
-        row::message(ui, Tier::Error, strings.get(StrKey::ExportStemEmpty));
-    } else if let Some(names) = names {
+    if let (true, Some(names)) = (valid, names) {
         row::hint(ui, &strings.fmt(StrKey::ExportNames, &[("names", names)]));
     }
 }

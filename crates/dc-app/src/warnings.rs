@@ -148,7 +148,44 @@ pub struct NoteFact {
     pub value: String,
 }
 
+/// What names a finding's row in the drawer, for the trip from a field's
+/// glyph to its row (capability 66): the row's name as the drawer words
+/// it, and the field it is about, which tells two rows of one wording
+/// apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowKey {
+    /// [`Row::name`].
+    pub name: String,
+    /// [`Row::field`].
+    pub field: Option<String>,
+}
+
+/// The drawer row of `finding`, one of
+/// [`App::warnings`](crate::App::warnings)'s (its message already worded
+/// for the app).
+#[must_use]
+pub fn key_of(strings: &Strings, finding: &Finding) -> RowKey {
+    RowKey {
+        name: row_name(
+            strings,
+            Level::from(finding.tier),
+            finding.code.as_deref(),
+            &finding.message,
+        ),
+        field: finding.field.clone(),
+    }
+}
+
 impl Row {
+    /// What names the row for a field's glyph ([`key_of`]).
+    #[must_use]
+    pub fn key(&self) -> RowKey {
+        RowKey {
+            name: self.name.clone(),
+            field: self.field.clone(),
+        }
+    }
+
     /// What clicking the row selects (capability 76): the operation when
     /// the row names one of its fields (the editor then focuses it), else
     /// the shape it is about, else its operation.

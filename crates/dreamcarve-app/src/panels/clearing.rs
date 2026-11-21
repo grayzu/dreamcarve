@@ -15,15 +15,15 @@
 //! shows a 2-px accent insertion line where the pass will land and a
 //! lifted copy at the cursor, and the release is one *Reorder* step.
 //! *Add pass* appends the next smaller end mill's pass. What validation
-//! finds in the list (`clearing_not_descending`) is drawn under it by the
-//! row ([`crate::panels::editor`]).
+//! finds at a pass's field (`clearing_not_descending` at its tool) marks
+//! that field, and what it finds of the list itself marks the list's row
+//! ([`crate::panels::editor`]); neither draws a line.
 
 use dc_app::StrKey;
 use dc_app::editor::{Row, clearing};
-use dc_job::Tier;
 use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
 
-use crate::panels::editor::{Cx, commit, control, control_id, nest, tool_note};
+use crate::panels::editor::{Cx, commit, control, control_id, nest, refusal, tool_note};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
@@ -40,6 +40,15 @@ const LIFTED_PX: f32 = 32.0;
 /// operation's and the list's, so two lists never share it.
 fn dragging_id(cx: &Cx<'_>, list: &Row) -> Id {
     Id::unique(("dc.editor.clearing.dragging", cx.op.id().as_str(), list.key))
+}
+
+/// The key path of every field the list draws, each pass's rows: what
+/// marks its own findings, so the list's row marks only the rest.
+pub(super) fn keys(cx: &Cx<'_>, list: &'static Row) -> Vec<String> {
+    (0..clearing::passes(cx.op, list).len())
+        .flat_map(|index| clearing::rows(cx.op, list, index))
+        .map(|slot| slot.key().to_owned())
+        .collect()
 }
 
 /// The list at `list`'s key path of the edited operation, its cards, the
@@ -165,19 +174,19 @@ fn card(
             });
             let slots = clearing::rows(cx.op, list, index);
             for slot in &slots {
+                // What is wrong at the pass's own field: the refusal of
+                // what was typed, and the findings at its path
+                // (`clearing_not_descending` at `clearing[1].tool`).
                 let refused_id = control_id(cx.op, slot.key()).with("refused");
-                let refused: Option<String> = ui.data(|d| d.get_temp(refused_id));
-                let tier = refused.as_ref().map(|_| Tier::Error);
+                let located = cx.located.problems_at(cx.strings, cx.op, slot.key());
+                let problems = refusal(ui, cx, refused_id, located);
                 let indent = slot.row.indented_among(slots.iter().map(|s| s.row));
                 ui.horizontal(|ui| {
                     nest(ui, indent);
-                    control(ui, cx, slot, &tools, tier, None, false, out)
+                    control(ui, cx, slot, &tools, &problems, false, false, out)
                 });
                 if matches!(slot.row.kind, dc_app::editor::FieldKind::ToolPicker) {
                     tool_note(ui, cx, slot);
-                }
-                if let Some(reason) = refused {
-                    row::message(ui, Tier::Error, &reason);
                 }
             }
         })

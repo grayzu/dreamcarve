@@ -14,6 +14,7 @@ pub(crate) mod chip;
 pub(crate) mod help;
 pub(crate) mod icon;
 pub(crate) mod op_glyph;
+pub(crate) mod problem;
 pub(crate) mod row;
 pub(crate) mod scroll;
 pub(crate) mod section;

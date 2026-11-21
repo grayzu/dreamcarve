@@ -13,11 +13,20 @@
 //!   or a sheet's ([`with_foot`], [`foot`]). It is the one place the eye
 //!   finds the help of what is being typed, without the pointer.
 //!
+//! A field with a problem (`dc_app::problems`; "Field problem") has no
+//! message under it, and a hover is not reachable by keyboard: while such
+//! a field has the keyboard the line shows the problem first, most severe
+//! first, each with its tier's glyph in the tier's colour, and then the
+//! field's ordinary help ([`problems`]). The line has its own room at the
+//! panel's foot, so a problem moves no row.
+//!
 //! A row's label offers its help ([`offer`], which `row::label` calls);
 //! the control drawn after it under the same name takes it ([`take`] for
 //! a text field, [`control`] for any other), so a panel names a field's
 //! help once, at its label.
 
+use dc_app::problems::Problems;
+use dc_job::Tier;
 use eframe::egui::{self, Id, Rect, Response, Sense, Stroke, TextStyle, Ui, UiBuilder};
 
 use crate::shell::focus::{self, Region};
@@ -28,6 +37,8 @@ use crate::widgets::icon::Icon;
 const PAD_PX: f32 = 10.0;
 /// The help line's side margin, px: the card's padding.
 const MARGIN_PX: f32 = theme::CARD_PADDING_PX;
+/// The gap between two lines of the foot, px.
+const LINE_GAP_PX: f32 = 6.0;
 
 /// Which panel a help line is the foot of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +66,21 @@ struct Shown {
     label: String,
     help: String,
     frame_nr: u64,
+}
+
+/// The problems of the control that has the keyboard, as its panel's
+/// foot shows them before its help.
+#[derive(Debug, Clone, PartialEq)]
+struct Wrong {
+    scope: Scope,
+    label: String,
+    /// Each problem's tier, its message, and its line (`Problem::line`).
+    lines: Vec<(Tier, String, String)>,
+    frame_nr: u64,
+}
+
+fn wrong_id() -> Id {
+    Id::unique("dc.help.wrong")
 }
 
 fn offered_id() -> Id {
@@ -122,6 +148,45 @@ pub(crate) fn focused(ui: &Ui, label: &str, help: &str) -> bool {
     new
 }
 
+/// Says the control named `label` has the keyboard this frame and has
+/// `problems`: its panel's foot shows them, most severe first, before the
+/// control's help. Whether the line is new, as for [`focused`]. Nothing
+/// is said of a control with no problem.
+pub(crate) fn problems(ui: &Ui, label: &str, problems: &Problems) -> bool {
+    if problems.is_empty() {
+        return false;
+    }
+    let wrong = Wrong {
+        scope: scope(ui),
+        label: label.to_owned(),
+        lines: problems
+            .iter()
+            .map(|p| (p.tier, p.message.clone(), p.line()))
+            .collect(),
+        frame_nr: ui.ctx().cumulative_frame_nr(),
+    };
+    let was = ui.data(|d| d.get_temp::<Wrong>(wrong_id()));
+    let new = was.is_none_or(|was| {
+        was.label != wrong.label
+            || was.scope != wrong.scope
+            || was.lines != wrong.lines
+            || was.frame_nr + 1 < wrong.frame_nr
+    });
+    if new {
+        ui.ctx().request_repaint();
+    }
+    ui.data_mut(|d| d.insert_temp(wrong_id(), wrong));
+    new
+}
+
+/// The problems to show at the foot of `scope`'s panel: those of the
+/// control that had the keyboard in the last frame or this one.
+fn wrong(ui: &Ui, scope: Scope) -> Option<Wrong> {
+    let frame_nr = ui.ctx().cumulative_frame_nr();
+    ui.data(|d| d.get_temp::<Wrong>(wrong_id()))
+        .filter(|wrong| wrong.scope == scope && wrong.frame_nr + 1 >= frame_nr)
+}
+
 /// Gives the control `response`, named `name`, the help its label
 /// offered: its tooltip, and the foot's line while it has the keyboard.
 /// A control whose label offered none is returned as it came.
@@ -150,7 +215,10 @@ pub(crate) fn settle(ui: &Ui, scope: Scope) {
     let frame_nr = ui.ctx().cumulative_frame_nr();
     let stale = ui
         .data(|d| d.get_temp::<Shown>(shown_id()))
-        .is_some_and(|shown| shown.scope == scope && shown.frame_nr + 1 == frame_nr);
+        .is_some_and(|shown| shown.scope == scope && shown.frame_nr + 1 == frame_nr)
+        || ui
+            .data(|d| d.get_temp::<Wrong>(wrong_id()))
+            .is_some_and(|wrong| wrong.scope == scope && wrong.frame_nr + 1 == frame_nr);
     if stale {
         ui.ctx().request_repaint();
     }
@@ -161,7 +229,7 @@ pub(crate) fn settle(ui: &Ui, scope: Scope) {
 fn galley(ui: &Ui, shown: &Shown, width: f32) -> std::sync::Arc<egui::Galley> {
     let palette = Palette::current(ui);
     let mut job = egui::text::LayoutJob::default();
-    job.wrap.max_width = (width - 2.0 * MARGIN_PX - theme::ICON_SMALL_PX - 8.0).max(40.0);
+    job.wrap.max_width = text_width(width);
     job.append(
         &shown.label,
         0.0,
@@ -183,41 +251,102 @@ fn galley(ui: &Ui, shown: &Shown, width: f32) -> std::sync::Arc<egui::Galley> {
     ui.painter().layout_job(job)
 }
 
+/// The room the foot's text has in a panel `width` px wide.
+fn text_width(width: f32) -> f32 {
+    (width - 2.0 * MARGIN_PX - theme::ICON_SMALL_PX - 8.0).max(40.0)
+}
+
+/// One line of the foot: its glyph, the glyph's colour, and its text.
+struct Line {
+    icon: Icon,
+    colour: egui::Color32,
+    galley: std::sync::Arc<egui::Galley>,
+}
+
+/// The foot's lines for `scope` in a panel `width` px wide: the focused
+/// control's problems, most severe first, each its tier's glyph and its
+/// message in the tier's text colour; then its help. Empty while no field
+/// of the panel has the keyboard.
+fn lines(ui: &Ui, scope: Scope, width: f32) -> Vec<Line> {
+    let palette = Palette::current(ui);
+    let mut lines = Vec::new();
+    if let Some(wrong) = wrong(ui, scope) {
+        for (tier, message, _) in &wrong.lines {
+            let (icon, colours) = crate::widgets::problem::look(palette, *tier);
+            lines.push(Line {
+                icon,
+                colour: colours.stroke,
+                galley: ui.painter().layout(
+                    message.clone(),
+                    TextStyle::Small.resolve(ui.style()),
+                    colours.text,
+                    text_width(width),
+                ),
+            });
+        }
+    }
+    if let Some(shown) = shown(ui, scope) {
+        lines.push(Line {
+            icon: Icon::Info,
+            colour: palette.text_secondary,
+            galley: galley(ui, &shown, width),
+        });
+    }
+    lines
+}
+
 /// How tall `scope`'s help line is in a panel `width` px wide; 0 while no
 /// field of the panel has the keyboard.
 pub(crate) fn foot_height(ui: &Ui, scope: Scope, width: f32) -> f32 {
-    shown(ui, scope).map_or(0.0, |shown| {
-        galley(ui, &shown, width).size().y + 2.0 * PAD_PX
-    })
+    let lines = lines(ui, scope, width);
+    if lines.is_empty() {
+        return 0.0;
+    }
+    #[allow(clippy::cast_precision_loss, reason = "a handful of lines")]
+    let gaps = LINE_GAP_PX * (lines.len() - 1) as f32;
+    lines
+        .iter()
+        .map(|line| line.galley.size().y.max(theme::ICON_SMALL_PX))
+        .sum::<f32>()
+        + gaps
+        + 2.0 * PAD_PX
 }
 
 /// Paints `scope`'s help line in `rect`, the foot [`foot_height`] gave
-/// room for: a hairline over it, the `info` glyph, the field's label and
-/// its help. One node for assistive tools, named with both.
+/// room for: a hairline over it, then the focused field's problems, each
+/// with its tier's glyph, and the `info` glyph, the field's label and
+/// its help. One node for assistive tools, named with all of it.
 pub(crate) fn foot(ui: &Ui, scope: Scope, rect: Rect) {
-    let Some(shown) = shown(ui, scope) else {
+    let lines = lines(ui, scope, rect.width());
+    if lines.is_empty() {
         return;
-    };
+    }
     let palette = Palette::current(ui);
-    let galley = galley(ui, &shown, rect.width());
     ui.painter().hline(
         (rect.left() + MARGIN_PX)..=(rect.right() - MARGIN_PX),
         rect.top() + 0.5,
         Stroke::new(1.0, palette.border_default),
     );
-    let glyph = Icon::Info.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
-    let top = rect.top() + PAD_PX;
-    ui.painter().galley(
-        egui::pos2(rect.left() + MARGIN_PX, top),
-        glyph,
-        palette.text_secondary,
-    );
-    ui.painter().galley(
-        egui::pos2(rect.left() + MARGIN_PX + theme::ICON_SMALL_PX + 8.0, top),
-        galley,
-        palette.text_secondary,
-    );
-    let name = format!("{}: {}", shown.label, shown.help);
+    let mut top = rect.top() + PAD_PX;
+    for line in lines {
+        let glyph = line.icon.galley(ui, theme::ICON_SMALL_PX, line.colour);
+        ui.painter()
+            .galley(egui::pos2(rect.left() + MARGIN_PX, top), glyph, line.colour);
+        let height = line.galley.size().y.max(theme::ICON_SMALL_PX);
+        ui.painter().galley(
+            egui::pos2(rect.left() + MARGIN_PX + theme::ICON_SMALL_PX + 8.0, top),
+            line.galley,
+            palette.text_secondary,
+        );
+        top += height + LINE_GAP_PX;
+    }
+    let mut name: Vec<String> = wrong(ui, scope)
+        .map(|wrong| wrong.lines.into_iter().map(|(_, _, line)| line).collect())
+        .unwrap_or_default();
+    if let Some(shown) = shown(ui, scope) {
+        name.push(format!("{}: {}", shown.label, shown.help));
+    }
+    let name = name.join("\n");
     ui.interact(
         rect,
         Id::unique(("dc.help.foot", scope as u8)),
