@@ -128,7 +128,7 @@ jobs:
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
       - name: "Install cargo-about"
-        uses: "taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39"
+        uses: "taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519"
         with:
           "tool": "cargo-about@0.9.2"
       - name: "Build cargo-about where no prebuilt binary exists"
