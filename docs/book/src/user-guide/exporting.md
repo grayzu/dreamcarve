@@ -145,6 +145,21 @@ zero with it, or fit the next bit and set Z zero only. Operations run in
 the order of the Operations list, and a tool that is needed again later
 gets a second program.
 
+With **One program for all tools** there is one file, and Program
+Details lists every tool it uses:
+
+![The plaque's Export step with Programs set to "One program for all tools" and Program Details open: one file, plaque.nc, 3 min 39 s, Z −12..15; under it "2 tools, 1 tool change", then T2 1/8 end mill, 45 s, Screw holes, Border and squiggle, and T1 1/4 end mill, 2 min 54 s, Panel, Square recess, Cut out; then "Before: fit T2 1/8 end mill and set work zero with it."; at the foot, "Ready to write 1 program."](figures/app/export-one-program.png)
+
+The file's line has the time and the Z range of the whole program. The
+line under it, *2 tools, 1 tool change*, says how many bits the program
+uses and how many times it stops for you to fit the next one. Then comes
+each tool in the order the program uses it, with its time and the
+operations it cuts. The tools' times add up to the file's. The time you
+take to change a bit is not counted. A tool that is needed again later
+is listed again, and is one more tool change. The line at the end says
+what to do before you start: fit the first bit and set work zero with
+it.
+
 ### Where they go
 
 **Destination** is the folder, beside the project file unless you
@@ -167,10 +182,14 @@ A sheet then shows what was written:
 
 - **The files**, in the order to run them, with each one's tool and
   time, and the **folder**, with a button to copy its path and **Show in
-  folder**.
+  folder**. One program for all tools says *2 tools, 1 tool change* as
+  its tool, and has a line under it for each tool, with what the tool
+  cuts and its time.
 - **Run instructions**: for each program, what to do before you start
   it, its extents and its time; then notes about your controller, such as
-  what the program does and does not do with tool length offsets.
+  what the program does and does not do with tool length offsets. One
+  program for all tools also lists each tool change, with the line of
+  the program it stops at and the bit to fit there.
 - **Done** closes the sheet. So do Escape and a click outside it.
 
 The Export step then says what was written, *2 programs written.*,
@@ -189,7 +208,9 @@ the card at its top.
 it. It has the project's name and the date, the post-processor, the
 stock and the origin, then each program in the order to run it, with its
 tool, its operations, what to do before it, its time, its extents and its
-Z range, and the export's warnings and notes.
+Z range, and the export's warnings and notes. One program for all tools
+has each of its tools in the order the program uses them, with the
+operations the tool cuts and its time.
 
 **File ▸ Save Setup Sheet…** saves it again for the last export.
 

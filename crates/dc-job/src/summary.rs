@@ -217,6 +217,74 @@ pub fn describe_estimated_time(estimate: &Estimate, settings: &EstimateConfig) -
     duration(estimated_s(estimate, settings))
 }
 
+/// The time of each of `shares`, the tool runs' shares of one program's
+/// estimate `total` ([`crate::RunSummary::estimate`]), in whole seconds
+/// that add up to `total`'s time as [`describe_estimated_time`] writes it.
+/// Each share rounded on its own can leave the list a second off its
+/// total (45.6 s and 173.6 s are 46 s and 174 s, and their sum 219 s), so
+/// each is rounded down and the seconds then missing go one each to the
+/// shares that lost the most, the earlier first. A share is within a
+/// second of its own time.
+#[must_use]
+pub fn share_seconds(shares: &[Estimate], total: &Estimate, settings: &EstimateConfig) -> Vec<u64> {
+    let exact: Vec<f64> = shares
+        .iter()
+        .map(|share| estimated_s(share, settings).max(0.0))
+        .collect();
+    let mut seconds: Vec<u64> = exact.iter().map(|s| whole_seconds(s.floor())).collect();
+    let whole = whole_seconds(estimated_s(total, settings).max(0.0).round());
+    let mut missing = whole.saturating_sub(seconds.iter().sum());
+    // The largest lost fraction first; a stable sort keeps run order
+    // among equals.
+    let mut order: Vec<usize> = (0..exact.len()).collect();
+    order.sort_by(|&a, &b| {
+        let lost = |k: usize| exact.get(k).map_or(0.0, |s| s - s.floor());
+        lost(b).total_cmp(&lost(a))
+    });
+    for k in order {
+        if missing == 0 {
+            break;
+        }
+        if let Some(share) = seconds.get_mut(k) {
+            *share += 1;
+            missing -= 1;
+        }
+    }
+    seconds
+}
+
+/// [`share_seconds`], each as [`describe_estimated_time`] writes a time:
+/// `46 s`, `2 min 53 s`.
+#[must_use]
+pub fn describe_share_times(
+    shares: &[Estimate],
+    total: &Estimate,
+    settings: &EstimateConfig,
+) -> Vec<String> {
+    share_seconds(shares, total, settings)
+        .into_iter()
+        .map(|seconds| {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a run time in seconds is far below 2^52"
+            )]
+            let seconds = seconds as f64;
+            duration(seconds)
+        })
+        .collect()
+}
+
+/// `seconds`, a whole number that is not negative, as an integer.
+fn whole_seconds(seconds: f64) -> u64 {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "rounded and not negative; a time beyond u64 seconds saturates"
+    )]
+    let whole = seconds as u64;
+    whole
+}
+
 /// `seconds`, rounded to the second, as `1 h 2 min 3 s`, `14 min 5 s` or
 /// `13 s`.
 fn duration(seconds: f64) -> String {
@@ -1263,4 +1331,56 @@ pub fn project_extents(
         centre: rect(&summary.program.extents)?,
         edge: rect(&summary.edge_extents)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An estimate that is `feed_s` of cutting and nothing else.
+    fn cutting(feed_s: f64) -> Estimate {
+        Estimate {
+            feed_s,
+            ..Estimate::default()
+        }
+    }
+
+    /// The times a program's entry lists for its tool runs add up to the
+    /// time it shows for the program. Two runs of 45.6 s and 173.6 s
+    /// make a 219.2 s program: rounded each on its own they read 46 s
+    /// and 2 min 54 s under 3 min 39 s, a second too many. The second
+    /// then missing after rounding down goes to the run that lost the
+    /// most, the earlier of two that lost the same.
+    #[test]
+    fn share_times_add_up_to_the_time_shown_for_the_program() {
+        let settings = EstimateConfig::default();
+        let shares = [cutting(45.6), cutting(173.6)];
+        let total = cutting(219.2);
+        assert_eq!(describe_estimated_time(&total, &settings), "3 min 39 s");
+        assert_eq!(share_seconds(&shares, &total, &settings), [46, 173]);
+        assert_eq!(
+            describe_share_times(&shares, &total, &settings),
+            ["46 s", "2 min 53 s"]
+        );
+
+        // The larger lost fraction first, whatever its place.
+        let shares = [cutting(10.2), cutting(20.7), cutting(30.4)];
+        let total = cutting(61.3);
+        assert_eq!(share_seconds(&shares, &total, &settings), [10, 21, 30]);
+
+        // Whole seconds are left as they are, and so is a sum a rounding
+        // error short of its total.
+        let shares = [cutting(10.0), cutting(20.0 - 1e-9)];
+        assert_eq!(share_seconds(&shares, &cutting(30.0), &settings), [10, 20]);
+
+        // The scale factor applies to each share as to the total.
+        let doubled = EstimateConfig {
+            scale_factor: 2.0,
+            ..EstimateConfig::default()
+        };
+        let shares = [cutting(45.6), cutting(173.6)];
+        let seconds = share_seconds(&shares, &cutting(219.2), &doubled);
+        assert_eq!(seconds, [91, 347]);
+        assert_eq!(seconds.iter().sum::<u64>(), 438, "219.2 s twice over");
+    }
 }

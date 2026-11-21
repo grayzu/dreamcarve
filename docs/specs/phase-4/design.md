@@ -122,7 +122,13 @@ pub fn generate_operation(project: &Project, op: &OperationId) -> Result<(Vec<Em
 pub fn finish(project: &Project, generated: &[EmitOp], split: ProgramSplit, date: &str, estimate: &EstimateConfig) -> Finished;
 pub struct Finished { pub findings: Findings, pub programs: Vec<ProgramSummary> }
 pub struct ProgramSummary { pub name: String, pub board: Board, pub tool: ToolId, pub operations: Vec<OperationId>,
+                            pub runs: Vec<RunSummary>,
                             pub extents: Extents, pub edge_extents: Extents, pub estimate: Option<Estimate>, pub before: String }
+/// One tool run of a program: one for a tool run's program, one per tool fitted for one program with
+/// tool changes. Its estimate is its share of the program's: the estimator's reading of the program up
+/// to each tool change, less the reading up to the one before, so the shares add up to the program's.
+pub struct RunSummary { pub tool: ToolId, pub number: u32, pub name: String, pub operations: Vec<OperationId>,
+                        pub estimate: Option<Estimate> }
 
 /// Program names as the CLI writes them (`<stem>-<k>-T<n>.<ext>`, per board with an Inlay).
 pub fn program_names(project: &Project, stem: &str, programs: &[Program]) -> Vec<String>;
@@ -564,7 +570,10 @@ The dialog is `dc-app::export::plan(project, split, board_filter)`: it
 refuses while any operation is pending or stale, then calls `dc_job::build`
 (a fresh full build, not the incremental results, so the dialog's bytes are
 `build`'s bytes), names the files with `program_names` and the chosen
-stem, and lists `ProgramSummary` rows. *Export* writes every program, the
+stem, and lists `ProgramSummary` rows, with a line per `RunSummary` under
+one program with tool changes (`Ready::tool`, `Ready::runs`; functional
+77), their times written to add up to the program's
+(`dc_job::summary::describe_share_times`). *Export* writes every program, the
 preview SVG when ticked, through `dreamcarve-shell::commit_all`, with the
 same marker check on an existing preview the CLI makes. The project file is
 not written. The result (functional 77a) is built from `dc_job::report`'s

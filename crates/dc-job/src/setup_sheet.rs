@@ -10,6 +10,9 @@
 //! order with its file, its tool, its operations, the step before it, its
 //! estimated time, its extents (tool centre and bit edge) and Z range,
 //! and its pauses; then the export's warnings and the controller notes.
+//! One program with tool changes counts its tools and tool changes and
+//! gives every tool in the order they run, each with its operations and
+//! its share of the time, as the app's Program Details do.
 //!
 //! Every fact comes from the export's own rows ([`ProgramSummary`]) and
 //! the CLI's text where the CLI has one (the step before, the notes, the
@@ -23,11 +26,12 @@
 
 use dc_gcode::format::format_number;
 use dc_gcode::{AxisRange, ProgramSplit};
-use dc_project::{OriginXy, OriginZ, Project, ToolKind, Units};
+use dc_project::{OperationId, OriginXy, OriginZ, Project, ToolId, ToolKind, Units};
 
 use crate::build::{Finding, ProgramSummary};
 use crate::summary::{
     EstimateConfig, board_heading, by_board, describe_estimated_time, describe_length,
+    describe_share_times,
 };
 
 /// A label of the sheet: one entry of the string table's `[setup_sheet]`
@@ -113,6 +117,13 @@ pub enum Label {
     Product,
     /// The operations row's label.
     Operations,
+    /// The label of the row that counts the tools of one program with
+    /// tool changes.
+    Tools,
+    /// The label of the row that counts its tool changes.
+    ToolChanges,
+    /// The label of one tool's share of such a program's estimated time.
+    RunTime,
     /// The step-before row's label.
     Before,
     /// The estimated time row's label.
@@ -177,6 +188,9 @@ impl Label {
         Self::Vendor,
         Self::Product,
         Self::Operations,
+        Self::Tools,
+        Self::ToolChanges,
+        Self::RunTime,
         Self::Before,
         Self::Time,
         Self::ExtentsCentre,
@@ -232,6 +246,9 @@ impl Label {
             Self::Vendor => "setup_sheet.vendor",
             Self::Product => "setup_sheet.product",
             Self::Operations => "setup_sheet.operations",
+            Self::Tools => "setup_sheet.tools",
+            Self::ToolChanges => "setup_sheet.tool_changes",
+            Self::RunTime => "setup_sheet.run_time",
             Self::Before => "setup_sheet.before",
             Self::Time => "setup_sheet.time",
             Self::ExtentsCentre => "setup_sheet.extents_centre",
@@ -545,14 +562,36 @@ fn programs(page: &mut Page<'_>, sheet: &Sheet<'_>) {
             &[("number", &k_in_board.to_string()), ("file", name)],
         );
         page.push(&format!("<section>\n<h3>{heading}</h3>\n<table>\n"));
-        tool(page, project, summary);
-        let operations: Vec<&str> = summary
-            .operations
-            .iter()
-            .filter_map(|id| project.operations.iter().find(|o| o.id() == id))
-            .map(dc_project::Operation::name)
-            .collect();
-        page.row(Label::Operations, &operations.join(", "));
+        if summary.runs.len() > 1 {
+            // One program with tool changes: every tool it uses, in the
+            // order they run, each with what it cuts and its share of the
+            // time, as the window's Program Details list them.
+            page.row(Label::Tools, &summary.tools().to_string());
+            page.row(Label::ToolChanges, &summary.tool_changes().to_string());
+            // Each tool's time, so that they add up to the program's.
+            let shares: Option<Vec<_>> = summary.runs.iter().map(|run| run.estimate).collect();
+            let times = shares
+                .zip(summary.estimate)
+                .map(|(shares, total)| describe_share_times(&shares, &total, &sheet.estimate));
+            for (k, run) in summary.runs.iter().enumerate() {
+                tool(page, project, &run.tool, run.number, &run.name);
+                page.row(
+                    Label::Operations,
+                    &operation_names(project, &run.operations),
+                );
+                if let Some(time) = times.as_ref().and_then(|times| times.get(k)) {
+                    page.row(Label::RunTime, time);
+                }
+            }
+        } else {
+            // The tool fitted before it starts, as the program names it.
+            let first = &program.first_tool;
+            tool(page, project, &first.id, first.number, &first.name);
+            page.row(
+                Label::Operations,
+                &operation_names(project, &summary.operations),
+            );
+        }
         page.row(Label::Before, &summary.before);
         // The CLI's time, or its line saying why there is none.
         let time = summary.estimate.map_or_else(
@@ -594,15 +633,25 @@ fn programs(page: &mut Page<'_>, sheet: &Sheet<'_>) {
     }
 }
 
-/// The rows of `summary`'s tool: the one fitted before it starts.
-fn tool(page: &mut Page<'_>, project: &Project, summary: &ProgramSummary) {
-    let first = &summary.program.first_tool;
+/// `ids`' operations by name, in order: `Panel, Cut out`.
+fn operation_names(project: &Project, ids: &[OperationId]) -> String {
+    ids.iter()
+        .filter_map(|id| project.operations.iter().find(|o| o.id() == id))
+        .map(dc_project::Operation::name)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The rows of tool `id`, written `T<number> <name>`: its type, its
+/// diameter, a V-bit's angle, and its vendor and product where it has
+/// them.
+fn tool(page: &mut Page<'_>, project: &Project, id: &ToolId, number: u32, name: &str) {
     let value = fill(
         &(page.text)(Label::ToolValue),
-        &[("number", &first.number.to_string()), ("name", &first.name)],
+        &[("number", &number.to_string()), ("name", name)],
     );
     page.row(Label::Tool, &value);
-    let Some(tool) = project.tools.iter().find(|t| t.id == first.id) else {
+    let Some(tool) = project.tools.iter().find(|t| &t.id == id) else {
         return;
     };
     let kind = match tool.cutter {

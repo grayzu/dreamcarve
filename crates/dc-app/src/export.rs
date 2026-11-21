@@ -21,15 +21,18 @@
 //!
 //! The plan is pure. The shell runs [`Request::run`] off the UI thread,
 //! names the files under the stem the user chose ([`Ready::files`]), and
-//! writes them every one or none. The result ([`Ready::result`],
-//! capability 77a) shows the CLI's report in three parts, and
-//! [`Ready::setup_sheet`] renders the setup sheet (capability 77b).
+//! writes them every one or none. A program's entry names its tool
+//! ([`Ready::tool`]), and one program with tool changes lists every tool
+//! run under it with its operations and its time ([`Ready::runs`]). The
+//! result ([`Ready::result`], capability 77a) shows the CLI's report in
+//! three parts, and [`Ready::setup_sheet`] renders the setup sheet
+//! (capability 77b).
 
 use std::path::Path;
 
 use dc_job::report::{Line, Part, Written, export_report, export_report_lines};
 use dc_job::setup_sheet::{self, Label};
-use dc_job::summary::{by_board, describe_estimated_time};
+use dc_job::summary::{by_board, describe_estimated_time, describe_share_times};
 use dc_job::{Built, EmitOp, EstimateConfig, Estimates, Findings, ProgramSplit, ProgramSummary};
 use dc_project::{Board, Project};
 
@@ -292,6 +295,83 @@ impl Ready {
         Some(describe_estimated_time(&estimate, &self.options.estimate))
     }
 
+    /// Program `k`'s tool, as its entry names it (capability 77). A tool
+    /// run's program names the tool it starts with, its one tool: `T2 1/8
+    /// end mill`. One program with tool changes counts its tools and the
+    /// times it stops for the next, `2 tools, 1 tool change`, and its
+    /// entry lists each under it ([`Ready::runs`]): naming the first tool
+    /// alone made a two-tool job read as a one-tool job (the maintainer's
+    /// smoke test, 2026-11-20).
+    #[must_use]
+    pub fn tool(&self, k: usize, strings: &Strings) -> String {
+        let Some(summary) = self.programs.get(k) else {
+            return String::new();
+        };
+        if summary.runs.len() < 2 {
+            let first = &summary.program.first_tool;
+            return tool_name(strings, first.number, &first.name);
+        }
+        strings.fmt(
+            StrKey::ExportRuns,
+            &[
+                ("tools", &summary.tools().to_string()),
+                ("changes", &summary.tool_changes().to_string()),
+            ],
+        )
+    }
+
+    /// Program `k`'s tool runs, in the order they are cut, when it has
+    /// more than one: the lines under one program with tool changes
+    /// (capability 77). Each has its tool, the operations it cuts by name,
+    /// as a tool run's own program lists them, and its share of the
+    /// program's estimated time (`dc_job::RunSummary::estimate`), written
+    /// so that the runs' times add up to the program's
+    /// (`dc_job::summary::describe_share_times`), or a dash each when the
+    /// program has no estimate to divide. Empty for a program of one tool
+    /// run, whose entry says it all.
+    #[must_use]
+    pub fn runs(&self, k: usize, strings: &Strings) -> Vec<ToolRun> {
+        let Some(summary) = self.programs.get(k).filter(|p| p.runs.len() > 1) else {
+            return Vec::new();
+        };
+        let shares: Option<Vec<dc_job::Estimate>> =
+            summary.runs.iter().map(|run| run.estimate).collect();
+        let times = shares
+            .zip(summary.estimate)
+            .map(|(shares, total)| describe_share_times(&shares, &total, &self.options.estimate));
+        summary
+            .runs
+            .iter()
+            .enumerate()
+            .map(|(at, run)| ToolRun {
+                tool: tool_name(strings, run.number, &run.name),
+                operations: self.operation_names(&run.operations),
+                time: times
+                    .as_ref()
+                    .and_then(|times| times.get(at).cloned())
+                    .unwrap_or_else(|| strings.get(StrKey::ExportNotAvailable).to_owned()),
+            })
+            .collect()
+    }
+
+    /// Program `k`'s operations by name, in cut order: `Panel, Cut out`.
+    #[must_use]
+    pub fn operations(&self, k: usize) -> String {
+        self.programs
+            .get(k)
+            .map(|summary| self.operation_names(&summary.operations))
+            .unwrap_or_default()
+    }
+
+    /// `ids`' operations by name, in order.
+    fn operation_names(&self, ids: &[dc_project::OperationId]) -> String {
+        ids.iter()
+            .filter_map(|id| self.project.operations.iter().find(|o| o.id() == id))
+            .map(dc_project::Operation::name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// The result of writing these programs as `names` into `folder`
     /// (capability 77a): the CLI's report, every line of it in one of
     /// three parts. Built from the report's tagged lines
@@ -377,14 +457,9 @@ impl Ready {
                     number: if self.by_board { k_in_board } else { k + 1 },
                     board: heading,
                     name: name.clone(),
-                    tool: strings.fmt(
-                        StrKey::ExportTool,
-                        &[
-                            ("number", &program.first_tool.number.to_string()),
-                            ("name", &program.first_tool.name),
-                        ],
-                    ),
+                    tool: self.tool(k, strings),
                     time: self.estimate(k).unwrap_or_else(|| not_available.to_owned()),
+                    runs: self.runs(k, strings),
                 }
             })
             .collect();
@@ -457,6 +532,9 @@ impl ExportResult {
                 row.tool.clone(),
                 row.time.clone(),
             ]);
+            for run in &row.runs {
+                files.extend([run.tool.clone(), run.operations.clone(), run.time.clone()]);
+            }
         }
         files.extend(self.files.repeated_boards.iter().cloned());
         files.extend(self.files.totals.iter().cloned());
@@ -499,10 +577,36 @@ pub struct FileRow {
     pub board: Option<String>,
     /// Its file name.
     pub name: String,
-    /// Its tool: `T2 1/8 end mill`.
+    /// Its tool, `T2 1/8 end mill`, or for one program with tool changes
+    /// how many it uses: `2 tools, 1 tool change` ([`Ready::tool`]).
     pub tool: String,
     /// Its estimated time as the CLI writes it, or a dash.
     pub time: String,
+    /// Its tool runs, when it has more than one: the lines under it
+    /// ([`Ready::runs`]).
+    pub runs: Vec<ToolRun>,
+}
+
+/// One tool run of one program with tool changes, as the program's entry
+/// lists it under its file (capability 77): the Export step's Program
+/// Details and the result's Files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolRun {
+    /// Its tool: `T2 1/8 end mill`.
+    pub tool: String,
+    /// The operations it cuts, by name, in cut order: `Panel, Cut out`.
+    pub operations: String,
+    /// Its share of the program's estimated time, as the CLI writes a
+    /// time, or a dash.
+    pub time: String,
+}
+
+/// A tool as an entry names it: `T2 1/8 end mill`.
+fn tool_name(strings: &Strings, number: u32, name: &str) -> String {
+    strings.fmt(
+        StrKey::ExportTool,
+        &[("number", &number.to_string()), ("name", name)],
+    )
 }
 
 /// The result's Files part.
@@ -589,6 +693,9 @@ pub fn setup_sheet_text(strings: &Strings, label: Label) -> String {
         Label::Vendor => StrKey::SetupSheetVendor,
         Label::Product => StrKey::SetupSheetProduct,
         Label::Operations => StrKey::SetupSheetOperations,
+        Label::Tools => StrKey::SetupSheetTools,
+        Label::ToolChanges => StrKey::SetupSheetToolChanges,
+        Label::RunTime => StrKey::SetupSheetRunTime,
         Label::Before => StrKey::SetupSheetBefore,
         Label::Time => StrKey::SetupSheetTime,
         Label::ExtentsCentre => StrKey::SetupSheetExtentsCentre,

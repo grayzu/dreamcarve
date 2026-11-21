@@ -6,8 +6,8 @@
 //! by any means keeps what was typed (capability 52), the Tool Library's
 //! columns and size, the Inlay's Band margin and Board thickness rows,
 //! help for every field, a stepover's distance, the Export step's one
-//! Programs control, its button and its result sheet, and a quote in a
-//! name.
+//! Programs control, every tool of one program for all tools, the step's
+//! button and its result sheet, and a quote in a name.
 
 #![allow(
     clippy::panic,
@@ -773,6 +773,204 @@ fn programs_is_one_control_that_sets_the_project() {
         1,
         "one place only"
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The label `label` whose rectangle is inside `within`, in window points.
+fn label_in(h: &Harness<'_, Shell>, within: egui::Rect, label: &str) -> egui::Rect {
+    let found: Vec<egui::Rect> = h
+        .query_all_by_label(label)
+        .map(|node| node.rect())
+        .filter(|rect| within.contains_rect(*rect))
+        .collect();
+    assert_eq!(found.len(), 1, "one `{label}` in {within:?}: {found:?}");
+    found[0]
+}
+
+/// The maintainer's follow-up to the smoke test (capabilities 77, 77a and
+/// 77b): with **Programs** set to *One program for all tools* the
+/// plaque's one file was listed with its first tool, `T2 1/8 end mill`,
+/// so a two-tool job looked like a one-tool job. *Program Details* now
+/// says *2 tools, 1 tool change* on the file's entry and lists each tool
+/// under it, in the order they run, indented, with what it cuts and its
+/// time; the times stand under the file's own and add up to it. The
+/// result sheet's table does the same under the file's row, its run
+/// instructions name the tool the program stops for, and the setup sheet
+/// it saves lists both tools.
+#[test]
+fn one_program_lists_every_tool_under_its_file() {
+    let (mut h, dir, dialogs) = plaque("one-program-runs");
+    common::settle(&mut h);
+    go_to(&mut h, "Export");
+    common::settle(&mut h);
+    h.get_by_role_and_label(Role::ComboBox, "Programs").click();
+    h.run();
+    h.query_all_by_label("One program for all tools")
+        .last()
+        .expect("the choice")
+        .click();
+    h.run();
+    common::settle(&mut h);
+    h.get_by_label("Program Details").click();
+    h.run();
+
+    const TOOLS: [(&str, &str, &str); 2] = [
+        (
+            "T2 1/8 end mill",
+            "Screw holes, Border and squiggle",
+            "45 s",
+        ),
+        (
+            "T1 1/4 end mill",
+            "Panel, Square recess, Cut out",
+            "2 min 54 s",
+        ),
+    ];
+    const TOTAL: &str = "3 min 39 s";
+    const COUNT: &str = "2 tools, 1 tool change";
+
+    // Program Details: the file, how many tools, then each tool run.
+    let panel = h.state().layout().step_panel.expect("the step panel");
+    let file = label_in(&h, panel, "plaque.nc");
+    let count = label_in(&h, panel, COUNT);
+    assert!(count.top() >= file.bottom() - 1.0, "under the file's line");
+    // The file's own time is on its line; the readiness card shows the
+    // same number, higher up.
+    let total = h
+        .query_all_by_label(TOTAL)
+        .map(|node| node.rect())
+        .find(|rect| (rect.center().y - file.center().y).abs() < 4.0)
+        .expect("the program's time on the file's line");
+    let mut above = count.bottom();
+    for (tool, operations, time) in TOOLS {
+        let tool_at = label_in(&h, panel, tool);
+        let cuts = label_in(&h, panel, operations);
+        let time_at = label_in(&h, panel, time);
+        assert!(tool_at.top() >= above - 1.0, "{tool}: in run order");
+        assert!(
+            tool_at.left() > count.left() + 4.0,
+            "{tool}: indented under the file's entry"
+        );
+        assert!(
+            (time_at.center().y - tool_at.center().y).abs() < 2.0,
+            "{tool}: its time is on its line"
+        );
+        assert!(
+            (time_at.right() - total.right()).abs() < 0.5,
+            "{tool}: its time stands under the file's: {time_at:?} under {total:?}"
+        );
+        assert!(
+            cuts.top() >= tool_at.bottom() - 1.0 && (cuts.left() - tool_at.left()).abs() < 0.5,
+            "{tool}: what it cuts is under it"
+        );
+        above = cuts.bottom();
+    }
+    let before = h
+        .query_all_by_label_contains("Before: fit T2 1/8 end mill")
+        .map(|node| node.rect())
+        .find(|rect| panel.contains_rect(*rect))
+        .expect("the step before the program");
+    assert!(before.top() >= above - 1.0, "after the tool runs");
+    assert!(
+        h.query_by_label_contains("T2 1/8 end mill · ").is_none(),
+        "the file is not listed with its first tool alone"
+    );
+
+    // One program per tool: a file has one tool run, so no line under it.
+    command_key(&h, egui::Key::Z);
+    h.run();
+    common::settle(&mut h);
+    assert!(h.query_by_label_contains("tool change").is_none());
+    for (tool, operations, _) in TOOLS {
+        let line = format!("{tool} · {operations}");
+        label_in(&h, panel, &line);
+        assert!(h.query_by_label(tool).is_none(), "{tool}: no run line");
+    }
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::Z,
+    );
+    h.run();
+    common::settle(&mut h);
+    label_in(&h, panel, COUNT);
+
+    // The result sheet's table: the tools under the file, each on a
+    // line of its own with what it cuts and its time in the Time column.
+    h.get_by_role_and_label(Role::Button, "Export G-code")
+        .click();
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    let rect_of = |label: &str| {
+        let found: Vec<egui::Rect> = sheet
+            .query_all_by_label(label)
+            .map(|node| node.rect())
+            .collect();
+        assert_eq!(found.len(), 1, "one `{label}` in the sheet: {found:?}");
+        found[0]
+    };
+    assert!(sheet.query_by_label("1 program written").is_some());
+    let file = rect_of("plaque.nc");
+    let count = rect_of(COUNT);
+    let total = rect_of(TOTAL);
+    assert!((count.center().y - file.center().y).abs() < 2.0);
+    let mut above = file.bottom();
+    let mut tool_lefts = Vec::new();
+    for (tool, operations, time) in TOOLS {
+        let tool_at = rect_of(tool);
+        let cuts = rect_of(operations);
+        let time_at = rect_of(time);
+        assert!(tool_at.top() >= above - 1.0, "{tool}: in run order");
+        assert!(
+            tool_at.left() > file.left() + 4.0 && tool_at.left() < count.left(),
+            "{tool}: indented under the file's name"
+        );
+        assert!(
+            (time_at.right() - total.right()).abs() < 0.5
+                && (time_at.center().y - tool_at.center().y).abs() < 2.0,
+            "{tool}: its time in the Time column, on its line"
+        );
+        assert!(
+            cuts.left() >= tool_at.right()
+                && cuts.right() <= time_at.left()
+                && (cuts.center().y - tool_at.center().y).abs() < 2.0,
+            "{tool}: what it cuts, between its name and its time"
+        );
+        tool_lefts.push((tool_at.left(), cuts.left()));
+        above = tool_at.bottom();
+    }
+    assert!(
+        (tool_lefts[0].0 - tool_lefts[1].0).abs() < 0.5
+            && (tool_lefts[0].1 - tool_lefts[1].1).abs() < 0.5,
+        "the runs' tools in one column and what they cut in another: {tool_lefts:?}"
+    );
+    // The run instructions name the tool the program stops for.
+    h.get_by_label("Run instructions").click();
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet
+            .query_by_label_contains("Before you start: fit T2 1/8 end mill")
+            .is_some()
+    );
+    assert!(
+        sheet
+            .query_by_label_contains("Fit T1 1/4 end mill. Set Z zero, then resume.")
+            .is_some(),
+        "the tool change, with its line"
+    );
+    // The setup sheet it saves lists both tools, with their times.
+    let saved = dir.join("plaque-setup.html");
+    dialogs.answer(&saved);
+    h.get_by_label("Save setup sheet…").scroll_to_me();
+    h.run();
+    h.get_by_label("Save setup sheet…").click();
+    h.run();
+    let page = std::fs::read_to_string(&saved).expect("the setup sheet is written");
+    for (tool, _, time) in TOOLS {
+        assert!(page.contains(&format!("<td>{tool}</td>")), "{tool}");
+        assert!(page.contains(&format!("<td>{time}</td>")), "{tool}: {time}");
+    }
+    assert!(dir.join("plaque.nc").is_file());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

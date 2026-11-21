@@ -18,7 +18,8 @@
 //! [`plan`] draws the step's lower half: the program split (where the
 //! project cuts with several tools), the boards, *Program Details* (a
 //! disclosure, closed until the user opens it, holding one row per
-//! program with the step before it), and the destination with *Choose…*
+//! program with the step before it, and under one program for all tools
+//! a line per tool run), and the destination with *Choose…*
 //! and the names it will write. The post-processor is the step's own
 //! Post-processor group ([`crate::panels::project::output`]). The step
 //! lists no warnings (the status bar counts them) and no estimated total
@@ -36,7 +37,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use dc_app::export::{Boards, ExportResult, Options, Ready};
+use dc_app::export::{Boards, ExportResult, Options, Ready, ToolRun};
 use dc_app::problems::Problems;
 use dc_app::project as project_model;
 use dc_app::status::counted;
@@ -61,6 +62,12 @@ pub(crate) const POLL: Duration = Duration::from_millis(50);
 const DETAILS: &str = "export.details";
 /// The gutter a program's number stands in, px.
 const NUMBER_PX: f32 = 12.0;
+/// How far a tool run's lines stand in from its program's, px.
+const RUN_INDENT_PX: i8 = 12;
+/// The room added between two tool runs, and after the last, px.
+const RUN_GAP_PX: f32 = 2.0;
+/// The gap between a program's estimate and its Z range, px.
+const FACT_GAP_PX: f32 = 12.0;
 
 /// What the Export step asks the shell for.
 #[derive(Debug, Clone, PartialEq)]
@@ -856,7 +863,10 @@ fn boards(ui: &mut Ui, strings: &Strings, export: &Export, out: &mut Vec<Action>
 /// The programs: one striped row per program, grouped by board with an
 /// Inlay: its number and file, its estimate and Z range on the right;
 /// its tool and operations under them; then the step before it as
-/// `export` prints it: *Program Details*' body.
+/// `export` prints it: *Program Details*' body. One program for all
+/// tools says how many tools and tool changes it has where a tool run's
+/// program names its tool, and lists each tool run under that
+/// ([`tool_run`]).
 fn programs(ui: &mut Ui, app: &App, ready: &Ready, stem: &str) {
     let strings = app.strings();
     let palette = Palette::current(ui);
@@ -880,19 +890,8 @@ fn programs(ui: &mut Ui, app: &App, ready: &Ready, stem: &str) {
         }
         k_in_board += 1;
         let number = if ready.by_board { k_in_board } else { k + 1 };
-        let tool = strings.fmt(
-            StrKey::ExportTool,
-            &[
-                ("number", &program.first_tool.number.to_string()),
-                ("name", &program.first_tool.name),
-            ],
-        );
-        let operations: Vec<&str> = summary
-            .operations
-            .iter()
-            .filter_map(|id| project.operations.iter().find(|o| o.id() == id))
-            .map(dc_project::Operation::name)
-            .collect();
+        let tool = ready.tool(k, strings);
+        let runs = ready.runs(k, strings);
         let estimate = ready
             .estimate(k)
             .unwrap_or_else(|| not_available.to_owned());
@@ -936,7 +935,7 @@ fn programs(ui: &mut Ui, app: &App, ready: &Ready, stem: &str) {
                             egui::vec2(ui.available_width(), line),
                             Layout::right_to_left(Align::Center),
                             |ui| {
-                                ui.spacing_mut().item_spacing.x = 12.0;
+                                ui.spacing_mut().item_spacing.x = FACT_GAP_PX;
                                 text(ui, &z, TextStyle::Body, palette.text_secondary)
                                     .on_hover_text(strings.get(StrKey::ExportColumnZ));
                                 text(ui, &estimate, TextStyle::Body, palette.text_primary)
@@ -947,11 +946,44 @@ fn programs(ui: &mut Ui, app: &App, ready: &Ready, stem: &str) {
                                 });
                             },
                         );
-                        let what = strings.fmt(
-                            StrKey::ExportUses,
-                            &[("tool", &tool), ("operations", &operations.join(", "))],
-                        );
-                        wrapped(ui, &what, TextStyle::Body, palette.text_primary);
+                        if runs.is_empty() {
+                            let what = strings.fmt(
+                                StrKey::ExportUses,
+                                &[("tool", &tool), ("operations", &ready.operations(k))],
+                            );
+                            wrapped(ui, &what, TextStyle::Body, palette.text_primary);
+                        } else {
+                            // How many tools, then each of them: the room
+                            // the Z range takes on the file's line is kept
+                            // on a run's, so its time stands under the
+                            // file's.
+                            wrapped(ui, &tool, TextStyle::Body, palette.text_primary);
+                            let z_px = ui
+                                .painter()
+                                .layout_no_wrap(
+                                    z.clone(),
+                                    TextStyle::Body.resolve(ui.style()),
+                                    palette.text_secondary,
+                                )
+                                .size()
+                                .x;
+                            egui::Frame::NONE
+                                .inner_margin(egui::Margin {
+                                    left: RUN_INDENT_PX,
+                                    ..egui::Margin::ZERO
+                                })
+                                .show(ui, |ui| {
+                                    for (at, run) in runs.iter().enumerate() {
+                                        // A little air between two tools,
+                                        // so each reads with what it cuts.
+                                        if at > 0 {
+                                            ui.add_space(RUN_GAP_PX);
+                                        }
+                                        tool_run(ui, run, z_px, line);
+                                    }
+                                });
+                            ui.add_space(RUN_GAP_PX);
+                        }
                         let before =
                             strings.fmt(StrKey::ExportBefore, &[("before", &summary.before)]);
                         wrapped(ui, &before, TextStyle::Small, palette.text_secondary);
@@ -959,6 +991,32 @@ fn programs(ui: &mut Ui, app: &App, ready: &Ready, stem: &str) {
                 });
             });
     }
+}
+
+/// One tool run of one program for all tools, under the program's own
+/// lines: its tool, with its time at the right, `z_px` and the facts' gap
+/// in from the edge so that it stands under the program's time; then the
+/// operations it cuts. `line` is one line's height.
+fn tool_run(ui: &mut Ui, run: &ToolRun, z_px: f32, line: f32) {
+    let palette = Palette::current(ui);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), line),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = FACT_GAP_PX;
+            ui.add_space(z_px + FACT_GAP_PX);
+            text(ui, &run.time, TextStyle::Body, palette.text_primary);
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                text(ui, &run.tool, TextStyle::Body, palette.text_primary).on_hover_text(&run.tool);
+            });
+        },
+    );
+    wrapped(
+        ui,
+        &run.operations,
+        TextStyle::Small,
+        palette.text_secondary,
+    );
 }
 
 /// `text` wrapped to the width.

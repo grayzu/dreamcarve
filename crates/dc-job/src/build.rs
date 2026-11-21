@@ -31,8 +31,11 @@ use dc_cam::{
     generate_engrave, generate_inlay_board, generate_photo, generate_pocket, generate_profile,
     generate_vcarve, order, placed_tabs,
 };
+use dc_gcode::parse::{CycleModel, parse_program_with};
 use dc_gcode::{EmitOp, Estimate, ExportWarning, Extents, Program, ProgramSplit, emit_programs};
-use dc_project::{Board, Operation, OperationId, Project, Severity, ToolChangeMode, validate};
+use dc_project::{
+    Board, Operation, OperationId, Project, Severity, ToolChangeMode, ToolId, validate,
+};
 
 use crate::names::program_names;
 use crate::summary::{
@@ -620,6 +623,10 @@ pub struct ProgramSummary {
     pub program: Program,
     /// The operations it cuts, in cut order, each once.
     pub operations: Vec<OperationId>,
+    /// Its tool runs, in the order they are cut (#95): one for a tool
+    /// run's program, and one per tool fitted for one program with tool
+    /// changes, which stops between them.
+    pub runs: Vec<RunSummary>,
     /// Its extents widened in X and Y by the radius of its largest tool:
     /// where the cutter's edge reaches, which clamps must stay outside
     /// (#62).
@@ -634,10 +641,56 @@ pub struct ProgramSummary {
     pub before: String,
 }
 
+impl ProgramSummary {
+    /// How many tools it cuts with: a tool that is fitted again later is
+    /// counted once.
+    #[must_use]
+    pub fn tools(&self) -> usize {
+        self.runs
+            .iter()
+            .enumerate()
+            .filter(|(k, run)| !self.runs.iter().take(*k).any(|r| r.tool == run.tool))
+            .count()
+    }
+
+    /// How many times it stops for the next tool: once between two tool
+    /// runs.
+    #[must_use]
+    pub fn tool_changes(&self) -> usize {
+        self.runs.len().saturating_sub(1)
+    }
+}
+
+/// One tool run of a program (#95): what one tool cuts before the program
+/// ends or stops for the next. A shell lists a program's runs so one
+/// program with tool changes shows every tool it uses, not only the one it
+/// starts with (functional spec, capability 77).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunSummary {
+    /// The tool's id, to find it in the project's tool list.
+    pub tool: ToolId,
+    /// Its number, `T<n>`, as the program's tool change writes it: the
+    /// tool's `number` when set, otherwise its 1-based place in the
+    /// project's tool list (capability 21a).
+    pub number: u32,
+    /// Its name, as the project has it.
+    pub name: String,
+    /// The operations the run cuts, in cut order, each once. A carve
+    /// whose clearing pass uses another tool is in both tools' runs.
+    pub operations: Vec<OperationId>,
+    /// The run's share of the program's cycle-time estimate, when the
+    /// program has one (functional spec, capability 30): what the
+    /// estimator reads between the tool change that starts the run and
+    /// the next, so the runs' shares add up to the program's estimate.
+    /// The tool change is the stop of the run it starts and has no time.
+    pub estimate: Option<Estimate>,
+}
+
 /// The project-level half of [`build`], once every enabled operation has
 /// its runs (`generated`, in operation order): the order and tab checks,
 /// then emission for the programs and their export warnings, then each
-/// program's name, operations, extents, edge extents and estimate, with
+/// program's name, operations, tool runs, extents, edge extents and
+/// estimate, with
 /// `estimate` (the user's `[estimate]` settings) applied to the printed
 /// lines. Pure: `date` is the caller's.
 #[must_use]
@@ -660,9 +713,9 @@ pub fn finish(
 
 /// The rows of `programs`, emitted from `generated` (every enabled
 /// operation's runs, or one board's) with `split`: each program's name
-/// under the project's name, operations, edge extents, estimate with the
-/// user's `estimate` settings and the step before it, as [`finish`] lists
-/// them; and the `Estimated total time: …` line when there are several.
+/// under the project's name, operations, tool runs with each one's share
+/// of its estimate, edge extents, estimate with the user's `estimate`
+/// settings and the step before it, as [`finish`] lists them; and the `Estimated total time: …` line when there are several.
 /// The second half of [`finish`], for a shell that built the programs
 /// with [`build`] itself (the app's export, which builds afresh).
 #[must_use]
@@ -675,7 +728,7 @@ pub fn summarize(
 ) -> (Vec<ProgramSummary>, Option<String>) {
     let estimates = Estimates::new(project, &programs, *estimate);
     let names = program_names(project, &project.name, &programs);
-    let groups = program_operations(project, generated, split);
+    let mut groups = program_runs(project, generated, split).into_iter();
     let boards = by_board(project);
     let single = programs.len() == 1 && !boards;
     let mut board = None;
@@ -694,9 +747,21 @@ pub fn summarize(
             } else {
                 tool_radius_mm(project, &program)
             };
+            let mut runs = groups.next().unwrap_or_default();
+            let shares = run_estimates(project, &program, estimates.estimate(k), runs.len());
+            for (run, share) in runs.iter_mut().zip(shares) {
+                run.estimate = share;
+            }
+            let mut operations: Vec<OperationId> = Vec::new();
+            for id in runs.iter().flat_map(|run| &run.operations) {
+                if !operations.contains(id) {
+                    operations.push(id.clone());
+                }
+            }
             let summary = ProgramSummary {
                 name: names.get(k).cloned().unwrap_or_default(),
-                operations: groups.get(k).cloned().unwrap_or_default(),
+                operations,
+                runs,
                 edge_extents: edge_extents(&program.extents, radius_mm),
                 estimate: estimates.estimate(k),
                 estimate_line: estimates.program_line(k),
@@ -710,43 +775,153 @@ pub fn summarize(
     (programs, estimates.total_line())
 }
 
-/// The operations of each program, as [`dc_gcode::emit_programs`] divides
-/// the runs: each board's runs in order (#498), as one program with `M6`
-/// tool changes or one per run of consecutive entries with one tool
+/// The tool runs of each program, without their estimates, as
+/// [`dc_gcode::emit_programs`] divides the runs: each board's entries in
+/// order (#498), a tool run being the consecutive entries with one tool,
+/// as one program with `M6` tool changes or one program per tool run
 /// (#95).
-fn program_operations(
+fn program_runs(
     project: &Project,
     generated: &[EmitOp],
     split: ProgramSplit,
-) -> Vec<Vec<OperationId>> {
+) -> Vec<Vec<RunSummary>> {
     let mode = match split {
         ProgramSplit::ProjectDefault => project.post_processor.tool_change_mode,
         ProgramSplit::OneProgram => ToolChangeMode::M6,
         ProgramSplit::ProgramPerTool => ToolChangeMode::SeparatePrograms,
     };
-    let mut groups = Vec::new();
+    let mut programs = Vec::new();
     for board in [Board::Female, Board::Male] {
         let on_board: Vec<&EmitOp> = generated.iter().filter(|e| e.board == board).collect();
         if on_board.is_empty() {
             continue;
         }
-        let runs: Vec<&[&EmitOp]> = match mode {
-            ToolChangeMode::M6 => vec![on_board.as_slice()],
-            ToolChangeMode::SeparatePrograms => {
-                on_board.chunk_by(|a, b| a.tool.id == b.tool.id).collect()
-            }
-        };
-        for run in runs {
-            let mut ops: Vec<OperationId> = Vec::new();
-            for entry in run {
-                if !ops.contains(entry.op.id()) {
-                    ops.push(entry.op.id().clone());
+        let runs: Vec<RunSummary> = on_board
+            .chunk_by(|a, b| a.tool.id == b.tool.id)
+            .filter_map(|entries| {
+                let tool = &entries.first()?.tool;
+                let mut operations: Vec<OperationId> = Vec::new();
+                for entry in entries {
+                    if !operations.contains(entry.op.id()) {
+                        operations.push(entry.op.id().clone());
+                    }
                 }
+                Some(RunSummary {
+                    tool: tool.id.clone(),
+                    number: tool_number(project, tool),
+                    name: tool.name.clone(),
+                    operations,
+                    estimate: None,
+                })
+            })
+            .collect();
+        match mode {
+            ToolChangeMode::M6 => programs.push(runs),
+            ToolChangeMode::SeparatePrograms => {
+                programs.extend(runs.into_iter().map(|run| vec![run]));
             }
-            groups.push(ops);
         }
     }
-    groups
+    programs
+}
+
+/// `tool`'s `T` number as a program writes it (capability 21a): its
+/// `number` when set, otherwise its 1-based place in `project`'s tool
+/// list; 0 for a tool the project does not have, which no program is
+/// emitted with.
+fn tool_number(project: &Project, tool: &dc_project::Tool) -> u32 {
+    tool.number.unwrap_or_else(|| {
+        project
+            .tools
+            .iter()
+            .position(|t| t.id == tool.id)
+            .and_then(|index| u32::try_from(index + 1).ok())
+            .unwrap_or(0)
+    })
+}
+
+/// Each tool run's share of `program`'s estimate `total`, for its `runs`
+/// tool runs in order. A program of one run has the whole of it. One
+/// program with tool changes is read by the estimator up to each `M6`
+/// line in turn, the way the whole program was read for `total`, and a
+/// run's share is what the reading gained since the tool change before
+/// it: the shares add up to `total`, and the `M6` stop is counted in the
+/// run it starts. `None` for every run when the program has no estimate,
+/// or does not stop for a tool exactly once between its runs.
+fn run_estimates(
+    project: &Project,
+    program: &Program,
+    total: Option<Estimate>,
+    runs: usize,
+) -> Vec<Option<Estimate>> {
+    if runs < 2 {
+        return vec![total; runs];
+    }
+    shares(project, program, total, runs).unwrap_or_else(|| vec![None; runs])
+}
+
+/// [`run_estimates`] for a program of two runs or more, when it can be
+/// divided.
+fn shares(
+    project: &Project,
+    program: &Program,
+    total: Option<Estimate>,
+    runs: usize,
+) -> Option<Vec<Option<Estimate>>> {
+    let total = total?;
+    let post = project.post_processor.resolve().ok()?;
+    // As the estimator reads the program.
+    let model = CycleModel {
+        units: program.extents.units,
+        ..CycleModel::of(&post)
+    };
+    let changes: Vec<usize> = parse_program_with(&program.text, &model)
+        .ok()?
+        .iter()
+        .filter(|block| block.has('M', TOOL_CHANGE_CODE))
+        .map(|block| block.line)
+        .collect();
+    if changes.len() + 1 != runs {
+        return None;
+    }
+    let mut out = Vec::with_capacity(runs);
+    let mut before = Estimate::default();
+    for line in changes {
+        // The program up to the tool change, which starts the next run.
+        let read = Program {
+            text: program
+                .text
+                .split_inclusive('\n')
+                .take(line.saturating_sub(1))
+                .collect(),
+            extension: program.extension.clone(),
+            pauses: Vec::new(),
+            first_tool: program.first_tool.clone(),
+            extents: program.extents,
+            machine_lift: program.machine_lift.clone(),
+            board: program.board,
+        };
+        let upto = dc_gcode::estimate(&read, &post).ok()?;
+        out.push(Some(gained(&upto, &before)));
+        before = upto;
+    }
+    out.push(Some(gained(&total, &before)));
+    Some(out)
+}
+
+/// The `M` code of a tool change, `M6`.
+const TOOL_CHANGE_CODE: f64 = 6.0;
+
+/// What the estimate `after` has that `before`, an estimate of the start
+/// of the same program, has not.
+fn gained(after: &Estimate, before: &Estimate) -> Estimate {
+    Estimate {
+        feed_s: after.feed_s - before.feed_s,
+        dwell_s: after.dwell_s - before.dwell_s,
+        feed_mm: after.feed_mm - before.feed_mm,
+        rapid_mm: after.rapid_mm - before.rapid_mm,
+        stops: after.stops.saturating_sub(before.stops),
+    }
 }
 
 #[cfg(test)]
@@ -791,6 +966,157 @@ mod tests {
                 .collect();
             assert_eq!(radii, [3.175, 1.5], "{numbers:?}");
         }
+    }
+
+    /// `project`'s programs with `split`, as rows.
+    fn rows(project: &Project, split: ProgramSplit) -> Vec<ProgramSummary> {
+        let Built {
+            programs,
+            findings,
+            generated,
+        } = build(project, split, "2026-01-01");
+        assert!(findings.errors.is_empty(), "{split:?}: {findings:?}");
+        let generated = generated.expect("every operation generated");
+        summarize(
+            project,
+            &generated,
+            programs,
+            split,
+            &EstimateConfig::default(),
+        )
+        .0
+    }
+
+    /// Capability 77 (the maintainer's smoke test, 2026-11-20): one
+    /// program for two tools lists both tool runs, in the order they are
+    /// cut, each with its tool, its operations and its share of the
+    /// program's estimate. The shares come from the estimator reading the
+    /// program up to each tool change, so they add up to the program's
+    /// own estimate, and each tool's cutting and dwell times are those of
+    /// its own program when the project is written one program per tool.
+    /// The tool change itself has no time: it is the second run's stop.
+    #[test]
+    fn one_program_lists_its_tool_runs_and_their_times_sum_to_its_own() {
+        use dc_geometry::assert_approx_eq;
+
+        for numbers in [[None, None], [Some(9), Some(4)]] {
+            let mut project = two_tool_project(numbers);
+            project.post_processor =
+                dc_project::PostProcessorRef::latest("grblhal").expect("grblHAL is bundled");
+            let one = rows(&project, ProgramSplit::OneProgram);
+            let [program] = one.as_slice() else {
+                panic!("{numbers:?}: one program, not {}", one.len());
+            };
+            let tools: Vec<(&str, u32, &str)> = program
+                .runs
+                .iter()
+                .map(|run| (run.tool.as_str(), run.number, run.name.as_str()))
+                .collect();
+            let [first, second] = numbers.map(|n| n.unwrap_or(0));
+            assert_eq!(
+                tools,
+                [
+                    ("t1", first.max(1), "6.35 mm upcut"),
+                    ("t2", if second == 0 { 2 } else { second }, "3 mm"),
+                ],
+                "{numbers:?}"
+            );
+            assert_eq!(
+                program.runs[0].number, program.program.first_tool.number,
+                "{numbers:?}: the first run's tool is the one the program starts with"
+            );
+            assert!(
+                program
+                    .program
+                    .text
+                    .lines()
+                    .any(|line| line.starts_with(&format!("T{} M6", program.runs[1].number))),
+                "{numbers:?}: the second run starts at its tool change"
+            );
+            let operations: Vec<Vec<&str>> = program
+                .runs
+                .iter()
+                .map(|run| run.operations.iter().map(OperationId::as_str).collect())
+                .collect();
+            assert_eq!(operations, [["o1"], ["o2"]], "{numbers:?}");
+            assert_eq!(
+                program.operations,
+                [OperationId::new("o1"), OperationId::new("o2")]
+            );
+
+            let total = program.estimate.expect("the program estimates");
+            let shares: Vec<Estimate> = program
+                .runs
+                .iter()
+                .map(|run| run.estimate.expect("each run estimates"))
+                .collect();
+            let sum = shares
+                .iter()
+                .fold(Estimate::default(), |sum, share| sum + *share);
+            assert_approx_eq!(sum.feed_s, total.feed_s, 1e-9);
+            assert_approx_eq!(sum.dwell_s, total.dwell_s, 1e-9);
+            assert_approx_eq!(sum.feed_mm, total.feed_mm, 1e-9);
+            assert_approx_eq!(sum.rapid_mm, total.rapid_mm, 1e-9);
+            assert_eq!(sum.stops, total.stops, "{numbers:?}");
+            assert_eq!(
+                (shares[0].stops, shares[1].stops),
+                (0, 1),
+                "{numbers:?}: the tool change is the second run's stop"
+            );
+
+            // The same estimator, the same cuts: one program per tool.
+            let per_tool = rows(&project, ProgramSplit::ProgramPerTool);
+            assert_eq!(per_tool.len(), 2, "{numbers:?}");
+            for (k, (share, own)) in shares.iter().zip(&per_tool).enumerate() {
+                let own_estimate = own.estimate.expect("each program estimates");
+                assert!(share.feed_s > 0.0, "{numbers:?}: run {k} cuts");
+                assert_approx_eq!(share.feed_s, own_estimate.feed_s, 1e-6);
+                assert_approx_eq!(share.dwell_s, own_estimate.dwell_s, 1e-6);
+                // A tool run's program is one run: its own.
+                let [run] = own.runs.as_slice() else {
+                    panic!("{numbers:?}: program {k} has {} runs", own.runs.len());
+                };
+                assert_eq!(run.tool, own.program.first_tool.id);
+                assert_eq!(run.number, own.program.first_tool.number);
+                assert_eq!(run.operations, own.operations);
+                assert_eq!(run.estimate, own.estimate);
+                assert_eq!((own.tools(), own.tool_changes()), (1, 0));
+            }
+            assert_eq!((program.tools(), program.tool_changes()), (2, 1));
+        }
+    }
+
+    /// A tool that is needed again later is a tool run of its own, and
+    /// one more tool change, but not one more tool: a third Profile with
+    /// the first tool makes three runs of two tools with two changes, and
+    /// the three shares still add up to the program's estimate.
+    #[test]
+    fn a_tool_fitted_again_is_another_run_of_the_same_tool() {
+        use dc_geometry::assert_approx_eq;
+
+        let mut project = two_tool_project([None, None]);
+        project.post_processor =
+            dc_project::PostProcessorRef::latest("grblhal").expect("grblHAL is bundled");
+        let mut again = profile_mut(&mut project).clone();
+        again.id = OperationId::new("o3");
+        project.operations.push(Operation::Profile(again));
+        let one = rows(&project, ProgramSplit::OneProgram);
+        let [program] = one.as_slice() else {
+            panic!("one program, not {}", one.len());
+        };
+        let tools: Vec<&str> = program.runs.iter().map(|run| run.tool.as_str()).collect();
+        assert_eq!(tools, ["t1", "t2", "t1"]);
+        assert_eq!((program.tools(), program.tool_changes()), (2, 2));
+        let total = program.estimate.expect("the program estimates");
+        let sum = program
+            .runs
+            .iter()
+            .map(|run| run.estimate.expect("each run estimates"))
+            .fold(Estimate::default(), |sum, share| sum + share);
+        assert_approx_eq!(sum.feed_s, total.feed_s, 1e-9);
+        assert_approx_eq!(sum.dwell_s, total.dwell_s, 1e-9);
+        assert_eq!(sum.stops, total.stops);
+        assert_eq!(total.stops, 2, "the two tool changes");
     }
 
     /// The sample project with a V-Carve `o6` of its 50 x 30 mm rectangle

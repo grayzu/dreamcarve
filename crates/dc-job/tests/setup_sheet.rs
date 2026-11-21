@@ -21,7 +21,7 @@
 mod common;
 
 use dc_job::setup_sheet::{self, Label, Sheet};
-use dc_job::summary::{describe_estimated_time, describe_length};
+use dc_job::summary::{describe_estimated_time, describe_length, describe_share_times};
 use dc_job::{EstimateConfig, ProgramSplit, ProgramSummary};
 use dc_project::{Project, Units};
 
@@ -210,6 +210,88 @@ fn matches_the_export() {
     }
     assert!(html.contains(DATE), "the export date");
     assert!(html.contains("grblHAL"), "the post-processor");
+}
+
+/// Capability 77b (the maintainer's smoke test, 2026-11-20): the sheet of
+/// one program for all tools says what the window's Program Details say.
+/// It counts the program's tools and tool changes, then gives each tool
+/// in the order they run, with that tool's own type and diameter, the
+/// operations it cuts and its share of the time, where it used to give
+/// the first tool alone; the program's own time, the sum, comes after.
+#[test]
+fn one_program_lists_every_tool_in_run_order() {
+    let mut project = load_dcv(&repo_root().join("tests/fixtures/plaque.dcv"));
+    project.post_processor.tool_change_mode = dc_project::ToolChangeMode::M6;
+    let exported = export(project, "plaque");
+    assert_eq!(exported.names, ["plaque.nc"]);
+    let html = render(&exported);
+    let project = &exported.project;
+    let [program] = exported.programs.as_slice() else {
+        panic!("one program");
+    };
+    assert_eq!(program.runs.len(), 2, "the plaque cuts with two tools");
+    let row = |label: &str, value: &str| format!("<tr><th>{label}</th><td>{value}</td></tr>");
+    assert!(html.contains(&row("Tools", "2")), "{html}");
+    assert!(html.contains(&row("Tool changes", "1")), "{html}");
+    let settings = EstimateConfig::default();
+    let starts: Vec<usize> = program
+        .runs
+        .iter()
+        .map(|run| {
+            let tool = row("Tool", &escaped(&format!("T{} {}", run.number, run.name)));
+            html.find(&tool)
+                .unwrap_or_else(|| panic!("{tool} is on the sheet:\n{html}"))
+        })
+        .collect();
+    assert!(starts[0] < starts[1], "the tools in the order they run");
+    let total = program.estimate.expect("the program estimates");
+    let shares: Vec<dc_job::Estimate> = program
+        .runs
+        .iter()
+        .map(|run| run.estimate.expect("each run estimates"))
+        .collect();
+    let times = describe_share_times(&shares, &total, &settings);
+    for (k, run) in program.runs.iter().enumerate() {
+        let end = starts.get(k + 1).copied().unwrap_or(html.len());
+        let block = &html[starts[k]..end];
+        let fitted = project.tools.iter().find(|t| t.id == run.tool).unwrap();
+        assert!(
+            block.contains(&row(
+                "Diameter",
+                &escaped(&describe_length(project, fitted.diameter_mm))
+            )),
+            "{}: its own diameter",
+            run.name
+        );
+        let operations: Vec<&str> = run
+            .operations
+            .iter()
+            .map(|id| {
+                let op = project.operations.iter().find(|o| o.id() == id).unwrap();
+                op.name()
+            })
+            .collect();
+        assert!(
+            block.contains(&row("Operations", &escaped(&operations.join(", ")))),
+            "{}: what it cuts: {operations:?}",
+            run.name
+        );
+        let time = &times[k];
+        assert!(
+            block.contains(&row("Time with this tool", time)),
+            "{}: its share of the time, {time}",
+            run.name
+        );
+    }
+    // The tools' times add up to the program's, as both are written:
+    // rounded each on its own the first reads 46 s, a second too many.
+    assert_eq!(times, ["45 s", "2 min 54 s"]);
+    let total = describe_estimated_time(&total, &settings);
+    assert_eq!(total, "3 min 39 s");
+    let at = html
+        .find(&row("Estimated time", &total))
+        .unwrap_or_else(|| panic!("the program's own time, {total}:\n{html}"));
+    assert!(at > starts[1], "after its tools");
 }
 
 /// Capability 77b: with the date pinned, two renders are byte-identical

@@ -1175,12 +1175,27 @@ folder are app preferences, kept outside the project.
       how the male is re-cut after a fit adjustment.
     - **Program Details**, a disclosure **closed until the user opens
       it** (and then left as they left it), which lists the programs it
-      will write, one row per tool run (capability 3): file name, tool,
-      operations, estimated time (capability 30) and Z range (capability
-      4), with the step before each (zero the tool, change to T2) as
-      `export` prints them, grouped by board with an Inlay. Closed, it
-      says how many there are. While toolpaths generate or the programs
-      are built, it says which it waits for.
+      will write: file name, tool, operations, estimated time
+      (capability 30) and Z range (capability 4), with the step before
+      each (zero the tool, change to T2) as `export` prints them, grouped
+      by board with an Inlay. With *One program per tool* that is one row
+      per tool run (capability 3). With *One program for all tools* the
+      one file holds every tool run, so its row says how many tools it
+      uses and how many times it stops for the next, *2 tools, 1 tool
+      change*, where a tool run's row names its tool, and lists each tool
+      run under that, indented, in the order they are cut: the tool (*T2
+      1/8 end mill*) with its time under the file's own, and under it the
+      operations it cuts (the maintainer's follow-up to the smoke test,
+      2026-11-20: the row named the file's first tool alone, so a
+      two-tool job read as a one-tool job). A tool that is needed again
+      later is a tool run of its own, and one more tool change. A tool
+      run's time is its share of the program's estimate: what the
+      estimator reads from the tool change that starts the run to the
+      next. The stop itself takes no time, as in the program's estimate.
+      The shares are written so that they add up to the program's time
+      as shown, each within a second of its own. Closed, the disclosure
+      says how many programs there are. While toolpaths generate or the
+      programs are built, it says which it waits for.
     - **The destination**: the folder, with *Choose…* opening the native
       folder dialog (default the project's own folder, remembered per
       project in the app's preferences), and the file name, with the
@@ -1207,12 +1222,19 @@ folder are app preferences, kept outside the project.
     - **Files**: one row per program in run order, number, file name in
       the monospace face, tool, estimated time; then the **folder** they
       were written to, with *Copy path*, *Show in folder* and **Save
-      setup sheet…** (77b).
+      setup sheet…** (77b). One program for all tools says *2 tools, 1
+      tool change* in its Tool column and has a row per tool run under
+      its own, indented under the file's name: the tool, the operations
+      it cuts, and its time in the Time column, the same lines Program
+      Details list (77).
     - **Run instructions**, a disclosure closed by default: per program,
       what to do before it runs (*Fit T2 1/8 end mill and set work zero X,
       Y and Z with it*), then the controller notes `export` prints (the
       `G43.1` and `G51` lines), each a separate callout, then the extents
-      and Z range.
+      and Z range. One program for all tools names the first tool in its
+      step and each later one among its pauses (*Fit T1 1/4 end mill.
+      Set Z zero, then resume.*), with the line it stops at, as `export`
+      prints them.
 
     *Done*, Escape or a click outside closes the sheet. The Export step,
     whose plan never left it, then says so in one line under its
@@ -1233,7 +1255,11 @@ folder are app preferences, kept outside the project.
     file name, its tool (name, number, type, diameter, angle, vendor and
     product), its operations, the step before it, its estimated time, its
     extents (tool centre and bit edge) and Z range; then the export's
-    warnings and the run instructions' controller notes. It has no script,
+    warnings and the run instructions' controller notes. One program for
+    all tools counts its tools and its tool changes and gives every tool
+    in the order they run, each with the same facts, the operations it
+    cuts and its time, where a tool run's program gives its one tool: the
+    sheet says what Program Details say (77). It has no script,
     no external resource and no image, prints on A4 and Letter in black
     on white, and uses the project's display units. Its text is the CLI's
     text where the CLI has one (step-before lines, notes, warnings), and
@@ -1242,7 +1268,10 @@ folder are app preferences, kept outside the project.
 78. **Estimate and extents** appear outside the Export step too: each
     operation's row shows its estimated time on hover, and the status bar
     shows the program's total. The numbers are the CLI's (`[estimate]` in
-    `config.toml` is read for the rapid rate, as today).
+    `config.toml` is read for the rapid rate, as today). A tool run's
+    time under one program for all tools (77) is no line the CLI prints,
+    and is no second estimate: it is the CLI's estimate of that program,
+    divided at its tool changes.
 
 ### First run and help
 

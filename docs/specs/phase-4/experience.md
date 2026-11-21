@@ -159,7 +159,13 @@ what to press next.
     open shows striped rows, each a program's number in a gutter
     beside three lines (its file name in the mono face with its time and
     Z range at the right; its tool and operations; the step before it in
-    12-px text.secondary); and *Destination* (the folder in the mono
+    12-px text.secondary). One program for all tools has more lines:
+    its second says *2 tools, 1 tool change*, and under it, 12 px in,
+    each tool run is two lines, the tool in 13-px text.primary with its
+    time at the right, standing under the file's time (the Z range's
+    room is left empty), then the operations it cuts in 12-px
+    text.secondary, with 2 px more between two runs. Then *Destination*
+    (the folder in the mono
     face, cut at its start, with *Choose…*) over *File name*. Once the
     programs are written the result takes the plan's place (section 7,
     "Export result").
@@ -860,7 +866,12 @@ Controls:
   they are long: Files, a table of 30-px
   striped rows under a 24-px header row (number, file name in JetBrains
   Mono, tool, time right-aligned, the columns one width for every row),
-  then the totals; then *Folder* and the folder as a 12-px mono line
+  then the totals. One program for all tools has, in its stripe under
+  its own row, a 22-px row per tool run, 12 px in from the file's name:
+  the tool in text.primary, in a column as wide as the widest of them,
+  then the operations it cuts in text.secondary, cut at the end where
+  they do not fit, and its time in the Time column; 6 px close the
+  stripe under the last. Then *Folder* and the folder as a 12-px mono line
   cut at its start with a `copy` icon button, over *Show in folder* and
   *Save setup sheet…*, both secondary; and *Run
   instructions*, a closed disclosure whose steps are numbered 13-px

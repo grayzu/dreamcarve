@@ -797,8 +797,9 @@ fn stock_screenshots() {
 
 /// The chapter "Checking and exporting"
 /// (`docs/book/src/user-guide/exporting.md`): the plaque's Export step
-/// with a tool that lacks its feed, so an error blocks export, and with
-/// the Post-processor group open.
+/// with a tool that lacks its feed, so an error blocks export, with the
+/// Post-processor group open, and written as one program for all tools,
+/// with Program Details open on its two tools.
 #[test]
 #[ignore = "writes the book's screenshots; run by hand"]
 fn exporting_screenshots() {
@@ -814,6 +815,36 @@ fn exporting_screenshots() {
     click_button(&mut h, "Post-processor");
     delete_a_feed(&mut h);
     shoot(&mut h, &out, "export-blocked", Crop::StepPanel);
+
+    // "The programs": one program for all tools lists each tool under
+    // its one file, with what it cuts and its time, and the times add up
+    // to the file's.
+    undo(&mut h);
+    settle(&mut h);
+    h.get_by_role_and_label(Role::ComboBox, "Programs").click();
+    h.run();
+    click(&mut h, "One program for all tools");
+    settle(&mut h);
+    open_program_details(&mut h);
+    for said in [
+        "plaque.nc",
+        "2 tools, 1 tool change",
+        "T2 1/8 end mill",
+        "Screw holes, Border and squiggle",
+        "45 s",
+        "T1 1/4 end mill",
+        "Panel, Square recess, Cut out",
+        "2 min 54 s",
+        "3 min 39 s",
+        "Ready to write 1 program.",
+    ] {
+        assert!(h.query_by_label(said).is_some(), "the step says `{said}`");
+    }
+    assert!(
+        h.query_by_label_contains("Before: fit T2 1/8 end mill and set work zero with it.")
+            .is_some()
+    );
+    shoot(&mut h, &out, "export-one-program", Crop::StepPanel);
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }

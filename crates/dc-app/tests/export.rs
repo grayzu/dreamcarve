@@ -492,6 +492,107 @@ fn result_parts_are_status_files_and_instructions() {
     }
 }
 
+/// Capabilities 77 and 77a (the maintainer's smoke test, 2026-11-20: with
+/// *One program for all tools* the plaque's one file was listed with its
+/// first tool alone, so a two-tool job read as a one-tool job). The plaque
+/// planned as one program lists its two tool runs in the order they are
+/// cut, each with its tool, the operations it cuts and its time, and says
+/// *2 tools, 1 tool change* where a tool run's program names its tool.
+/// The runs' times come from the estimate of the program itself, read up
+/// to its tool change, so they add up to the program's, in seconds and as
+/// they are written. The result's Files row carries the same lines.
+/// Written one program per tool, each program has its one tool and no
+/// run lines.
+#[test]
+fn one_program_lists_each_tool_run_with_its_time() {
+    let strings = Strings::english();
+    let harness = generated(&plaque_bytes());
+    let one = Options {
+        split: ProgramSplit::OneProgram,
+        ..options()
+    };
+    let ready_one = ready(&harness, &one);
+    assert!(ready_one.blocked().is_none(), "nothing blocks");
+    assert_eq!(ready_one.names("plaque"), ["plaque.nc"]);
+    assert_eq!(ready_one.tool(0, &strings), "2 tools, 1 tool change");
+    let runs = ready_one.runs(0, &strings);
+    let listed: Vec<(&str, &str)> = runs
+        .iter()
+        .map(|run| (run.tool.as_str(), run.operations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("T2 1/8 end mill", "Screw holes, Border and squiggle"),
+            ("T1 1/4 end mill", "Panel, Square recess, Cut out"),
+        ],
+        "each tool run, in the order they are cut"
+    );
+
+    // The times: the program's own estimate, divided at its tool change.
+    let settings = EstimateConfig::default();
+    let program = &ready_one.programs[0];
+    let total = program.estimate.expect("the plaque estimates");
+    let total_s = dc_job::summary::estimated_s(&total, &settings);
+    let shares: Vec<dc_job::Estimate> = program
+        .runs
+        .iter()
+        .map(|run| run.estimate.expect("each run estimates"))
+        .collect();
+    let sum_s: f64 = shares
+        .iter()
+        .map(|share| dc_job::summary::estimated_s(share, &settings))
+        .sum();
+    assert!(
+        (sum_s - total_s).abs() < 1e-6,
+        "the runs take {sum_s} s, the program {total_s} s"
+    );
+    let seconds = dc_job::summary::share_seconds(&shares, &total, &settings);
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a few minutes, in seconds"
+    )]
+    let whole = total_s.round() as u64;
+    assert_eq!(seconds.iter().sum::<u64>(), whole, "as they are written");
+    let times: Vec<&str> = runs.iter().map(|run| run.time.as_str()).collect();
+    assert_eq!(
+        times,
+        dc_job::summary::describe_share_times(&shares, &total, &settings)
+    );
+    assert_eq!(times, ["45 s", "2 min 54 s"]);
+    assert_eq!(ready_one.estimate(0).as_deref(), Some("3 min 39 s"));
+
+    // The result's Files row says the same.
+    let names = ready_one.names("plaque");
+    let result = ready_one.result(&names, &folder(), &strings);
+    let [row] = result.files.rows.as_slice() else {
+        panic!("one file: {:?}", result.files.rows);
+    };
+    assert_eq!(row.tool, "2 tools, 1 tool change");
+    assert_eq!(row.time, "3 min 39 s");
+    assert_eq!(row.runs, runs);
+    let (_, files) = &result.parts()[1];
+    for run in &runs {
+        for text in [&run.tool, &run.operations, &run.time] {
+            assert!(files.contains(text), "Files holds `{text}`: {files:?}");
+        }
+    }
+
+    // One program per tool: a file has its one tool, as before.
+    let ready_each = ready(&harness, &options());
+    assert_eq!(ready_each.programs.len(), 2);
+    assert_eq!(ready_each.tool(0, &strings), "T2 1/8 end mill");
+    assert_eq!(ready_each.tool(1, &strings), "T1 1/4 end mill");
+    let names = ready_each.names("plaque");
+    let result = ready_each.result(&names, &folder(), &strings);
+    for (k, row) in result.files.rows.iter().enumerate() {
+        assert!(ready_each.runs(k, &strings).is_empty(), "program {k}");
+        assert!(row.runs.is_empty(), "{}: no run lines", row.name);
+        assert_eq!(row.tool, ready_each.tool(k, &strings));
+    }
+}
+
 /// Capability 77a (#625): the CLI's report text is no longer shown as one
 /// block; every line of it is in exactly one of the result's three parts,
 /// Status, Files and Run instructions, on the plaque, the sign, the inlay

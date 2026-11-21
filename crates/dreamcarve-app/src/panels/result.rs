@@ -7,7 +7,8 @@
 //! **Status**, one 15-px SemiBold line with `circle-check` and the CLI's
 //! own lines under it. Its body scrolls: **Files**, a table of 30-px rows
 //! (number, file name in the monospace face, tool, time right-aligned)
-//! grouped by board with an Inlay, and the totals; the **Folder**, one
+//! grouped by board with an Inlay, one program for all tools with a row
+//! per tool run under its own, and the totals; the **Folder**, one
 //! mono line cut at its start, with a `copy` button, over *Show in
 //! folder* and *Save setup sheet…*; and **Run instructions**, a
 //! disclosure closed whenever the sheet opens, whose steps are numbered
@@ -18,7 +19,7 @@
 //! result*. Every line of the CLI's report is in exactly one part
 //! (`dc_app::export::ExportResult::parts`).
 
-use dc_app::export::ExportResult;
+use dc_app::export::{ExportResult, ToolRun};
 use dc_app::{StrKey, Strings};
 use eframe::egui::{self, Align, Layout, TextStyle, Ui};
 
@@ -34,6 +35,12 @@ use crate::widgets::section::section;
 const ROW_PX: f32 = 30.0;
 /// The Files table's header row, px.
 const HEADER_ROW_PX: f32 = 24.0;
+/// A tool run's row under its file's, px.
+const RUN_ROW_PX: f32 = 22.0;
+/// How far a tool run's row stands in from its file's name, px.
+const RUN_INDENT_PX: f32 = 12.0;
+/// The room under a file's last tool run, inside its stripe, px.
+const RUN_FOOT_PX: f32 = 6.0;
 /// The number column, px.
 const NUMBER_PX: f32 = 16.0;
 /// The gap between the result's parts, px.
@@ -165,7 +172,9 @@ fn files(ui: &mut Ui, strings: &Strings, result: &ExportResult) {
         .files
         .rows
         .iter()
-        .map(|row| row.time.as_str())
+        .flat_map(|row| {
+            std::iter::once(row.time.as_str()).chain(row.runs.iter().map(|run| run.time.as_str()))
+        })
         .chain([header[3]])
         .map(|time| {
             ui.painter()
@@ -180,7 +189,7 @@ fn files(ui: &mut Ui, strings: &Strings, result: &ExportResult) {
         shared_px: ((inner - NUMBER_PX - time_px - 3.0 * theme::GAP_PX) / 2.0).max(0.0),
         time_px,
     };
-    table_row(ui, header, columns, None, true);
+    table_row(ui, header, columns, None, true, &[]);
     for (k, row) in result.files.rows.iter().enumerate() {
         if let Some(board) = &row.board {
             ui.add_space(4.0);
@@ -198,6 +207,7 @@ fn files(ui: &mut Ui, strings: &Strings, result: &ExportResult) {
             columns,
             fill,
             false,
+            &row.runs,
         );
     }
     ui.add_space(4.0);
@@ -250,13 +260,17 @@ fn folder(ui: &mut Ui, strings: &Strings, result: &ExportResult, out: &mut Vec<A
 }
 
 /// One row of the Files table: number, file name in mono, tool, and the
-/// time right-aligned; the header row in secondary text.
+/// time right-aligned; the header row in secondary text. Under the row of
+/// one program for all tools, in its stripe, a row per tool run in
+/// `runs`, indented under the file's name: the tool, what it cuts, and
+/// its time in the Time column.
 fn table_row(
     ui: &mut Ui,
     cells: [&str; 4],
     columns: Columns,
     fill: Option<egui::Color32>,
     header: bool,
+    runs: &[ToolRun],
 ) {
     let palette = Palette::current(ui);
     let (colour, style, height) = if header {
@@ -271,6 +285,7 @@ fn table_row(
         .inner_margin(egui::Margin::symmetric(8, 0))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), height),
                 Layout::left_to_right(Align::Center),
@@ -288,11 +303,72 @@ fn table_row(
                     ui.allocate_ui_with_layout(
                         egui::vec2(columns.time_px, height),
                         Layout::right_to_left(Align::Center),
-                        |ui| text(ui, time, style, colour),
+                        |ui| text(ui, time, style.clone(), colour),
                     );
                 },
             );
+            // One column for the runs' tools: as wide as the widest.
+            let body = TextStyle::Body.resolve(ui.style());
+            let tool_px = runs
+                .iter()
+                .map(|run| {
+                    ui.painter()
+                        .layout_no_wrap(run.tool.clone(), body.clone(), palette.text_primary)
+                        .size()
+                        .x
+                })
+                .fold(0.0, f32::max)
+                .ceil()
+                + 1.0;
+            for run in runs {
+                run_row(ui, run, columns, tool_px);
+            }
+            if !runs.is_empty() {
+                ui.add_space(RUN_FOOT_PX);
+            }
         });
+}
+
+/// One tool run's row under its file's, indented under the file's name:
+/// its tool in a column `tool_px` wide, then what it cuts in secondary
+/// text, across the file's and the tool's columns; its time in the Time
+/// column.
+fn run_row(ui: &mut Ui, run: &ToolRun, columns: Columns, tool_px: f32) {
+    let palette = Palette::current(ui);
+    let height = RUN_ROW_PX;
+    // What the file's and the tool's columns give a run, after the indent.
+    let span_px = (2.0 * columns.shared_px + theme::GAP_PX - RUN_INDENT_PX).max(0.0);
+    let tool_px = tool_px.min(span_px / 2.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), height),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = theme::GAP_PX;
+            // The number's column and the indent, with the gap between.
+            ui.add_space(NUMBER_PX + theme::GAP_PX + RUN_INDENT_PX);
+            cell(
+                ui,
+                &run.tool,
+                TextStyle::Body,
+                palette.text_primary,
+                tool_px,
+                height,
+            );
+            cell(
+                ui,
+                &run.operations,
+                TextStyle::Body,
+                palette.text_secondary,
+                span_px - tool_px - theme::GAP_PX,
+                height,
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(columns.time_px, height),
+                Layout::right_to_left(Align::Center),
+                |ui| text(ui, &run.time, TextStyle::Body, palette.text_primary),
+            );
+        },
+    );
 }
 
 /// `text` in a cell `width` px wide, truncated at the end, the whole of
