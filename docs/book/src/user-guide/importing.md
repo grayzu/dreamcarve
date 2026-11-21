@@ -57,6 +57,10 @@ An SVG has no options. A DXF has three:
   many closed shapes and open paths the layer holds, and how many
   entities on it DreamCarve does not read.
 
+Drag any edge of the sheet, or the grip at its bottom right corner, to
+make it larger: a wider sheet draws the preview larger, and a taller one
+shows more layers at once. The size is kept for next time.
+
 The button at the bottom says what it will do: **Add 10 shapes**, or
 **Create project** for a new project. It is off while the file cannot be
 imported.

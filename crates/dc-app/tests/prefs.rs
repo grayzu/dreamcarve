@@ -190,3 +190,40 @@ fn a_sheet_size_is_kept_and_held_inside_the_window() {
         (1600.0 - SHEET_GAP_PX, 480.0)
     );
 }
+
+/// A sheet that is as tall as its content until it is dragged (the
+/// Import drawing sheet; the smoke test's leftover) keeps each side it
+/// was dragged to and no other: its width dragged, the height is still
+/// its content's.
+#[test]
+fn a_sheet_keeps_only_the_side_it_was_dragged_to() {
+    use dc_app::prefs::{SHEET_GAP_PX, SheetSize};
+
+    let sheet = SheetSize {
+        key: "import",
+        default_px: (560.0, 640.0),
+        min_px: (440.0, 320.0),
+    };
+    let window = (1280.0, 800.0);
+    let mut prefs = Prefs::default();
+    assert_eq!(sheet.kept(&prefs, window), (None, None), "never dragged");
+    sheet.keep(&mut prefs, (Some(700.0), None), window);
+    assert_eq!(sheet.kept(&prefs, window), (Some(700.0), None));
+    assert_eq!(prefs.sizes.get("import.height"), None);
+    sheet.keep(&mut prefs, (None, Some(100.0)), window);
+    assert_eq!(
+        sheet.kept(&prefs, window),
+        (Some(700.0), Some(320.0)),
+        "held at the minimum, the width as it was"
+    );
+    sheet.keep(&mut prefs, (Some(5000.0), Some(5000.0)), window);
+    assert_eq!(
+        sheet.kept(&prefs, window),
+        (Some(1280.0 - SHEET_GAP_PX), Some(800.0 - SHEET_GAP_PX))
+    );
+    // A smaller window holds what is kept inside it.
+    assert_eq!(
+        sheet.kept(&prefs, (800.0, 600.0)),
+        (Some(800.0 - SHEET_GAP_PX), Some(600.0 - SHEET_GAP_PX))
+    );
+}

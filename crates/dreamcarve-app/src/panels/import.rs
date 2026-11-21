@@ -17,6 +17,13 @@
 //! listed as the Warnings panel will list them. The footer's *Add 14
 //! shapes* (or *Create project*) counts what it adds.
 //!
+//! The sheet resizes, as the Tool Library does (the smoke test's
+//! leftover, 2026-11-20): by its edges and the grip at its corner, each
+//! side it is dragged to kept in `gui.toml`. Until it is dragged it is
+//! 560 px wide and as tall as its content. A wider sheet draws the
+//! preview larger, and a taller one shows more of the layers and the
+//! preview without scrolling.
+//!
 //! The model is `dc_app::import::DrawingImport`; the shell read the file.
 //! The sheet changes the model's options in place, so every change reads
 //! the bytes again, and asks the shell for *Import*, *Choose…* and close.
@@ -27,6 +34,7 @@
 use std::path::{Path, PathBuf};
 
 use dc_app::import::{DrawingFormat, DrawingImport, Preview, Purpose};
+use dc_app::prefs::{Prefs, SheetSize};
 use dc_app::problems::Problems;
 use dc_app::{Camera, StrKey, Strings};
 use dc_geometry::{Point, Vec2 as MmVec2};
@@ -42,8 +50,24 @@ use crate::widgets::icon::Icon;
 use crate::widgets::row;
 use crate::widgets::unit_field::{UnitField, field as unit_field};
 
-/// The sheet's width, px.
+/// The sheet's width until it is dragged, px.
 const WIDTH_PX: f32 = 560.0;
+/// The sheet's size among the preferences' `sizes`: each side the user
+/// dragged it to. The default's height is not used: until its height is
+/// dragged the sheet is as tall as its content. The smallest it goes
+/// holds the file's row, an option and the footer.
+const SHEET: SheetSize = SheetSize {
+    key: "import",
+    default_px: (560.0, 640.0),
+    min_px: (440.0, 320.0),
+};
+
+/// `value` px as egui's `f32`. Sizes are a few thousand pixels at most,
+/// far inside `f32`'s exact range.
+#[allow(clippy::cast_possible_truncation, reason = "pixel sizes, exact in f32")]
+fn px(value: f64) -> f32 {
+    value as f32
+}
 /// Its margin, px.
 const MARGIN_PX: i8 = 24;
 /// The header and a sheet footer button, px.
@@ -80,8 +104,15 @@ pub(crate) struct Sheet {
 }
 
 /// What the sheet asks the shell to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Request {
+    /// The sheet dragged by an edge or its grip: the size asked for, the
+    /// size it had, and the window's, px.
+    Resize {
+        asked: egui::Vec2,
+        was: egui::Vec2,
+        screen: egui::Vec2,
+    },
     /// Pick another file (*Choose…*).
     Choose,
     /// *Import*, or *Create project* for *New from drawing*.
@@ -122,12 +153,29 @@ impl Sheet {
     }
 }
 
-/// Shows the sheet over the open `project`; what the user asked for goes
-/// to `out`.
+/// Keeps the sides of the sheet a drag changed (`asked` from `was`) in
+/// `prefs`: a side that did not move stays as it was, so a sheet made
+/// wider is still as tall as its content.
+pub(crate) fn resize(prefs: &mut Prefs, asked: egui::Vec2, was: egui::Vec2, screen: egui::Vec2) {
+    let window = (f64::from(screen.x), f64::from(screen.y));
+    let (_, height) = SHEET.kept(prefs, window);
+    let moved = |asked: f32, was: f32| (asked - was).abs() > 0.5;
+    SHEET.keep(
+        prefs,
+        (
+            moved(asked.x, was.x).then(|| f64::from(asked.x)),
+            (moved(asked.y, was.y) || height.is_some()).then(|| f64::from(asked.y)),
+        ),
+        window,
+    );
+}
+
+/// Shows the sheet over the open `project`, at the size `prefs` keeps for
+/// it; what the user asked for goes to `out`.
 pub(crate) fn show(
     ctx: &egui::Context,
     strings: &Strings,
-    project: &Project,
+    (project, prefs): (&Project, &Prefs),
     sheet: &mut Sheet,
     out: &mut Vec<Action>,
 ) {
@@ -138,26 +186,57 @@ pub(crate) fn show(
         &theme::LIGHT
     };
     let screen = ctx.content_rect().size();
-    let width = WIDTH_PX.min(screen.x - 48.0);
+    let (kept_width, kept_height) = SHEET.kept(prefs, (f64::from(screen.x), f64::from(screen.y)));
+    let width = kept_width.map_or(WIDTH_PX.min(screen.x - 48.0), px);
+    let height = kept_height.map(px);
     let frame = theme::sheet(palette);
     let response = egui::Modal::new(egui::Id::unique("import_drawing"))
         .backdrop_color(palette.scrim)
         .frame(frame)
         .show(ctx, |ui| {
-            ui.set_width(width - 2.0 * f32::from(MARGIN_PX));
-            ui.set_max_height(screen.y - 96.0);
-            body(ui, strings, project, sheet, out);
+            let margin = f32::from(MARGIN_PX);
+            let corner = ui.cursor().min - egui::vec2(margin, margin);
+            ui.set_width(width - 2.0 * margin);
+            match height {
+                // Dragged: that tall, its options scrolling inside it.
+                Some(height) => {
+                    ui.set_min_height(height - 2.0 * margin);
+                    ui.set_max_height(height - 2.0 * margin);
+                }
+                None => ui.set_max_height(screen.y - 96.0),
+            }
+            body(ui, strings, project, sheet, height.is_some(), out);
+            // The sheet's frame, round its content: its edges and its
+            // corner grip resize it.
+            let tall = height.unwrap_or(ui.min_rect().height() + 2.0 * margin);
+            let outer = egui::Rect::from_min_size(corner, egui::vec2(width, tall));
+            if let Some(asked) = crate::widgets::sheet::resize_handles(
+                ui,
+                egui::Id::unique("import_drawing.resize"),
+                outer,
+                strings.get(StrKey::AppImportResize),
+            ) {
+                out.push(Action::ImportSheet(Request::Resize {
+                    asked,
+                    was: outer.size(),
+                    screen,
+                }));
+            }
         });
     if response.should_close() {
         out.push(Action::ImportSheet(Request::Close));
     }
 }
 
+/// The sheet's content. `fixed` is whether the sheet's height is the
+/// user's: the options then fill what the header and the footer leave,
+/// and the help line takes its room from them, not from the sheet.
 fn body(
     ui: &mut Ui,
     strings: &Strings,
     project: &Project,
     sheet: &mut Sheet,
+    fixed: bool,
     out: &mut Vec<Action>,
 ) {
     header(ui, strings, sheet.model.purpose(), out);
@@ -169,12 +248,25 @@ fn body(
     // The options, the layers and the preview scroll when the window is
     // short; the header and footer stay.
     let footer_h = FOOTER_PX + 16.0;
-    let room = (ui.available_height() - footer_h).max(120.0);
+    let foot_px = crate::widgets::help::foot_height(
+        ui,
+        crate::widgets::help::Scope::Sheet,
+        ui.available_width() + 2.0 * f32::from(MARGIN_PX),
+    );
+    // A sheet of the user's height holds its footer, the gap egui puts
+    // after the options, and the help line while it shows.
+    let foot_room = match (fixed, foot_px > 0.0) {
+        (true, true) => foot_px + 8.0 + 2.0 * ui.spacing().item_spacing.y,
+        (true, false) => ui.spacing().item_spacing.y,
+        (false, _) => 0.0,
+    };
+    let least = if fixed { 0.0 } else { 120.0 };
+    let room = (ui.available_height() - footer_h - foot_room).max(least);
     crate::widgets::scroll::show(
         ui,
         egui::ScrollArea::vertical()
             .max_height(room)
-            .auto_shrink([false, true]),
+            .auto_shrink([false, !fixed]),
         crate::widgets::scroll::Surface::Raised,
         |ui| {
             if sheet.model.format() == DrawingFormat::Dxf {
@@ -189,12 +281,8 @@ fn body(
         },
     );
     ui.add_space(16.0);
-    footer(ui, strings, &sheet.model, out); // The help of the field being typed in, at the sheet's foot.
-    let foot_px = crate::widgets::help::foot_height(
-        ui,
-        crate::widgets::help::Scope::Sheet,
-        ui.available_width() + 2.0 * f32::from(MARGIN_PX),
-    );
+    footer(ui, strings, &sheet.model, out);
+    // The help of the field being typed in, at the sheet's foot.
     crate::widgets::help::settle(ui, crate::widgets::help::Scope::Sheet);
     if foot_px > 0.0 {
         ui.add_space(8.0);
@@ -512,8 +600,12 @@ fn layers(ui: &mut Ui, strings: &Strings, model: &mut DrawingImport) {
 /// they landed.
 fn preview(ui: &mut Ui, model: &DrawingImport) {
     let palette = Palette::current(ui);
+    // As tall for its width as in the sheet's own size: a sheet dragged
+    // wider draws the drawing larger.
+    let own = WIDTH_PX - 2.0 * f32::from(MARGIN_PX);
+    let height = PREVIEW_PX * (ui.available_width() / own).max(1.0);
     let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), PREVIEW_PX), Sense::hover());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, theme::INNER_CARD_RADIUS_PX, palette.viewport_bg);
     painter.rect_stroke(

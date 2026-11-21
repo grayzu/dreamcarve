@@ -324,7 +324,9 @@ the unit occupies the last 28 px inside the field. Tool-Library sheet
 them, leave the name 120 px), resized by the user between 920 × 480
 and the window less 24 px all round, its right (editing) pane
 320 wide;
-Import drawing and Add picture sheets 560 wide; unsaved-changes sheet
+Import drawing sheet 560 wide and as tall as its content until the
+user drags it, then between 440 × 320 and the window less 24 px all
+round; Add picture sheet 560 wide; unsaved-changes sheet
 420 wide; the Export step's panel 440 wide; the start screen's content
 624 wide.
 
@@ -1002,12 +1004,15 @@ Controls:
   pill, on the right and secondary actions on the left. A file's path
   in a sheet is one mono line cut at its start, since its name is at
   its end; the whole path is its tooltip. A sheet that holds a table
-  (the Tool Library, with its import review) resizes: an 8-px strip
+  (the Tool Library, with its import review) or a drawing (Import
+  drawing, whose preview a wider sheet draws larger) resizes: an 8-px strip
   along each edge and an 18-px grip of three short strokes at its bottom
   right corner take the drag, with the resize cursor; the sheet stays
   centred, so the edge follows the pointer and the opposite edge moves
-  the other way; the size is kept in `gui.toml`. A sheet that asks one
-  question (unsaved changes) or holds one form (Import drawing, Add
+  the other way; the size is kept in `gui.toml`. The Import drawing
+  sheet is as tall as its content until its height is dragged, and
+  keeps each side it was dragged to. A sheet that asks one
+  question (unsaved changes) or holds one form (Add
   picture) keeps its fixed size. Never a second sheet above a
   sheet: the tool picker from an editor is a popover, the import review
   replaces the Tool Library's panes in place with a *Back*, and so does

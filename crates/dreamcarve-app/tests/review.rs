@@ -2238,8 +2238,9 @@ fn glyph_named(h: &H, start: &str) -> egui::Pos2 {
 /// error's glyph; a field with two problems, its tooltip open; a refused
 /// entry with its tooltip; the help line showing the focused field's
 /// problem; the drawer opened from a glyph, its row selected; a tool
-/// picker and a Targets row marked; the Tool Library's editing pane; and
-/// an import sheet with a problem field.
+/// picker and a Targets row marked; the Tool Library's editing pane; an
+/// import sheet with a problem field; and the import sheet dragged
+/// larger.
 ///
 /// ```sh
 /// cargo test -p dreamcarve-app --test review field_problems -- --ignored
@@ -2410,4 +2411,21 @@ fn field_problems_review() {
     let glyph = glyph_named(&h, "error: ");
     rest_at(&mut h, glyph);
     shoot_in(&mut h, &out, "12-import-sheet-tooltip", &looks);
+
+    // 13: the Import drawing sheet dragged larger by its grip (the smoke
+    // test's leftover): the preview is larger with it.
+    park_pointer(&mut h);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.input_mut()
+        .dropped_files
+        .push(std::sync::Arc::new(Dropped(fixture("dxf/layers.dxf"))));
+    h.run();
+    let grip = h
+        .get_by_role_and_label(Role::Splitter, "Resize the sheet")
+        .rect()
+        .center();
+    drag(&mut h, grip, grip + egui::vec2(110.0, 60.0));
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "13-import-sheet-resized", &looks);
 }

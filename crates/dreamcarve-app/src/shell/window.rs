@@ -1311,11 +1311,16 @@ impl Shell {
 
     /// What the Import drawing sheet asked for.
     fn import_request(&mut self, request: panels::import::Request) {
+        // A drag of the sheet's edge: its size, kept; the sheet stays.
+        if let panels::import::Request::Resize { asked, was, screen } = request {
+            panels::import::resize(self.app.prefs_mut(), asked, was, screen);
+            return;
+        }
         let Some(sheet) = self.import.take() else {
             return;
         };
         match request {
-            panels::import::Request::Close => {}
+            panels::import::Request::Close | panels::import::Request::Resize { .. } => {}
             panels::import::Request::Choose => {
                 let title = self.strings().get(StrKey::AppDialogDrawingTitle).to_owned();
                 let purpose = sheet.model().purpose();
@@ -2295,7 +2300,7 @@ impl eframe::App for Shell {
             panels::import::show(
                 &ctx,
                 self.app.strings(),
-                self.app.project(),
+                (self.app.project(), self.app.prefs()),
                 sheet,
                 &mut actions,
             );

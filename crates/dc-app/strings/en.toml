@@ -1095,6 +1095,8 @@ hatch = "Hatch"
 title = "Add drawing to project"
 title_new = "New project from drawing"
 close = "Close"
+# The grip at the sheet's corner, dragged to resize it.
+resize = "Resize the sheet"
 file = "File"
 file_help = "The drawing to import. Choose… picks another."
 choose = "Choose…"

@@ -1046,3 +1046,127 @@ fn a_quote_in_a_name_is_kept_and_shown_as_typed() {
     assert!(!text.contains("\\\\\""), "never a literal backslash");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A file dropped on the window: a path on disk.
+#[derive(Debug)]
+struct Dropped(std::path::PathBuf);
+
+impl egui::DroppedFile for Dropped {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
+/// The smoke test's leftover (G5; capability 55): the Import drawing
+/// sheet resizes as the Tool Library does, by its corner grip and its
+/// edges, and its size is kept in `gui.toml`. Until it is dragged it is
+/// 560 px wide and as tall as its content; the grip dragged 40 px out
+/// and 30 px down makes it 80 px wider and 60 px taller, since the sheet
+/// is centred; it reopens at that size, and the preview is drawn larger
+/// in the wider sheet.
+#[test]
+fn import_sheet_resizes_and_keeps_its_size() {
+    use dreamcarve_shell::{Paths, gui_prefs};
+
+    let (mut h, dir, _dialogs) = plaque("import-resize");
+    go_to(&mut h, "Design");
+    let drop = |h: &mut Harness<'_, Shell>| {
+        h.input_mut()
+            .dropped_files
+            .push(std::sync::Arc::new(Dropped(common::fixture(
+                "dxf/layers.dxf",
+            ))));
+        h.run();
+    };
+    let grip = |h: &Harness<'_, Shell>| {
+        h.get_by_role_and_label(Role::Splitter, "Resize the sheet")
+            .rect()
+    };
+    let kept = |h: &Harness<'_, Shell>| {
+        let sizes = &h.state().app().prefs().sizes;
+        (
+            sizes.get("import.width").copied(),
+            sizes.get("import.height").copied(),
+        )
+    };
+    // The sheet is centred in the 1280 × 800 window: its size is twice
+    // the grip's corner from the centre.
+    let size = |h: &Harness<'_, Shell>| (grip(h).max - egui::pos2(640.0, 400.0)) * 2.0;
+    drop(&mut h);
+    assert_eq!(kept(&h), (None, None), "its own size until it is dragged");
+    let before = size(&h);
+    assert!((before.x - 560.0).abs() <= 1.0, "560 px wide: {before:?}");
+    let preview = |h: &Harness<'_, Shell>| {
+        // The footer's button is under the preview: where it stands
+        // says how tall the content above it is.
+        h.get_by_role(Role::Dialog)
+            .query_all_by_role(Role::Button)
+            .find(|node| {
+                node.accesskit_node()
+                    .label()
+                    .is_some_and(|name| name.starts_with("Add ") && name.contains("shape"))
+            })
+            .expect("the sheet's button")
+            .rect()
+            .top()
+    };
+    let footer = preview(&h);
+
+    let at = grip(&h).center();
+    common::drag(
+        &mut h,
+        at,
+        at + egui::vec2(40.0, 30.0),
+        egui::PointerButton::Primary,
+    );
+    let (Some(width), Some(height)) = kept(&h) else {
+        panic!("the size is kept: {:?}", kept(&h));
+    };
+    assert!(
+        (width - 640.0).abs() <= 2.0 && (height - f64::from(before.y) - 60.0).abs() <= 2.0,
+        "{width} × {height} from {before:?}"
+    );
+    assert!(
+        (grip(&h).center() - (at + egui::vec2(40.0, 30.0))).length() <= 2.0,
+        "the grip followed the pointer"
+    );
+    assert!(preview(&h) > footer + 20.0, "the footer is at the new foot");
+
+    // Under its minimum: held there.
+    let at = grip(&h).center();
+    common::drag(
+        &mut h,
+        at,
+        egui::pos2(650.0, 410.0),
+        egui::PointerButton::Primary,
+    );
+    assert_eq!(kept(&h), (Some(440.0), Some(320.0)));
+
+    // Closed and opened again: the size it was left at, and in the file.
+    let at = grip(&h).center();
+    common::drag(
+        &mut h,
+        at,
+        at + egui::vec2(100.0, 120.0),
+        egui::PointerButton::Primary,
+    );
+    let left = kept(&h);
+    assert_eq!(left, (Some(640.0), Some(560.0)));
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none());
+    drop(&mut h);
+    let again = size(&h);
+    assert!(
+        (again.x - 640.0).abs() <= 1.0 && (again.y - 560.0).abs() <= 1.0,
+        "it reopens at the size it was left at: {again:?}"
+    );
+    let file = gui_prefs::load(&Paths::in_dir(dir.join("config"))).prefs;
+    assert_eq!(file.sizes.get("import.width"), Some(&640.0));
+    assert_eq!(file.sizes.get("import.height"), Some(&560.0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

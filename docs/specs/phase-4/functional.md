@@ -330,7 +330,13 @@ folder are app preferences, kept outside the project.
     names them (DXF layer names, SVG ids). Import warnings (entities not
     read, open paths skipped by nothing yet, duplicate shapes dropped)
     appear in the Warnings drawer after the import, once, under the import's
-    name. One import is one undo step.
+    name. One import is one undo step. The sheet resizes as the Tool
+    Library does (64; maintainer's smoke test, 2026-11-20): by its edges
+    and the grip at its bottom right corner, down to 440 × 320 and up to
+    the window's size less a margin, staying centred, each side it was
+    dragged to kept for the session and in `gui.toml` (`sizes`). Until
+    it is dragged it is 560 px wide and as tall as its content; a wider
+    sheet draws the preview larger.
 56. **Add a picture to the project** (File ▸ *Add Picture to Project…*,
     the Design step's *Add picture*, or drop a `.png`, `.jpg`
     or `.jpeg`) adds a bitmap (capability 46) at the origin, asking for its

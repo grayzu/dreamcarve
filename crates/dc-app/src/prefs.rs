@@ -101,6 +101,50 @@ impl SheetSize {
         )
     }
 
+    /// The size the user dragged the sheet to, a side at a time, held
+    /// as [`SheetSize::of`] holds it in a window of `window_px`; `None`
+    /// for a side never dragged. A sheet that is as tall as its content
+    /// until then reads this (the Import drawing sheet), and keeps each
+    /// side with [`SheetSize::keep`].
+    #[must_use]
+    pub fn kept(self, prefs: &Prefs, window_px: (f64, f64)) -> (Option<f64>, Option<f64>) {
+        let kept = |axis: &str| {
+            prefs
+                .sizes
+                .get(&format!("{}.{axis}", self.key))
+                .copied()
+                .filter(|px| px.is_finite())
+        };
+        let (width, height) = (kept("width"), kept("height"));
+        let held = self.held(
+            (
+                width.unwrap_or(self.default_px.0),
+                height.unwrap_or(self.default_px.1),
+            ),
+            window_px,
+        );
+        (width.map(|_| held.0), height.map(|_| held.1))
+    }
+
+    /// Keeps each side of `size` that is given as the sheet's in `prefs`,
+    /// held as [`SheetSize::of`] holds it, and leaves the other as it
+    /// was.
+    pub fn keep(self, prefs: &mut Prefs, size: (Option<f64>, Option<f64>), window_px: (f64, f64)) {
+        let held = self.held(
+            (
+                size.0.unwrap_or(self.default_px.0),
+                size.1.unwrap_or(self.default_px.1),
+            ),
+            window_px,
+        );
+        if size.0.is_some() {
+            prefs.sizes.insert(format!("{}.width", self.key), held.0);
+        }
+        if size.1.is_some() {
+            prefs.sizes.insert(format!("{}.height", self.key), held.1);
+        }
+    }
+
     /// Keeps `size` as the sheet's in `prefs`, held as [`SheetSize::of`]
     /// holds it.
     pub fn set(self, prefs: &mut Prefs, size: (f64, f64), window_px: (f64, f64)) {
