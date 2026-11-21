@@ -519,6 +519,12 @@ defaults differ. Before you use `"m6"`, set your sender so that it stops at
 | Candle | Sends `M6` to the controller. Whether the sender also pauses is a setting whose default is unclear. | Enable "Pause sender on M6". |
 | OpenBuilds CONTROL | Splits the file at `M6` lines into per-tool sections. | Use its per-tool run menu. |
 
+**gSender warns about the `M61` line when it loads the file.** It shows
+*Invalid lines detected … Your job may not run correctly* and lists
+`M61 Q1`. That is gSender's own check of the file, not the controller's:
+grblHAL accepts the line, and typing `M61 Q1` in gSender's console answers
+`ok` (seen on 2026-11-20). Close the warning and run the program.
+
 This behaviour was read from each sender's source code on 2026-10-19, for
 interoperability only:
 
