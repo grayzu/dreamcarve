@@ -2661,7 +2661,9 @@ fn inlay_both_boards() {
 /// ([`editor::choose_boundary`]) therefore writes the boundary and clears
 /// both, one undo step named for the boundary, so no value the engine
 /// ignores stays in the file; choosing *None* puts the rows back in use,
-/// empty. A hand-edited file that has a boundary and a margin still shows
+/// with the values they had before the boundary when the window kept
+/// them ([`editor::replaced_values`]), and empty when it did not. A
+/// hand-edited file that has a boundary and a margin still shows
 /// the margin's value and validation's warning under it. The closed
 /// group's summary names the boundary and not the margin.
 #[test]
@@ -2682,9 +2684,11 @@ fn inlay_boundary_replaces_the_margin_and_the_rounding() {
     // Chosen in the window: the boundary, and the two it replaces
     // cleared, as one step.
     let before = steps(&h);
+    // What the window keeps for the session as the boundary is chosen.
+    let kept = editor::replaced_values(&inlay);
     let label = run_edit(
         &mut h,
-        editor::choose_boundary(&inlay, boundary, std::slice::from_ref(&frame)),
+        editor::choose_boundary(&inlay, boundary, std::slice::from_ref(&frame), None),
     );
     assert_eq!(label, "Set boundary of “DC”");
     assert_eq!(steps(&h), before + 1, "one undo step");
@@ -2720,7 +2724,7 @@ fn inlay_boundary_replaces_the_margin_and_the_rounding() {
     assert!(!depth.to_lowercase().contains("margin"), "{depth}");
     assert!(!depth.to_lowercase().contains("rounding"), "{depth}");
     assert_eq!(
-        editor::choose_boundary(&drawn, boundary, std::slice::from_ref(&frame)).unwrap(),
+        editor::choose_boundary(&drawn, boundary, std::slice::from_ref(&frame), None).unwrap(),
         None,
         "choosing it again is no step"
     );
@@ -2739,14 +2743,48 @@ fn inlay_boundary_replaces_the_margin_and_the_rounding() {
             .contains("margin")
     );
     // Choosing the boundary again in the window clears it.
-    let again = editor::choose_boundary(&by_hand, boundary, std::slice::from_ref(&frame))
+    let again = editor::choose_boundary(&by_hand, boundary, std::slice::from_ref(&frame), None)
         .unwrap()
         .expect("a change: the margin goes");
     hand.run(again).unwrap();
     assert_eq!(op_of(&hand, "op1"), drawn);
 
-    // None: the margin is the band's again, and it is asked for.
-    let label = run_edit(&mut h, editor::choose_boundary(&drawn, boundary, &[]));
+    // None, with what the rows held before the boundary: the margin and
+    // the rounding are back as they were, in the same one step, and the
+    // record is the one the boundary was chosen on (the smoke test's
+    // leftover, G5).
+    let mut restored = h.clone();
+    let label = run_edit(
+        &mut restored,
+        editor::choose_boundary(&drawn, boundary, &[], Some(&kept)),
+    );
+    assert_eq!(label, "Set boundary of “DC”");
+    assert_eq!(op_of(&restored, "op1"), inlay, "as before the boundary");
+    let Operation::Inlay(back) = op_of(&restored, "op1") else {
+        panic!("op1 is an Inlay");
+    };
+    assert_eq!(back.margin_mm, Some(8.0));
+    // Kept values never reach a record that still has a boundary: the
+    // file must not carry a margin the engine ignores.
+    let other =
+        editor::choose_boundary(&drawn, boundary, std::slice::from_ref(&frame), Some(&kept))
+            .unwrap();
+    assert_eq!(other, None, "still the boundary: nothing is restored");
+    // A value typed since (a hand-edited margin under the boundary) is
+    // the newer one, and stays.
+    let label = run_edit(
+        &mut hand,
+        editor::choose_boundary(&by_hand, boundary, &[], Some(&kept)),
+    );
+    assert_eq!(label, "Set boundary of “DC”");
+    let Operation::Inlay(kept_hand) = op_of(&hand, "op1") else {
+        panic!("op1 is an Inlay");
+    };
+    assert_eq!(kept_hand.margin_mm, Some(8.0));
+
+    // None, with nothing kept (another session): the margin is the
+    // band's again, empty, and it is asked for.
+    let label = run_edit(&mut h, editor::choose_boundary(&drawn, boundary, &[], None));
     assert_eq!(label, "Set boundary of “DC”");
     let none = op_of(&h, "op1");
     assert!(editor::boundary(&none).is_empty());

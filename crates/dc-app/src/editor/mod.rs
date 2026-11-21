@@ -1174,14 +1174,51 @@ pub fn replaced(op: &Operation, row: &Row) -> Option<Replaced> {
     })
 }
 
+/// What the rows a boundary replaces held before it was chosen
+/// ([`replaced_values`]): each key path of [`replaced`]'s rows with its
+/// value, `null` for an unset one.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ReplacedValues(Vec<(&'static str, Value)>);
+
+/// What the rows a boundary replaces hold in `op` now. The window keeps
+/// this for the session as a boundary is chosen, and hands it back to
+/// [`choose_boundary`] when *None* is chosen, so the margin the user
+/// typed is not lost to a look at a boundary. It is view state: the
+/// project never carries it. Empty for another kind.
+#[must_use]
+pub fn replaced_values(op: &Operation) -> ReplacedValues {
+    let Ok(record) = fields::record(op) else {
+        return ReplacedValues::default();
+    };
+    if !matches!(op, Operation::Inlay(_)) {
+        return ReplacedValues::default();
+    }
+    ReplacedValues(
+        REPLACED_BY_BOUNDARY
+            .iter()
+            .map(|key| {
+                (
+                    *key,
+                    fields::get(&record, key).cloned().unwrap_or(Value::Null),
+                )
+            })
+            .collect(),
+    )
+}
+
 /// The Boundary row's choice as the window makes it: [`set_boundary`],
 /// and, when `shapes` is not empty, the margin and the rounding the
 /// boundary replaces cleared to `null` in the same command, so the file
 /// holds no value the engine ignores and the two rows have nothing to
 /// warn about while they are disabled ([`replaced`]). One undo step,
 /// named for the boundary; `None` when the record is that already.
-/// Choosing none leaves the margin as it is, which is unset after a
-/// boundary: validation then asks for it.
+///
+/// Choosing none puts back what `kept` holds ([`replaced_values`], as
+/// the window kept it when the boundary was chosen) in each row that is
+/// unset, in the same step; a value the file has since been given
+/// stays. With nothing kept the margin is left as it is, which is unset
+/// after a boundary: validation then asks for it. `kept` is never
+/// written while `shapes` lists a boundary.
 ///
 /// # Errors
 ///
@@ -1190,6 +1227,7 @@ pub fn choose_boundary(
     op: &Operation,
     row: &Row,
     shapes: &[InstanceId],
+    kept: Option<&ReplacedValues>,
 ) -> Result<Option<Command>, CommandError> {
     let mut next = match set_boundary(op, row, shapes)? {
         Some(Command::UpdateOperation(next)) => next,
@@ -1199,6 +1237,14 @@ pub fn choose_boundary(
     if !shapes.is_empty() {
         for key in REPLACED_BY_BOUNDARY {
             next = fields::set(&next, key, Value::Null)?;
+        }
+    } else if let Some(kept) = kept {
+        let record = fields::record(&next)?;
+        for (key, value) in &kept.0 {
+            let unset = fields::get(&record, key).is_none_or(Value::is_null);
+            if unset && !value.is_null() && REPLACED_BY_BOUNDARY.contains(key) {
+                next = fields::set(&next, key, value.clone())?;
+            }
         }
     }
     Ok((next != *op).then_some(Command::UpdateOperation(next)))

@@ -906,8 +906,14 @@ folder are app preferences, kept outside the project.
     **Band margin** and **Outline rounding** rows are disabled: each
     shows *Set by the boundary* where its value would be, with the
     reason as its tooltip, and writes nothing. Choosing *None* enables
-    them again, the margin empty and required (the male needs one once
-    it has no boundary). A hand-edited file that has a boundary and a
+    them again with the values they had before the boundary was chosen,
+    in the one undo step that takes the boundary away (maintainer's
+    smoke test, 2026-11-20: a look at a boundary should not cost the
+    margin). The window keeps those values for the session, per
+    operation, and never in the project: the file still carries no
+    margin while a boundary is set, so in another session, or for a file
+    that came with a boundary, *None* brings the margin back empty and
+    required (the male needs one once it has no boundary). A hand-edited file that has a boundary and a
     margin shows the margin's value greyed in its disabled row, marked
     with `inlay_margin_ignored` (66, "A field's problem"); choosing the
     boundary again clears it. The closed Depth group's summary names the boundary and leaves

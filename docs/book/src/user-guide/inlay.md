@@ -113,8 +113,11 @@ in the project file.
 
 A boundary replaces the band margin and the outline rounding, so
 choosing a shape empties both in the same step, and their rows turn off
-and say **Set by the boundary**. Choose **None** to use them again: the
-**Band margin** is then empty and says **Required**.
+and say **Set by the boundary**. Choose **None** to use them again: both
+come back with the values they had before you chose the boundary. The
+app keeps those values only while it is open, never in the project
+file, so in a project opened with a boundary already set the **Band
+margin** comes back empty and says **Required**.
 
 **The two boards.** The Viewport draws the **male board** to the right
 of the stock, with the design mirrored and the male's toolpaths, as the

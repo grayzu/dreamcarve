@@ -386,7 +386,9 @@ fn pair(
 /// Boundary, the Band margin row is disabled and says *Set by the
 /// boundary* where its value was, the Outline rounding with it, and the
 /// file holds no margin; the closed Depth group's summary names the
-/// boundary and no margin. Choosing *None* enables both again.
+/// boundary and no margin. Choosing *None* enables both again, with the
+/// values they had before the boundary was chosen (the leftover, G5):
+/// the window keeps them for the session, never the file.
 #[test]
 fn band_margin_is_disabled_while_a_boundary_is_chosen() {
     let (mut h, dir) = pair("inlay-margin", |_| {});
@@ -443,12 +445,32 @@ fn band_margin_is_disabled_while_a_boundary_is_chosen() {
     assert!(!summary.to_lowercase().contains("margin"), "{summary}");
     open_group(&mut h, "Depth");
 
-    // None: the margin is the band's again, empty and asked for.
+    // None: the margin is the band's again, as it was before the
+    // boundary, in the one step that takes the boundary away.
+    let steps = undo_steps(&h);
     h.get_by_role_and_label(Role::ComboBox, "Boundary").click();
     h.run();
     h.get_by_label("None (use the band margin)").click();
     h.run();
-    assert!(!margin(&h).0, "enabled again");
+    assert_eq!(undo_steps(&h), steps + 1, "one undo step");
+    assert_eq!(
+        margin(&h),
+        (false, "8".to_owned(), None),
+        "enabled again, with the 8 mm it had"
+    );
+    assert_eq!(inlay_of(&h).margin_mm, Some(8.0));
+    assert!(inlay_of(&h).boundary.is_empty());
+    // A margin typed after that is the one kept for the next boundary.
+    type_into(&mut h, "Band margin", "6");
+    h.key_press(egui::Key::Tab);
+    h.run();
+    for choice in ["frame", "None (use the band margin)"] {
+        h.get_by_role_and_label(Role::ComboBox, "Boundary").click();
+        h.run();
+        h.get_by_label(choice).click();
+        h.run();
+    }
+    assert_eq!(inlay_of(&h).margin_mm, Some(6.0), "the newer margin");
     type_into(&mut h, "Band margin", "7");
     h.key_press(egui::Key::Tab);
     h.run();

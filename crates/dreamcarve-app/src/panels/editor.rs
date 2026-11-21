@@ -1231,12 +1231,21 @@ fn boundary_picker(
         .response
         .accessible_name(cx.strings.get(row.label));
     if let Some(shapes) = picked {
+        // What the margin and the rounding held before a boundary took
+        // their place, kept for the session (never in the project) and
+        // put back when *None* is chosen again.
+        let kept_id = id.with("replaced");
+        let kept: Option<editor::ReplacedValues> = ui.data(|d| d.get_temp(kept_id));
+        if !shapes.is_empty() && current.is_empty() {
+            let now = editor::replaced_values(cx.op);
+            ui.data_mut(|d| d.insert_temp(kept_id, now));
+        }
         commit(
             ui,
             id.with("refused"),
             // The boundary, and the margin and the rounding it replaces
-            // cleared with it: one undo step.
-            editor::choose_boundary(cx.op, row, &shapes),
+            // cleared with it, or put back without it: one undo step.
+            editor::choose_boundary(cx.op, row, &shapes, kept.as_ref()),
             out,
         );
     }
