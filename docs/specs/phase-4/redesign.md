@@ -241,8 +241,10 @@ black at 35 % in dark and 14 % in light).
 - **Field.** `surface.sunken`, radius 8, 32 high, a `border.default`
   outline that turns `border.strong` on hover and `focus.ring` on focus.
   The unit sits inside at the right in secondary text. A problem turns the
-  outline to its status stroke and puts the message under the field, as
-  now.
+  outline to its status stroke and puts its status glyph inside the field;
+  the message takes no room: it is the glyph's tooltip, a row in the
+  Warnings drawer (a click on the glyph opens it there), and, while the
+  field has focus, the first thing in the panel's help line.
 - **List row.** No rule between rows. Hover is `surface.hover`; selected
   is `accent.soft` with a 3-px `accent` bar at its left edge.
 - **Rail button.** 48 × 52; icon 24 over an 11-px label; state mark at
