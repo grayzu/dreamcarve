@@ -554,6 +554,11 @@ number_unset = "Its place in the list"
 # between passes it comes to with the bit's diameter, in the units shown.
 step_over_note = "{distance} {unit} between passes"
 step_over_note_tiny = "less than {distance} {unit} between passes"
+# The note beside an angle field: the same angle said the other way. A
+# tapered ball nose's Taper per side shows its included angle; a V-bit's
+# included Angle shows the angle per side.
+taper_note = "{angle}° included"
+angle_note = "{angle}° per side"
 # What each of a tool's fields is (the smoke test's item 6): what it
 # does, its unit, the values it takes (validation's own limits) and what
 # leaving it empty means. Shown on the label and the field as a tooltip,

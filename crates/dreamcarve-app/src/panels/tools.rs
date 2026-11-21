@@ -705,6 +705,11 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
             {
                 quiet_line(ui, &note);
             }
+            // An angle said the other way: a taper's included angle, a
+            // V-bit's angle per side.
+            if let Some(note) = tools::angle_note(strings, tool, field, &output.text) {
+                quiet_line(ui, &note);
+            }
             output
         });
         let response = output.response.labelled_by(label.id);

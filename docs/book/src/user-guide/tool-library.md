@@ -67,7 +67,7 @@ diameter and the tool number. A V-bit's row adds its angle, `6.35 mm ·
 | --- | --- | --- |
 | **Name** | What the lists, the operations' **Tool** rows and the program's comments call the tool | `name` |
 | **Type** | End mill, Ball nose, V-bit, Engraver, Drill or Tapered ball nose | `cutter` |
-| **Angle** | A V-bit's **included** angle, as V-bits are sold. Only a V-bit has it | `cutter.v_bit.included_angle_deg` |
+| **Angle** | A V-bit's **included** angle, as V-bits are sold. Only a V-bit has it. Under the field the app says the angle per side that comes to (`60` reads *30° per side*) | `cutter.v_bit.included_angle_deg` |
 | **Tip diameter**, **Taper per side**, **Flute length** | A tapered ball nose's three numbers ([Tapered ball nose](tapered-ball-nose.md#in-the-app)). Only that type has them | `cutter.tapered_ball_nose` |
 | **Diameter** | The cutting diameter, for every type | `diameter_mm` |
 | **Flutes** | The number of cutting edges | `flutes` |

@@ -1404,3 +1404,50 @@ fn a_finding_at_a_tools_field_is_that_fields_status() {
         "{status:?}"
     );
 }
+
+/// An angle's field says the same angle the other way, as it is typed: a
+/// tapered ball nose's taper is per side and its note gives the included
+/// angle; a V-bit's angle is included and its note gives the angle per
+/// side. A bit sold as "6.7°" entered as 6.7 per side reads
+/// `13.4° included`, which is how the slip shows.
+#[test]
+fn an_angle_field_says_the_angle_the_other_way() {
+    let strings = dc_app::strings::Strings::english();
+    let mut tapered = dc_project::test_support::tool_6_35_upcut();
+    tapered.cutter = dc_project::ToolKind::TaperedBallNose {
+        tip_diameter_mm: Some(2.286),
+        taper_angle_deg: Some(6.7),
+        flute_length_mm: Some(19.05),
+    };
+    let taper = |typed: &str| tools::angle_note(&strings, &tapered, ToolField::Taper, typed);
+    assert_eq!(taper("6.7").as_deref(), Some("13.4° included"));
+    assert_eq!(taper("3.35").as_deref(), Some("6.7° included"));
+    assert_eq!(taper("3.35°").as_deref(), Some("6.7° included"));
+    assert_eq!(taper(""), None, "empty is not set");
+    assert_eq!(taper("steep"), None);
+    assert_eq!(taper("60"), None, "a taper the field refuses has no note");
+
+    let mut v_bit = dc_project::test_support::tool_6_35_upcut();
+    v_bit.cutter = dc_project::ToolKind::VBit {
+        included_angle_deg: 60.0,
+    };
+    let angle = |typed: &str| tools::angle_note(&strings, &v_bit, ToolField::Angle, typed);
+    assert_eq!(angle("60").as_deref(), Some("30° per side"));
+    assert_eq!(angle("90").as_deref(), Some("45° per side"));
+    assert_eq!(angle("13.4").as_deref(), Some("6.7° per side"));
+    assert_eq!(angle(""), None);
+
+    // Only the two angle fields, and only on the cutter that has them.
+    assert_eq!(
+        tools::angle_note(&strings, &tapered, ToolField::Angle, "60"),
+        None
+    );
+    assert_eq!(
+        tools::angle_note(&strings, &v_bit, ToolField::Taper, "6.7"),
+        None
+    );
+    assert_eq!(
+        tools::angle_note(&strings, &v_bit, ToolField::Diameter, "6"),
+        None
+    );
+}

@@ -1445,3 +1445,41 @@ fn boards_ticks_and_the_sheets_units_show_their_help() {
     assert!(text.ends_with(help), "{text}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// An angle's field says the same angle the other way, as it is typed
+/// (the maintainer's test cuts, 2026-11-21: a bit sold as 6.7° was 6.7°
+/// included, 3.35° per side, and the plug would not enter the pocket). A
+/// tapered ball nose's Taper per side shows its included angle under the
+/// field.
+#[test]
+fn a_taper_field_says_its_included_angle_as_it_is_typed() {
+    let dir = scratch("angle-note");
+    let part = copy_fixture("dc-tbn.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(part), &dialogs),
+        1280.0,
+        800.0,
+    );
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "2.286 mm tip tapered ball nose")
+        .click();
+    h.run();
+    let field = h
+        .get_by_role_and_label(Role::TextInput, "Taper per side")
+        .rect();
+    let note = h.get_by_label("13.4° included").rect();
+    assert!(
+        note.top() >= field.bottom() - 1.0 && note.left() >= field.left() - 12.0,
+        "the note is under its field: {note:?}, {field:?}"
+    );
+    let steps = undo_steps(&h);
+    type_into(&mut h, "Taper per side", "3.35");
+    assert!(h.query_by_label("6.7° included").is_some());
+    assert!(h.query_by_label("13.4° included").is_none());
+    assert_eq!(undo_steps(&h), steps, "nothing is written while typing");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_label("13.4° included").is_some());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

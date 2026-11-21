@@ -510,7 +510,13 @@ folder are app preferences, kept outside the project.
     a bit's diameter (here, in the library's pane, 64a, and a Pocket's
     own, 68) a quiet line says the distance it comes to in the units
     shown, *0.508 mm between passes*, from what is typed, as
-    it is typed; an empty Pocket stepover says its tool's. A finding
+    it is typed; an empty Pocket stepover says its tool's. An **angle**
+    is said both ways for the same reason (maintainer's test cuts,
+    2026-11-21: a bit sold as 6.7° was 6.7° included, and entered as 6.7°
+    per side its plug would not enter its pocket): under a tapered ball
+    nose's Taper per side a quiet line gives the included angle,
+    *13.4° included*, and under a V-bit's Angle the angle per side,
+    *30° per side*, from what is typed. A finding
     validation locates at one of the tool's fields (a plunge rate above
     the feed, a stepover far too small) marks that field with its tier's
     outline and glyph, as an operation's row is marked (66, "A field's

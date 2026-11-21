@@ -680,6 +680,31 @@ pub fn step_over_note(strings: &Strings, tool: &Tool, typed: &str, units: Units)
     between_passes(strings, fraction * tool.diameter_mm, units)
 }
 
+/// The note beside `tool`'s Taper or Angle field while it holds `typed`:
+/// the same angle said the other way. A tapered ball nose's taper is per
+/// side, so its note is the included angle (`6.7` reads `13.4° included`);
+/// a V-bit's angle is included, so its note is the angle per side (`60`
+/// reads `30° per side`). Bits are sold by either figure, and one entered
+/// as the other halves or doubles the wall's slope. `None` for any other
+/// field, a cutter without that field, and a field that is empty or holds
+/// an angle it refuses.
+#[must_use]
+pub fn angle_note(strings: &Strings, tool: &Tool, field: ToolField, typed: &str) -> Option<String> {
+    if typed.trim().is_empty() {
+        return None;
+    }
+    let (key, angle_deg) = match (field, &tool.cutter) {
+        (ToolField::Taper, ToolKind::TaperedBallNose { .. }) => {
+            (StrKey::AppToolsTaperNote, taper_angle(typed).ok()? * 2.0)
+        }
+        (ToolField::Angle, ToolKind::VBit { .. }) => {
+            (StrKey::AppToolsAngleNote, included_angle(typed).ok()? / 2.0)
+        }
+        _ => return None,
+    };
+    Some(strings.fmt(key, &[("angle", &trimmed(angle_deg, FIELD_DECIMALS))]))
+}
+
 /// The worst finding located at each of `tool`'s own fields, errors
 /// before warnings before hints, one a field. A value the tool still
 /// needs is left out: its field says *Required* (66b).

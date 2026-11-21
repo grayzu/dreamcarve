@@ -146,7 +146,7 @@ under it:
 | Field | What to type | In the file |
 | --- | --- | --- |
 | **Tip diameter** | The ball's diameter: twice the tip radius vendors usually give. 0.762 for an R 0.381 mm tip | `tip_diameter_mm` |
-| **Taper per side** | The taper in degrees **per side**, as tapered bits are sold. Do not double it | `taper_angle_deg` |
+| **Taper per side** | The taper in degrees **per side**: from the bit's axis to one flank. Bits are sold by either figure, so check which one the maker gives: a bit listed as 6.7° may be 6.7° across both sides, which is 3.35° here. Under the field the app says the included angle your number comes to, as you type (`3.35` reads *6.7° included*) | `taper_angle_deg` |
 | **Flute length** | How far up the bit the flutes go | `flute_length_mm` |
 | **Diameter** | The **cutting diameter**, where the taper becomes a cylinder: 6.35 for a 1/4 in bit. Not the tip | `diameter_mm` |
 
