@@ -3,12 +3,19 @@
 All notable changes to DreamCarve are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 the rule in the roadmap: `0.N.0` marks the end of phase N, and fixes between
-phases bump the patch number.
+phases bump the patch number. `0.N.0-alpha.K` is a pre-release for testers
+before that; its changes are those under Unreleased.
 
 ## [Unreleased]
 
 ### Added
 
+- **The app is in the releases.** From `v0.4.0-alpha.1` every release has
+  an archive of `dreamcarve-app` for Linux, macOS (Intel and Apple
+  silicon) and Windows beside the command line program's, with its own
+  installer scripts, and `THIRD-PARTY-LICENSES` covers the app's crates.
+  The programs are not signed; the Installing chapter says how to get
+  past the first launch check for a copy downloaded by hand.
 - **The DreamCarve app.** DreamCarve now has a desktop app,
   `dreamcarve-app`: one window that takes a drawing or a picture to
   G-code without the command line. It works on the same `.dcv` project

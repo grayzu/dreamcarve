@@ -8,26 +8,60 @@ G-code. They run on Windows, macOS, and Linux.
 
 ## Prebuilt binaries
 
-Tagged releases publish archives for Linux x86_64, macOS (Intel and Apple
-silicon), and Windows x86_64 on the
+Tagged releases publish archives of both programs for Linux x86_64, macOS
+(Intel and Apple silicon), and Windows x86_64 on the
 [releases page](https://github.com/grayzu/dreamcarve/releases), with shell
-and PowerShell installer scripts that put `dreamcarve` on your `PATH`.
+and PowerShell installer scripts that put the program on your `PATH`.
 
-The first release that can write G-code is `v0.1.0`. To install the latest
-release on macOS or Linux:
+The app is in the releases from `v0.4.0-alpha.1`, a pre-release for
+testers. GitHub's "latest" link skips pre-releases, so name the version.
+To install the app on macOS or Linux:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grayzu/dreamcarve/releases/latest/download/dreamcarve-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grayzu/dreamcarve/releases/download/v0.4.0-alpha.1/dreamcarve-app-installer.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/grayzu/dreamcarve/releases/latest/download/dreamcarve-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/grayzu/dreamcarve/releases/download/v0.4.0-alpha.1/dreamcarve-app-installer.ps1 | iex"
 ```
 
-Each archive on the releases page also has a `.sha256` file to check a
-manual download against.
+Then open a new terminal and run `dreamcarve-app`. The command line
+program installs the same way: put `dreamcarve-installer` where the lines
+above have `dreamcarve-app-installer`. Each installs one program to
+Cargo's `bin` folder (`~/.cargo/bin`, or `%USERPROFILE%\.cargo\bin` on
+Windows) and neither needs Rust.
+
+The first release that can write G-code is `v0.1.0`. The latest release
+that is not a pre-release has the command line program alone; for it, use
+`https://github.com/grayzu/dreamcarve/releases/latest/download/` in place
+of the versioned address.
+
+### Downloading an archive by hand
+
+Each archive on the releases page holds the one program, the licence
+files and this project's changelog, and has a `.sha256` file to check the
+download against. Unpack it and run the program from a terminal, or move
+it to a folder on your `PATH`.
+
+The programs are not signed, so a copy downloaded with a browser is
+stopped the first time:
+
+- **macOS** says the program cannot be opened because Apple could not
+  verify it. Open System Settings, Privacy & Security, and choose *Open
+  Anyway* beside its name; or clear the mark the browser put on it:
+
+  ```sh
+  xattr -d com.apple.quarantine ./dreamcarve-app
+  ```
+
+- **Windows** shows "Windows protected your PC". Choose *More info*, then
+  *Run anyway*.
+
+The installer scripts above download the same archives without that
+mark. On Linux the app needs a desktop with Vulkan or OpenGL drivers and
+glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36).
 
 ## Build from source
 
@@ -55,8 +89,8 @@ at `target/release/dreamcarve` (`dreamcarve.exe` on Windows).
 
 ## The app
 
-The app is not in the release archives yet: build it from source. With
-the prerequisites above, in the checkout:
+A release from `v0.4.0-alpha.1` has the app ready built, above. To build
+it from source instead, with the prerequisites above, in the checkout:
 
 ```sh
 cargo install --locked --path crates/dreamcarve-app
