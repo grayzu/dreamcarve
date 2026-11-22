@@ -57,7 +57,7 @@ The rail marks each step with where it stands:
 
 | Step | Complete when | Marked with a dot when |
 | --- | --- | --- |
-| Design | The project has a shape or a picture | A shape has a problem, such as an open path no operation cuts |
+| Design | The project has a shape or a picture | A shape has a problem, such as an open path no operation cuts, or the artwork has one, such as two shapes that overlap ([Preparing artwork](preparing-artwork.md#in-the-app)) |
 | Stock | The thickness is set and every shape is on the stock | A stock or origin value has a problem, or a shape reaches past the stock |
 | Tools | The project has a tool | A tool an operation uses lacks a feed, plunge rate or spindle speed |
 | Operations | An enabled operation exists | An operation has an error or a warning |

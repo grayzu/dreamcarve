@@ -252,3 +252,12 @@ DXF; `check` reports them from the project's shapes. [Preparing
 artwork](preparing-artwork.md) explains each check and `dreamcarve
 image-prep`, which fixes them in an SVG: a drawing, or a picture traced
 in Inkscape.
+
+In the app, the drawing sheet lists the checks before the drawing is
+added: all of them for an SVG, and those two for a DXF, read from the
+shapes of the layers you have ticked. The app does not clean a drawing;
+when a check fires, run `dreamcarve image-prep` on the file (it reads a
+DXF too) and add the SVG it writes
+([Preparing artwork](preparing-artwork.md#in-the-app)). After the
+import the two are warnings in the Warnings drawer, as `check` prints
+them.

@@ -755,3 +755,282 @@ fn preview_is_the_drawing_alone() {
         }
     }
 }
+
+/// The lines `dreamcarve init` prints for `checks`: `warning: <code>:
+/// <message>`.
+fn check_lines(checks: &[dc_job::Check]) -> Vec<String> {
+    checks.iter().map(dc_job::Check::line).collect()
+}
+
+/// The codes of `checks`, in order.
+fn check_codes(checks: &[dc_job::Check]) -> Vec<&'static str> {
+    checks.iter().map(|c| c.code).collect()
+}
+
+/// Capability 55, acceptance 106: the sheet over an SVG lists the checks
+/// `dreamcarve init` prints for the file, in its order and its words. The
+/// messy drawing has one of each kind; the four messages below are the
+/// book's (*Preparing artwork*, "The checks `init` prints"), which its
+/// doc-test holds to the binary. The checks do not disable *Import*, the
+/// importer's own warnings about what a check counts are not listed
+/// twice, and a clean drawing lists none and points nowhere.
+#[test]
+fn svg_sheet_lists_the_checks_init_prints() {
+    let sheet = sheet("prep/messy.svg");
+    let bytes = read(&fixture("prep/messy.svg"));
+    let printed: Vec<String> =
+        dc_import::prep::findings(&bytes, &dc_import::SvgImportOptions::new())
+            .expect("the checks run")
+            .iter()
+            .map(|w| format!("warning: {}: {w}", w.code()))
+            .collect();
+    assert_eq!(check_lines(sheet.checks()), printed);
+    assert_eq!(
+        check_codes(sheet.checks()),
+        [
+            "shapes_overlap",
+            "svg_hole_as_separate_path",
+            "svg_stroke_only_path",
+            "svg_hidden_object",
+            "svg_object_not_convertible",
+            "svg_object_not_convertible",
+            "svg_object_not_convertible",
+            "feature_below_size",
+        ]
+    );
+    let message = |code: &str| -> &str {
+        &sheet
+            .checks()
+            .iter()
+            .find(|c| c.code == code)
+            .unwrap_or_else(|| panic!("no {code}"))
+            .message
+    };
+    assert_eq!(
+        message("shapes_overlap"),
+        "1 pair(s) of shapes overlap; the first is `sq-a` and `sq-b`, meeting near (18.00, \
+         95.00) mm; unite them or move them apart; `dreamcarve image-prep` would fix this"
+    );
+    assert_eq!(
+        message("svg_stroke_only_path"),
+        "1 path(s) have a stroke and no fill; the first is `centreline`, stroked 1.200 mm \
+         wide. Only its centreline is imported, an open path no Inlay or V-Carve can cut; turn \
+         strokes into shapes; `dreamcarve image-prep` would fix this"
+    );
+    assert_eq!(
+        message("svg_hidden_object"),
+        "1 object(s) are not drawn (display:none) but are imported and would be cut; the \
+         first is `old-layer`; skip them; `dreamcarve image-prep` would fix this"
+    );
+    assert_eq!(
+        message("feature_below_size"),
+        "1 piece(s) or hole(s) are narrower than 0.200 mm at their widest, 0.2% of the \
+         design's 100.0 mm height; the smallest is 0.087 mm. Specks that small are not worth \
+         carving; `dreamcarve image-prep` would fix this"
+    );
+    assert!(
+        sheet
+            .checks()
+            .iter()
+            .all(|c| c.tier() == dc_job::Tier::Warning),
+        "the CLI prints each as a warning"
+    );
+
+    assert_eq!(sheet.blocked(), None, "a check never disables Import");
+    assert!(sheet.command().is_some());
+    assert!(sheet.advises_prep(), "the sheet points to image-prep");
+    assert!(
+        !sheet
+            .warnings()
+            .iter()
+            .any(dc_job::checks::counted_by_svg_checks),
+        "the checks stand in for the importer's text, image and clip warnings: {:?}",
+        sheet.warnings()
+    );
+
+    let clean = self::sheet("prep/clean.svg");
+    assert!(clean.checks().is_empty(), "{:?}", clean.checks());
+    assert!(!clean.advises_prep());
+}
+
+/// Capability 55, acceptance 106: a DXF has no paint, so its sheet lists
+/// the two checks `check` reads from shapes, read from the shapes the
+/// import would add. The tray's two pockets overlap and its speck is too
+/// small; unticking the layer that holds the pockets takes the overlap
+/// off the list and ticking it brings it back, so the list is of what
+/// *Import* adds. The lines are what `dc_job::checks::drawing` reads from
+/// the importer's result for the same options.
+#[test]
+fn dxf_sheet_lists_the_checks_of_the_shapes_it_would_add() {
+    let mut sheet = sheet("prep/tool-tray.dxf");
+    assert_eq!(
+        check_codes(sheet.checks()),
+        ["shapes_overlap", "feature_below_size"]
+    );
+    assert_eq!(
+        sheet.checks()[0].message,
+        "1 pair(s) of shapes overlap; the first is `pockets-1` and `pockets-2`, meeting near \
+         (98.43, 14.29) mm; unite them or move them apart; `dreamcarve image-prep` would fix this"
+    );
+    let (all, _) = imported("prep/tool-tray.dxf", &DxfImportOptions::new());
+    assert_eq!(
+        check_lines(sheet.checks()),
+        check_lines(&dc_job::checks::drawing(&Drawing::Dxf(all)))
+    );
+    assert!(sheet.advises_prep());
+    assert_eq!(sheet.blocked(), None, "a check never disables Import");
+
+    sheet.set_layer("pockets", false);
+    assert_eq!(check_codes(sheet.checks()), ["feature_below_size"]);
+    let (subset, _) = imported(
+        "prep/tool-tray.dxf",
+        &DxfImportOptions {
+            layers: Some(vec!["hatched".into(), "speck".into(), "tray".into()]),
+            ..DxfImportOptions::new()
+        },
+    );
+    assert_eq!(
+        check_lines(sheet.checks()),
+        check_lines(&dc_job::checks::drawing(&Drawing::Dxf(subset)))
+    );
+    sheet.set_layer("speck", false);
+    assert!(sheet.checks().is_empty(), "{:?}", sheet.checks());
+    assert!(!sheet.advises_prep(), "nothing fired, nothing to prepare");
+
+    sheet.set_layer("pockets", true);
+    assert_eq!(check_codes(sheet.checks()), ["shapes_overlap"]);
+
+    // A file that cannot be read yet has no checks.
+    let no_units = self::sheet("dxf/no_units.dxf");
+    assert!(no_units.blocked().is_some());
+    assert!(no_units.checks().is_empty());
+}
+
+/// Capabilities 55 and 76, acceptance 106: importing keeps the checks.
+/// The two a project's shapes can be read for are the app's findings from
+/// then on (`App::artwork_checks`), named as the project names the
+/// shapes; the others, which only the drawing's paint could say, are
+/// notes under the file's name with their codes, beside the importer's
+/// own. Nothing is listed twice.
+#[test]
+fn importing_keeps_the_checks_as_findings() {
+    let sheet = sheet("prep/messy.svg");
+    let mut harness = empty();
+    assert!(harness.app.artwork_checks().is_empty());
+    harness
+        .app
+        .import_drawing(&sheet)
+        .expect("the drawing imports");
+
+    assert_eq!(
+        check_codes(harness.app.artwork_checks()),
+        ["shapes_overlap", "feature_below_size"]
+    );
+    assert_eq!(
+        check_lines(harness.app.artwork_checks()),
+        check_lines(&dc_job::checks::project(harness.app.project())),
+        "what check prints for the project"
+    );
+    let overlap = &harness.app.artwork_checks()[0];
+    let named: Vec<&str> = overlap
+        .shapes
+        .iter()
+        .map(|id| {
+            harness
+                .app
+                .project()
+                .instances
+                .iter()
+                .find(|i| &i.id == id)
+                .expect("the shape is in the project")
+                .name
+                .as_str()
+        })
+        .collect();
+    assert_eq!(named, ["sq-a", "sq-b"]);
+
+    let notes = harness.app.notes();
+    assert_eq!(notes, sheet.notes(harness.app.strings()));
+    let noted = |code: &str| notes.iter().filter(|n| n.contains(code)).count();
+    assert_eq!(noted("messy.svg: svg_stroke_only_path: 1 path(s)"), 1);
+    assert_eq!(noted("messy.svg: svg_hidden_object: 1 object(s)"), 1);
+    assert_eq!(noted("messy.svg: svg_hole_as_separate_path: "), 1);
+    assert_eq!(noted("messy.svg: svg_object_not_convertible: "), 3);
+    assert_eq!(noted("shapes_overlap"), 0, "the project's own: {notes:?}");
+    assert_eq!(noted("feature_below_size"), 0, "{notes:?}");
+    assert_eq!(
+        notes.len(),
+        sheet.warnings().len() + 6,
+        "the importer's warnings and the six checks of the drawing's paint"
+    );
+
+    // A new project round the drawing has them too, and a DXF's checks
+    // are all the project's own: no note is added for them.
+    let mut harness = empty();
+    harness
+        .app
+        .new_from_drawing(&sheet)
+        .expect("the project is made");
+    assert_eq!(
+        check_codes(harness.app.artwork_checks()),
+        ["shapes_overlap", "feature_below_size"]
+    );
+    assert_eq!(harness.app.notes(), sheet.notes(harness.app.strings()));
+
+    let tray = self::sheet("prep/tool-tray.dxf");
+    let mut harness = empty();
+    harness.app.import_drawing(&tray).expect("the tray imports");
+    assert_eq!(
+        check_lines(harness.app.artwork_checks()),
+        check_lines(tray.checks()),
+        "placed as drawn, the shapes read as the sheet read them"
+    );
+    assert_eq!(harness.app.notes().len(), tray.warnings().len());
+}
+
+/// Capability 55, acceptance 106: the quick start's coaster is a circle
+/// drawn as a hairline with no fill, as most drawings for a cut-out are,
+/// and `init` says so (`svg_stroke_only_path`). The sheet lists it and
+/// the import keeps it as a note, but it is advice about a shape that was
+/// imported whole, so it is not among what the import left out and the
+/// Design step is complete: the first project a new user makes is not
+/// marked as needing attention. What the messy drawing's import did
+/// leave out (its text, its image, its clipped group) marks the step, as
+/// the importer's warnings about them did.
+#[test]
+fn an_outline_drawn_as_a_stroke_is_noted_and_marks_nothing() {
+    use dc_app::steps::{self, Session, State, Step};
+
+    let bytes = read(&common::repo_root().join("fixtures/coaster.svg"));
+    let coaster = DrawingImport::open(DrawingFormat::Svg, "coaster.svg", bytes, Purpose::New);
+    assert_eq!(check_codes(coaster.checks()), ["svg_stroke_only_path"]);
+    assert!(coaster.warnings().is_empty());
+    assert_eq!(coaster.left_out(), 0, "the circle was imported whole");
+
+    let mut harness = empty();
+    harness
+        .app
+        .new_from_drawing(&coaster)
+        .expect("the project is made");
+    let notes = harness.app.notes();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].starts_with("coaster.svg: svg_stroke_only_path: 1 path(s) have a stroke"),
+        "{notes:?}"
+    );
+    assert!(harness.app.artwork_checks().is_empty());
+    let session = Session {
+        import_warnings: coaster.left_out(),
+        ..Session::default()
+    };
+    let states = steps::states(&harness.app, &session);
+    assert_eq!(states.of(Step::Design), State::Complete);
+    assert_eq!(steps::opening(&states), Step::Stock);
+
+    let messy = sheet("prep/messy.svg");
+    assert_eq!(
+        messy.left_out(),
+        messy.warnings().len() + 3,
+        "the importer's warnings, and the text, the image and the clipped group"
+    );
+}

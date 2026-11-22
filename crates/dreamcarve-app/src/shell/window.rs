@@ -1333,11 +1333,13 @@ impl Shell {
                 let model = sheet.model();
                 let name = model.name().to_owned();
                 // The importer's warnings become notes: the Design step
-                // marks them until the file is saved.
-                let noted = self.app.notes().len();
+                // marks what the import left out until the file is saved.
+                // A note of an artwork check that only advises (a stroke
+                // with no fill) marks nothing.
+                let left_out = model.left_out();
                 let result = match model.purpose() {
                     Purpose::Import => self.app.import_drawing(model).map(|_| {
-                        self.import_warnings += self.app.notes().len().saturating_sub(noted);
+                        self.import_warnings += left_out;
                         let count = self.app.selection().instances().len().to_string();
                         self.strings().fmt(
                             StrKey::AppMessageImported,
@@ -1345,7 +1347,7 @@ impl Shell {
                         )
                     }),
                     Purpose::New => self.app.new_from_drawing(model).map(|()| {
-                        self.import_warnings = self.app.notes().len();
+                        self.import_warnings = left_out;
                         self.viewport.fit_on_next_frame();
                         self.strings()
                             .fmt(StrKey::AppMessageNewFromDrawing, &[("name", &name)])

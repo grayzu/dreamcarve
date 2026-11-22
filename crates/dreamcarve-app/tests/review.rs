@@ -2429,3 +2429,110 @@ fn field_problems_review() {
     park_pointer(&mut h);
     shoot_in(&mut h, &out, "13-import-sheet-resized", &looks);
 }
+
+/// Where the artwork-check pictures are committed.
+fn import_checks_dir() -> PathBuf {
+    common::repo_root().join("docs/specs/phase-4/review/import-checks")
+}
+
+/// The artwork checks in the window (functional spec, capabilities 55
+/// and 76, acceptance 106), written into
+/// `docs/specs/phase-4/review/import-checks/`, dark at 1×:
+///
+/// - `01`: the Import drawing sheet on the messy SVG
+///   (`tests/fixtures/prep/messy.svg`): the first of its eight checks
+///   under the preview, each with its code and its message whole.
+/// - `02`: the same sheet scrolled to its end: the last checks, the line
+///   that names `dreamcarve image-prep` with the link to *Preparing
+///   artwork*, and the button still at the sheet's foot.
+/// - `03`: the sheet on the tray's DXF (`tests/fixtures/prep/tool-tray.dxf`),
+///   as it opens: at its top, its options and layers, the preview, and
+///   the list starting at its foot.
+/// - `04`: the same sheet scrolled to its end: the overlap of its two
+///   pockets and its speck, read from the shapes of the layers ticked.
+/// - `05`: the tray imported, the Warnings drawer open and the overlap's
+///   row clicked (the pointer still on it): the Design step, the two
+///   pockets selected on the Viewport and in the list.
+/// - `06`: the same project on the Stock step: the rail's Design button
+///   carries the warning mark.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review import_checks -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed artwork-check pictures; run by hand"]
+fn import_checks_review() {
+    let out = import_checks_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark];
+    SCALE.set(1.0);
+    let dir = scratch("review-import-checks");
+
+    let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
+        return;
+    };
+    // 01, 02: an SVG with one of every check.
+    h.input_mut()
+        .dropped_files
+        .push(std::sync::Arc::new(Dropped(fixture("prep/messy.svg"))));
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "01-sheet-svg-checks", &looks);
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Preparing artwork")
+        .scroll_to_me();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "02-sheet-svg-checks-end", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 03, 04: a DXF whose pockets overlap.
+    h.input_mut()
+        .dropped_files
+        .push(std::sync::Arc::new(Dropped(fixture("prep/tool-tray.dxf"))));
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "03-sheet-dxf", &looks);
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Preparing artwork")
+        .scroll_to_me();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "04-sheet-dxf-overlap", &looks);
+
+    // 05: imported; the overlap's row in the drawer, clicked.
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Add 6 shapes")
+        .click();
+    h.run();
+    settle(&mut h);
+    go_to(&mut h, "Stock");
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.run();
+    open_drawer(&mut h);
+    let row = dc_app::warnings::panel(h.state().app())
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .find(|row| row.code.as_deref() == Some("shapes_overlap"))
+        .expect("the overlap's row")
+        .name;
+    h.get_by_label(&row).click();
+    h.run();
+    assert_eq!(h.state().step(), dc_app::steps::Step::Design);
+    assert_eq!(h.state().app().selection().instances().len(), 2);
+    shoot_in(
+        &mut h,
+        &out,
+        "05-drawer-overlap-row-selects-the-shapes",
+        &looks,
+    );
+
+    // 06: the rail's mark on Design, seen from another step.
+    click(&mut h, "Close the Warnings drawer");
+    go_to(&mut h, "Stock");
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "06-rail-design-marked", &looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

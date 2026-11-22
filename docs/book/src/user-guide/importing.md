@@ -65,6 +65,21 @@ The button at the bottom says what it will do: **Add 10 shapes**, or
 **Create project** for a new project. It is off while the file cannot be
 imported.
 
+Under the preview the sheet lists what the importer left out, and the
+**artwork checks**: what in the drawing would trip a V-Carve or an Inlay,
+such as shapes that overlap, lines drawn as strokes, hidden objects, or
+specks too small to carve. They are the checks `dreamcarve init` prints,
+in the same words, each with its code. An SVG gets all of them; a DXF,
+which has no paint, the two that can be read from its shapes, for the
+layers you have ticked. A check never turns the button off: you can add
+the drawing as it is, and for a cut-out drawn as thin outlines that is
+the right thing to do. The app does not clean a drawing itself. When a
+check fires, a line under the list says to run `dreamcarve image-prep`
+on the file and add the drawing it writes instead, where a V-Carve or an
+Inlay needs it;
+[Preparing artwork](preparing-artwork.md#in-the-app) shows the sheet and
+the steps.
+
 [Importing DXF](importing-dxf.md) says exactly which entities are read,
 how units and layers are handled, and how loose ends are stitched.
 
@@ -78,9 +93,12 @@ circle, which is what lets Drill and Bore take it.
 Anything the importer has to tell you (entities it did not read,
 duplicate shapes it dropped, an SVG object that will not cut as drawn) is
 listed in the Warnings drawer after the import, under the file's name,
-and marks the Design step with a dot. [Preparing
-artwork](preparing-artwork.md) explains the SVG checks and how to fix a
-drawing that fails them.
+and marks the Design step with a dot. The artwork checks the sheet
+listed are there too: shapes that overlap and features too small to
+carve as warnings, which mark the step for as long as the shapes are
+that way, and the rest as notes under the file's name.
+[Preparing artwork](preparing-artwork.md#in-the-app)
+explains the checks and how to fix a drawing that fails them.
 
 An **open path**, one that does not close into an outline, has its own
 mark in the list and is drawn dashed. An Engrave, or a Profile on the

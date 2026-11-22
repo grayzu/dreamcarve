@@ -180,7 +180,7 @@ impl Fnv {
 
     /// `value`'s JSON under `tag`: the tag keeps two inputs that
     /// serialize alike (a missing tool and a missing definition) apart.
-    fn put<T: Serialize + ?Sized>(&mut self, tag: &str, value: &T) {
+    pub(crate) fn put<T: Serialize + ?Sized>(&mut self, tag: &str, value: &T) {
         self.bytes(tag.as_bytes());
         self.bytes(b"=");
         if serde_json::to_writer(&mut *self, value).is_err() {

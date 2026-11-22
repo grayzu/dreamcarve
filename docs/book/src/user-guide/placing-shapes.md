@@ -170,6 +170,12 @@ No operation cuts a new copy: its row counts 0. Add it to an operation's
 targets, or select it and add an operation for it
 ([Adding an operation](operations.md#adding-an-operation)).
 
+A copy 10 mm from its original lies over it, unless the shape is smaller
+than that. The app says so while it does: a `shapes_overlap` warning in
+the Warnings drawer, and an amber dot on the Design step. Drag the copy
+clear of the original and both go
+([Warnings](warnings.md#what-the-drawing-holds)).
+
 ## Deleting
 
 Select the shapes and press Delete or Backspace, or choose **Edit ▸
@@ -234,6 +240,11 @@ The **Stock** step is marked too, and says that a shape reaches past the
 stock. Move the shape back, or make the stock fit with
 [Fit to shapes](stock-and-origin.md#fit-to-shapes) if your material
 really is that big.
+
+Out there the square also lies across the plaque's outline. Shapes that
+cross are a warning, `shapes_overlap`, which the drawer lists under the
+error and which names the first pair; click its row to select the two.
+It goes when the shapes no longer cross.
 
 In the project file, each row of the list is an entry of
 [`instances`](project-file.md#definitions-and-instances), and what this chapter changes

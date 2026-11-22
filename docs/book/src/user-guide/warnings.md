@@ -432,7 +432,9 @@ side follows the picture's proportions".
 warnings never stop `init`, and never change the project it writes. The
 messages that [`image-prep`](preparing-artwork.md) would fix end with "`dreamcarve
 image-prep` would fix this". [Preparing artwork](preparing-artwork.md#the-checks-init-prints)
-explains the checks of the first table with an example.
+explains the checks of the first table with an example. The app lists
+the same checks on its drawing sheet, and `check`'s two in its Warnings
+drawer ([in the app](preparing-artwork.md#in-the-app)).
 
 ### What the drawing holds
 
@@ -449,6 +451,7 @@ past tense ("were skipped").
 | `svg_hidden_object` | <a id="svg_hidden_object"></a>An object is not drawn (`display:none`, `visibility:hidden`, zero opacity, or neither filled nor stroked) but is imported, and would be cut. | Delete it; or `image-prep`, which skips it. |
 | `svg_object_not_convertible` | <a id="svg_object_not_convertible"></a>Live text, an image, a clip path or a mask. Text and images are skipped; clipped or masked shapes are imported whole. One warning per kind, with the count. | Convert text to paths (Path → Object to Path); trace pictures in Inkscape first; expand clips and masks. |
 | `feature_below_size` | <a id="feature_below_size"></a>Pieces or holes whose widest point is under the default `--min-detail` of the design's height; the smallest is named. | Nothing is cut wrongly, but a speck that small is not worth carving; `image-prep` drops them. |
+| `import_checks_skipped` | <a id="import_checks_skipped"></a>The drawing was imported, but the checks above could not be run on it: to measure its strokes they would have to build more outline than a drawing may hold (a dashed stroke with a very fine dash does it). The message gives the reason. | Nothing was checked, so look the drawing over yourself. Turn the stroke into a shape in the drawing program (Path → Stroke to Path), or simplify it, and import again. |
 
 ### `image-prep` warnings
 

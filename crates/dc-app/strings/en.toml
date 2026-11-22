@@ -1132,11 +1132,21 @@ unread_kind = "{kind}: {count}"
 list_separator = ", "
 preview = "Preview"
 notes_heading = "Listed in the Warnings drawer after the import:"
+# The artwork checks under the importer's notes (capability 55): a
+# check's code links to its entry in the Warnings chapter, and one line
+# under the list says what to do, since the app does not clean a drawing.
+check_chapter = "Open {code} in the Warnings chapter"
+prep_advice = "The app does not clean a drawing. Where a V-Carve or an Inlay needs these fixed, run dreamcarve image-prep on the file and add the drawing it writes."
+prep_chapter = "Preparing artwork"
+prep_chapter_help = "Open the Preparing artwork chapter of the book"
 add = "Add shapes"
 add_one = "Add 1 shape"
 add_many = "Add {count} {count|shape|shapes}"
 create = "Create project"
 note = "{name}: {note}"
+# A check only the drawing could be read for, as a note after the import:
+# its code, then its message, as init prints it.
+check_note = "{name}: {code}: {note}"
 
 # The Add picture sheet's model (slice 6, #535; functional spec,
 # capabilities 51 and 56): why Import is disabled before a size is typed,

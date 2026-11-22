@@ -40,6 +40,14 @@
 //! form, so a field's line, a row's hover and the status bar read the
 //! same words as the drawer.
 //!
+//! The artwork checks ([`App::artwork_checks`](crate::App::artwork_checks);
+//! capability 76, acceptance 106): the two `check` reads from the
+//! project's shapes and prints after its warnings, `shapes_overlap` and
+//! `feature_below_size`. Each is a row after the warnings, in `check`'s
+//! tier and words, counted as `check` counts it; the overlap's row
+//! carries the shapes it names ([`Row::shapes`]), which clicking it
+//! selects.
+//!
 //! Carve notes (slice 28, #620; capability 76a): the summary `check`
 //! prints for each operation that carves ([`dc_job::carve_facts`]) is a
 //! [`Level::Note`] row last in its operation's group, laid out as
@@ -52,7 +60,7 @@
 
 use dc_job::summary::{CarveFacts, Fact, Top};
 use dc_job::{Finding, Findings, ShapeRef, Tier};
-use dc_project::{OperationId, Project, SourceMap};
+use dc_project::{InstanceId, OperationId, Project, SourceMap};
 
 use crate::app::App;
 use crate::selection::Selection;
@@ -107,6 +115,9 @@ pub struct Row {
     pub op: Option<OperationId>,
     /// The shape it is about.
     pub shape: Option<ShapeRef>,
+    /// The shapes an artwork check names: the pair of `shapes_overlap`.
+    /// Empty for every other row.
+    pub shapes: Vec<InstanceId>,
     /// The whole line as `check` prints it; a carve note's lines, one
     /// per board, joined by newlines. `check` labels a hint `warning`.
     /// Empty for one of the app's own hints ([`App::hints`]), which
@@ -188,13 +199,17 @@ impl Row {
 
     /// What clicking the row selects (capability 76): the operation when
     /// the row names one of its fields (the editor then focuses it), else
-    /// the shape it is about, else its operation.
+    /// the shape it is about, else its operation, else the shapes an
+    /// artwork check names.
     #[must_use]
     pub fn selection(&self) -> Option<Selection> {
         match (&self.field, &self.op, &self.shape) {
             (Some(_), Some(op), _) => Some(Selection::Operation(op.clone())),
             (_, _, Some(shape)) => Some(Selection::Instances(vec![shape.instance.clone()])),
             (_, Some(op), None) => Some(Selection::Operation(op.clone())),
+            (_, None, None) if !self.shapes.is_empty() => {
+                Some(Selection::Instances(self.shapes.clone()))
+            }
             (_, None, None) => None,
         }
     }
@@ -423,8 +438,8 @@ fn row_name(strings: &Strings, level: Level, code: Option<&str>, message: &str) 
 }
 
 /// Every row: the app's own hints ([`App::hints`]), then `check`'s in its
-/// order: the notes, the errors, the warnings (hints among them), then
-/// the carve notes.
+/// order: the notes, the errors, the warnings (hints among them), the
+/// artwork checks of the shapes, then the carve notes.
 fn rows(app: &App) -> Vec<Row> {
     let location = Location::of(app);
     let strings = app.strings();
@@ -437,6 +452,7 @@ fn rows(app: &App) -> Vec<Row> {
         field: None,
         op: None,
         shape: None,
+        shapes: Vec::new(),
         line: String::new(),
         name: row_name(strings, Level::Hint, None, hint),
         note: None,
@@ -450,6 +466,7 @@ fn rows(app: &App) -> Vec<Row> {
             field: None,
             op: None,
             shape: None,
+            shapes: Vec::new(),
             line: format!("{}: note: {note}", location.name),
             name: row_name(strings, Level::Note, None, &shown),
             shown,
@@ -471,6 +488,7 @@ fn rows(app: &App) -> Vec<Row> {
             field: finding.field.clone(),
             op: finding.op.clone(),
             shape: finding.shape.clone(),
+            shapes: Vec::new(),
             line: location.describe(label, finding),
             name: row_name(
                 strings,
@@ -479,6 +497,24 @@ fn rows(app: &App) -> Vec<Row> {
                 &shown,
             ),
             shown,
+            note: None,
+        }
+    });
+    // `check` prints these whatever else it found: they are read from the
+    // shapes alone.
+    let artwork = app.artwork_checks().iter().map(|check| {
+        let level = Level::from(check.tier());
+        Row {
+            level,
+            code: Some(check.code.to_owned()),
+            message: check.message.clone(),
+            shown: check.message.clone(),
+            field: None,
+            op: None,
+            shape: None,
+            shapes: check.shapes.clone(),
+            line: check.line(),
+            name: row_name(strings, level, Some(check.code), &check.message),
             note: None,
         }
     });
@@ -493,7 +529,11 @@ fn rows(app: &App) -> Vec<Row> {
             .map(|facts| carve_row(app.strings(), facts))
             .collect()
     };
-    own.chain(notes).chain(found).chain(carves).collect()
+    own.chain(notes)
+        .chain(found)
+        .chain(artwork)
+        .chain(carves)
+        .collect()
 }
 
 /// The carve summary of operation `op` (capability 76a), from the
@@ -522,6 +562,7 @@ fn carve_row(strings: &Strings, facts: &CarveFacts) -> Row {
         field: None,
         op: Some(facts.op.clone()),
         shape: None,
+        shapes: Vec::new(),
         line: text.clone(),
         name: text,
         note: Some(carve_note(strings, facts)),

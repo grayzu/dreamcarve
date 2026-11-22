@@ -125,7 +125,9 @@ enum Crop {
 
 /// The open sheet's card: the box round its buttons, fields and text
 /// (the sheet itself reports no rectangle), with the sheet's 24-px
-/// padding put back.
+/// padding put back. The Import drawing sheet scrolls, and what is
+/// scrolled out of it still reports where it would be: that sheet's card
+/// ends at its corner grip, and it is centred in the window.
 fn sheet_rect(h: &H) -> egui::Rect {
     let sheet = h.get_by_role(Role::Dialog);
     let mut content = egui::Rect::NOTHING;
@@ -135,7 +137,17 @@ fn sheet_rect(h: &H) -> egui::Rect {
         }
     }
     assert!(content.is_positive(), "the sheet has content");
-    content.expand(24.0)
+    let card = content.expand(24.0);
+    match sheet.query_by_role_and_label(Role::Splitter, "Resize the sheet") {
+        Some(grip) => {
+            let corner = grip.rect().max;
+            card.intersect(egui::Rect::from_min_max(
+                egui::pos2(WINDOW.x - corner.x, WINDOW.y - corner.y),
+                corner,
+            ))
+        }
+        None => card,
+    }
 }
 
 /// The part of the window `crop` names, points.
@@ -734,7 +746,9 @@ fn the_app_screenshots() {
 /// (`docs/book/src/user-guide/importing.md`): a project made round a
 /// picture (a landscape drawn here, so no photograph needs committing),
 /// the picture selected on the Design step, and a DXF drawing added to
-/// it.
+/// it. For "Preparing artwork" (`preparing-artwork.md`, "In the app"),
+/// the sheet on the chapter's own messy drawing, scrolled to the end of
+/// its checks.
 #[test]
 #[ignore = "writes the book's screenshots; run by hand"]
 fn importing_screenshots() {
@@ -770,6 +784,28 @@ fn importing_screenshots() {
     dialogs.answer(&drawing);
     click_button(&mut h, "Add drawing");
     shoot(&mut h, &out, "import-dxf-sheet", Crop::Sheet);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // Add drawing on the messy SVG: the artwork checks, all eight, and
+    // the line under them that points to `image-prep`.
+    let messy = dir.join("messy.svg");
+    std::fs::copy(common::fixture("prep/messy.svg"), &messy).unwrap();
+    dialogs.answer(&messy);
+    click_button(&mut h, "Add drawing");
+    let sheet = h.get_by_role(Role::Dialog);
+    let listed = dc_job::checks::svg(&std::fs::read(&messy).unwrap()).unwrap();
+    assert_eq!(listed.len(), 8, "the chapter's eight lines");
+    for check in &listed {
+        assert!(
+            sheet.query_all_by_label(&check.message).next().is_some(),
+            "the sheet lists what the chapter prints: {}",
+            check.line()
+        );
+    }
+    sheet.get_by_label("Preparing artwork").scroll_to_me();
+    h.run();
+    shoot(&mut h, &out, "import-checks-sheet", Crop::Sheet);
     drop(h);
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -1042,9 +1078,16 @@ fn placing_shapes_screenshots() {
     h.run();
     assert_eq!(undo_label(&h), "Lock “square (2)”");
     settle(&mut h);
+    // The copy lies 10 mm from its original, over it and across the
+    // pocket's outline: the one thing `check` has to say (acceptance
+    // 106), as the chapter does.
+    let said = problems(&h);
     assert!(
-        problems(&h).is_empty() && h.query_by_label("Est. 3 min 39 s").is_some(),
-        "a copy nothing cuts, a hidden shape and a locked one change no cut"
+        matches!(said.as_slice(), [overlap] if overlap.starts_with(
+            "warning: shapes_overlap: 2 pair(s) of shapes overlap; the first is `pocket` and \
+             `square (2)`"
+        )) && h.query_by_label("Est. 3 min 39 s").is_some(),
+        "a copy nothing cuts, a hidden shape and a locked one change no cut: {said:?}"
     );
     shoot(&mut h, &out, "place-list", Crop::StepPanel);
     shoot(&mut h, &out, "place-locked", Crop::ViewportAndInspector);
@@ -1078,13 +1121,18 @@ fn placing_shapes_screenshots() {
     assert_eq!(undo_label(&h), "Unlock “square (2)”");
 
     // A shape moved past the stock's right edge: its cut is an error,
-    // and the Stock step says the shape reaches past the stock.
+    // and the Stock step says the shape reaches past the stock. There
+    // it also crosses the plaque's outline, which is a warning.
     row(&mut h, "square");
     type_in(&mut h, "X", "150");
     settle(&mut h);
-    assert_eq!(
-        problems(&h),
-        ["error: operation `op4` cuts off the stock: 10.930 mm past the +X (right) edge"]
+    let said = problems(&h);
+    assert!(
+        matches!(said.as_slice(), [error, overlap]
+            if error == "error: operation `op4` cuts off the stock: 10.930 mm past the +X (right) edge"
+                && overlap.starts_with("warning: shapes_overlap: ")
+                && overlap.contains("the first is `outline` and `square`")),
+        "{said:?}"
     );
     go_to(&mut h, "Stock");
     assert!(

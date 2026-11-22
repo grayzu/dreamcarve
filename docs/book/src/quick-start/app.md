@@ -60,7 +60,15 @@ opens the next one that still needs something.
 Click **New from drawing…** and choose `coaster.svg`. A sheet shows what
 the file holds: one closed shape.
 
-![The New project from drawing sheet: the file, "SVG · 1 closed, 0 open", and a preview of the circle](figures/app/02-new-from-drawing.png)
+![The New project from drawing sheet: the file, "SVG · 1 closed, 0 open", a preview of the circle, one check under it, svg_stroke_only_path, and the button Create project](figures/app/02-new-from-drawing.png)
+
+Under the preview the sheet lists what it found in the drawing that could
+trip a carve. Here it is one line, `svg_stroke_only_path`: the coaster is
+drawn as a thin line with no fill, as most drawings for a cut-out are.
+That matters to a V-Carve or an Inlay, which carve areas. A Profile cuts
+along the line, so this drawing is right as it is and there is nothing to
+fix. [Preparing artwork](../user-guide/preparing-artwork.md#in-the-app)
+explains the checks for when you bring in artwork of your own.
 
 Click **Create project**. DreamCarve makes a new project round the
 drawing:

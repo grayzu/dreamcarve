@@ -143,7 +143,7 @@ folder are app preferences, kept outside the project.
 
     | Step | Complete when | Needs attention when |
     | --- | --- | --- |
-    | Design | The project has a shape or a picture | A finding is about a shape, or an importer's warning about a drawing is still in the Warnings drawer |
+    | Design | The project has a shape or a picture | A finding is about a shape, an artwork check fired on the shapes (76), or a note that an import left part of a drawing out is still in the Warnings drawer (55) |
     | Stock | The thickness is set and every shape is on the stock | A stock or origin field has a problem, or a shape reaches past the stock |
     | Tools | The project has a tool | A finding is about a tool (one an enabled operation uses lacks a feed, plunge rate or RPM) |
     | Operations | An enabled operation exists | A finding is about an operation |
@@ -251,7 +251,9 @@ folder are app preferences, kept outside the project.
     `init` does (capabilities 1, 20, 46): a stock sized round the drawing
     with its margin, the picture or the shapes placed as `init` places
     them, and, for a picture, one Photo V-Carve on it with `init`'s
-    defaults. They differ from *Add Drawing to Project…* and *Add Picture
+    defaults. The drawing's sheet lists the artwork checks as 55 says,
+    and they are in the new project's Warnings drawer as 76 says.
+    They differ from *Add Drawing to Project…* and *Add Picture
     to Project…* (55, 56), which add to the open project and leave its
     stock alone; the File menu groups the two pairs apart with a divider.
     *New Project from Drawing* adds the shapes and the stock only: no
@@ -330,7 +332,39 @@ folder are app preferences, kept outside the project.
     names them (DXF layer names, SVG ids). Import warnings (entities not
     read, open paths skipped by nothing yet, duplicate shapes dropped)
     appear in the Warnings drawer after the import, once, under the import's
-    name. One import is one undo step. The sheet resizes as the Tool
+    name. The sheet also lists the **artwork checks** of the drawing
+    (phase 3, 49a; the maintainer's clip art, 2026-11-21), which the CLI
+    prints and the app used not to show: under the importer's notes, one
+    line for each check that fired, with its tier's glyph, its code,
+    which opens its entry in the Warnings chapter, and its message in
+    the CLI's words, whole. For an SVG they are the checks `init` prints
+    for the file, and the importer's own warnings about text, images,
+    clip paths and masks give way to the check that counts them, as at
+    `init`; for a DXF, which has no paint, they are the two `check`
+    reads from shapes (`shapes_overlap`, `feature_below_size`), read
+    from the shapes the import would add, so they follow the units, the
+    join tolerance and the layers ticked. They are read once with each
+    read of the file, never as the sheet is drawn. A check never
+    disables the sheet's button. The list scrolls with the sheet's
+    options while the button stays at its foot, and a sheet opens at
+    its top wherever the last was scrolled to. The app does not clean a
+    drawing (image prep in the app was considered and deferred): when a
+    check fired, one quiet line under the list says so and says what to
+    do where a V-Carve or an Inlay needs it fixed, run `dreamcarve
+    image-prep` on the file and add the drawing it writes, with a link
+    to the book's *Preparing artwork* chapter. After
+    the import the two checks a project's shapes can be read for are
+    the drawer's own (76); the others, which only the drawing's paint
+    could say, are notes under the import's name with their codes,
+    beside the importer's. The Design step is marked (50) by the notes
+    that say the import left part of the drawing out: the importer's,
+    and `svg_object_not_convertible`, which stands in for the
+    importer's own about text, images, clips and masks. A note of
+    `svg_hole_as_separate_path`, `svg_stroke_only_path` or
+    `svg_hidden_object` is advice about shapes imported whole and marks
+    nothing: the quick start's coaster, an outline drawn as a hairline
+    as most cut-outs are, has the second, and its new project opens on
+    Stock with Design complete. One import is one undo step. The sheet resizes as the Tool
     Library does (64; maintainer's smoke test, 2026-11-20): by its edges
     and the grip at its bottom right corner, down to 440 × 320 and up to
     the window's size less a margin, staying centred, each side it was
@@ -1115,6 +1149,17 @@ folder are app preferences, kept outside the project.
     counts; the drawer opens from them or from View ▸ Warnings. Its header
     holds the counts, *Copy* (the drawer's text on the clipboard in
     `check`'s format) and close; it has no Regenerate button (71).
+    The two artwork checks `check` reads from the project's shapes
+    (`shapes_overlap` and `feature_below_size`; phase 3, 49a) are rows
+    too, for any open project: after the warnings, as `check` prints
+    them, in its tier (a warning) and its words, counted as it counts
+    them, so *Copy* is `check`'s text for a project whose shapes overlap
+    or hold a speck. The overlap's row names the first pair of shapes
+    and clicking it opens the Design step with the two selected; the
+    speck's row names no shape. They are read again when a shape changes
+    and at no other edit, so moving a shape clear of the other takes the
+    overlap's row away, and while one stands the Design step is marked
+    as needing attention (50).
 76a. **Carve notes** (`10-warnings-panel.svg`; review 2026-11-10). The
     summary `check` prints for an operation that carves (deepest cut, flat
     floor, floor ridges, start plane, the male board's band and cut-out)
@@ -1710,6 +1755,27 @@ slices carry them.
     when marked, its glyph inside the field or the dropdown (clear of
     the chevron) or beside the control, inside the row. The pictures are
     `docs/specs/phase-4/review/field-problems/`.
+106. **Artwork checks in the app** (51, 55, 76; phase 3, 49a). The
+    Import drawing sheet on `tests/fixtures/prep/messy.svg` lists the
+    eight lines `dreamcarve init` prints for it, in its order, each
+    with its code and its message; its button is enabled and stays
+    inside the sheet while the list scrolls; under the list one line
+    names `dreamcarve image-prep` and links to *Preparing artwork*; a
+    clean drawing's sheet has neither. *New from drawing* on
+    `fixtures/coaster.svg` lists `svg_stroke_only_path`, and the project
+    it makes opens on Stock with Design complete and the check as a
+    note. The sheet on
+    `tests/fixtures/prep/tool-tray.dxf` lists `shapes_overlap` and
+    `feature_below_size`, and with the *pockets* layer unticked no
+    overlap. Imported, the project's Warnings drawer lists those two as
+    warnings after the others, and the checks only the SVG could be
+    read for as notes with their codes; the overlap's row selects its
+    two shapes on the Design step, which the rail marks with a warning;
+    moving one of the shapes clear, hiding it, or undoing the move
+    changes the rows to match. For `tests/fixtures/prep/messy.dcv` and
+    the tray as `init` writes it, *Copy* equals the binary's `check`
+    line for line, and the CLI's own tests pass unchanged. The pictures
+    are `docs/specs/phase-4/review/import-checks/`.
 
 ## Safety requirements
 

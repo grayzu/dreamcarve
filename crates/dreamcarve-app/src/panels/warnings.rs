@@ -28,7 +28,10 @@
 //! closes (capability 66). Each group is named above its rows
 //! only when there are two or more (#616). An operation's carve note is
 //! the last row of its group, its facts laid out as labelled lines under
-//! a board's sub-heading (#620). The drawer has no Regenerate
+//! a board's sub-heading (#620). The artwork checks of the shapes
+//! (`shapes_overlap`, `feature_below_size`; acceptance 106) are rows
+//! like any warning's, and the overlap's selects the two shapes it names
+//! on the Design step. The drawer has no Regenerate
 //! button, since *Regenerate all* lives in the status bar after Stop
 //! (capability 71).
 

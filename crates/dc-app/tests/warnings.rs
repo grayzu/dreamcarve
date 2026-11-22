@@ -746,3 +746,167 @@ fn findings_are_shown_with_names_and_copied_with_ids() {
         "Copy is check's line"
     );
 }
+
+/// The messy drawing as `init` wrote it (`tests/fixtures/prep/messy.dcv`):
+/// two squares that overlap and a speck.
+fn messy() -> Harness {
+    let bytes = read(&common::fixture("prep/messy.dcv"));
+    generated("messy.dcv", &bytes)
+}
+
+/// The panel's rows, flat.
+fn all_rows(harness: &Harness) -> Vec<warnings::Row> {
+    warnings::panel(&harness.app)
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .collect()
+}
+
+/// Capability 76, acceptance 106: the artwork checks `check` reads from a
+/// project's shapes are rows of the drawer, after the warnings as `check`
+/// prints them, in its tier (a warning) and its words, counted as it
+/// counts them. The overlap's row names its two shapes, which clicking it
+/// selects; the speck's names none. (`check`'s lines for the file are
+/// compared with the binary's in the CLI's `warnings_panel` test.)
+#[test]
+fn artwork_checks_are_rows_after_the_warnings() {
+    let harness = messy();
+    let checks = dc_job::checks::project(harness.app.project());
+    assert_eq!(checks.len(), 2, "{checks:?}");
+    assert_eq!(harness.app.artwork_checks(), checks);
+
+    let rows = all_rows(&harness);
+    let overlap = rows
+        .iter()
+        .find(|r| r.code.as_deref() == Some("shapes_overlap"))
+        .expect("the overlap's row");
+    assert_eq!(overlap.level, Level::Warning);
+    assert_eq!(overlap.message, checks[0].message);
+    assert_eq!(overlap.shown, checks[0].message, "the shapes are named");
+    assert_eq!(overlap.line, checks[0].line());
+    assert_eq!(
+        overlap.name,
+        format!("warning: shapes_overlap: {}", checks[0].message)
+    );
+    let ids = |names: [&str; 2]| -> Vec<dc_project::InstanceId> {
+        names
+            .iter()
+            .map(|name| {
+                harness
+                    .app
+                    .project()
+                    .instances
+                    .iter()
+                    .find(|i| i.name == *name)
+                    .expect("the square")
+                    .id
+                    .clone()
+            })
+            .collect()
+    };
+    assert_eq!(
+        overlap.selection(),
+        Some(Selection::Instances(ids(["sq-a", "sq-b"])))
+    );
+    assert_eq!(
+        overlap.chapter_url().as_deref(),
+        Some("https://grayzu.github.io/dreamcarve/user-guide/warnings.html#shapes_overlap")
+    );
+    let speck = rows
+        .iter()
+        .find(|r| r.code.as_deref() == Some("feature_below_size"))
+        .expect("the speck's row");
+    assert_eq!(speck.level, Level::Warning);
+    assert_eq!(speck.line, checks[1].line());
+    assert_eq!(speck.selection(), None, "it names no shape");
+
+    // After the warnings, in check's order, and counted with them.
+    let lines = warnings::lines(&harness.app);
+    let at = |needle: &str| {
+        lines
+            .iter()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("no line with {needle}: {lines:?}"))
+    };
+    assert!(at("open_profile") < at("shapes_overlap"));
+    assert_eq!(at("shapes_overlap") + 1, at("feature_below_size"));
+    assert_eq!(at("feature_below_size") + 1, lines.len());
+    let counts = warnings::counts(&harness.app);
+    assert_eq!(counts.warnings, 3, "the open path and the two checks");
+    assert!(
+        warnings::copy_text(&harness.app).ends_with("messy.dcv: 6 error(s), 3 warning(s)\n"),
+        "{}",
+        warnings::copy_text(&harness.app)
+    );
+}
+
+/// Capability 76, acceptance 106: the checks follow the shapes. Moving
+/// one square clear of the other ends the overlap and its row goes; undo
+/// brings both back; hiding a square ends it too, as `check` leaves a
+/// hidden shape out; deleting the speck ends the other check. An edit
+/// that changes no shape leaves the checks as they were.
+#[test]
+fn moving_a_shape_apart_clears_the_overlap() {
+    let mut harness = messy();
+    let codes = |harness: &Harness| -> Vec<&'static str> {
+        harness
+            .app
+            .artwork_checks()
+            .iter()
+            .map(|c| c.code)
+            .collect()
+    };
+    let id_of = |harness: &Harness, name: &str| {
+        harness
+            .app
+            .project()
+            .instances
+            .iter()
+            .find(|i| i.name == name)
+            .unwrap_or_else(|| panic!("no shape {name}"))
+            .id
+            .clone()
+    };
+    assert_eq!(codes(&harness), ["shapes_overlap", "feature_below_size"]);
+    let square = id_of(&harness, "sq-b");
+
+    harness
+        .run(Command::TransformInstances {
+            ids: vec![square.clone()],
+            delta: dc_geometry::Transform::translate(8.0, 0.0),
+        })
+        .expect("the square moves");
+    assert_eq!(codes(&harness), ["feature_below_size"]);
+    assert!(
+        !all_rows(&harness)
+            .iter()
+            .any(|r| r.code.as_deref() == Some("shapes_overlap")),
+        "the row went with the overlap"
+    );
+    assert_eq!(warnings::counts(&harness.app).warnings, 2);
+
+    harness.app.undo().expect("the move is undone");
+    assert_eq!(codes(&harness), ["shapes_overlap", "feature_below_size"]);
+
+    harness
+        .run(Command::SetInstanceFlags {
+            ids: vec![square],
+            visible: Some(false),
+            locked: None,
+        })
+        .expect("the square is hidden");
+    assert_eq!(codes(&harness), ["feature_below_size"]);
+    harness.app.undo().expect("shown again");
+
+    let before = harness.app.artwork_checks().to_vec();
+    let mut stock = harness.app.project().stock.clone();
+    stock.thickness_mm = Some(12.0);
+    harness.run(Command::SetStock(stock)).expect("the stock");
+    assert_eq!(harness.app.artwork_checks(), before);
+
+    let dot = id_of(&harness, "dot");
+    harness
+        .run(Command::DeleteInstances(vec![dot]))
+        .expect("the speck is deleted");
+    assert_eq!(codes(&harness), ["shapes_overlap"]);
+}

@@ -162,3 +162,64 @@ fn copy_equals_check_on_the_binary() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Acceptance 106 against the binary: `check` prints the two artwork
+/// checks it can still read from a project's shapes (`shapes_overlap`,
+/// `feature_below_size`; phase 3 functional, 49a) after its warnings, and
+/// counts them. For a project whose shapes overlap and hold a speck, the
+/// app's *Copy* is still `check`'s text line for line: the messy drawing
+/// as `init` wrote it (`tests/fixtures/prep/messy.dcv`), and the tool
+/// tray's DXF, which `init` reads here and whose two pockets overlap.
+/// None of the eight projects of `copy_equals_check_on_the_binary` has
+/// such shapes, so that test alone did not show the drawer lacked them.
+#[test]
+fn copy_equals_check_for_overlapping_and_too_small_shapes() {
+    let dir = work_dir("copy_equals_check_for_overlapping_and_too_small_shapes");
+    let root = repo_root();
+    std::fs::copy(
+        root.join("tests/fixtures/prep/messy.dcv"),
+        dir.join("messy.dcv"),
+    )
+    .unwrap();
+    std::fs::copy(
+        root.join("tests/fixtures/prep/tool-tray.dxf"),
+        dir.join("tool-tray.dxf"),
+    )
+    .unwrap();
+    let (code, _) = run(&dir, &["init", "tool-tray.dxf"]);
+    assert_eq!(code, Some(0), "init writes the tray");
+
+    for file in ["messy.dcv", "tool-tray.dcv"] {
+        let (code, stdout) = run(&dir, &["check", file]);
+        let expected = panel_lines(&stdout, file);
+        for check in ["shapes_overlap", "feature_below_size"] {
+            assert_eq!(
+                expected
+                    .iter()
+                    .filter(|l| l.starts_with(&format!("warning: {check}: ")))
+                    .count(),
+                1,
+                "{file}: check prints {check} once:\n{stdout}"
+            );
+        }
+        let bytes = std::fs::read(dir.join(file)).unwrap();
+        let mut harness = Harness::from_project(dc_project::test_support::sample_project());
+        harness
+            .app
+            .open(&bytes, Some(PathBuf::from(file)))
+            .unwrap_or_else(|e| panic!("{file}: {e}"));
+        harness.generate();
+        let copied: Vec<String> = dc_app::warnings::copy_text(&harness.app)
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(copied, expected, "{file}: the panel's text is not check's");
+        let counts = dc_app::warnings::counts(&harness.app);
+        assert_eq!(
+            code,
+            Some(i32::from(counts.errors > 0)),
+            "{file}: check's exit"
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}

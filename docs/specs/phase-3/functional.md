@@ -601,7 +601,10 @@ designed here.
  exactly what they were without the checks. `check` repeats the two that
  still apply to a project, `shapes_overlap` and `feature_below_size`,
  read from the project's shapes; the others need the drawing's paint and
- paths and are `init`'s alone. A clean drawing prints none of them.
+ paths and are `init`'s alone. A clean drawing prints none of them. The
+ app lists the same checks in the same words, on its Import drawing
+ sheet and in its Warnings drawer (phase 4 functional spec, capabilities
+ 55 and 76).
 49b. **`image-prep`** (`dreamcarve image-prep <design.svg|design.dxf> [-o
  design-inlay.svg] [--regions] [--min-detail <pct>] [--smooth <pct>]`;
  #462, #669). Reads one SVG or DXF and writes one SVG that is easy to

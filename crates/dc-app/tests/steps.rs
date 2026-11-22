@@ -520,3 +520,37 @@ fn each_step_has_a_one_line_summary() {
         "1 error blocks export."
     );
 }
+
+/// Capabilities 50 and 76, acceptance 106: an artwork check that fired on
+/// the shapes marks the Design step as needing attention, a warning's
+/// mark, with nothing else noted. The tray's pockets overlap and it has a
+/// speck; with one pocket and the speck deleted nothing fires and Design
+/// is complete.
+#[test]
+fn design_needs_attention_while_an_artwork_check_fires() {
+    use dc_app::import::{DrawingFormat, DrawingImport, Purpose};
+
+    let bytes = common::read(&common::fixture("prep/tool-tray.dxf"));
+    let sheet = DrawingImport::open(DrawingFormat::Dxf, "tool-tray.dxf", bytes, Purpose::New);
+    let mut harness = new_project();
+    harness.app.new_from_drawing(&sheet).unwrap();
+    assert!(harness.app.notes().is_empty(), "no importer's warning");
+    assert_eq!(harness.app.artwork_checks().len(), 2);
+    assert_eq!(
+        states(&harness).of(Step::Design),
+        State::Attention(Severity::Warning)
+    );
+
+    let gone: Vec<dc_project::InstanceId> = harness
+        .app
+        .project()
+        .instances
+        .iter()
+        .filter(|i| i.name == "pockets-2" || i.name == "speck")
+        .map(|i| i.id.clone())
+        .collect();
+    assert_eq!(gone.len(), 2);
+    harness.run(Command::DeleteInstances(gone)).unwrap();
+    assert!(harness.app.artwork_checks().is_empty());
+    assert_eq!(states(&harness).of(Step::Design), State::Complete);
+}

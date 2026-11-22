@@ -14,7 +14,7 @@
 //!
 //! | Step | Complete when | Needs attention when |
 //! | --- | --- | --- |
-//! | Design | The project has a shape or a picture | A finding is about a shape, or an importer's warning is still noted |
+//! | Design | The project has a shape or a picture | A finding is about a shape, an artwork check fired on the shapes, or an importer's warning is still noted |
 //! | Stock | The thickness is set and every shape is on the stock | A stock or origin field has a problem, or a shape reaches past the stock |
 //! | Tools | A tool exists | A finding is about a tool |
 //! | Operations | An enabled operation exists | A finding is about an operation |
@@ -151,7 +151,8 @@ impl Default for States {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Session {
     /// How many of an importer's warnings about a drawing are still noted
-    /// in the Warnings panel.
+    /// in the Warnings panel: what an import left out or changed
+    /// ([`crate::import::DrawingImport::left_out`]).
     pub import_warnings: usize,
     /// The snapshot the last successful export wrote, when there was one.
     pub exported: Option<SnapshotId>,
@@ -277,8 +278,14 @@ pub fn states(app: &App, session: &Session) -> States {
         .any(dc_project::Operation::enabled);
 
     let imported = (session.import_warnings > 0).then_some(Severity::Warning);
+    // The artwork checks are about the shapes, whichever they name.
+    let artwork = app
+        .artwork_checks()
+        .iter()
+        .filter_map(|check| severity(check.tier()))
+        .max();
     let design = state(
-        worst(app, Step::Design).max(imported),
+        worst(app, Step::Design).max(imported).max(artwork),
         !project.instances.is_empty() || !project.bitmaps.is_empty(),
     );
 

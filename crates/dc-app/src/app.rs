@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
-use dc_job::{EmitOp, Finding, Findings};
+use dc_job::{Check, EmitOp, Finding, Findings};
 use dc_project::{
     BitmapId, CURRENT_VERSION, Heights, InstanceId, MachineOrigin, MigrationNote, Operation,
     OperationId, OriginXy, OriginZ, Problem, Project, SettingReset, SourceMap, Stock, TabId, Units,
@@ -21,7 +21,7 @@ use dc_project::{
 use crate::command::Command;
 use crate::editor::targets::Editing;
 use crate::error::CommandError;
-use crate::generation::{Generation, Job, JobResult, SnapshotId, Work};
+use crate::generation::{Fnv, Generation, Job, JobResult, SnapshotId, Work};
 use crate::history::LabelledHistory;
 use crate::import::{DrawingImport, Dropped, FileKind, PictureImport, Purpose};
 use crate::prefs::Prefs;
@@ -72,6 +72,11 @@ pub struct App {
     /// `findings`, errors then warnings, in `check`'s order, each
     /// message as the app shows it (`warnings::present`).
     listed: Vec<Finding>,
+    /// The artwork checks of the current snapshot's shapes
+    /// ([`App::artwork_checks`]), and the digest of the shapes they were
+    /// read from: they are read again only when a shape changed.
+    artwork: Vec<Check>,
+    artwork_digest: Option<u64>,
     /// What opening the file (its migration) or importing into it noted,
     /// for the Warnings panel; cleared when the file is saved.
     notes: Vec<String>,
@@ -130,6 +135,8 @@ impl App {
             validation,
             findings: Findings::default(),
             listed: Vec::new(),
+            artwork: Vec::new(),
+            artwork_digest: None,
             notes: Vec::new(),
             hints: Vec::new(),
             source_map: None,
@@ -137,6 +144,7 @@ impl App {
             scene: Scene::default(),
             replaced: 0,
         };
+        app.refresh_artwork();
         app.refresh_findings();
         app.rebuild_scene();
         app
@@ -229,6 +237,7 @@ impl App {
         self.last_resets.clear();
         self.replaced += 1;
         self.refresh_dirty();
+        self.refresh_artwork();
         self.refresh_findings();
         self.rebuild_scene();
     }
@@ -246,7 +255,10 @@ impl App {
     /// Imports the drawing `sheet` shows into the project, placed as
     /// drawn, as one undo step (*Import plaque.dxf*), and selects the new
     /// shapes (functional spec, capability 55). Each of the importer's
-    /// warnings becomes one note in the Warnings panel ([`App::notes`]).
+    /// warnings becomes one note in the Warnings panel ([`App::notes`]),
+    /// and so does each artwork check the sheet listed that only the
+    /// drawing can be read for; the two the shapes can be read for are
+    /// the panel's own from here on ([`App::artwork_checks`]).
     ///
     /// # Errors
     ///
@@ -389,14 +401,12 @@ impl App {
         }
     }
 
-    /// The importer's warnings as the Warnings panel's notes
-    /// ([`App::add_note`]), each under the file's name.
+    /// What the import leaves as the Warnings panel's notes
+    /// ([`DrawingImport::notes`]): the importer's warnings and the artwork
+    /// checks only the drawing could be read for, each under the file's
+    /// name.
     fn note_import(&mut self, sheet: &DrawingImport) {
-        for warning in sheet.warnings() {
-            let note = self.strings.fmt(
-                StrKey::AppImportNote,
-                &[("name", sheet.name()), ("note", &warning.to_string())],
-            );
+        for note in sheet.notes(&self.strings) {
             self.add_note(note);
         }
     }
@@ -694,8 +704,22 @@ impl App {
             self.previewed = None;
         }
         self.refresh_dirty();
+        self.refresh_artwork();
         self.refresh_findings();
         self.rebuild_scene();
+    }
+
+    /// Reads the artwork checks of the current snapshot's shapes
+    /// ([`dc_job::checks::project`]), unless they are the shapes the
+    /// checks were last read from: an edit that changes no shape (a
+    /// depth typed, a tool picked) costs one digest and no check.
+    fn refresh_artwork(&mut self) {
+        let project = self.history.current();
+        let digest = shapes_digest(project);
+        if self.artwork_digest != Some(digest) {
+            self.artwork = dc_job::checks::project(project);
+            self.artwork_digest = Some(digest);
+        }
     }
 
     /// Builds the Scene of the current snapshot and results under the
@@ -1105,6 +1129,27 @@ impl App {
     pub fn validation(&self) -> &Findings {
         &self.validation
     }
+
+    /// The artwork checks of the current snapshot's shapes (functional
+    /// spec, capability 76; phase 3, 49a): the two `check` prints after
+    /// its warnings, `shapes_overlap` and `feature_below_size`, in its
+    /// words, the overlap with the shapes it names. The Warnings drawer
+    /// lists them after the warnings, as `check` prints them, and they
+    /// mark the Design step. Read again whenever a shape changes, so a
+    /// move that ends an overlap takes its check away.
+    #[must_use]
+    pub fn artwork_checks(&self) -> &[Check] {
+        &self.artwork
+    }
+}
+
+/// A digest of what the artwork checks read of `project`: its instances
+/// (each one's name, transform and visibility) and their definitions.
+fn shapes_digest(project: &Project) -> u64 {
+    let mut hash = Fnv::new();
+    hash.put("instances", &project.instances);
+    hash.put("definitions", &project.definitions);
+    hash.0
 }
 
 /// Where each value is in `bytes`, when they are JSON text.

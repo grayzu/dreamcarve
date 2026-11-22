@@ -64,6 +64,19 @@ phases bump the patch number.
   worked out as the cut itself does it: of the bit's diameter for a
   Pocket, of the width the bit cuts at the flat depth for a V-Carve's or
   an Inlay's floor. Export still works.
+- **The app shows the artwork checks.** The checks `init` and `check`
+  print for a drawing (shapes that overlap, a hole drawn as a separate
+  path, strokes with no fill, hidden objects, text, images and clips,
+  features too small to carve) are now in the app, in the same words.
+  The drawing sheet lists them before anything is added: all of them
+  for an SVG, and for a DXF the two that can be read from its shapes,
+  for the layers ticked. They never stop the import. After it,
+  `shapes_overlap` and `feature_below_size` are warnings in the Warnings
+  drawer of any project, as `check` prints them, for as long as the
+  shapes are that way; the overlap's row selects the two shapes, and
+  the Design step is marked. The app does not clean a drawing: the
+  sheet says to run `dreamcarve image-prep` on the file, and links to
+  the *Preparing artwork* chapter, which has a new part on the app.
 - **Vendors' tapered ball noses import from Fusion libraries.** A tool
   vendor's Fusion library writes a 1/4 in tapered ball nose with the
   cutting diameter in `DC` (and `SFDM`) and the ball as the corner

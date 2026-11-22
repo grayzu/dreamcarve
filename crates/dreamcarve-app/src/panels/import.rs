@@ -17,6 +17,17 @@
 //! listed as the Warnings panel will list them. The footer's *Add 14
 //! shapes* (or *Create project*) counts what it adds.
 //!
+//! Under the importer's warnings the sheet lists the artwork checks that
+//! fired (capability 55, acceptance 106): what `dreamcarve init` prints
+//! for an SVG and what `dreamcarve check` reads from a DXF's shapes, each
+//! with its tier's glyph, its code (a link to its entry in the Warnings
+//! chapter, as a drawer row's is) and its message whole, and one quiet
+//! line that says to run `dreamcarve image-prep`, with a link to the
+//! *Preparing artwork* chapter, since the app does not clean a drawing.
+//! The list is the model's, read with the file; it scrolls with the
+//! options and the preview while the footer stays, never disables the
+//! button, and each sheet opens scrolled to its top.
+//!
 //! The sheet resizes, as the Tool Library does (the smoke test's
 //! leftover, 2026-11-20): by its edges and the grip at its corner, each
 //! side it is dragged to kept in `gui.toml`. Until it is dragged it is
@@ -101,6 +112,9 @@ pub(crate) struct Sheet {
     /// The join tolerance the user typed and the parser refused, with
     /// its reason.
     refused: Option<String>,
+    /// Whether the sheet has yet to be drawn: its first frame puts its
+    /// content at the top, wherever the last sheet was scrolled to.
+    fresh: bool,
 }
 
 /// What the sheet asks the shell to do.
@@ -134,6 +148,7 @@ impl Sheet {
             model: DrawingImport::open(format, name, bytes, purpose),
             path: path.to_path_buf(),
             refused: None,
+            fresh: true,
         }
     }
 
@@ -144,6 +159,7 @@ impl Sheet {
             model,
             path: path.to_path_buf(),
             refused: None,
+            fresh: true,
         }
     }
 
@@ -262,24 +278,25 @@ fn body(
     };
     let least = if fixed { 0.0 } else { 120.0 };
     let room = (ui.available_height() - footer_h - foot_room).max(least);
-    crate::widgets::scroll::show(
-        ui,
-        egui::ScrollArea::vertical()
-            .max_height(room)
-            .auto_shrink([false, !fixed]),
-        crate::widgets::scroll::Surface::Raised,
-        |ui| {
-            if sheet.model.format() == DrawingFormat::Dxf {
-                options(ui, strings, project.display_units, sheet);
-                ui.add_space(12.0);
-                layers(ui, strings, &mut sheet.model);
-                ui.add_space(12.0);
-            }
-            heading(ui, strings.get(StrKey::AppImportPreview));
-            preview(ui, &sheet.model);
-            notes(ui, strings, &sheet.model);
-        },
-    );
+    let mut area = egui::ScrollArea::vertical()
+        .max_height(room)
+        .auto_shrink([false, !fixed]);
+    // A list of checks can be longer than the sheet: the next drawing's
+    // sheet starts at its top, not where this one was left.
+    if std::mem::take(&mut sheet.fresh) {
+        area = area.vertical_scroll_offset(0.0);
+    }
+    crate::widgets::scroll::show(ui, area, crate::widgets::scroll::Surface::Raised, |ui| {
+        if sheet.model.format() == DrawingFormat::Dxf {
+            options(ui, strings, project.display_units, sheet);
+            ui.add_space(12.0);
+            layers(ui, strings, &mut sheet.model);
+            ui.add_space(12.0);
+        }
+        heading(ui, strings.get(StrKey::AppImportPreview));
+        preview(ui, &sheet.model);
+        notes(ui, strings, &sheet.model, out);
+    });
     ui.add_space(16.0);
     footer(ui, strings, &sheet.model, out);
     // The help of the field being typed in, at the sheet's foot.
@@ -656,10 +673,18 @@ fn preview(ui: &mut Ui, model: &DrawingImport) {
     }
 }
 
-/// The importer's warnings, as the Warnings panel will list them.
-fn notes(ui: &mut Ui, strings: &Strings, model: &DrawingImport) {
+/// The importer's warnings, as the Warnings panel will list them, then
+/// the artwork checks that fired (capability 55): each check with its
+/// tier's glyph, its code, which opens its entry in the Warnings
+/// chapter as a drawer row's does, and its message as the CLI words it,
+/// whole. Under the list, when a check fired, one quiet line says what
+/// to do, since the app does not clean a drawing: run `dreamcarve
+/// image-prep`, with a link to the *Preparing artwork* chapter. The list
+/// is the model's, read with the file; nothing is checked here.
+fn notes(ui: &mut Ui, strings: &Strings, model: &DrawingImport, out: &mut Vec<Action>) {
     let warnings = model.warnings();
-    if warnings.is_empty() {
+    let checks = model.checks();
+    if warnings.is_empty() && checks.is_empty() {
         return;
     }
     let palette = Palette::current(ui);
@@ -671,13 +696,7 @@ fn notes(ui: &mut Ui, strings: &Strings, model: &DrawingImport) {
         palette.text_secondary,
     );
     for warning in warnings {
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let glyph =
-                Icon::TriangleAlert.galley(ui, theme::ICON_SMALL_PX, palette.status_warning.stroke);
-            let (rect, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
-            ui.painter()
-                .galley(rect.min, glyph, palette.status_warning.stroke);
+        note(ui, Tier::Warning, |ui| {
             wrapped(
                 ui,
                 &warning.to_string(),
@@ -686,6 +705,72 @@ fn notes(ui: &mut Ui, strings: &Strings, model: &DrawingImport) {
             );
         });
     }
+    for check in checks {
+        let tier = check.tier();
+        let (_, colours) = crate::widgets::problem::look(palette, tier);
+        note(ui, tier, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            let code = ui
+                .add(
+                    egui::Label::new(
+                        egui::RichText::new(check.code)
+                            .text_style(TextStyle::Monospace)
+                            .color(palette.accent),
+                    )
+                    .selectable(false)
+                    .sense(Sense::click()),
+                )
+                .on_hover_text(strings.fmt(StrKey::AppImportCheckChapter, &[("code", check.code)]));
+            if code.clicked() {
+                out.push(Action::OpenUrl(format!(
+                    "{}#{}",
+                    dc_app::warnings::CHAPTER_URL,
+                    check.code
+                )));
+            }
+            wrapped(ui, &check.message, TextStyle::Small, colours.text);
+        });
+    }
+    if model.advises_prep() {
+        ui.add_space(8.0);
+        wrapped(
+            ui,
+            strings.get(StrKey::AppImportPrepAdvice),
+            TextStyle::Small,
+            palette.text_secondary,
+        );
+        let chapter = ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new(strings.get(StrKey::AppImportPrepChapter))
+                        .text_style(TextStyle::Small)
+                        .color(palette.accent),
+                )
+                .selectable(false)
+                .sense(Sense::click()),
+            )
+            .on_hover_text(strings.get(StrKey::AppImportPrepChapterHelp));
+        if chapter.clicked() {
+            out.push(Action::OpenUrl(
+                dc_app::import::PREPARING_ARTWORK_URL.to_owned(),
+            ));
+        }
+    }
+}
+
+/// One line of the sheet's notes: the glyph of `tier` in its colour,
+/// then what `body` draws, top-aligned with it and as wide as the room
+/// left.
+fn note(ui: &mut Ui, tier: Tier, body: impl FnOnce(&mut Ui)) {
+    let palette = Palette::current(ui);
+    let (icon, colours) = crate::widgets::problem::look(palette, tier);
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let glyph = icon.galley(ui, theme::ICON_SMALL_PX, colours.stroke);
+        let (rect, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
+        ui.painter().galley(rect.min, glyph, colours.stroke);
+        ui.vertical(body);
+    });
 }
 
 /// The footer: the one primary action, disabled with the reason when the

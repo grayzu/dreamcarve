@@ -11,6 +11,16 @@
 //! option reads the bytes again, so what the sheet shows (the counts, the
 //! layer list, the preview, the notes) is what *Import* adds.
 //!
+//! The sheet also lists the artwork checks of the drawing
+//! ([`DrawingImport::checks`]; capability 55, acceptance 106), in the
+//! CLI's words: for an SVG the checks `dreamcarve init` prints for the
+//! file, for a DXF the two `dreamcarve check` reads from the shapes the
+//! import would add. They are read once with each read of the bytes,
+//! never when the sheet is drawn, and never disable *Import*. The app
+//! does not clean a drawing: [`DrawingImport::advises_prep`] says when
+//! the sheet points to `dreamcarve image-prep` and the book's chapter
+//! ([`PREPARING_ARTWORK_URL`]).
+//!
 //! The sheet imports into the open project ([`Purpose::Import`], through
 //! [`crate::App::import_drawing`]) or makes a new project from the drawing
 //! ([`Purpose::New`], [`crate::App::new_from_drawing`]).
@@ -36,12 +46,18 @@ use dc_import::{
     JOIN_TOLERANCE_DEFAULT_MM, SvgImportOptions,
 };
 use dc_job::picture::PictureSize;
-use dc_job::{Drawing, JobError};
+use dc_job::{Check, Drawing, JobError, checks};
 use dc_project::{Grayscale, Units};
 
 use crate::app::Opened;
 use crate::command::Command;
 use crate::strings::{StrKey, Strings};
+
+/// The *Preparing artwork* chapter of the book, which says what each
+/// artwork check means and what `dreamcarve image-prep` does about it:
+/// where the sheet's line under its checks leads.
+pub const PREPARING_ARTWORK_URL: &str =
+    "https://grayzu.github.io/dreamcarve/user-guide/preparing-artwork.html";
 
 /// What a file is, by its name's extension in any case: what the window
 /// does with one dropped on it, passed on the command line or chosen
@@ -160,6 +176,8 @@ pub struct DrawingImport {
     /// The last read: the drawing and its warnings, or the importer's
     /// refusal.
     read: Result<(Drawing, Vec<ImportWarning>), String>,
+    /// The artwork checks of the last read ([`DrawingImport::checks`]).
+    checks: Vec<Check>,
 }
 
 impl DrawingImport {
@@ -180,6 +198,7 @@ impl DrawingImport {
             declared: None,
             layers: Vec::new(),
             read: Err(String::new()),
+            checks: Vec::new(),
         };
         let first = sheet.import();
         sheet.units_required = matches!(first, Err(ImportError::UnitsUnknown { .. }));
@@ -311,10 +330,87 @@ impl DrawingImport {
     }
 
     /// The importer's warnings for the last read: what the Warnings panel
-    /// lists after the import.
+    /// lists after the import. For an SVG they are the ones `init` prints
+    /// beside its checks: the importer's own about text, images, clip
+    /// paths and masks are left out, since a check counts each of those
+    /// over the whole document ([`DrawingImport::checks`]).
     #[must_use]
     pub fn warnings(&self) -> &[ImportWarning] {
         self.read.as_ref().map_or(&[], |(_, warnings)| warnings)
+    }
+
+    /// The artwork checks that fired on the last read, in the CLI's order
+    /// and words (capability 55): for an SVG the checks `dreamcarve init`
+    /// prints for the file ([`checks::svg`]), or the one line that says
+    /// they could not run; for a DXF, which has no paint, the two
+    /// `dreamcarve check` reads from shapes ([`checks::drawing`]), read
+    /// from the shapes the import would add with the units, the join
+    /// tolerance and the layers chosen. Empty while the file cannot be
+    /// read. Held from the read, so listing them costs nothing; none of
+    /// them disables *Import* ([`DrawingImport::blocked`]).
+    #[must_use]
+    pub fn checks(&self) -> &[Check] {
+        &self.checks
+    }
+
+    /// Whether the sheet points to `dreamcarve image-prep` and the
+    /// *Preparing artwork* chapter under its checks: when one fired. The
+    /// app does not clean a drawing itself.
+    #[must_use]
+    pub fn advises_prep(&self) -> bool {
+        self.checks
+            .iter()
+            .any(|check| check.code != checks::SKIPPED)
+    }
+
+    /// What the import leaves in the Warnings panel as notes, each under
+    /// the file's name ([`crate::App::import_drawing`]): the importer's
+    /// warnings as it words them, then each check that cannot be read
+    /// again from the project, with its code. The two that can
+    /// (`shapes_overlap`, `feature_below_size`) are not notes: the panel
+    /// lists them from the shapes for as long as they hold
+    /// ([`crate::App::artwork_checks`]).
+    #[must_use]
+    pub fn notes(&self, strings: &Strings) -> Vec<String> {
+        let importer = self.warnings().iter().map(|warning| {
+            strings.fmt(
+                StrKey::AppImportNote,
+                &[("name", &self.name), ("note", &warning.to_string())],
+            )
+        });
+        let checks = self
+            .checks
+            .iter()
+            .filter(|check| !check.read_from_shapes())
+            .map(|check| {
+                strings.fmt(
+                    StrKey::AppImportCheckNote,
+                    &[
+                        ("name", &self.name),
+                        ("code", check.code),
+                        ("note", &check.message),
+                    ],
+                )
+            });
+        importer.chain(checks).collect()
+    }
+
+    /// How many of [`DrawingImport::notes`] say the import left part of
+    /// the drawing out or changed it: the importer's warnings, and the
+    /// checks that stand in for the ones it leaves to them (text, images,
+    /// clip paths, masks). These mark the Design step until the file is
+    /// saved ([`crate::steps::Session::import_warnings`]), as the
+    /// importer's warnings always have. The other notes of a drawing's
+    /// paint are advice about shapes imported whole and mark nothing: a
+    /// cut-out's outline drawn as a hairline has one and needs no fix.
+    #[must_use]
+    pub fn left_out(&self) -> usize {
+        self.warnings().len()
+            + self
+                .checks
+                .iter()
+                .filter(|check| check.says_something_was_left_out())
+                .count()
     }
 
     /// The drawing *Import* adds, when it is enabled.
@@ -385,7 +481,17 @@ impl DrawingImport {
         self.take(read);
     }
 
-    fn take(&mut self, read: Result<(Drawing, Vec<ImportWarning>), ImportError>) {
+    fn take(&mut self, mut read: Result<(Drawing, Vec<ImportWarning>), ImportError>) {
+        // The checks are read here, once for each read of the bytes: the
+        // sheet lists what is held.
+        self.checks = match &mut read {
+            Ok((Drawing::Svg(_), warnings)) => {
+                warnings.retain(|warning| !checks::counted_by_svg_checks(warning));
+                checks::svg(&self.bytes).unwrap_or_else(|skipped| vec![skipped])
+            }
+            Ok((drawing @ Drawing::Dxf(_), _)) => checks::drawing(drawing),
+            Err(_) => Vec::new(),
+        };
         if let Ok((Drawing::Dxf(import), _)) = &read {
             self.declared = import.units;
             self.layers.clone_from(&import.layers);

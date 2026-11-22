@@ -8,8 +8,11 @@ ways:
 
 - `init` and `check` **tell you** what they found, in the drawing, as
   warnings. They change nothing ([the checks](#the-checks-init-prints)).
+  The app tells you the same, in the same words, when you add a drawing
+  ([in the app](#in-the-app)).
 - `dreamcarve image-prep` **fixes it**, if you ask: it reads one SVG and
-  writes a clean one ([`image-prep`](#image-prep)).
+  writes a clean one ([`image-prep`](#image-prep)). It is a command: the
+  app does not clean a drawing.
 
 Nothing requires `image-prep`. `init` takes any SVG, and a clean drawing
 from a CAD or drawing program needs none of it. It changes the art (it
@@ -51,7 +54,7 @@ dreamcarve init messy.svg -o messy.dcv
 ```
 
 ```text
-Imported 9 shape(s) from messy.svg: page units mm, 1 user unit = 1.0000 mm.
+Imported 7 shape(s) from messy.svg: page units mm, 1 user unit = 1.0000 mm.
 warning: shapes_overlap: 1 pair(s) of shapes overlap; the first is `sq-a` and `sq-b`, meeting near (18.00, 95.00) mm; unite them or move them apart; `dreamcarve image-prep` would fix this
 warning: svg_hole_as_separate_path: 1 filled path(s) lie wholly inside another filled path; the first is `inner` inside `outer`. They are separate shapes, a hole only where an operation targets both; make each one path with a hole; `dreamcarve image-prep` would fix this
 warning: svg_stroke_only_path: 1 path(s) have a stroke and no fill; the first is `centreline`, stroked 1.200 mm wide. Only its centreline is imported, an open path no Inlay or V-Carve can cut; turn strokes into shapes; `dreamcarve image-prep` would fix this
@@ -83,6 +86,54 @@ set them.
 
 The same codes are listed, with every other warning, in
 [Warnings](warnings.md#import).
+
+### In the app
+
+The app runs the same checks when you choose a drawing, and lists what
+they found on the drawing sheet, under the preview, before anything is
+added ([Importing drawings and pictures](importing.md#the-drawing-sheet)).
+Each line has the check's code, which opens its entry in
+[Warnings](warnings.md#import), and the message `init` prints, word for
+word. This is the sheet on `messy.svg`, scrolled to the end of its list:
+
+![The Add drawing to project sheet on messy.svg, scrolled to its checks: eight lines, each a warning mark, a code and a message, from shapes_overlap, "1 pair(s) of shapes overlap; the first is sq-a and sq-b", to feature_below_size; under them "The app does not clean a drawing. Where a V-Carve or an Inlay needs these fixed, run dreamcarve image-prep on the file and add the drawing it writes.", the link Preparing artwork, and the button Add 7 shapes](figures/app/import-checks-sheet.png)
+
+- For an **SVG** the sheet lists every check of the table above.
+- A **DXF** has no paint, so the sheet lists the two that can be read
+  from shapes, `shapes_overlap` and `feature_below_size`, for the shapes
+  it is about to add: untick a layer and its shapes are no longer
+  counted.
+
+A check never stops the import: the sheet's button stays on, and the
+drawing is added as it is. A clean drawing lists nothing.
+
+Not every check needs a fix. A drawing for a cut-out is usually thin
+outlines with no fill, and each outline is a `svg_stroke_only_path`: a
+Profile cuts along the line, so it is right as it is. The checks matter
+where a V-Carve or an Inlay will carve the drawing as areas.
+
+**The app does not clean a drawing.** It has no `image-prep` of its own,
+with no clean-up and no options to set. When a check fires, the line
+under the list says what to do, and links to this chapter:
+
+1. Close the sheet, or add the drawing anyway to look at it.
+2. In a terminal, run `dreamcarve image-prep` on the file
+   ([below](#image-prep)): `dreamcarve image-prep design.svg` writes
+   `design-inlay.svg` beside it. Read its report.
+3. In the app, add `design-inlay.svg` in place of the original. Its
+   sheet lists no check.
+
+After the import the checks are in the **Warnings** drawer. The two that
+can be read from shapes are warnings there for as long as they hold, in
+any project you open, as [`check`](exporting.md) prints them: move the
+shapes apart, or delete the speck, and the row goes. Click the
+`shapes_overlap` row to open the Design step with the two shapes
+selected. While either holds, the Design step has an amber dot on the
+rail. The others (a hole drawn as a separate path, strokes, hidden
+objects, text, images, clips) could only be read from the drawing's
+paint, so they are listed once, as notes under the file's name, until
+you save. Text, images and clips mark the Design step too, since part of
+the drawing was left out; the rest are advice and mark nothing.
 
 ## `image-prep`
 
