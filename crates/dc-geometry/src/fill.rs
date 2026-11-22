@@ -13,7 +13,7 @@ use crate::boolean::{difference, from_shapes, intersection, to_shapes, union};
 use crate::contour::Contour;
 use crate::point::{EPS_MM, Rect};
 use crate::polyline::Polyline;
-use crate::region::{Region, area_mm2, nest, touching_pairs};
+use crate::region::{Region, area_mm2, contours_cross, nest, touching_pairs};
 use i_overlay::core::fill_rule::FillRule as OverlayFillRule;
 use i_overlay::float::simplify::SimplifyShape;
 
@@ -63,7 +63,7 @@ pub fn resolve_fill(subpaths: &[Polyline], rule: FillRule, tolerance_mm: f64) ->
 
 /// Paths' areas, each from [`resolve_fill`], joined as `init` would read
 /// them. Areas that cross (share area, neither inside the other's
-/// material) are united, in groups by transitive crossing, one union per
+/// material, by their chords or by their curves) are united, in groups by transitive crossing, one union per
 /// group; then every contour goes through [`nest`], so an area wholly
 /// inside another's material is a hole of it (an island path) and one
 /// inside a hole is a piece of its own. Nesting decides holes, not paint
@@ -92,7 +92,7 @@ pub fn merge_fills(
         let (Some(&to), Some(&from)) = (label.get(i), label.get(j)) else {
             continue;
         };
-        if from != to && crosses(a, b, tolerance_mm) {
+        if from != to && (crosses(a, b, tolerance_mm) || nest_would_refuse(a, b)) {
             for l in &mut label {
                 if *l == from {
                     *l = to;
@@ -140,6 +140,19 @@ fn crosses(a: &Region, b: &Region, tolerance_mm: f64) -> bool {
     shared_mm2 > slack_mm2
         && (a.area_mm2() - shared_mm2).abs() > slack_mm2
         && (b.area_mm2() - shared_mm2).abs() > slack_mm2
+}
+
+/// True when a contour of `a` crosses one of `b` as [`nest`] judges it,
+/// on the curves themselves. [`crosses`] compares the areas' chords, which
+/// lie inside an arc by up to the tolerance, so two arcs that overlap by
+/// less than that share no chord area and yet cross for `nest`. Such a
+/// pair is united with the rest; its chords come out as they went in,
+/// and no longer cross.
+fn nest_would_refuse(a: &Region, b: &Region) -> bool {
+    fn contours(r: &Region) -> impl Iterator<Item = &Contour> {
+        std::iter::once(r.outer()).chain(r.holes())
+    }
+    contours(a).any(|ca| contours(b).any(|cb| contours_cross(ca, cb)))
 }
 
 /// The art's outline (49c, step 4): every region's outer contour, holes
@@ -381,6 +394,30 @@ mod tests {
                 .collect();
             prop_assert!(nest(contours).is_ok());
         }
+    }
+
+    /// Two circles that overlap by a 0.003 mm sliver, as the property
+    /// above once found them: their chords at 0.01 mm share no area, so
+    /// they were not united, while `nest`, which reads the arcs, called
+    /// them crossing and the merge failed as `Unresolved`. Both tests of
+    /// crossing are asked now, and the two come out as two areas.
+    #[test]
+    fn merge_fills_reads_circles_that_overlap_by_a_sliver() {
+        let (large, small) = (
+            circle_region(43.058_230_557, 40.077_527_763, 12.457_076_970),
+            circle_region(23.544_896_138, 36.306_869_625, 7.419_551_301),
+        );
+        let apart_mm = (43.058_230_557_f64 - 23.544_896_138).hypot(40.077_527_763 - 36.306_869_625);
+        let overlap_mm = 12.457_076_970 + 7.419_551_301 - apart_mm;
+        assert!(overlap_mm > 0.0 && overlap_mm < 0.005, "{overlap_mm}");
+
+        let out = merge_fills(vec![vec![large.clone()], vec![small.clone()]], TOL_MM).unwrap();
+        assert!(!out.is_empty() && out.len() <= 2, "{}", out.len());
+        assert!(out.iter().all(|r| r.holes().is_empty()));
+        // The areas are the circles', to the chords' error.
+        let circles_mm2 = large.area_mm2() + small.area_mm2();
+        assert_approx_eq!(area_mm2(&out), circles_mm2, 0.005 * circles_mm2);
+        assert_canonical(&out);
     }
 
     #[test]

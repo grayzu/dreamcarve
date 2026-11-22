@@ -296,6 +296,11 @@ fn overlap(a: &Contour, b: &Contour) -> Overlap {
     }
 }
 
+/// Whether [`nest`] would refuse `a` beside `b` as crossing.
+pub(crate) fn contours_cross(a: &Contour, b: &Contour) -> bool {
+    overlap(a, b) == Overlap::Cross
+}
+
 /// Area of the intersection of `a` and `b`, mm².
 fn shared_area_mm2(a: &Contour, b: &Contour) -> f64 {
     let ccw = |c: &Contour| to_cavalier(with_ccw(c.clone(), true).polyline());

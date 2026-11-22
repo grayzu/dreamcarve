@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 990287a0595d20ed14410efde9d3a0ae0f0a850974302e34be34f1a7a7a33d75 # shrinks to shapes = [Region { outer: Contour(Polyline { vertices: [Vertex { x: 55.515307527663325, y: 40.07752776296469, bulge: 1.0 }, Vertex { x: 30.601153587175176, y: 40.07752776296469, bulge: 1.0 }], closed: true }), outer_index: 0, holes: [], hole_indices: [], depth: 0 }, Region { outer: Contour(Polyline { vertices: [Vertex { x: 30.96444743846559, y: 36.306869624979434, bulge: 1.0 }, Vertex { x: 16.12534483735091, y: 36.306869624979434, bulge: 1.0 }], closed: true }), outer_index: 0, holes: [], hole_indices: [], depth: 0 }]
