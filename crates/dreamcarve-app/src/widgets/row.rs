@@ -10,7 +10,7 @@
 //! with its `.dcv` field name in JetBrains Mono ("Help affordance"), and
 //! the notes under a row, which are not problems: what a value comes to,
 //! why an option is missing ([`hint`]), an Inlay's derived lines
-//! ([`line`], [`derived`]). A problem takes no line under its field: it
+//! ([`line()`], [`derived`]). A problem takes no line under its field: it
 //! is the field's outline and glyph, with the details in the glyph's
 //! tooltip, the help line and the Warnings drawer
 //! ([`crate::widgets::problem`]; "Field problem"). Every state has an

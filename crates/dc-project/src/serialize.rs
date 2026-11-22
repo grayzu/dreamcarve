@@ -312,7 +312,7 @@ fn path_segments(err: &PathError) -> Vec<PathSegment> {
 }
 
 /// serde reads an internally tagged enum such as
-/// [`Operation`](crate::model::Operation) whole before
+/// [`crate::model::Operation`] whole before
 /// it picks the variant, so serde_path_to_error's path stops at
 /// `operations[i]`. Reading that operation's fields again as its variant's
 /// struct gives the error with the rest of the path. `None` when `path` is

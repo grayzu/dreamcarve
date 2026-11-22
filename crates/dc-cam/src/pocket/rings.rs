@@ -562,7 +562,7 @@ fn link_inside(region: &Region, from: Point, to: Point) -> bool {
 }
 
 /// Where a ring starts: the point of `contour` nearest `anchor` among its
-/// vertices and along its arcs, and its distance ([`nearest_to`]); the
+/// vertices and along its arcs, and its distance (`nearest_to`); the
 /// first vertex and 0 with no anchor.
 ///
 /// # Errors

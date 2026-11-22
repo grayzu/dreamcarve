@@ -742,7 +742,7 @@ pub enum CamError {
     Internal {
         /// The operation being generated. `None` only where the code that
         /// found the defect is not told it (the sequencer) and no
-        /// generator has named it since ([`CamError::for_op`]).
+        /// generator has named it since (`CamError::for_op`).
         op: Option<OperationId>,
         /// The invariant that did not hold, in words.
         what: &'static str,
@@ -1131,7 +1131,7 @@ pub enum CamError {
 /// A geometry failure as it is, but for a defect the geometry code found
 /// in itself ([`GeometryError::Internal`]): that is this crate's
 /// [`CamError::Internal`], for a generator to name its operation in
-/// ([`CamError::for_op`]).
+/// (`CamError::for_op`).
 impl From<GeometryError> for CamError {
     fn from(error: GeometryError) -> Self {
         match error {

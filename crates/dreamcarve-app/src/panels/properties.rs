@@ -22,7 +22,7 @@
 //! picture's name, the selection's X and Y, W and H with the link always
 //! closed (a picture is never stretched: [`closed_link`]), its size in
 //! pixels, read-only, its lock and the Photo V-Carves that carve it
-//! ([`pictures`]). The values are `dc_app::pictures`'; X or Y moves the
+//! ([`pictures()`]). The values are `dc_app::pictures`'; X or Y moves the
 //! selection and W or H resizes the one picture about its centre, each
 //! one undo step.
 //!

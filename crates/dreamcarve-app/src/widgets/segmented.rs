@@ -7,7 +7,7 @@
 //! two to four exclusive options on a `surface.sunken` track with fully
 //! rounded ends, 32 px; the chosen segment a `surface.raised` pill with
 //! text.primary Medium, the rest text.secondary. The app has no radio
-//! buttons. [`tabs`] is the same control heard as a tab list.
+//! buttons.
 
 use eframe::egui::{self, Align2, Id, Rect, Sense, Stroke, StrokeKind, TextStyle, Ui};
 

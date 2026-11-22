@@ -15,7 +15,7 @@
 //! the defaults plus a one-line note for the Warnings panel, never a
 //! refusal to start: a preference is not worth losing the session over.
 //! A file that is there and could not be used at all is reported as such
-//! ([`Loaded::unread`]), so the app can say so and leave it alone: it may
+//! (`Loaded::unread`), so the app can say so and leave it alone: it may
 //! be one typo away from the user's settings, and writing the defaults
 //! over it would lose them.
 
