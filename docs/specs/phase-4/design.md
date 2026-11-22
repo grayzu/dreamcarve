@@ -160,7 +160,37 @@ pub mod import {
     pub enum Drawing { Svg(SvgImport), Dxf(DxfImport) }
 }
 pub mod tabs { pub use dc_cam::placed_tabs::{place, place_on_outlines, replace, crossed_by}; pub fn place_request(project: &Project, op: &OperationId) -> Result<Project, CamError>; }
+pub mod checks {                // the artwork checks (phase 3, 49a) as both shells report them
+    /// One check that fired: its code, the CLI's words, and the shapes it names (the overlap's pair).
+    pub struct Check { pub code: &'static str, pub message: String, pub shapes: Vec<InstanceId> }
+    /// `init`'s: every check, read from an SVG's paint and paths; `Err` is the one line that says they could not run.
+    pub fn svg(bytes: &[u8]) -> Result<Vec<Check>, Check>;
+    /// `check`'s: `shapes_overlap` and `feature_below_size`, read from the project's visible shapes. Moved from `crates/dreamcarve/src/check.rs`.
+    pub fn project(project: &Project) -> Vec<Check>;
+    /// The same two for a drawing not yet in a project: the Import drawing sheet's, for a DXF.
+    pub fn drawing(drawing: &Drawing) -> Vec<Check>;
+    /// The importer's SVG warnings a check counts over the whole document, which `init` leaves out.
+    pub fn counted_by_svg_checks(warning: &ImportWarning) -> bool;
+}
 ```
+
+The rules, thresholds, codes and words of the checks stay
+`dc_import::prep`'s; `checks` owns which are read from what, so `init`,
+`check`, the sheet (`DrawingImport::checks`) and the drawer
+(`App::artwork_checks`) each call one function and say the same thing.
+The sheet reads its checks when it reads the file, once for each change
+of an option, and the app reads the project's when a shape changes (a
+digest of the instances and their definitions tells) and at no other
+edit; neither reads them as a frame is drawn. Both run on the window's
+thread. A read of shapes costs one width test (an erosion) for each
+closed region and hole, up to sixteen more for one narrower than every
+one before it, and one intersection for each pair of shapes whose boxes
+touch: for a traced drawing of 250 shapes and 100 400 vertices, 250
+width tests and 124 intersections. An SVG's read on the sheet also
+parses and flattens the file once more and outlines its strokes
+(`prep::findings`). Should a drawing make either read long enough to
+feel, the project's belongs on the worker beside generation; that is
+not done here.
 
 `with_defaults: false` is what the GUI passes (functional Q1: no
 placeholder tool, no Profile); the CLI passes `true` and writes what it
@@ -416,7 +446,9 @@ findings, a finding going to the step that edits its field
 `steps::opening` what a newly opened project starts on;
 `steps::summary` is the line under a step's title. `Session` is what
 the project does not hold: how many importer's warnings are still
-noted, and the snapshot the last export wrote. The shell holds the
+noted, and the snapshot the last export wrote. The Design step also
+needs attention while an artwork check stands on the shapes
+(`App::artwork_checks`, functional 76). The shell holds the
 current step, the `Session`, and the states as shown, which
 `steps::settle` holds steady while toolpaths regenerate. Which tool the
 Tools step has selected is view state in egui's memory; the Design
@@ -691,7 +723,7 @@ before merge.
 ## Module layout
 
 ```
-crates/dc-job/src/{lib.rs, build.rs (build, generate_operation, finish, Findings, Tier), names.rs (program_names), summary.rs (extents, estimates, carve_facts, describe_carves), report.rs, setup_sheet.rs (review: render), preview.rs (render, marks; moved), project_from.rs (drawing, picture; moved from init.rs), import.rs (drawing_into), tabs.rs (place_request and re-exports)}
+crates/dc-job/src/{lib.rs, build.rs (build, generate_operation, finish, Findings, Tier), names.rs (program_names), summary.rs (extents, estimates, carve_facts, describe_carves), report.rs, setup_sheet.rs (review: render), preview.rs (render, marks; moved), project_from.rs (drawing, picture; moved from init.rs), import.rs (drawing_into), checks.rs (the artwork checks: svg, project, drawing), tabs.rs (place_request and re-exports)}
 crates/dc-app/src/{lib.rs, app.rs (App, SnapshotId, dirty), command.rs (Command, apply, label, CommandError), history.rs (labels beside dc_project::History), selection.rs, view.rs (View, Visibility, ColourMode), generation.rs (digest, Job, JobResult, staleness), scene.rs (Scene, male board offset), viewport/{camera.rs, pick.rs, handles.rs, arrows.rs (port), tabs.rs (tab_drag)}, editor/{fields.rs (the capability 68 table), set.rs (key-path set/get), targets.rs, clearing.rs}, tree.rs, pictures.rs (a picture's Properties and moves), warnings.rs (merge, tiers, grouping), steps.rs (Step, State, states, next, opening; redesign), export.rs (plan), library.rs (filter; port), units.rs, strings.rs (+ build.rs, strings/en.toml), prefs.rs, test_support.rs (Harness)}
 crates/dreamcarve-app/src/{main.rs (eframe entry, --open), shell/{window.rs, header.rs (menus' bar, name, Undo and Redo, the primary button; redesign), menu.rs, rail.rs (the steps; redesign), status.rs, files.rs (open/save/recent/unsaved), worker.rs (thread, channels), theme.rs (tokens → Visuals), strings.rs (loader)}, panels/{side.rs (the step panel and the Inspector; redesign), tree.rs, properties.rs, arrange.rs (the Arrange group), project.rs (the Stock step, the Export step's settings), operations.rs, editor.rs (renderers per field kind), tools.rs, export_step.rs (the readiness card; redesign), library.rs (window), warnings.rs, export.rs (sheet), import.rs (sheet), picture.rs (the Add picture sheet; slice D6), empty.rs (the start screen)}, viewport/{mod.rs, renderer.rs (wgpu callback, buffers, shader.wgsl, picture.wgsl), pictures.rs (a picture's quad, drag and handles; slice D6), lod.rs, handles.rs, cursor.rs}, widgets/{unit_field.rs, problem.rs (a field's problem: outline, glyph, tooltip, the drawer trip), segmented.rs, section.rs, row.rs, icon.rs, tabs.rs}}
 crates/dreamcarve-app/assets/{fonts/, icons/, strings/ (symlink or include of dc-app's table)}
@@ -758,6 +790,7 @@ carries. The CLI's existing tests are the regression net for slice 1.
 - `preview::render_is_unchanged_after_the_move`, `preview::marks_equal_what_the_svg_draws` (tab marks, start points, holes extracted from the SVG match `marks`).
 - `project_from::drawing_with_defaults_equals_init`, `project_from::drawing_without_defaults_has_no_tool_and_no_operation` (acc 63).
 - `import::drawing_into_places_as_drawn_and_returns_the_new_ids` (acc 64).
+- `checks::an_svgs_checks_are_the_importers_findings`, `checks::checks_that_cannot_run_are_one_line`, `checks::a_projects_checks_name_the_shapes_by_id`, `checks::shapes_of_one_name_are_told_apart`, `checks::hidden_shapes_are_left_out`, `checks::a_drawings_checks_are_its_projects` (acc 106); in dc-app `import::svg_sheet_lists_the_checks_init_prints`, `import::dxf_sheet_lists_the_checks_of_the_shapes_it_would_add`, `import::importing_keeps_the_checks_as_findings`, `warnings::artwork_checks_are_rows_after_the_warnings`, `warnings::moving_a_shape_apart_clears_the_overlap`, `steps::design_needs_attention_while_an_artwork_check_fires`; against the binary `warnings_panel::copy_equals_check_for_overlapping_and_too_small_shapes`; in the window `artwork_checks.rs`.
 - `tabs::place_request_equals_tabs_place` (acc 78, first half).
 
 **dreamcarve-shell (slice 1)**

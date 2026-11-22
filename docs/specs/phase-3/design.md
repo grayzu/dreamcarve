@@ -1230,7 +1230,10 @@ result with the importer's warnings, in the order of functional 49a; the
 project it writes and its exit status do not depend on them. `init` on a
 DXF is unchanged: the checks need an SVG's paint and paths. `check` calls
 `prep::design_findings` on the regions of every instance of the project,
-with the design's height from their joint bounding box, and prints the
+with the design's height from their joint bounding box (through
+`dc_job::checks::project` since phase 4, which the app's Warnings drawer
+calls too; `init`'s call is `dc_job::checks::svg`, which the app's Import
+drawing sheet shares), and prints the
 two findings it can make with the errors and warnings it already prints
 (`shapes_overlap` is also an error where an operation's targets cross; the
 finding is for the user who has no operation yet).

@@ -5,7 +5,8 @@
 //! "Overview" and "Data model → dc-job"): from a project to its programs,
 //! with every error and warning found on the way; the toolpath preview;
 //! the export summary's lines; a new project from a drawing; a drawing
-//! imported into a project; placed tabs. Moved down from the `dreamcarve`
+//! imported into a project; the artwork checks of a drawing and of a
+//! project's shapes; placed tabs. Moved down from the `dreamcarve`
 //! CLI so the app calls the same functions and gets the same bytes, since
 //! it has no other way to get them (functional spec, S20): the app's
 //! crates depend on `dc-cam` and `dc-gcode` only through this crate, whose
@@ -17,6 +18,7 @@
 //! date, writes the programs and prints.
 
 pub mod build;
+pub mod checks;
 mod error;
 pub mod import;
 pub mod names;
@@ -33,6 +35,7 @@ pub use build::{
     Built, Finding, Findings, Finished, Generated, ProgramSummary, RunSummary, Tier, build,
     build_board, finish, generate_operation, project_checks, summarize, validation,
 };
+pub use checks::Check;
 pub use error::JobError;
 pub use import::{Drawing, drawing_into};
 pub use names::{program_names, program_suffixes};

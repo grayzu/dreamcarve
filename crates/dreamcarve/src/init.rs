@@ -36,9 +36,10 @@ use crate::image::{import_picture, picture_format, picture_name, picture_size, p
 use crate::output::{errln, outln};
 use dc_import::{
     DxfImportOptions, ImportError, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM, SvgImportOptions,
-    import_dxf, import_svg, prep,
+    import_dxf, import_svg,
 };
 use dc_job::JobError;
+use dc_job::checks;
 use dc_job::import::Drawing;
 use dc_job::project_from;
 use dc_project::{Project, SourceMap, validate};
@@ -149,33 +150,27 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
 }
 
 /// Prints an SVG import's `warnings` and the 49a import checks of `bytes`
-/// as `warning: <code>: <message>`. The checks count the text, images,
-/// clip paths and masks over the whole document, so they stand in for the
-/// importer's own per-group warnings about them; the rest of the
-/// importer's come first. Nothing here changes the project or the exit
-/// status.
+/// ([`dc_job::checks::svg`]) as `warning: <code>: <message>`. The checks
+/// count the text, images, clip paths and masks over the whole document,
+/// so they stand in for the importer's own per-group warnings about them;
+/// the rest of the importer's come first. Nothing here changes the
+/// project or the exit status. The app's Import drawing sheet lists the
+/// same lines.
 fn print_svg_warnings(warnings: &[ImportWarning], bytes: &[u8]) -> Result<(), Failure> {
-    let counted_by_the_checks = |w: &ImportWarning| {
-        matches!(
-            w,
-            ImportWarning::TextIgnored { .. }
-                | ImportWarning::ImagesIgnored { .. }
-                | ImportWarning::ClipPathIgnored { .. }
-                | ImportWarning::MaskIgnored { .. }
-        )
-    };
     // The checks never change the outcome: a drawing they cannot measure
-    // (they budget the strokes' outlines, which the import does not build)
     // is imported all the same, with a note.
-    let checks = prep::findings(bytes, &SvgImportOptions::new()).unwrap_or_else(|e| {
-        errln!("warning: import_checks_skipped: the drawing could not be checked: {e}");
+    let checks = checks::svg(bytes).unwrap_or_else(|skipped| {
+        errln!("{}", skipped.line());
         Vec::new()
     });
-    for warning in warnings.iter().filter(|w| !counted_by_the_checks(w)) {
+    for warning in warnings
+        .iter()
+        .filter(|w| !checks::counted_by_svg_checks(w))
+    {
         errln!("warning: {}: {warning}", warning.code());
     }
-    for warning in &checks {
-        errln!("warning: {}: {warning}", warning.code());
+    for check in &checks {
+        errln!("{}", check.line());
     }
     Ok(())
 }

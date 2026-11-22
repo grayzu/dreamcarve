@@ -50,8 +50,8 @@ dreamcarve-shell → { dreamcarve, dreamcarve-app }
 `dc-gcode` depends on `dc-cam` for the `Toolpath` type it writes out, and for
 nothing else. `dc-job` is the pipeline both shells drive (phase 4 design,
 "Overview"): validation, generation, the order and tab checks, emission,
-program names, summaries, the preview, a project from a drawing, placed
-tabs. `dreamcarve-shell` is the file I/O the two binaries share (staged
+program names, summaries, the preview, a project from a drawing, the
+artwork checks of a drawing and of a project's shapes, placed tabs. `dreamcarve-shell` is the file I/O the two binaries share (staged
 writes, the config directory, `config.toml`, `gui.toml`, the tool library
 file); it is not a `dc-*` crate.
 
