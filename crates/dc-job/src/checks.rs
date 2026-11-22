@@ -85,7 +85,7 @@ impl Check {
     /// warning of that ([`counted_by_svg_checks`]). The other checks of a
     /// drawing's paint (a hole drawn as a separate path, a stroke with no
     /// fill, a hidden object) are advice about shapes that were imported
-    /// whole: an outline drawn as a hairline, which is how most drawings
+    /// whole, or about a layer the drawing itself hides: an outline drawn as a hairline, which is how most drawings
     /// for a cut-out are made, is one of them and needs no fix.
     #[must_use]
     pub fn says_something_was_left_out(&self) -> bool {

@@ -819,8 +819,8 @@ fn svg_sheet_lists_the_checks_init_prints() {
     );
     assert_eq!(
         message("svg_hidden_object"),
-        "1 object(s) are not drawn (display:none) but are imported and would be cut; the \
-         first is `old-layer`; skip them; `dreamcarve image-prep` would fix this"
+        "1 object(s) are in a layer that is not drawn (display:none) and were left out; the \
+         first is `old-layer`; show the layer in your drawing program to cut them"
     );
     assert_eq!(
         message("feature_below_size"),

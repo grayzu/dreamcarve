@@ -506,6 +506,17 @@ phases bump the patch number.
 
 ### Fixed
 
+- **A hidden layer is said to be left out.** `svg_hidden_object` told
+  of a `display:none` layer that it "is imported and would be cut". It
+  never was: nothing of such a layer is in the project. The warning now
+  says the layer was left out and to show it in the drawing program if
+  it should be cut. Objects hidden another way (`visibility:hidden`,
+  zero opacity, neither fill nor stroke) are imported and would be cut;
+  they have a warning of their own, in the old words.
+- **Shapes that overlap by a hair are read.** Joining filled shapes
+  (`image-prep`, and the checks for features too small to carve) could
+  fail when two curved outlines overlapped by less than the flattening
+  tolerance, a few thousandths of a millimetre. They are joined now.
 - **A dogbone beside a very small helix exports.** An Inside or Outside
   Profile with dogbones, a helix a few hundredths of a millimetre across
   (a 1 mm bit at a 0.05 helix diameter) and arc fitting on failed to

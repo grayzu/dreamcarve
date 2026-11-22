@@ -141,6 +141,7 @@ Notes from the fixes:
 | G6 | A field's problem takes no room (the maintainer's request): no message line under any field; the field's outline and glyph mark it; a tooltip on the glyph or the field lists its findings; a click on the glyph opens the Warnings drawer at the finding; the focused field's problem shows first in the help line, and in the field's accessible description. Notes that are not problems, and the Export step's list of what blocks export, stay where they are. `redesign.md`'s Field component still says the message goes under the field | done |
 | G7 | A single program lists its tool runs: under the file, "2 tools, 1 tool change", then each tool with what it cuts and its time, in Program Details, the result sheet and the setup sheet. `dc_job::ProgramSummary.runs`; the runs' times add up to the program's. CLI output and G-code unchanged | done |
 | G8 | An angle is said both ways in the tool editor and the library's pane: a tapered ball nose's Taper per side shows its included angle, a V-bit's Angle its angle per side (`dc_app::tools::angle_note`). From the maintainer's test cuts of 2026-11-21: the Fine Detail bit entered as 6.7° per side made a plug that would not enter its pocket; measured pockets matched 3.35° per side to within 0.1 mm, and a coaster cut at 3.35° fitted. The vendor's file gives 10° for the same bit | done |
+| G9 | The app shows the artwork checks (asked 2026-11-21, with clip art in mind; image prep itself stays a command). The checks moved to `dc_job::checks`, so `check`, `init` and the app word them alike. The drawing sheet lists them before anything is added (all of them for an SVG; `shapes_overlap` and `feature_below_size` for a DXF, for the layers ticked), with a line that says to run `dreamcarve image-prep` and a link to *Preparing artwork*; after the import those two are rows in the Warnings drawer for as long as the shapes are that way, the overlap's row selects both shapes, and Design is marked. Before this the app showed none of them, so *Copy* was not `check` for a drawing with these faults. Pictures: `docs/specs/phase-4/review/import-checks/`. Two faults found on the way and fixed test-first: `svg_hidden_object` said a `display:none` layer "is imported and would be cut" when usvg drops it and nothing of it is in the project (now a note of its own: left out, show the layer to cut it; objects hidden by `visibility`, zero opacity or no paint, which are imported, keep the old words); and `dc_geometry::merge_fills` failed as `Unresolved` for two arcs overlapping by less than the flattening tolerance, found by its own property test on a new seed (it now also asks `nest`'s test of crossing; the seed is kept in `proptest-regressions/fill.txt`). Gate after it: 3,430 tests | done |
 | G4 | gSender's *Invalid lines detected* on `M61 Q1`: gSender's own check at file load; grblHAL answers `ok` to the line and the program runs. Documented in the Post-processors chapter. The maintainer decided on 2026-11-20 to leave the program as it is for now: the `M61` line stays, no `T1` word is added (so gSender lists only the second tool), and a single program keeps its first tool in its file name | done |
 
 What the smoke test showed: an Inlay estimated at 1 h 23 min, 60 minutes
@@ -218,6 +219,12 @@ Decisions made while wiring, for the maintainer to confirm:
   it left the Layers popover.
 - A new carve takes the first tool its picker offers, so a project whose
   only carving tool is a tapered ball nose gets it.
+- The artwork checks' advice notes (a stroke with no fill, a hole drawn
+  as a separate path, a hidden object) do not mark the Design step: the
+  quick start's coaster, an outline drawn as a hairline, has the first.
+  Notes that say part of the drawing was left out do mark it.
+- *Duplicate* puts the copy 10 mm off, over the original, so it raises
+  `shapes_overlap` in the Warnings drawer until the copy is moved clear.
 
 ### E. Docs and release preparation
 

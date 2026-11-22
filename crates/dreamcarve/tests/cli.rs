@@ -12881,17 +12881,24 @@ fn init_prints_the_import_checks() {
     );
     line("svg_object_not_convertible", "expand clips and masks");
     line("feature_below_size", "0.200 mm");
-    // The ones `image-prep` fixes say so; the three it cannot, do not.
+    // The ones `image-prep` fixes say so; the three it cannot, do not,
+    // nor does the hidden layer, which the import left out.
     let fix = "; `dreamcarve image-prep` would fix this";
     for code in [
         "shapes_overlap",
         "svg_hole_as_separate_path",
         "svg_stroke_only_path",
-        "svg_hidden_object",
         "feature_below_size",
     ] {
         assert!(line(code, "").ends_with(fix), "{code}");
     }
+    assert!(
+        line("svg_hidden_object", "").ends_with(
+            "and were left out; the first is `old-layer`; show the layer in your drawing \
+             program to cut them"
+        ),
+        "{err}"
+    );
     assert!(
         lines
             .iter()

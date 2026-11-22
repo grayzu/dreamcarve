@@ -580,11 +580,15 @@ designed here.
     imports its centreline, an open path no Inlay or V-Carve can cut; the
     warning gives the stroke's width and says that `image-prep` turns
     strokes into shapes.
-    - `svg_hidden_object`: an object that is not drawn (`display:none`,
-    `visibility:hidden`, zero opacity, or neither filled nor stroked).
-    `init` imports geometry whatever its paint, so a hidden layer is
-    imported and would be cut; the warning names it and says `image-prep`
-    skips such objects.
+    - `svg_hidden_object`: an object that is not drawn. One hidden by
+    `visibility:hidden`, zero opacity, or neither fill nor stroke is
+    imported, as `init` imports geometry whatever its paint, and would be
+    cut; the warning names it and says `image-prep` skips such objects.
+    One in a `display:none` element is not in the tree the importer
+    reads and is left out; a second warning with the same code names the
+    layer and says to show it if it should be cut, and names no fix
+    (corrected 2026-11-21: the first wording said such a layer was
+    imported, which it never was).
     - `svg_object_not_convertible`, the existing text, image, clip-path
     and mask warnings with a fix added to each (convert text
     to paths, expand clips and masks, trace images in Inkscape first):

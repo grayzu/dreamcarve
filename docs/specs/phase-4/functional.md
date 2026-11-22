@@ -361,8 +361,8 @@ folder are app preferences, kept outside the project.
     and `svg_object_not_convertible`, which stands in for the
     importer's own about text, images, clips and masks. A note of
     `svg_hole_as_separate_path`, `svg_stroke_only_path` or
-    `svg_hidden_object` is advice about shapes imported whole and marks
-    nothing: the quick start's coaster, an outline drawn as a hairline
+    `svg_hidden_object` is advice about shapes imported whole, or about
+    a layer the drawing itself hides, and marks nothing: the quick start's coaster, an outline drawn as a hairline
     as most cut-outs are, has the second, and its new project opens on
     Stock with Design complete. One import is one undo step. The sheet resizes as the Tool
     Library does (64; maintainer's smoke test, 2026-11-20): by its edges

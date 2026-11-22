@@ -333,23 +333,36 @@ pub(super) fn stroke_only(painted: &[PaintedPath], shapes: &[Shape]) -> Option<I
     })
 }
 
-/// `svg_hidden_object`: the walk's objects that are not drawn, the first
-/// named by the order `display_none`, `hidden`, `zero_opacity`,
-/// `unpainted`, then document order.
-pub(super) fn hidden(objects: &[super::walk::HiddenObject]) -> Option<ImportWarning> {
-    let first = [
-        HiddenReason::DisplayNone,
-        HiddenReason::Hidden,
-        HiddenReason::ZeroOpacity,
-        HiddenReason::Unpainted,
-    ]
-    .into_iter()
-    .find_map(|reason| objects.iter().find(|o| o.reason == reason))?;
-    Some(ImportWarning::SvgHiddenObject {
-        count: objects.iter().map(|o| o.shapes).sum(),
-        first: first.name.clone(),
-        reason: first.reason,
-    })
+/// `svg_hidden_object`, at most twice: once for the shapes in
+/// `display:none` elements, which usvg drops and the import leaves out,
+/// and once for the objects that are imported though not drawn, the
+/// first named by the order `hidden`, `zero_opacity`, `unpainted`, then
+/// document order.
+pub(super) fn hidden(objects: &[super::walk::HiddenObject]) -> Vec<ImportWarning> {
+    let (left_out, imported): (Vec<_>, Vec<_>) = objects
+        .iter()
+        .partition(|o| o.reason == HiddenReason::DisplayNone);
+    let note = |group: &[&super::walk::HiddenObject], order: &[HiddenReason]| {
+        let first = order
+            .iter()
+            .find_map(|reason| group.iter().find(|o| o.reason == *reason))?;
+        Some(ImportWarning::SvgHiddenObject {
+            count: group.iter().map(|o| o.shapes).sum(),
+            first: first.name.clone(),
+            reason: first.reason,
+        })
+    };
+    note(&left_out, &[HiddenReason::DisplayNone])
+        .into_iter()
+        .chain(note(
+            &imported,
+            &[
+                HiddenReason::Hidden,
+                HiddenReason::ZeroOpacity,
+                HiddenReason::Unpainted,
+            ],
+        ))
+        .collect()
 }
 
 /// The height of the painted paths' joint box, mm, strokes grown by half
@@ -551,6 +564,66 @@ mod tests {
         );
     }
 
+    /// usvg drops a `display:none` subtree, so its shapes are not in the
+    /// project: the note says they were left out, and names no fix, there
+    /// being nothing for `image-prep` to do.
+    #[test]
+    fn a_display_none_layer_is_said_to_be_left_out() {
+        let found = check(MESSY);
+        let message = found
+            .iter()
+            .find(|w| w.code() == "svg_hidden_object")
+            .expect("the hidden layer")
+            .to_string();
+        assert_eq!(
+            message,
+            "1 object(s) are in a layer that is not drawn (display:none) and were left out; \
+             the first is `old-layer`; show the layer in your drawing program to cut them"
+        );
+    }
+
+    /// The objects that are not drawn but are imported (hidden, zero
+    /// opacity, unpainted) are a second note, which keeps the old words
+    /// and counts none of a `display:none` layer's.
+    #[test]
+    fn hidden_objects_left_out_and_imported_are_two_notes() {
+        let found = check(&drawing(
+            r#"<rect id="shown" x="10" y="10" width="10" height="10"/>
+               <g id="old-layer" style="display:none">
+                 <rect x="30" y="30" width="5" height="5"/>
+                 <rect x="40" y="30" width="5" height="5"/>
+               </g>
+               <rect id="ghost" x="50" y="50" width="10" height="10" style="visibility:hidden"/>
+               <rect id="clear" x="70" y="70" width="10" height="10" style="opacity:0"/>"#,
+        ));
+        let hidden: Vec<_> = found
+            .iter()
+            .filter(|w| w.code() == "svg_hidden_object")
+            .collect();
+        assert_eq!(
+            hidden,
+            [
+                &ImportWarning::SvgHiddenObject {
+                    count: 2,
+                    first: "old-layer".into(),
+                    reason: HiddenReason::DisplayNone,
+                },
+                &ImportWarning::SvgHiddenObject {
+                    count: 2,
+                    first: "ghost".into(),
+                    reason: HiddenReason::Hidden,
+                },
+            ]
+        );
+        assert_eq!(
+            hidden[1].to_string(),
+            format!(
+                "2 object(s) are not drawn (visibility is hidden) but are imported and would \
+                 be cut; the first is `ghost`; skip them{FIX}"
+            )
+        );
+    }
+
     #[test]
     fn not_convertible_names_the_fix() {
         let found = check(MESSY);
@@ -656,7 +729,14 @@ mod tests {
     fn messages_that_image_prep_fixes_name_it() {
         for warning in check(MESSY) {
             let message = warning.to_string();
-            let fixed = !matches!(warning, ImportWarning::SvgObjectNotConvertible { .. });
+            let fixed = !matches!(
+                warning,
+                ImportWarning::SvgObjectNotConvertible { .. }
+                    | ImportWarning::SvgHiddenObject {
+                        reason: HiddenReason::DisplayNone,
+                        ..
+                    }
+            );
             assert_eq!(message.ends_with(FIX), fixed, "{message}");
         }
     }

@@ -3452,7 +3452,7 @@ example, and none changes anything.
 | `shapes_overlap` | pairs of regions (from different painted paths) whose areas cross: `nest`'s overlap test on the filled regions and the stroke areas; the point is the middle of the crossing's box, Y-up |
 | `svg_hole_as_separate_path` | a painted path whose filled region lies wholly inside the material of another painted path's filled region (both with a visible fill) |
 | `svg_stroke_only_path` | a painted path with a stroke and no visible fill; the width is the stroke's, in mm, after the transform's scale along the stroke's normal (the mean of the two axis scales) |
-| `svg_hidden_object` | the walk's hidden, unpainted, zero-opacity and `display:none` counts, naming the first object by id or its layer's |
+| `svg_hidden_object` | the walk's `display:none` count, naming the first layer, as shapes left out; and, as a second warning, its hidden, unpainted and zero-opacity counts, naming the first object by id or its layer's, as shapes imported |
 | `svg_object_not_convertible` | the existing text, image, clip-path and mask counts, with the fix |
 | `feature_below_size` | regions or holes whose widest point is under `DEFAULT_MIN_DETAIL_PCT` of `H` (`is_narrower_than`, `hole_is_narrower_than`), the count and the smallest; `H` from the painted bounds |
 
@@ -3554,7 +3554,7 @@ checks that `init` words as advice to run `image-prep`
 | `shapes_overlap` | warning | count, first, second, x_mm, y_mm | `init`, `check` |
 | `svg_hole_as_separate_path` | warning | count, inner, outer | `init`, `image-prep` |
 | `svg_stroke_only_path` | warning | count, first, width_mm | `init`, `image-prep` |
-| `svg_hidden_object` | warning | count, first, reason (`display_none`, `hidden`, `zero_opacity`, `unpainted`) | `init`, `image-prep` |
+| `svg_hidden_object` | warning | count, first, reason (`display_none` for the warning about shapes left out; else `hidden`, `zero_opacity` or `unpainted`) | `init`, `image-prep` |
 | `svg_object_not_convertible` | warning | kind (`text`, `image`, `clip_path`, `mask`), count, group | `init`, `image-prep` |
 | `feature_below_size` | warning | count, smallest_mm, threshold_mm, height_mm | `init`, `check` |
 | `prep_regions_suggested` | warning | median_width_mm, height_mm | `image-prep`, default mode |

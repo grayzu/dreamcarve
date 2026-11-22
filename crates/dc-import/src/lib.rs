@@ -372,13 +372,17 @@ pub enum ImportWarning {
         /// The first one's stroke width, mm.
         width_mm: f64,
     },
-    /// An object that is not drawn (3.4, `svg_hidden_object`).
+    /// Objects that are not drawn (3.4, `svg_hidden_object`): those in a
+    /// `display:none` element, which the import leaves out, or, in a
+    /// warning of their own, those hidden some other way, which it
+    /// imports.
     SvgHiddenObject {
         /// Number of hidden shapes.
         count: usize,
         /// The first one's id, or its layer's.
         first: String,
-        /// Why the first is not drawn.
+        /// Why the first is not drawn; `DisplayNone` for the warning
+        /// about shapes left out, and never otherwise.
         reason: HiddenReason,
     },
     /// Text, images, clip paths or masks that cannot become shapes (3.4,
@@ -679,6 +683,16 @@ impl std::fmt::Display for ImportWarning {
             } => write!(
                 f,
                 "{count} path(s) have a stroke and no fill; the first is `{first}`, stroked {width_mm:.3} mm wide. Only its centreline is imported, an open path no Inlay or V-Carve can cut; turn strokes into shapes{IMAGE_PREP_FIXES}"
+            ),
+            // usvg drops a `display:none` subtree: nothing of it is in
+            // the project, and `image-prep` has nothing to fix.
+            Self::SvgHiddenObject {
+                count,
+                first,
+                reason: HiddenReason::DisplayNone,
+            } => write!(
+                f,
+                "{count} object(s) are in a layer that is not drawn (display:none) and were left out; the first is `{first}`; show the layer in your drawing program to cut them"
             ),
             Self::SvgHiddenObject {
                 count,

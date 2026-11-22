@@ -241,7 +241,8 @@ or without them:
   (`svg_hole_as_separate_path`);
 - a stroke with no fill, imported as a bare centre line
   (`svg_stroke_only_path`);
-- objects that are not drawn, which would be cut anyway
+- objects that are not drawn: a hidden layer's, which are left out, and
+  those hidden another way, which would be cut anyway
   (`svg_hidden_object`);
 - text, images, clip paths and masks (`svg_object_not_convertible`);
 - specks and hairlines too small to carve (`feature_below_size`).
