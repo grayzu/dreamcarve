@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Generates `THIRD-PARTY-LICENSES` for the release archives and checks that it
-//! covers every crate linked into the `dreamcarve` binary (issue #31).
+//! covers every crate linked into the binaries a release ships, `dreamcarve`
+//! and `dreamcarve-app` (issue #31).
 //!
 //! Generation is `cargo about generate` with the workspace's `about.toml` and
 //! `about.hbs`. The check is independent of cargo-about: it resolves the
@@ -21,8 +22,16 @@ use std::process::Command;
 /// The generated file's name, at the workspace root and in every archive.
 pub const LICENSES_FILE: &str = "THIRD-PARTY-LICENSES";
 
-/// The package whose binary the release archives ship.
-pub const SHIPPED_PACKAGE: &str = "dreamcarve";
+/// The packages whose binaries the release archives ship, one archive
+/// each for every dist target. The first is the one the archive test
+/// builds.
+pub const SHIPPED_PACKAGES: [&str; 2] = ["dreamcarve", "dreamcarve-app"];
+
+/// The package cargo-about reads the crates from. It takes one manifest,
+/// and the app links every third-party crate the command line program
+/// does, both being built on `dc-job` and `dreamcarve-shell`; [`check`]
+/// reads both packages' crates and fails if that stops being so.
+pub const GENERATED_FROM: &str = "dreamcarve-app";
 
 /// Files every release archive must carry at its root.
 pub const ARCHIVE_FILES: [&str; 3] = ["LICENSE", "NOTICE", LICENSES_FILE];
@@ -249,7 +258,7 @@ pub fn generate(root: &Path, output: &Path) -> Result<(), Error> {
         .arg("--config")
         .arg(root.join("about.toml"))
         .arg("--manifest-path")
-        .arg(root.join("crates").join(SHIPPED_PACKAGE).join("Cargo.toml"))
+        .arg(root.join("crates").join(GENERATED_FROM).join("Cargo.toml"))
         .arg("--output-file")
         .arg(output)
         .arg(root.join("about.hbs"));
@@ -259,7 +268,7 @@ pub fn generate(root: &Path, output: &Path) -> Result<(), Error> {
     run(&mut cmd).map(drop)
 }
 
-/// The third-party crates linked into the `dreamcarve` binary on any dist
+/// The third-party crates linked into a shipped binary on any dist
 /// target, from `cargo tree -e normal --target TARGET`.
 pub fn shipped_crates_for_release(root: &Path) -> Result<BTreeSet<CrateId>, Error> {
     let targets = dist_targets(&read(&root.join("dist-workspace.toml"))?)?;
@@ -268,7 +277,8 @@ pub fn shipped_crates_for_release(root: &Path) -> Result<BTreeSet<CrateId>, Erro
         let mut cmd = Command::new(cargo());
         cmd.current_dir(root)
             .args(["tree", "--locked", "--color", "never"])
-            .args(["-p", SHIPPED_PACKAGE, "-e", "normal"])
+            .args(SHIPPED_PACKAGES.iter().flat_map(|p| ["-p", p]))
+            .args(["-e", "normal"])
             .args(["--prefix", "none", "--format", "{p}"])
             .args(["--target", &target])
             .arg("--manifest-path")
@@ -297,24 +307,30 @@ pub fn host_target() -> Result<String, Error> {
         .ok_or_else(|| Error::Format("`rustc -vV` printed no `host:` line".into()))
 }
 
-/// Runs `dist build` for `target` and returns the archive it wrote.
-pub fn dist_build_archive(root: &Path, target: &str) -> Result<PathBuf, Error> {
+/// Runs `dist build` for `target` and returns the archives it wrote, one
+/// for each of [`SHIPPED_PACKAGES`], in that order.
+pub fn dist_build_archives(root: &Path, target: &str) -> Result<Vec<PathBuf>, Error> {
     let mut cmd = Command::new("dist");
     cmd.current_dir(root)
         .args(["build", "--artifacts=local", "--output-format=json"])
         .args(["--target", target]);
     run(&mut cmd)?;
     let distrib = root.join("target").join("distrib");
-    [".tar.xz", ".tar.gz", ".zip"]
+    SHIPPED_PACKAGES
         .iter()
-        .map(|ext| distrib.join(format!("{SHIPPED_PACKAGE}-{target}{ext}")))
-        .find(|p| p.is_file())
-        .ok_or_else(|| {
-            Error::Format(format!(
-                "dist build wrote no {SHIPPED_PACKAGE}-{target} archive in {}",
-                distrib.display()
-            ))
+        .map(|package| {
+            [".tar.xz", ".tar.gz", ".zip"]
+                .iter()
+                .map(|ext| distrib.join(format!("{package}-{target}{ext}")))
+                .find(|p| p.is_file())
+                .ok_or_else(|| {
+                    Error::Format(format!(
+                        "dist build wrote no {package}-{target} archive in {}",
+                        distrib.display()
+                    ))
+                })
         })
+        .collect()
 }
 
 /// Lists an archive's entries with `tar -tf` (bsdtar also reads zip).

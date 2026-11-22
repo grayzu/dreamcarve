@@ -23,3 +23,14 @@ accepted = [
 # Only crates linked into the binary need their texts shipped.
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
+
+# The app's clipboard on Windows (eframe `clipboard` → egui-winit → arboard →
+# clipboard-win → error-code) is under the Boost Software License, which
+# asks only that its text go with the source and is Apache-2.0-compatible.
+# It is accepted for these two crates and no other, as deny.toml's
+# `exceptions` does.
+[clipboard-win]
+accepted = ["BSL-1.0"]
+
+[error-code]
+accepted = ["BSL-1.0"]

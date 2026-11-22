@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Release checks for issue #31: every release archive carries the license
-//! texts of the crates linked into the `dreamcarve` binary.
+//! texts of the crates linked into the binary it ships, `dreamcarve` or
+//! `dreamcarve-app`.
 //!
 //! Both tests are `#[ignore]`d so `cargo test --all` stays offline and needs no
 //! extra tools. CI runs them with `--ignored`:
@@ -21,7 +22,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use third_party_licenses::{
-    ARCHIVE_FILES, LICENSES_FILE, archive_entries, check, dist_build_archive, generate,
+    ARCHIVE_FILES, LICENSES_FILE, archive_entries, check, dist_build_archives, generate,
     host_target, licensed_crates, missing_archive_files,
 };
 
@@ -30,7 +31,8 @@ fn workspace_root() -> PathBuf {
 }
 
 /// The generated file names every non-workspace crate that `cargo tree`
-/// resolves into the `dreamcarve` binary on any dist target, each under a
+/// resolves into a shipped binary (`dreamcarve`, `dreamcarve-app`) on any
+/// dist target, each under a
 /// non-empty license text. `generate` itself fails (`cargo about --fail`) when
 /// a license cannot be resolved to a text.
 #[test]
@@ -47,6 +49,10 @@ fn third_party_licenses_cover_lockfile() {
         "dreamcarve links third-party crates (clap at least), so the shipped set is not empty"
     );
     assert!(
+        coverage.shipped.iter().any(|c| c.name == "eframe"),
+        "the app's crates are among the shipped: eframe, its window, is one"
+    );
+    assert!(
         coverage.uncovered.is_empty(),
         "every shipped crate has a license text in {LICENSES_FILE}; missing: {:?}",
         coverage.uncovered
@@ -59,13 +65,19 @@ fn third_party_licenses_cover_lockfile() {
         "clap, the CLI's direct dependency, is listed with its license"
     );
     assert!(
-        listed.iter().all(|c| c.name != "dreamcarve"),
+        listed.iter().any(|c| c.name == "eframe"),
+        "eframe, the app's direct dependency, is listed with its license"
+    );
+    assert!(
+        listed
+            .iter()
+            .all(|c| c.name != "dreamcarve" && c.name != "dreamcarve-app"),
         "the file lists third-party crates only, not DreamCarve itself"
     );
 }
 
-/// A `dist build` archive for the host target carries the license files at its
-/// root: LICENSE (dist's auto-include), NOTICE and THIRD-PARTY-LICENSES (both
+/// Each `dist build` archive for the host target, the command line program's
+/// and the app's, carries the license files at its root: LICENSE (dist's auto-include), NOTICE and THIRD-PARTY-LICENSES (both
 /// from `include` in dist-workspace.toml).
 #[test]
 #[ignore = "needs cargo-about and dist, and runs a release build; CI runs it with --ignored"]
@@ -74,13 +86,15 @@ fn release_archive_contains_third_party_licenses() {
     generate(&root, &root.join(LICENSES_FILE)).expect("cargo about generates THIRD-PARTY-LICENSES");
 
     let target = host_target().expect("rustc reports the host target");
-    let archive = dist_build_archive(&root, &target).expect("dist builds the host archive");
-    let entries = archive_entries(&archive).expect("tar lists the archive");
-
-    assert_eq!(
-        missing_archive_files(&entries),
-        Vec::<&str>::new(),
-        "{} contains {ARCHIVE_FILES:?}; entries: {entries:?}",
-        archive.display()
-    );
+    let archives = dist_build_archives(&root, &target).expect("dist builds the host archives");
+    assert_eq!(archives.len(), 2, "one archive for each shipped package");
+    for archive in archives {
+        let entries = archive_entries(&archive).expect("tar lists the archive");
+        assert_eq!(
+            missing_archive_files(&entries),
+            Vec::<&str>::new(),
+            "{} contains {ARCHIVE_FILES:?}; entries: {entries:?}",
+            archive.display()
+        );
+    }
 }

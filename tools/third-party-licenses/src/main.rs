@@ -3,7 +3,7 @@
 
 //! `cargo run -p third-party-licenses -- generate [OUTPUT]`: writes
 //! THIRD-PARTY-LICENSES (default: at the workspace root) with cargo-about,
-//! then checks it covers every crate shipped in the `dreamcarve` binary.
+//! then checks it covers every crate shipped in the release's binaries.
 //!
 //! `cargo run -p third-party-licenses -- check [FILE]`: the check alone.
 //!
