@@ -61,6 +61,9 @@ add_tab = "Add tab"
 move_tab = "Move tab"
 update_tab = "Edit tab"
 update_tabs = "Edit {count} {count|tab|tabs}"
+# Phase 5: a shape drawn in the app (capability 90).
+draw = "Draw {subject}"
+add_shapes = "Add {count} {count|shape|shapes}"
 delete_tab = "Delete tab"
 delete_tabs = "Delete {count} {count|tab|tabs}"
 centre_on_stock = "Centre {subject} on stock"
@@ -1436,3 +1439,63 @@ warnings = "Warnings"
 warning = "Warning {code}: {message}"
 notes = "Notes"
 footer = "{name} · {date} · DreamCarve {version}"
+
+# Phase 5, drawing (docs/specs/phase-5/functional.md, capabilities 81 to
+# 90). What a new shape is named, with the next free number after it:
+# "Rectangle 1". A regular polygon is named for its sides, as PureCutCNC
+# names them.
+[draw.name]
+rectangle = "Rectangle"
+circle = "Circle"
+ellipse = "Ellipse"
+slot = "Slot"
+polygon = "Polygon"
+polygon_3 = "Triangle"
+polygon_4 = "Square"
+polygon_5 = "Pentagon"
+polygon_6 = "Hexagon"
+polygon_7 = "Heptagon"
+polygon_8 = "Octagon"
+polygon_9 = "Nonagon"
+polygon_10 = "Decagon"
+polygon_11 = "Hendecagon"
+polygon_12 = "Dodecagon"
+
+# The tool bar's line: what the next click does (capability 81).
+[draw.prompt]
+rectangle_first = "Click the first corner"
+rectangle_second = "Click the opposite corner, or type its size"
+circle_first = "Click the centre"
+circle_second = "Click a point on the circle, or type its diameter"
+ellipse_first = "Click the centre"
+ellipse_second = "Click a corner of its box, or type its size"
+polygon_first = "Click the centre"
+polygon_second = "Click where a corner points, or type its radius"
+polygon_second_flats = "Click the middle of a side, or type its radius"
+slot_first = "Click the centre of one end"
+slot_second = "Click the centre of the other end, or type its length"
+slot_width = "Click to set the width, or type it"
+
+# The fields of the step in hand (capability 83).
+[draw.field]
+x = "X"
+y = "Y"
+width = "W"
+height = "H"
+diameter = "Diameter"
+radius = "Radius"
+angle = "Angle"
+length = "Length"
+slot_width = "Width"
+
+# Why a typed size was refused, shown at its field.
+[draw.problem]
+not_positive = "a size must be greater than 0"
+not_an_angle = "`{text}` is not an angle; type degrees, anticlockwise from +X, as 30 or -45.5"
+
+# The sizes written beside a shape being drawn (capability 83a).
+[draw.label]
+box = "{width} × {height}"
+diameter = "⌀ {diameter}"
+radius = "R {radius}"
+length = "{length}"

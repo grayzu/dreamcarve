@@ -10,7 +10,8 @@
 use dc_geometry::GeometryError;
 use dc_job::JobError;
 use dc_project::{
-    BitmapId, InstanceId, LoadError, OperationId, PostProcessorError, SaveError, TabId, ToolId,
+    BitmapId, FolderId, InstanceId, LoadError, OperationId, PostProcessorError, SaveError, TabId,
+    ToolId,
 };
 
 /// Why the app refused what it was asked.
@@ -75,6 +76,9 @@ pub enum CommandError {
         /// The id that was named.
         id: BitmapId,
     },
+    /// The project has no folder with this id.
+    #[error("the project has no folder `{0}`")]
+    UnknownFolder(FolderId),
     /// Something was added under an id the project already uses.
     #[error("the project already has {kind} `{id}`")]
     DuplicateId {

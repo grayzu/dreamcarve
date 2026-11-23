@@ -149,6 +149,25 @@ fn kind(command: &Command) -> &'static str {
         Command::DeleteTabs(_) => "DeleteTabs",
         Command::CentreOnStock(_) => "CentreOnStock",
         Command::FitStockToShapes { .. } => "FitStockToShapes",
+        Command::AddShapes(_) => "AddShapes",
+    }
+}
+
+/// A slot 40 × 12 mm, turned 30° and placed at (60, 40): a parametric
+/// shape with the outline its sizes give (phase 5, ADR-0006).
+fn new_slot(name: &str) -> dc_app::command::NewShape {
+    let shape = dc_project::Shape::Slot {
+        length_mm: 40.0,
+        width_mm: 12.0,
+    };
+    dc_app::command::NewShape {
+        name: name.to_owned(),
+        profiles: shape.outline(0.01).unwrap().unwrap(),
+        shape: Some(shape),
+        transform: Transform::rotate(std::f64::consts::FRAC_PI_6)
+            .then(Transform::translate(60.0, 40.0)),
+        construction: false,
+        folder: None,
     }
 }
 
@@ -367,7 +386,8 @@ fn every_command() -> Vec<(Project, Command)> {
         ),
         (with_tabs.clone(), Command::DeleteTabs(vec![first_tab.id])),
         (plaque.clone(), Command::CentreOnStock(vec![instance("i4")])),
-        (plaque, Command::FitStockToShapes { margin_mm: 5.0 }),
+        (plaque.clone(), Command::FitStockToShapes { margin_mm: 5.0 }),
+        (plaque, Command::AddShapes(vec![new_slot("Slot 1")])),
     ]
 }
 
@@ -437,6 +457,18 @@ fn labels_name_the_thing() {
             to: 0,
         }),
         "Reorder operations"
+    );
+    // Phase 5: a drawn shape is named; several are counted.
+    assert_eq!(
+        label(Command::AddShapes(vec![new_slot("Slot 1")])),
+        "Draw “Slot 1”"
+    );
+    assert_eq!(
+        label(Command::AddShapes(vec![
+            new_slot("Slot 1"),
+            new_slot("Slot 2")
+        ])),
+        "Add 2 shapes"
     );
     assert_eq!(
         label(Command::ImportDrawing {
@@ -735,4 +767,55 @@ fn remove_tool_in_use_is_refused_naming_operations() {
         }
         other => panic!("expected a refusal, got {other:?}"),
     }
+}
+
+/// Phase 5, capability 90: `AddShapes` gives each shape the next free
+/// definition and instance ids, at the end of the Design Tree, and
+/// refuses what no project can hold: no shape, a shape with no outline,
+/// an outline that is not a number, a folder that is not there.
+#[test]
+fn add_shapes_takes_the_next_ids_and_refuses_what_cannot_be() {
+    use dc_app::CommandError;
+    use dc_app::command::next_name;
+    let before = plaque();
+    let after = Command::AddShapes(vec![new_slot("Slot 1"), new_slot("Slot 2")])
+        .apply(&before)
+        .unwrap();
+    assert_eq!(after.instances.len(), before.instances.len() + 2);
+    let added = &after.instances[before.instances.len()..];
+    // The plaque's ids run to d10 and i10.
+    assert_eq!(added[0].id, instance("i11"));
+    assert_eq!(added[1].id, instance("i12"));
+    assert_eq!(added[0].definition, dc_project::DefinitionId::new("d11"));
+    assert_eq!(added[1].definition, dc_project::DefinitionId::new("d12"));
+    assert_eq!(after.definitions[&added[1].definition].name, "Slot 2");
+    assert!(
+        added
+            .iter()
+            .all(|i| i.visible && !i.locked && i.folder.is_none())
+    );
+    assert_eq!(dc_project::validate(&after), dc_project::validate(&before));
+
+    let refuse = |shapes: Vec<dc_app::command::NewShape>| Command::AddShapes(shapes).apply(&before);
+    assert!(matches!(refuse(Vec::new()), Err(CommandError::NothingToDo)));
+    let mut empty = new_slot("Slot 1");
+    empty.profiles.clear();
+    assert!(matches!(
+        refuse(vec![empty]),
+        Err(CommandError::NothingToDo)
+    ));
+    let mut far = new_slot("Slot 1");
+    far.transform = Transform::translate(1e9, 0.0);
+    assert!(matches!(refuse(vec![far]), Err(CommandError::Geometry(_))));
+    let mut filed = new_slot("Slot 1");
+    filed.folder = Some(dc_project::FolderId::new("f9"));
+    assert!(matches!(
+        refuse(vec![filed]),
+        Err(CommandError::UnknownFolder(_))
+    ));
+
+    // The next free number, by the names in use.
+    assert_eq!(next_name(&before, "Slot"), "Slot 1");
+    assert_eq!(next_name(&after, "Slot"), "Slot 3");
+    assert_eq!(next_name(&after, "Circle"), "Circle 1");
 }

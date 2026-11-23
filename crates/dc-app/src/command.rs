@@ -17,11 +17,13 @@
 mod bitmaps;
 mod instances;
 mod operations;
+mod shapes;
 
 pub(crate) use bitmaps::{check_move as check_bitmap_move, check_resize as check_bitmap_resize};
 pub(crate) use instances::{
     about, bounds as selection_bounds, centre, copy_name, find as find_instance, next_free_id,
 };
+pub use shapes::{NewShape, next_name};
 
 use std::sync::Arc;
 
@@ -244,6 +246,9 @@ pub enum Command {
         /// The margin between the shapes and each edge, mm.
         margin_mm: f64,
     },
+    /// Add drawn shapes, each a new instance of a new definition at the
+    /// end of the Design Tree (phase 5, capability 90). Ids are `apply`'s.
+    AddShapes(Vec<NewShape>),
 }
 
 impl Command {
@@ -460,6 +465,7 @@ impl Command {
                 }
                 next.tabs.retain(|t| !ids.contains(&t.id));
             }
+            Self::AddShapes(new) => next = shapes::add(project, new)?,
             Self::CentreOnStock(ids) => next = instances::centre_on_stock(project, ids)?,
             Self::FitStockToShapes { margin_mm } => {
                 next = instances::fit_stock(project, *margin_mm)?;
@@ -652,6 +658,13 @@ impl Command {
                 with_subject(StrKey::CommandLabelCentreOnStock, &subject_of(ids))
             }
             Self::FitStockToShapes { .. } => plain(StrKey::CommandLabelFitStock),
+            Self::AddShapes(new) => match new.as_slice() {
+                [shape] => with_subject(StrKey::CommandLabelDraw, &one(strings, &shape.name)),
+                _ => strings.fmt(
+                    StrKey::CommandLabelAddShapes,
+                    &[("count", &new.len().to_string())],
+                ),
+            },
         }
     }
 }

@@ -176,6 +176,21 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
             .grid_spacing_mm
             .filter(|spacing| spacing.is_finite() && *spacing > 0.0),
         drawing_tool: dc_app::Drawing::from_key(&file.drawing.tool).unwrap_or_default(),
+        drawing: dc_app::prefs::DrawingPrefs {
+            corners: dc_app::tool::CornerStyle::from_key(&file.drawing.corners).unwrap_or_default(),
+            corner_mm: file
+                .drawing
+                .corner_mm
+                .filter(|size| size.is_finite() && *size > 0.0),
+            polygon_sides: file
+                .drawing
+                .polygon_sides
+                .clamp(dc_project::MIN_POLYGON_SIDES, dc_project::MAX_POLYGON_SIDES),
+            polygon_measured: match file.drawing.polygon_measured.as_str() {
+                "flats" => dc_project::Measured::Flats,
+                _ => dc_project::Measured::Corners,
+            },
+        },
     }
 }
 
@@ -250,6 +265,14 @@ pub fn prefs_to_file(prefs: &Prefs) -> GuiPrefs {
         drawing: gui_prefs::Drawing {
             tool: prefs.drawing_tool.key().to_owned(),
             grid_spacing_mm: prefs.grid_spacing_mm,
+            corners: prefs.drawing.corners.key().to_owned(),
+            corner_mm: prefs.drawing.corner_mm,
+            polygon_sides: prefs.drawing.polygon_sides,
+            polygon_measured: match prefs.drawing.polygon_measured {
+                dc_project::Measured::Corners => "corners",
+                dc_project::Measured::Flats => "flats",
+            }
+            .to_owned(),
         },
     }
 }
@@ -291,6 +314,12 @@ mod tests {
         prefs.snap.radius_px = 20.0;
         prefs.grid_spacing_mm = Some(6.35);
         prefs.drawing_tool = dc_app::Drawing::Slot;
+        prefs.drawing = dc_app::prefs::DrawingPrefs {
+            corners: dc_app::tool::CornerStyle::Chamfered,
+            corner_mm: Some(6.35),
+            polygon_sides: 8,
+            polygon_measured: dc_project::Measured::Flats,
+        };
         assert_eq!(prefs_from_file(&prefs_to_file(&prefs)), prefs);
         assert_eq!(prefs_from_file(&GuiPrefs::default()), Prefs::default());
     }
@@ -306,7 +335,18 @@ mod tests {
         file.snap.radius_px = 500.0;
         file.drawing.tool = "pen".to_owned();
         file.drawing.grid_spacing_mm = Some(-1.0);
+        file.drawing.corners = "bevelled".to_owned();
+        file.drawing.corner_mm = Some(0.0);
+        file.drawing.polygon_sides = 900;
+        file.drawing.polygon_measured = "points".to_owned();
         let prefs = prefs_from_file(&file);
+        assert_eq!(
+            prefs.drawing,
+            dc_app::prefs::DrawingPrefs {
+                polygon_sides: 50,
+                ..dc_app::prefs::DrawingPrefs::default()
+            }
+        );
         assert_eq!(
             prefs.snap.kinds.iter().copied().collect::<Vec<_>>(),
             [dc_app::SnapKind::Endpoint]

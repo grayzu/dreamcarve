@@ -270,30 +270,36 @@ definition has no profile left.
 // tool.rs: the Viewport's tool in use. Not project data, not in the history.
 pub enum Tool { Select, Nodes, Tab, Trim, Measure, Draw(Drawing) }
 pub enum Drawing { Line, Arc, Spline, Rectangle, Circle, Ellipse, Polygon, Slot, Gear, Text }
-pub struct Pointer { pub at_mm: Point, pub px_per_mm: f64, pub shift: bool, pub alt: bool, pub command: bool }
-pub enum Event { Move(Pointer), Press(Pointer), Release(Pointer), DoubleClick(Pointer),
-                 Key(Key), Field { field: SizeField, text: String }, Option(ToolOption), Done }
-pub enum Key { Enter, Escape, Backspace, Delete, Tab, Letter(char), Nudge { dx_mm: f64, dy_mm: f64 } }
+pub enum Event { Move(Pointer), Press(Pointer), Release(Pointer), DoubleClick(Pointer), Key(Key), Leave,
+                 Field { field: SizeField, text: String }, Option(ToolOption), Done }
+pub enum Key { Enter, Escape, Backspace, Delete }
+pub enum SizeField { X, Y, Width, Height, Diameter, Radius, Angle, Length, SlotWidth }
+pub enum ToolOption { Corners(CornerStyle), CornerSize(String), Sides(u32), Measured(Measured), Construction(bool) }
 pub struct Reply { pub ran: Option<String>,            // the undo label of what this event committed
                    pub refused: Option<String> }       // a reason for the status bar
 impl App {
-    pub fn tool(&self) -> &Tool;
-    pub fn arm(&mut self, tool: Tool);                 // drops any draft
+    pub fn tool(&self) -> Tool;
+    pub fn arm(&mut self, tool: Tool);                 // drops any draft; refused while targets are edited
     pub fn tool_event(&mut self, event: Event) -> Reply;
     /// What the tool wants drawn this frame, in project millimetres.
     pub fn draft(&self) -> &Draft;
-    /// The tool bar: the prompt, the options, the fields of the step in hand.
+    /// The tool bar: the prompt and the fields of the step in hand.
     pub fn tool_bar(&self) -> Option<ToolBar>;
+    pub fn drawing_construction(&self) -> bool;        // the tool bar's Construction switch
 }
-pub struct Draft { pub outlines: Vec<Polyline>,        // dashed preview
-                   pub nodes: Vec<NodeMark>,           // Edit nodes: anchors, handles, their state
+pub struct Draft { pub outlines: Vec<Polyline>,        // the shape as it would be made now
                    pub snap: Option<Snapped>,          // the marker and its guide
-                   pub labels: Vec<Label>,             // 83a: a size and where to write it
-                   pub highlight: Vec<Polyline> }      // Trim's part under the pointer; Measure's line
-pub struct ToolBar { pub tool: Tool, pub prompt: String, pub options: Vec<OptionRow>,
-                     pub fields: Vec<SizeRow>, pub can_finish: bool }
-pub struct SizeRow { pub field: SizeField, pub text: String, pub pinned: bool, pub problem: Option<String> }
+                   pub labels: Vec<Label> }            // 83a: a size and where to write it
+                                                       // (nodes and highlights join it with their tools)
+pub struct ToolBar { pub tool: Tool, pub prompt: String, pub fields: Vec<SizeRow> }
+pub struct SizeRow { pub field: SizeField, pub label: String, pub text: String, pub quantity: Quantity,
+                     pub pinned: bool, pub problem: Option<String> }
 ```
+
+A tool's options are preferences (`Prefs::drawing`: the rectangle's
+corners and their size, the polygon's sides and what its radius reaches)
+and, for the Construction switch, the session's; the window reads them
+there and sets them with `Event::Option`.
 
 `snap`:
 
@@ -701,16 +707,19 @@ serve Extend (`line_line_crossing`, `line_arc_two_hits`, `line_arc_tangent`,
 `files::prefs_round_trip_through_the_file_record`,
 `snap_and_drawing_from_a_file_are_held_to_what_the_app_can_use`.
 
-**Drawing tools (slices 5–7)** `dc_app::tool::` `rectangle_by_two_clicks`,
-`rectangle_by_a_drag`, `shift_squares_alt_centres`,
-`rounded_and_chamfered_corners`, `circle`, `ellipse`, `polygon_sides_and_flats`,
-`slot_by_three_clicks`, `slot_by_typed_width`, `gear_previews_and_commits`,
-`line_open_and_closed`, `backspace_takes_back_a_point`,
-`arc_segment_through_a_point`, `spline_is_a_path_with_cubics`,
-`a_tool_stays_armed_with_its_options` (port of `stickyDrawing.test.ts`'s
-cases), `a_shape_too_small_is_not_made`, `new_shapes_are_named_and_numbered`,
-`typed_sizes_per_tool` (table-driven over capability 83),
-`a_pinned_size_leaves_the_rest_to_the_pointer`, `a_refused_size_marks_its_field`
+**Drawing tools (slices 5–7)** `dc_app` `tests/draw.rs`:
+`rectangle_by_two_clicks`, `rectangle_by_a_drag`, `shift_squares_alt_centres`,
+`rounded_and_chamfered_corners`, `rectangle_by_typed_sizes`,
+`the_first_point_and_units_can_be_typed`, `a_refused_size_marks_its_field`,
+`circle`, `ellipse`, `polygon_sides_and_flats`, `slot_by_three_clicks`,
+`slot_by_typed_sizes`, `a_tool_stays_armed_with_its_options` (the cases of
+`stickyDrawing.test.ts`), `too_small_is_not_made_and_construction_is_marked`,
+`points_snap_and_sizes_are_shown`, `a_new_shape_joins_the_selections_folder`;
+`tests/command.rs` `add_shapes_takes_the_next_ids_and_refuses_what_cannot_be`,
+with `AddShapes` in `every_command_round_trips_through_the_file` and
+`labels_name_the_thing`; for slice 6 `line_open_and_closed`,
+`backspace_takes_back_a_point`, `arc_segment_through_a_point`,
+`spline_is_a_path_with_cubics`; for slice 7 `gear_previews_and_commits`
 (acc 108–112, 114, 129).
 
 **Parametric edits (slice 8)** `dc_app::shape::` `rows_per_kind`,

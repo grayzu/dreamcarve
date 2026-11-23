@@ -10,10 +10,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use dc_project::{TabShape, Units};
+use dc_project::{Measured, TabShape, Units};
 
 use crate::snap::SnapSettings;
-use crate::tool::Drawing;
+use crate::tool::{CornerStyle, Drawing};
 use crate::view::{ColourMode, Visibility};
 
 /// Everything the app remembers between sessions.
@@ -58,6 +58,52 @@ pub struct Prefs {
     /// The drawing tool the Draw button holds: the last one armed
     /// (capability 81).
     pub drawing_tool: Drawing,
+    /// The drawing tools' options, as last set (capabilities 85 and 85b).
+    pub drawing: DrawingPrefs,
+}
+
+/// A new rectangle's corner size in a millimetre project, mm
+/// (PureCutCNC's default).
+const CORNER_MM: f64 = 5.0;
+/// A new rectangle's corner size in an inch project, mm: 0.2 in.
+const CORNER_INCH_MM: f64 = 5.08;
+
+/// What the drawing tools remember between shapes and sessions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DrawingPrefs {
+    /// The Rectangle tool's corners.
+    pub corners: CornerStyle,
+    /// The size of a rounded or chamfered corner, mm; `None` until it is
+    /// typed, and then [`DrawingPrefs::corner_size_mm`]'s default.
+    pub corner_mm: Option<f64>,
+    /// The Polygon tool's sides.
+    pub polygon_sides: u32,
+    /// What the Polygon tool's radius reaches.
+    pub polygon_measured: Measured,
+}
+
+impl Default for DrawingPrefs {
+    /// Square corners, six sides, measured to the corners.
+    fn default() -> Self {
+        Self {
+            corners: CornerStyle::Square,
+            corner_mm: None,
+            polygon_sides: 6,
+            polygon_measured: Measured::Corners,
+        }
+    }
+}
+
+impl DrawingPrefs {
+    /// The corner size the Rectangle tool uses in a project of `units`:
+    /// the one typed, else 5 mm or 0.2 in.
+    #[must_use]
+    pub fn corner_size_mm(&self, units: Units) -> f64 {
+        self.corner_mm.unwrap_or(match units {
+            Units::Mm => CORNER_MM,
+            Units::Inch => CORNER_INCH_MM,
+        })
+    }
 }
 
 /// What a sheet keeps clear of the window's edges on each axis, px: 24

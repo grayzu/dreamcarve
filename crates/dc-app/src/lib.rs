@@ -45,7 +45,7 @@ pub use generation::{
     FinishJob, Generation, Job, JobResult, OperationResult, Progress, SnapshotId, Work,
 };
 pub use history::LabelledHistory;
-pub use prefs::{Panels, Prefs, Theme, WindowGeometry};
+pub use prefs::{DrawingPrefs, Panels, Prefs, Theme, WindowGeometry};
 pub use scene::Scene;
 pub use selection::{ClickMode, Selection};
 pub use snap::{Pointer, SnapKind, SnapSettings, Snapped};

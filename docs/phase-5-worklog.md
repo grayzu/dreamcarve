@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 4: 3,550.
+`0.5.0-alpha.1`. After slice 5: 3,569.
 
 ## Decisions waiting for the maintainer
 
@@ -67,6 +67,11 @@ Decisions made while building are added here.
   (upstream cycles an axis lock on an `Alt` tap); Intersection is on by
   default (upstream: opt-in); a shape's real outline snaps, not its
   frame.
+- Slice 5: on Rectangle and Ellipse `Shift` squares the box, so it
+  does not also hold the corner to a 15° direction; a polygon measured
+  to its flats takes the click as the middle of a side, not a corner; a
+  slot whose width is typed with its length and angle is made at once,
+  as PureCutCNC makes it.
 
 ## Slices
 
@@ -82,7 +87,7 @@ The numbers are the design spec's.
 | 2 | Shape outlines: `dc_geometry::shapes` (rectangle, rounded and chamfered, circle, ellipse, regular polygon to corners or flats, slot) with PureCutCNC's slot, n-gon and canned-rectangle tests ported, and `shapes::gear`, `gearProfile.ts` ported with its tests; every outline counter-clockwise, which upstream's are not as a set; `Shape::outline` and `outline_matches`; the warning `shape_outline_differs`; a gear's sizes checked together as `out_of_range` at the size at fault; the drawing fixture now holds every kind but text. Two properties: an outline is simple and its box is its sizes; a gear is simple and symmetric. Gate: 3,490 tests | done |
 | 3 | Paths: `dc_geometry::path` edits a path node by node, `profileEdit.ts` ported with its tests on nodes that each hold the span leaving them: the arc through three points (`bulge_through`), a spline through points (Catmull-Rom, closed or open), split a span, delete a node, break, delete a span, fillet and chamfer a corner with the reason when one is refused, change a span's kind, move a node (an arc beside it rebuilt through its old middle), move a handle (smooth or alone), reshape an arc by its middle or its radius, reverse, close. This is the path geometry of slices 10 to 12 as well; those add the tool. Three properties. Gate: 3,517 tests | done |
 | 4 | The tool model and snapping, in the app core: `dc_app::tool` (the tool in use, a drawing tool the Draw button holds, events, the draft the window paints), `dc_app::snap` ported from PureCutCNC's `resolveSketchSnap` with its tests (endpoint, midpoint, centre, intersection, on outline, perpendicular, grid; rank then distance), `dc_geometry::intersect` ported from `segmentIntersection.ts` (brought forward from slice 15: the Intersection snap reads it), a scene shape's centre and construction flag, and the snapping and drawing preferences in `gui.toml` (`[snap]`, `[drawing]`). No window yet: that is slice 9. Gate: 3,550 tests | done |
-| 5 | Rectangle, Circle, Ellipse, Polygon, Slot | todo |
+| 5 | Rectangle, Circle, Ellipse, Polygon and Slot, in the app core: `Command::AddShapes`; the tools' state machine (`dc_app::tool::draw`) with PureCutCNC's click sequences, a drag as two points, `Shift` for a square and `Alt` from the centre, every step typed (the first point as X and Y from the origin, then the sizes; a typed size is pinned and the rest follows the pointer), a refused size marked at its field, the tool bar's prompt and fields as data, the size label, sticky tools, names by the next free number, the Construction switch, the selection's folder; the tools' options in `gui.toml`. Gate: 3,569 tests | done |
 | 6 | Line, Arc, Spline | todo |
 | 7 | Gear | todo |
 | 8 | Sizes: the Shape section, stretching, Convert to Path | todo |

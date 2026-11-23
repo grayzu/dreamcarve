@@ -114,6 +114,15 @@ pub struct Drawing {
     /// The snap grid's spacing when the user has pinned one, mm; missing
     /// for a grid that follows the zoom.
     pub grid_spacing_mm: Option<f64>,
+    /// The Rectangle tool's corners: `square`, `rounded` or `chamfered`.
+    pub corners: String,
+    /// The size of a rounded or chamfered corner, mm; missing until one
+    /// is typed, and then 5 mm, or 0.2 in in an inch project.
+    pub corner_mm: Option<f64>,
+    /// The Polygon tool's sides, 3 to 50.
+    pub polygon_sides: u32,
+    /// What the Polygon tool's radius reaches: `corners` or `flats`.
+    pub polygon_measured: String,
 }
 
 impl Default for Drawing {
@@ -121,6 +130,10 @@ impl Default for Drawing {
         Self {
             tool: "rectangle".to_owned(),
             grid_spacing_mm: None,
+            corners: "square".to_owned(),
+            corner_mm: None,
+            polygon_sides: 6,
+            polygon_measured: "corners".to_owned(),
         }
     }
 }
@@ -428,7 +441,14 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
     ];
     const TAB: &[&str] = &["width_mm", "height_mm", "shape"];
     const SNAP: &[&str] = &["enabled", "kinds", "radius_px"];
-    const DRAWING: &[&str] = &["tool", "grid_spacing_mm"];
+    const DRAWING: &[&str] = &[
+        "tool",
+        "grid_spacing_mm",
+        "corners",
+        "corner_mm",
+        "polygon_sides",
+        "polygon_measured",
+    ];
     let mut unknown = Vec::new();
     for (key, value) in table {
         if !TOP.contains(&key.as_str()) {
@@ -572,6 +592,10 @@ mod tests {
             drawing: Drawing {
                 tool: "slot".to_owned(),
                 grid_spacing_mm: Some(6.35),
+                corners: "rounded".to_owned(),
+                corner_mm: Some(3.0),
+                polygon_sides: 8,
+                polygon_measured: "flats".to_owned(),
             },
         };
         save(&paths, &prefs).unwrap();
