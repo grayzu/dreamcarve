@@ -7,9 +7,11 @@
 //! Viewport's card, each a `surface.raised` pill with a hairline and the
 //! one shadow, 12 px in from the card's edges.
 //!
-//! - **Top left**, the tools and the view: *Select* and the *Tab tool*
-//!   (the one in use shows pressed), then *Fit*, *Zoom out*, the zoom as
-//!   a percentage, and *Zoom in*. The percentage is of 96 pixels to the
+//! - **Top left**, the tools and the view: *Select*, *Draw* and the *Tab
+//!   tool* (the one in use shows pressed), then *Fit*, *Zoom out*, the
+//!   zoom as a percentage, and *Zoom in*. *Draw* holds the drawing tool
+//!   last used and arms it; the chevron beside it opens the drawing
+//!   tools, each with its icon, name and key (phase 5, capability 81). The percentage is of 96 pixels to the
 //!   inch (`dc_app::viewport::camera::ACTUAL_PX_PER_MM`), about the real
 //!   size on most displays, and a click on it sets the zoom to 100 %.
 //! - **Top right**, once the project has a toolpath: the *By operation /
@@ -33,7 +35,6 @@ use dc_app::view::ColourMode;
 use dc_app::viewport::camera::{Camera, Insets};
 use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
 
-use super::tab_tool;
 use crate::keyboard::{self, Command as Shortcut};
 use crate::shell::theme::{self, Palette};
 use crate::shell::toolpaths;
@@ -50,6 +51,13 @@ const CONTROL_PX: f32 = 28.0;
 const READOUT_PX: f32 = 28.0;
 /// The gap between a pill's controls, px.
 const GAP_PX: f32 = 2.0;
+/// The Draw button's chevron, px wide: the least a control can be for
+/// its focus ring.
+const CHEVRON_PX: f32 = 24.0;
+/// The drawing tools' popover, px wide.
+const DRAW_MENU_PX: f32 = 200.0;
+/// A row of the drawing tools' popover, px high.
+const DRAW_ROW_PX: f32 = 32.0;
 /// The room a rule between two groups of a pill takes, px.
 const RULE_PX: f32 = 9.0;
 /// The gap between the colour mode and *Layers*, px.
@@ -99,10 +107,19 @@ pub const FIT_INSETS: Insets = Insets {
 /// whichever draws the stock largest (`Camera::fit_clear`). The
 /// target-editing bar is not stood clear of: it lies over the room the
 /// pills keep, and the drawing holds still when the mode starts.
-pub(super) fn ways((right_px, bottom_px): (f32, f32), legend: Option<egui::Vec2>) -> Vec<Insets> {
+///
+/// A drawing tool's bar is stood clear of too (`tool_bar_px`, one row of
+/// it): what is drawn must not start under it.
+pub(super) fn ways(
+    (right_px, bottom_px): (f32, f32),
+    legend: Option<egui::Vec2>,
+    tool_bar_px: f32,
+) -> Vec<Insets> {
     let base = Insets {
         right_px: FIT_INSETS.right_px + f64::from(right_px),
         bottom_px: FIT_INSETS.bottom_px + f64::from(bottom_px),
+        // The armed tool's bar hangs under the pills.
+        top_px: FIT_INSETS.top_px + f64::from(tool_bar_px),
         ..FIT_INSETS
     };
     match legend {
@@ -211,6 +228,9 @@ struct Fit {
     zoom_px: f32,
     /// Whether the zoom controls show: not in the narrowest panes.
     zoom: bool,
+    /// Whether the zoom percentage shows between them: it goes before
+    /// they do.
+    level: bool,
     /// *Layers*' width with its label, px.
     layers_px: f32,
     /// Whether *Layers* shows its label: not in a narrow pane.
@@ -225,16 +245,25 @@ impl Fit {
         let mut fit = Self {
             zoom_px,
             zoom: true,
+            level: true,
             layers_px,
             label: true,
         };
-        if !view {
-            fit.zoom = fit.tools_px() <= room_px;
-            return fit;
-        }
-        let fits = |fit: &Self| fit.tools_px() + BETWEEN_PX + fit.view_px() <= room_px;
-        if !fits(&fit) {
+        let fits = |fit: &Self| {
+            let view_px = if view {
+                BETWEEN_PX + fit.view_px()
+            } else {
+                0.0
+            };
+            fit.tools_px() + view_px <= room_px
+        };
+        // What goes, in order: the label, the percentage, the two zoom
+        // buttons.
+        if view && !fits(&fit) {
             fit.label = false;
+        }
+        if !fits(&fit) {
+            fit.level = false;
         }
         if !fits(&fit) {
             fit.zoom = false;
@@ -245,11 +274,12 @@ impl Fit {
     /// The top-left pill's width, px.
     fn tools_px(&self) -> f32 {
         let padding = PILL_PX - CONTROL_PX;
-        let tools = 3.0 * CONTROL_PX + RULE_PX + 3.0 * GAP_PX;
-        if self.zoom {
-            padding + tools + 2.0 * CONTROL_PX + self.zoom_px + 3.0 * GAP_PX
-        } else {
-            padding + tools
+        // Select, Draw and its chevron, the Tab tool, the rule, Fit.
+        let tools = 4.0 * CONTROL_PX + CHEVRON_PX + RULE_PX + 5.0 * GAP_PX;
+        match (self.zoom, self.level) {
+            (true, true) => padding + tools + 2.0 * CONTROL_PX + self.zoom_px + 3.0 * GAP_PX,
+            (true, false) => padding + tools + 2.0 * CONTROL_PX + 2.0 * GAP_PX,
+            (false, _) => padding + tools,
         }
     }
 
@@ -264,7 +294,131 @@ impl Fit {
     }
 }
 
-/// The top-left pill: *Select* and the *Tab tool*, then *Fit* and, where
+/// The icon of drawing tool `drawing`.
+pub(crate) const fn drawing_icon(drawing: dc_app::Drawing) -> Icon {
+    use dc_app::Drawing;
+    match drawing {
+        Drawing::Line => Icon::Slash,
+        Drawing::Arc => Icon::Radius,
+        Drawing::Spline => Icon::Spline,
+        Drawing::Rectangle => Icon::Square,
+        Drawing::Circle => Icon::Circle,
+        Drawing::Ellipse => Icon::Ellipse,
+        Drawing::Polygon => Icon::Hexagon,
+        Drawing::Slot => Icon::Pill,
+        Drawing::Gear => Icon::Cog,
+        Drawing::Text => Icon::Type,
+    }
+}
+
+/// The key that arms `drawing`, as a menu writes it; empty for a tool
+/// with none.
+pub(crate) fn drawing_keys(ctx: &egui::Context, drawing: dc_app::Drawing) -> String {
+    keyboard::command_of(drawing)
+        .and_then(keyboard::binding)
+        .map_or_else(String::new, |(modifiers, key)| {
+            crate::shell::window::shortcut_text(ctx, modifiers, key)
+        })
+}
+
+/// The drawing tool the Draw button holds: the one last used, or the
+/// Rectangle where this build does not have that one.
+pub(crate) fn held_drawing(app: &dc_app::App) -> dc_app::Drawing {
+    let held = app.prefs().drawing_tool;
+    if held.is_ready() {
+        held
+    } else {
+        dc_app::Drawing::Rectangle
+    }
+}
+
+/// The drawing tools' popover's id, which the chevron toggles.
+fn draw_menu_id() -> Id {
+    Id::unique("dc.viewport.draw.popover")
+}
+
+/// One drawing tool's row in the popover: its icon and its name at the
+/// left, its key at the right, the tool in use on the selected surface.
+fn draw_row(ui: &mut Ui, icon: Icon, name: &str, keys: &str, chosen: bool) -> egui::Response {
+    let palette = Palette::current(ui);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), DRAW_ROW_PX),
+        Sense::click(),
+    );
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, chosen, name));
+    let painter = ui.painter();
+    let fill = if chosen {
+        palette.accent_soft
+    } else if response.hovered() || response.has_focus() {
+        palette.surface_hover
+    } else {
+        theme::NONE
+    };
+    painter.rect_filled(rect, theme::CONTROL_RADIUS_PX, fill);
+    let glyph = icon.galley(ui, theme::ICON_SMALL_PX, palette.text_primary);
+    let middle = rect.center().y;
+    painter.galley(
+        egui::pos2(rect.left() + 8.0, middle - glyph.size().y / 2.0),
+        glyph,
+        palette.text_primary,
+    );
+    let body = TextStyle::Body.resolve(ui.style());
+    let label = painter.layout_no_wrap(name.to_owned(), body.clone(), palette.text_primary);
+    painter.galley(
+        egui::pos2(
+            rect.left() + 8.0 + theme::ICON_SMALL_PX + 8.0,
+            middle - label.size().y / 2.0,
+        ),
+        label,
+        palette.text_primary,
+    );
+    let key = painter.layout_no_wrap(keys.to_owned(), body, palette.text_secondary);
+    painter.galley(
+        egui::pos2(
+            rect.right() - 8.0 - key.size().x,
+            middle - key.size().y / 2.0,
+        ),
+        key,
+        palette.text_secondary,
+    );
+    crate::widgets::button::focus_ring(ui, &response);
+    response
+}
+
+/// The drawing tools under the Draw button's `chevron`: a row each, with
+/// its icon, its name and its key; the one in use ticked by its wash.
+fn draw_menu(ui: &Ui, chevron: &egui::Response, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
+    let strings = state.app.strings();
+    let armed = match state.app.tool() {
+        dc_app::Tool::Draw(drawing) => Some(drawing),
+        _ => None,
+    };
+    egui::Popup::from_toggle_button_response(chevron)
+        .id(draw_menu_id())
+        .align(egui::RectAlign::BOTTOM_START)
+        .gap(8.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+        .width(DRAW_MENU_PX)
+        .frame(theme::popover(palette, 6))
+        .show(|ui| {
+            ui.set_width(DRAW_MENU_PX - 12.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for drawing in dc_app::Drawing::ALL
+                .into_iter()
+                .filter(|drawing| drawing.is_ready())
+            {
+                let name = strings.get(drawing.name());
+                let keys = drawing_keys(ui.ctx(), drawing);
+                let chosen = armed == Some(drawing);
+                if draw_row(ui, drawing_icon(drawing), name, &keys, chosen).clicked() {
+                    out.push(Action::Arm(dc_app::Tool::Draw(drawing)));
+                }
+            }
+        });
+}
+
+/// The top-left pill: *Select*, *Draw* and the *Tab tool*, then *Fit* and, where
 /// there is room (`fit`), *Zoom out*, the zoom and *Zoom in*. `top` is
 /// the pane's top edge less whatever lies across it. Returns the camera
 /// a zoom control set.
@@ -287,22 +441,65 @@ fn tools(
     );
     let mut zoomed = None;
     pill(ui, rect, "tools", opacity, |ui| {
-        // The tools (#546): the one in use shows as pressed. Target
-        // editing has the drawing to itself.
-        let armed = tab_tool::armed(ui.ctx());
+        // The tools (#546; phase 5, capability 81): the one in use
+        // shows as pressed. Target editing has the drawing to itself.
+        let in_use = state.app.tool();
+        let select_tip = with_keys(
+            ui,
+            strings.get(StrKey::AppViewportSelectHelp),
+            Shortcut::SelectTool,
+        );
         let select = tool(strings, StrKey::AppViewportSelect, Icon::MousePointer)
-            .tooltip(strings.get(StrKey::AppViewportSelectHelp))
-            .pressed(!armed && !editing_targets)
+            .tooltip(&select_tip)
+            .pressed(in_use == dc_app::Tool::Select && !editing_targets)
             .enabled(!editing_targets);
         if button(ui, select).clicked() {
-            tab_tool::arm(ui.ctx(), false);
+            out.push(Action::Arm(dc_app::Tool::Select));
         }
+        // Draw: the drawing tool last used, and the chevron to the rest.
+        let held = held_drawing(state.app);
+        let drawing = matches!(in_use, dc_app::Tool::Draw(_));
+        let keys = drawing_keys(ui.ctx(), held);
+        let held_name = strings.get(held.name());
+        let draw_name = strings.fmt(StrKey::AppViewportDraw, &[("tool", held_name)]);
+        let draw_tip = if keys.is_empty() {
+            strings.fmt(StrKey::AppViewportDrawHelp, &[("tool", held_name)])
+        } else {
+            let help = strings.fmt(StrKey::AppViewportDrawHelp, &[("tool", held_name)]);
+            format!("{help} ({keys})")
+        };
+        let draw = ButtonSpec::new(Kind::Quiet, "")
+            .icon(drawing_icon(held), theme::ICON_SMALL_PX)
+            .width(CONTROL_PX)
+            .height(CONTROL_PX)
+            .named(&draw_name)
+            .tooltip(&draw_tip)
+            .pressed(drawing)
+            .enabled(!editing_targets);
+        if button(ui, draw).clicked() {
+            out.push(Action::Arm(dc_app::Tool::Draw(held)));
+        }
+        let chevron = ButtonSpec::new(Kind::Quiet, "")
+            .icon(Icon::ChevronDown, theme::ICON_SMALL_PX)
+            .width(CHEVRON_PX)
+            .height(CONTROL_PX)
+            .named(strings.get(StrKey::AppViewportDrawTools))
+            .tooltip(strings.get(StrKey::AppViewportDrawTools))
+            .pressed(egui::Popup::is_id_open(ui.ctx(), draw_menu_id()))
+            .enabled(!editing_targets);
+        let chevron = button(ui, chevron);
+        draw_menu(ui, &chevron, state, out);
+        let tab_armed = in_use == dc_app::Tool::Tab;
         let tab = tool(strings, StrKey::AppViewportTabTool, Icon::BookmarkPlus)
             .tooltip(strings.get(StrKey::AppViewportTabToolHelp))
-            .pressed(armed)
+            .pressed(tab_armed)
             .enabled(!editing_targets);
         if button(ui, tab).clicked() {
-            tab_tool::arm(ui.ctx(), !armed);
+            out.push(Action::Arm(if tab_armed {
+                dc_app::Tool::Select
+            } else {
+                dc_app::Tool::Tab
+            }));
         }
         rule(ui);
         let fit_tip = with_keys(ui, strings.get(StrKey::AppViewportFit), Shortcut::FitView);
@@ -321,16 +518,18 @@ fn tools(
         if button(ui, tool(strings, StrKey::AppViewportZoomOut, Icon::ZoomOut)).clicked() {
             zoomed = Some(stepped(1.0 / ZOOM_STEP));
         }
-        let name = strings.fmt(StrKey::AppViewportZoomLevel, &[("zoom", &zoom)]);
-        let level = ButtonSpec::new(Kind::Quiet, &zoom)
-            .width(zoom_px)
-            .height(CONTROL_PX)
-            .named(&name)
-            .tooltip(strings.get(StrKey::AppViewportZoomReset));
-        if button(ui, level).clicked() {
-            let mut next = *camera;
-            next.set_zoom_percent(100.0);
-            zoomed = Some(next);
+        if fit.level {
+            let name = strings.fmt(StrKey::AppViewportZoomLevel, &[("zoom", &zoom)]);
+            let level = ButtonSpec::new(Kind::Quiet, &zoom)
+                .width(zoom_px)
+                .height(CONTROL_PX)
+                .named(&name)
+                .tooltip(strings.get(StrKey::AppViewportZoomReset));
+            if button(ui, level).clicked() {
+                let mut next = *camera;
+                next.set_zoom_percent(100.0);
+                zoomed = Some(next);
+            }
         }
         if button(ui, tool(strings, StrKey::AppViewportZoomIn, Icon::ZoomIn)).clicked() {
             zoomed = Some(stepped(ZOOM_STEP));
@@ -582,32 +781,41 @@ mod tests {
         );
     }
 
-    /// In a wide pane both top pills show whole; at the Viewport's least
-    /// width, 520 px, *Layers* is its icon alone; narrower, the zoom
-    /// controls go too; and the pills never overlap while they fit at
-    /// all.
+    /// In a wide pane both top pills show whole; in a narrower one
+    /// *Layers* is its icon alone; at the Viewport's least width, 520 px,
+    /// the zoom percentage goes too, since the Draw button took its room
+    /// (phase 5), and Zoom in and Zoom out stay; narrower still they go;
+    /// and the pills never overlap while they fit at all.
     #[test]
     fn narrow_panes_drop_the_label_then_the_zoom() {
         let (zoom_px, layers_px) = (ZOOM_PX, 88.0);
         let wide = Fit::of(900.0 - 24.0, zoom_px, layers_px, true);
-        assert!(wide.zoom && wide.label);
+        assert!(wide.zoom && wide.level && wide.label);
+        let narrower = Fit::of(560.0 - 24.0, zoom_px, layers_px, true);
+        assert!(
+            narrower.zoom && narrower.level && !narrower.label,
+            "{narrower:?}"
+        );
         let least = Fit::of(theme::VIEWPORT_MIN_PX - 24.0, zoom_px, layers_px, true);
-        assert!(least.zoom && !least.label, "{least:?}");
+        assert!(least.zoom && !least.level && !least.label, "{least:?}");
         assert!(least.tools_px() + BETWEEN_PX + least.view_px() <= theme::VIEWPORT_MIN_PX - 24.0);
         let narrow = Fit::of(400.0, zoom_px, layers_px, true);
         assert!(!narrow.zoom && !narrow.label, "{narrow:?}");
         assert!(narrow.tools_px() + BETWEEN_PX + narrow.view_px() <= 400.0);
         // With no toolpath there is one pill, which keeps its zoom.
         let alone = Fit::of(400.0, zoom_px, layers_px, false);
-        assert!(alone.zoom);
+        assert!(alone.zoom && alone.level);
     }
 
     /// With the legend hung at the top right, Fit may stand beside it or
     /// under it; without it, there is the one way.
     #[test]
     fn ways_stand_beside_the_legend_or_under_it() {
-        assert_eq!(ways((0.0, 0.0), None), [FIT_INSETS]);
-        let with = ways((0.0, 0.0), Some(egui::vec2(200.0, 280.0)));
+        assert_eq!(ways((0.0, 0.0), None, 0.0), [FIT_INSETS]);
+        // A drawing tool's bar takes its row off the top.
+        let drawing = ways((0.0, 0.0), None, 56.0);
+        assert!((drawing[0].top_px - 116.0).abs() < 1e-9, "{:?}", drawing[0]);
+        let with = ways((0.0, 0.0), Some(egui::vec2(200.0, 280.0)), 0.0);
         assert_eq!(with.len(), 2);
         assert!(
             (with[0].right_px - 224.0).abs() < 1e-9,
@@ -623,7 +831,7 @@ mod tests {
         assert!((with[1].right_px - 40.0).abs() < 1e-9);
         // An Inspector over the pane's right moves both ways clear of it,
         // and the Warnings drawer over its bottom lifts them.
-        let narrow = ways((300.0, 248.0), Some(egui::vec2(200.0, 280.0)));
+        let narrow = ways((300.0, 248.0), Some(egui::vec2(200.0, 280.0)), 0.0);
         assert!((narrow[0].right_px - 524.0).abs() < 1e-9, "{:?}", narrow[0]);
         assert!((narrow[1].right_px - 340.0).abs() < 1e-9, "{:?}", narrow[1]);
         assert!(

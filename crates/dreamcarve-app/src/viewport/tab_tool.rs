@@ -3,8 +3,9 @@
 
 //! Placed tabs on the Viewport (functional spec, capability 69;
 //! `experience.md`, sections 8 and 9, "Tab dragging" and the
-//! `viewport.tab` token; mock-up 08; #546): the Tab tool's armed state and
-//! its click, and the tab marks the overlay paints over the GPU layers.
+//! `viewport.tab` token; mock-up 08; #546): the Tab tool's click, and the
+//! tab marks the overlay paints over the GPU layers. Whether the tool is
+//! armed is the app's (`dc_app::Tool::Tab`), as every Viewport tool's is.
 //!
 //! The toolpaths' own tab marks (`dc_job::preview::marks`, slice 16) show
 //! each crossed tab across each run that rises over it. What this module
@@ -21,7 +22,7 @@ use dc_app::viewport::tabs::{self, OutlinePoint};
 use dc_app::{App, Command};
 use dc_geometry::{Point, Vec2};
 use dc_project::TabId;
-use eframe::egui::{self, Id, Pos2, Rect, Stroke};
+use eframe::egui::{self, Pos2, Rect, Stroke};
 
 use crate::shell::theme::Palette;
 
@@ -34,23 +35,6 @@ const HOVER_EXTRA_PX: f32 = 2.0;
 /// A hollow tab's outline, px (section 5: "the same stroke at 1.5 px with
 /// no fill").
 const HOLLOW_PX: f32 = 1.5;
-
-/// Where the Tab tool's armed state lives.
-fn armed_id() -> Id {
-    Id::unique("dc.viewport.tab_tool")
-}
-
-/// Whether the Tab tool is armed: the next click on an outline adds a
-/// tab.
-pub(crate) fn armed(ctx: &egui::Context) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(armed_id()))
-        .unwrap_or(false)
-}
-
-/// Arms or disarms the Tab tool.
-pub(crate) fn arm(ctx: &egui::Context, on: bool) {
-    ctx.data_mut(|d| d.insert_temp(armed_id(), on));
-}
 
 /// The command an armed click at pane point `at` makes: a tab at the
 /// outline point under it with the last-used size (`Prefs::tab`), or

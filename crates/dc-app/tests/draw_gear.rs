@@ -138,7 +138,7 @@ fn gear_previews_and_commits() {
         .map(|outline| at_centre.apply_polyline(outline).unwrap())
         .collect();
     assert_eq!(app.draft().outlines, expected);
-    assert_eq!(app.draft().labels[0].text, "⌀ 40");
+    assert_eq!(app.draft().labels[0].text, "Ø 40");
     assert!(!bar(&app).can_finish, "the radius is not taken yet");
 
     assert_eq!(

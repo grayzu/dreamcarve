@@ -1,8 +1,8 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The menus (functional spec, capability 50: File, Edit, Arrange, View,
-//! Project, Help; `redesign.md`, "The window"): quiet text buttons at the
+//! The menus (functional spec, capability 50: File, Edit, Draw, Shape,
+//! Arrange, View, Project, Help; `redesign.md`, "The window"): quiet text buttons at the
 //! left of the header ([`crate::shell::header`]), egui's own on every
 //! platform (design open question 6), every shortcut shown in its row
 //! (capability 54). The Arrange menu (capability 58a, mock-up 14) holds
@@ -12,7 +12,10 @@
 //! and add-to-project apart, *Export G-code…* in its own group, View ▸
 //! *Go to* each of the five steps, and View ▸ Appearance a choice of
 //! three with a check. The rail's Appearance and Help buttons open the
-//! same rows ([`appearance_items`], [`help_items`]).
+//! same rows ([`appearance_items`], [`help_items`]). Phase 5 adds
+//! **Draw**, the drawing tools with their keys (capability 81), **Shape**
+//! with *Convert to Path* (84), and under View the **Snapping** switch,
+//! its kinds under **Snap To** (82) and the **Grid**'s spacing (82a).
 
 use dc_app::steps::Step;
 use dc_app::{StrKey, Strings};
@@ -63,6 +66,10 @@ pub(crate) fn menus(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) 
             let strings = state.app.strings();
             ui.menu_button(strings.get(StrKey::AppMenuFile), |ui| file(ui, state, out));
             ui.menu_button(strings.get(StrKey::AppMenuEdit), |ui| edit(ui, state, out));
+            ui.menu_button(strings.get(StrKey::AppMenuDraw), |ui| draw(ui, state, out));
+            ui.menu_button(strings.get(StrKey::AppMenuShape), |ui| {
+                shape(ui, state, out)
+            });
             ui.menu_button(strings.get(StrKey::AppMenuArrange), |ui| {
                 arrange(ui, state, out);
             });
@@ -393,6 +400,144 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     }
 }
 
+/// Draw (capability 81): the drawing tools this build has, each with its
+/// key, the one in use checked. Arming one opens the Design step.
+fn draw(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let app = state.app;
+    let strings = app.strings();
+    let armed = match app.tool() {
+        dc_app::Tool::Draw(drawing) => Some(drawing),
+        _ => None,
+    };
+    // Target editing has the drawing to itself.
+    let enabled = app.target_editing().is_none();
+    for drawing in dc_app::Drawing::ALL
+        .into_iter()
+        .filter(|drawing| drawing.is_ready())
+    {
+        let binding = keyboard::command_of(drawing).and_then(keyboard::binding);
+        let row = checked_item_with(
+            ui,
+            strings.get(drawing.name()),
+            armed == Some(drawing),
+            binding,
+            enabled,
+        );
+        if row.clicked() {
+            out.push(Action::Arm(dc_app::Tool::Draw(drawing)));
+            ui.close();
+        }
+    }
+}
+
+/// Shape (capability 84): *Convert to Path*, for the selected shapes
+/// that keep their sizes.
+fn shape(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let app = state.app;
+    let strings = app.strings();
+    let selected = app.selection().instances();
+    let sized = selected
+        .iter()
+        .any(|id| dc_app::shape::section(app.project(), strings, id).is_some());
+    item_text(
+        ui,
+        strings.get(StrKey::AppMenuConvertToPath),
+        None,
+        sized,
+        Action::run(dc_app::Command::ConvertToPath(selected.to_vec())),
+        out,
+    );
+}
+
+/// View ▸ Snap To (capability 82): a tick per kind of snap. The master
+/// switch is View ▸ Snapping, a row of the View menu with its key.
+fn snap_to(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let strings = state.app.strings();
+    let snap = &state.prefs.snap;
+    for kind in dc_app::SnapKind::ALL {
+        let on = snap.kinds.contains(&kind);
+        let name = strings.get(crate::viewport::snap_kind_name(kind));
+        if checked_item_with(ui, name, on, None, snap.enabled).clicked() {
+            let mut next = snap.clone();
+            next.set(kind, !on);
+            out.push(Action::SetSnap(next));
+            ui.close();
+        }
+    }
+}
+
+/// View ▸ Grid (capability 82a): the grid shown or hidden, and its
+/// spacing, *Automatic* or a typed length in the project's units.
+fn grid(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let app = state.app;
+    let strings = app.strings();
+    let units = app.project().display_units;
+    let visibility = app.view().visibility;
+    if checked_item(ui, strings.get(StrKey::AppMenuGridShow), visibility.grid).clicked() {
+        out.push(Action::SetVisibility(dc_app::Visibility {
+            grid: !visibility.grid,
+            ..visibility
+        }));
+        ui.close();
+    }
+    ui.separator();
+    let pinned = state.prefs.grid_spacing_mm;
+    if checked_item(
+        ui,
+        strings.get(StrKey::AppMenuGridAutomatic),
+        pinned.is_none(),
+    )
+    .clicked()
+    {
+        out.push(Action::SetGridSpacing(None));
+        ui.close();
+    }
+    // The spacing, typed: what is pinned, or the automatic one as the
+    // placeholder.
+    let value = pinned.map_or_else(String::new, |mm| dc_app::units::field_text(mm, units));
+    let automatic = dc_app::units::field_text(app.grid_step_mm(), units);
+    let label = strings.get(StrKey::AppMenuGridSpacing);
+    let typed = ui
+        .horizontal(|ui| {
+            ui.label(label);
+            ui.allocate_ui(egui::vec2(GRID_FIELD_PX, theme::CONTROL_PX), |ui| {
+                ui.set_width(GRID_FIELD_PX);
+                crate::widgets::unit_field::field(
+                    ui,
+                    crate::widgets::unit_field::UnitField {
+                        placeholder: &automatic,
+                        ..crate::widgets::unit_field::UnitField::new(
+                            egui::Id::unique("dc.menu.grid.spacing"),
+                            label,
+                            &value,
+                            dc_app::units::suffix(units),
+                        )
+                    },
+                )
+                .committed
+            })
+            .inner
+        })
+        .inner;
+    if let Some(typed) = typed {
+        // Emptied, the spacing is automatic again.
+        if typed.trim().is_empty() {
+            out.push(Action::SetGridSpacing(None));
+        } else {
+            match dc_app::units::parse_length_mm(&typed, units) {
+                Ok(mm) if mm > 0.0 => out.push(Action::SetGridSpacing(Some(mm))),
+                Ok(_) => out.push(Action::Refused(
+                    strings.get(StrKey::DrawProblemNotPositive).to_owned(),
+                )),
+                Err(e) => out.push(Action::Refused(e.to_string())),
+            }
+        }
+    }
+}
+
+/// The grid spacing field in View ▸ Grid, px wide.
+const GRID_FIELD_PX: f32 = 96.0;
+
 fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
     // A row that is on or off is ticked or not, as a choice's rows are
@@ -442,6 +587,25 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         out.push(Action::ToggleWarnings);
         ui.close();
     }
+    ui.separator();
+    // Phase 5: snapping and the snap grid (capabilities 82 and 82a).
+    let snapping = checked_item_with(
+        ui,
+        strings.get(StrKey::AppMenuSnap),
+        state.prefs.snap.enabled,
+        keyboard::binding(Shortcut::ToggleSnapping),
+        true,
+    );
+    if snapping.clicked() {
+        if let Some(action) = shortcut_action(state.app, Shortcut::ToggleSnapping) {
+            out.push(action);
+        }
+        ui.close();
+    }
+    ui.menu_button(strings.get(StrKey::AppMenuSnapping), |ui| {
+        snap_to(ui, state, out);
+    });
+    ui.menu_button(strings.get(StrKey::AppMenuGrid), |ui| grid(ui, state, out));
     ui.separator();
     item(
         ui,
@@ -496,6 +660,18 @@ pub(crate) fn appearance_items(ui: &mut Ui, state: &FrameState<'_>, out: &mut Ve
 /// A menu row with a check in front when `checked`: one of a choice
 /// (mock-up 14). Screen readers hear it as a toggled button.
 fn checked_item(ui: &mut Ui, text: &str, checked: bool) -> egui::Response {
+    checked_item_with(ui, text, checked, None, true)
+}
+
+/// [`checked_item`] with its `shortcut` shown, and greyed when not
+/// `enabled`.
+fn checked_item_with(
+    ui: &mut Ui,
+    text: &str,
+    checked: bool,
+    shortcut: Option<(Modifiers, Key)>,
+    enabled: bool,
+) -> egui::Response {
     let palette = Palette::current(ui);
     let colour = if checked {
         palette.text_primary
@@ -508,9 +684,22 @@ fn checked_item(ui: &mut Ui, text: &str, checked: bool) -> egui::Response {
             egui::FontFamily::Name(theme::ICONS.into()),
         ))
         .color(colour);
-    let response = ui.add(Button::new((check, text)));
+    let mut button = Button::new((check, text));
+    // The row's name ends with its keys, as a plain row's does.
+    let mut name = text.to_owned();
+    if let Some((modifiers, key)) = shortcut {
+        let keys = shortcut_text(ui.ctx(), modifiers, key);
+        name = format!("{text} {keys}");
+        button = button.shortcut_text(keys);
+    }
+    let response = ui.add_enabled(enabled, button);
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), checked, text)
+        egui::WidgetInfo::selected(
+            egui::Role::Button,
+            enabled && ui.is_enabled(),
+            checked,
+            &name,
+        )
     });
     response
 }

@@ -101,6 +101,26 @@ Decisions made while building are added here.
   circle keeps the name *Circle 1*. A locked linked copy makes the
   sizes of all its copies read-only. Convert to Path is allowed on a
   locked shape, since nothing moves.
+- Slice 9: the tool bar floats under the pills, not across the top as
+  the target-editing bar does, and breaks into rows when it is wide
+  (the Gear's). Fit leaves room for one row of it while a drawing tool
+  is armed, so the view refits when a tool is taken up or put down
+  (phase 4's target bar deliberately does not). The Inspector stays
+  closed while a drawing tool is armed. The Snapping switch is a row of
+  the View menu and the kinds are under *Snap To*, where the spec had
+  both under one submenu: a shortcut's key must show in its menu's own
+  row. The zoom percentage now goes before the zoom buttons in a
+  narrow Viewport; at 1280 wide with an Inspector open the percentage
+  is hidden. Icons are all Lucide's (it has an ellipse and a pill); the
+  Arc's is `radius`, which may deserve a drawn glyph. No palette token
+  was added: the draft is `accent`, the snap marker
+  `viewport.shape.hover`. The Construction switch is left for slice 22
+  with the rest of construction geometry; the Rectangle's corners and
+  the Polygon's sides are not in the tool bar yet (they are set in
+  Properties after drawing, and `ToolOption` carries them): to add
+  when the bar's choices are filled for those tools. The pill's Edit
+  nodes, Trim and Measure buttons come with their tools. The diameter
+  sign in size labels is `Ø`: the bundled Inter has no `⌀`.
 
 ## Slices
 
@@ -120,7 +140,7 @@ The numbers are the design spec's.
 | 6 | Line, Arc and Spline, in the app core (`dc_app::tool::path`): one path drawn a point at a time, each span a line, an arc (its end, then a point it passes through, or a typed radius) or a curve (Catmull-Rom through its points); changing among the three keeps the path; a click on the first point closes, `Enter`, Done or a double-click finishes open, `Backspace` takes back a point; the next point by typed length and angle; lines and arcs saved as their outline, a path with a curve as `Shape::Path` and its flattened outline; three points in a line refused with the reason; the tool bar's `can_finish`. Gate: 3,577 tests | done |
 | 7 | The Gear tool, in the app core (`dc_app::tool::gear`): the centre, the outside radius, then the sizes in the tool bar (teeth, outside diameter, pressure angle, whole depth, root fillet, crest radius, bore; flanks, root and crest as choices; the module as a note), previewed, until Done; what the gear cannot be said at the field at fault; the bore a second outline; `Shape::from_gear`; `ToolBar::choices` and `note`, `Quantity::Count`. Gate: 3,581 tests | done |
 | 8 | Sizes (`dc_app::shape`): the Properties Shape section as data (each kind's sizes as placed, its choices, a gear's module), a typed size or a choice as one `SetOutline` named for it, held and refused as each kind needs, linked copies following; a stretch taken as new sizes by a rectangle, an ellipse, a slot and a circle inside `TransformInstances`, refused by a polygon, a gear, a turned shape and a linked copy; `ConvertToPath`; tabs re-seated on a changed outline. Gate: 3,595 tests | done |
-| 9 | The window, drawing | todo |
+| 9 | The window, drawing: the pill's Draw button and its popover, the tool bar (prompt, choices, typed sizes, Done; wraps into rows), the draft overlay (preview, size labels, snap marker and guide), the tools' keys and Enter, Escape, Backspace through to the tool, the Draw and Shape menus, View ▸ Snapping, Snap To and Grid, *Draw from scratch*, the Properties Shape section, the prompt in the status bar; the Tab tool is `Tool::Tab`; help on every size and choice; a font-coverage test over the strings table; review pictures in `docs/specs/phase-5/review/drawing/` | doing |
 
 ### 5.2 Editing
 

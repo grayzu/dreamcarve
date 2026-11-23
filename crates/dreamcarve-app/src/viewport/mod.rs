@@ -56,12 +56,14 @@
 //! place of the stock ([`crate::panels::empty`]).
 
 mod controls;
+mod draft;
 mod layers;
 mod legend;
 mod lod;
 mod pictures;
 pub(crate) mod renderer;
 pub(crate) mod tab_tool;
+mod tool_bar;
 
 use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
@@ -74,7 +76,7 @@ use dc_app::viewport::camera::{self, Camera, Insets, Pos};
 use dc_app::viewport::grid::Grid;
 use dc_app::viewport::handles::{self, Grab, Handles};
 use dc_app::viewport::pick::{self, ClickCycle, Hit, PICK_TOLERANCE_PX};
-use dc_app::{App, ClickMode, Command, Selection, StrKey};
+use dc_app::{App, ClickMode, Command, Selection, StrKey, Tool};
 use dc_geometry::{Point, Rect as MmRect, Transform};
 use dc_project::{BitmapId, InstanceId, OperationId, TabId};
 use eframe::egui::{
@@ -91,6 +93,8 @@ use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
 use crate::widgets::card::mask_corners;
 use crate::widgets::icon::Icon;
 pub use controls::FIT_INSETS;
+pub(crate) use controls::held_drawing;
+pub(crate) use draft::kind_name as snap_kind_name;
 use renderer::{Frame, Layer, LayerData, StyleId, StyleTable, ToolpathData};
 
 /// What the Viewport leaves of the gap to the card on each side, px: 8
@@ -208,6 +212,9 @@ enum Drag {
         ids: Vec<BitmapId>,
         grip: pictures::Grip,
     },
+    /// The primary button down on the pane while a drawing tool is armed:
+    /// the press went to the tool, and so will the release.
+    Tool,
 }
 
 /// The selection drawn where the drag in progress will put it.
@@ -266,6 +273,9 @@ pub(crate) struct ViewportState {
     /// The tab being dragged and where the release will put it, in
     /// definition space.
     tab_preview: Option<(TabId, f64, f64)>,
+    /// Where the armed tool was last told the pointer is: it is told
+    /// again only when the pointer, or a key held with it, changes.
+    tool_pointer: Option<dc_app::Pointer>,
     layers: [Cached; Layer::ALL.len()],
     /// Each operation's toolpath buffer as last built.
     toolpaths: BTreeMap<OperationId, Cached>,
@@ -369,7 +379,11 @@ impl ViewportState {
         });
         let camera = app.view().camera;
         self.cursor_mm = over.map(|p| camera.to_world(pane_pos(pane, p)));
+        let drawing = takes_pointer(app);
         let hit = match (over, &self.drag) {
+            // A drawing tool's clicks are its own: nothing under the
+            // pointer is picked, so nothing lights up.
+            _ if drawing => Hit::Nothing,
             // Target editing toggles shapes: a cut under the pointer is
             // nothing to click.
             (Some(p), None) if app.target_editing().is_some() => pick::pick(
@@ -436,7 +450,11 @@ impl ViewportState {
                     Some((name, false))
                 },
             ),
-            drag: self.readout.clone(),
+            // The armed tool's prompt, where a drag's travel reads.
+            drag: self
+                .readout
+                .clone()
+                .or_else(|| app.tool_bar().map(|bar| bar.prompt)),
         }
     }
 
@@ -524,6 +542,13 @@ impl ViewportState {
     }
 }
 
+/// Whether the armed tool takes the pointer's clicks and moves as its own
+/// events: a drawing tool, outside target editing. Select's are phase 4's
+/// gestures and the Tab tool's its one click.
+fn takes_pointer(app: &App) -> bool {
+    matches!(app.tool(), Tool::Draw(_)) && app.target_editing().is_none()
+}
+
 /// The keys the Viewport answers when no field has the keyboard
 /// (functional spec, capability 54), read through the shortcut table
 /// ([`keyboard::SHORTCUTS`]): F fits, Shift F zooms to the selection,
@@ -547,12 +572,26 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     let pictures = app.selected_pictures().to_vec();
     let park_picking = project::park_pick_armed(ctx);
     let point_picking = editor::point_pick(ctx).is_some();
-    let tab_tool_armed = tab_tool::armed(ctx);
-    let mut toggle_tab_tool = false;
+    let tab_tool_armed = app.tool() == Tool::Tab;
+    // A drawing tool reads Enter, Escape, Backspace and Delete itself
+    // (phase 5, capabilities 81 and 87): they finish, step back and take
+    // back a point, and delete nothing.
+    let drawing = takes_pointer(app);
     let mut disarm = false;
     let mut pressed = Vec::new();
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
+        if drawing && !popup_open {
+            for (key, told) in [
+                (Key::Enter, dc_app::tool::Key::Enter),
+                (Key::Backspace, dc_app::tool::Key::Backspace),
+                (Key::Delete, dc_app::tool::Key::Delete),
+            ] {
+                if input.consume_key(Modifiers::NONE, key) {
+                    actions.push(Action::Tool(dc_app::tool::Event::Key(told)));
+                }
+            }
+        }
         for command in [
             Shortcut::ZoomToSelection,
             Shortcut::FitView,
@@ -567,16 +606,31 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             Shortcut::FlipVertical,
             Shortcut::RotateAnticlockwise,
             Shortcut::RotateClockwise,
+            Shortcut::TabTool,
+            Shortcut::SelectTool,
+            Shortcut::ToggleSnapping,
+            Shortcut::DrawLine,
+            Shortcut::DrawArc,
+            Shortcut::DrawSpline,
+            Shortcut::DrawRectangle,
+            Shortcut::DrawCircle,
+            Shortcut::DrawEllipse,
+            Shortcut::DrawPolygon,
+            Shortcut::DrawSlot,
         ] {
             if !popup_open && keyboard::consume(input, command) > 0 {
                 pressed.push(command);
             }
         }
-        if !popup_open && keyboard::consume(input, Shortcut::TabTool) > 0 {
-            toggle_tab_tool = true;
-        }
         if !popup_open && keyboard::consume(input, Shortcut::Escape) > 0 && !escape_left_widget {
-            if park_picking || point_picking || tab_tool_armed {
+            if drawing {
+                // Out of what the tool has begun, then out of the tool.
+                actions.push(Action::Tool(dc_app::tool::Event::Key(
+                    dc_app::tool::Key::Escape,
+                )));
+            } else if tab_tool_armed {
+                actions.push(Action::Arm(Tool::Select));
+            } else if park_picking || point_picking {
                 // Disarmed below: the context is locked inside `input_mut`.
                 disarm = true;
             } else {
@@ -626,13 +680,8 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             .into_iter()
             .filter_map(|command| shortcut_action(app, command)),
     );
-    if toggle_tab_tool {
-        tab_tool::arm(ctx, !tab_tool_armed);
-    }
     if disarm {
-        if tab_tool_armed {
-            tab_tool::arm(ctx, false);
-        } else if park_picking {
+        if park_picking {
             project::arm_park_pick(ctx, false);
         } else {
             editor::arm_point_pick(ctx, None);
@@ -1060,9 +1109,86 @@ fn gestures(
                 out.push(Action::Run(Box::new(Command::MoveTab { id, x_mm, y_mm })));
             }
         }
-        Some(Drag::Pan { .. } | Drag::Refused) | None => {}
+        Some(Drag::Pan { .. } | Drag::Refused | Drag::Tool) | None => {}
     }
     moved
+}
+
+/// The pointer while a drawing tool is armed (phase 5, capability 81):
+/// the middle button and Space still pan; the primary button's press and
+/// release, a double-click, and every move over the pane are the tool's,
+/// told in project millimetres with the keys held. Nothing is selected,
+/// moved or resized. Returns whether the camera moved.
+fn tool_gestures(
+    ui: &Ui,
+    pane: Rect,
+    response: &egui::Response,
+    view: &mut ViewportState,
+    camera: &mut Camera,
+    out: &mut Vec<Action>,
+) -> bool {
+    use dc_app::tool::Event;
+    let (pos, pressed, released, doubled, middle_pressed, middle_released, space, modifiers) = ui
+        .input(|i| {
+            (
+                i.pointer.interact_pos().or_else(|| i.pointer.hover_pos()),
+                i.pointer.button_pressed(PointerButton::Primary),
+                i.pointer.button_released(PointerButton::Primary),
+                i.pointer.button_double_clicked(PointerButton::Primary),
+                i.pointer.button_pressed(PointerButton::Middle),
+                i.pointer.button_released(PointerButton::Middle),
+                i.key_down(Key::Space),
+                i.modifiers,
+            )
+        });
+    let Some(pos) = pos.filter(|p| pane.contains(*p) || view.drag.is_some()) else {
+        // Off the pane: the tool shows no next point.
+        view.drag = None;
+        if view.tool_pointer.take().is_some() {
+            out.push(Action::Tool(Event::Leave));
+        }
+        return false;
+    };
+    if (middle_pressed || (pressed && space)) && response.hovered() && view.drag.is_none() {
+        view.drag = Some(Drag::Pan { last: pos });
+    }
+    if let Some(Drag::Pan { last }) = view.drag {
+        let delta = pos - last;
+        let moved = delta != egui::Vec2::ZERO;
+        if moved {
+            camera.pan(f64::from(delta.x), f64::from(delta.y));
+        }
+        view.drag = Some(Drag::Pan { last: pos });
+        if released || middle_released {
+            view.drag = None;
+        }
+        return moved;
+    }
+    let pointer = dc_app::Pointer {
+        at_mm: camera.to_world(pane_pos(pane, pos)),
+        shift: modifiers.shift,
+        alt: modifiers.alt,
+        command: modifiers.command,
+    };
+    // Over a pill or the tool bar the tool keeps the point it had: a size
+    // is typed with the preview still where the pointer left it.
+    let over = response.hovered() || view.drag.is_some();
+    if over && view.tool_pointer != Some(pointer) {
+        view.tool_pointer = Some(pointer);
+        out.push(Action::Tool(Event::Move(pointer)));
+    }
+    if pressed && response.hovered() && view.drag.is_none() {
+        view.drag = Some(Drag::Tool);
+        out.push(Action::Tool(Event::Press(pointer)));
+    }
+    if released && matches!(view.drag, Some(Drag::Tool)) {
+        view.drag = None;
+        out.push(Action::Tool(Event::Release(pointer)));
+        if doubled {
+            out.push(Action::Tool(Event::DoubleClick(pointer)));
+        }
+    }
+    false
 }
 
 /// The GPU layers of this frame.
@@ -1521,7 +1647,12 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
             dragged: view.tab_preview.as_ref(),
         },
     );
-    transform_handles(ui, &painter, pane, state, view, camera);
+    // While a tool is armed the clicks are its own: there is nothing to
+    // grab, so no handles are drawn (phase 5, capability 81).
+    if state.app.tool() == Tool::Select {
+        transform_handles(ui, &painter, pane, state, view, camera);
+    }
+    draft::paint(ui, &painter, pane, state.app, camera);
 
     if let Some(Drag::Marquee { start }) = view.drag
         && let Some(now) = ui.input(|i| i.pointer.interact_pos())
@@ -1699,6 +1830,10 @@ pub(crate) fn show(
         .show(ui, |ui| {
             let (pane, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+            // Tab from the drawing (the Viewport focused, or nothing)
+            // goes to the armed tool's first field.
+            let tabbed = focus::tab_from(ui.ctx())
+                .is_some_and(|from| from.is_none_or(|id| id == response.id));
             // Tab stops on the Viewport (#548): named for screen readers.
             let viewport_name = state.app.strings().get(StrKey::AppViewportName);
             response
@@ -1730,7 +1865,15 @@ pub(crate) fn show(
                 .filter(|_| !state.show_empty);
             let legend_size = legend.as_ref().map(|legend| legend::size(ui, app, legend));
             let over = (margins.overlay_right, margins.overlay_bottom);
-            let ways = controls::ways(over, legend_size);
+            // One row of the armed tool's bar: Fit stands clear of it,
+            // and a fitted view refits as the tool is taken up or put
+            // down.
+            let tool_bar_px = if takes_pointer(app) {
+                tool_bar::ROW_PX
+            } else {
+                0.0
+            };
+            let ways = controls::ways(over, legend_size, tool_bar_px);
             let ways_changed = view.ways != ways;
             view.ways = ways;
             if view.fit_pending || (view.fitted && (resized || ways_changed)) {
@@ -1752,9 +1895,10 @@ pub(crate) fn show(
             }
             let editing_targets = app.target_editing().is_some();
             let point = editor::point_pick(ui.ctx()).filter(|_| !editing_targets);
-            let adding_tabs = tab_tool::armed(ui.ctx()) && !editing_targets;
+            let adding_tabs = app.tool() == Tool::Tab && !editing_targets;
+            let drawing = takes_pointer(app);
             let park = project::park_pick_armed(ui.ctx()) && !editing_targets;
-            if (park || point.is_some() || adding_tabs) && response.hovered() {
+            if (park || point.is_some() || adding_tabs || drawing) && response.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
             if park
@@ -1787,8 +1931,13 @@ pub(crate) fn show(
                 view.drag = None;
                 view.clicks.reset();
                 out.extend(tab_tool::click(app, &camera, pane_pos(pane, at)).map(Action::run));
+            } else if drawing {
+                moved |= tool_gestures(ui, pane, &response, view, &mut camera, out);
             } else {
                 moved |= gestures(ui, pane, &response, state, view, &mut camera, out);
+            }
+            if !drawing {
+                view.tool_pointer = None;
             }
             if moved {
                 view.fitted = false;
@@ -1855,7 +2004,7 @@ pub(crate) fn show(
                 Some(Drag::Marquee { start } | Drag::Press { start, .. }) => {
                     pointer.is_some_and(|at| start.distance(at) >= CLICK_SLOP_PX)
                 }
-                Some(Drag::Refused) | None => false,
+                Some(Drag::Refused | Drag::Tool) | None => false,
             };
             let opacity = controls::opacity(ui, dragging);
             let place = controls::Place {
@@ -1866,6 +2015,9 @@ pub(crate) fn show(
                 opacity,
             };
             let floats = controls::show(ui, place, state, &camera, view.cursor_mm, out);
+            // The armed tool's bar, under the pills.
+            let bar_top = place.top + theme::FLOAT_INSET_PX + controls::PILL_PX;
+            let tool_bar = tool_bar::show(ui, pane, bar_top, tabbed, state, out);
             if let Some(zoomed) = floats.camera {
                 // A zoom control's camera, shown from the next frame on.
                 out.push(Action::SetCamera(zoomed));
@@ -1875,6 +2027,7 @@ pub(crate) fn show(
             // whether or not the toolpath view is open, hung under the
             // top-right controls.
             let mut covers = floats.rects();
+            covers.extend(tool_bar);
             if let Some(legend) = &legend {
                 let mut fading = painter.clone();
                 fading.set_opacity(opacity);

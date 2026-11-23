@@ -135,6 +135,24 @@ pub(crate) fn label(ui: &mut Ui, text: &str, help: &str, path: Option<&str>) -> 
     })
 }
 
+/// A field's label on a bar, where there is no label column: `text` at
+/// its own width in text.secondary, with `help` on hover, which the
+/// control drawn after it takes as [`label`]'s does.
+pub(crate) fn inline_label(ui: &mut Ui, text: &str, help: &str) -> Response {
+    let palette = Palette::current(ui);
+    crate::widgets::help::offer(ui, text, help);
+    ui.add(
+        egui::Label::new(
+            RichText::new(text)
+                .text_style(TextStyle::Body)
+                .color(palette.text_secondary),
+        )
+        .selectable(false)
+        .sense(egui::Sense::hover()),
+    )
+    .on_hover_text(help)
+}
+
 /// A file path on one line in the mono face, cut at its start with an
 /// ellipsis when it is longer than the room, since a path's end says the
 /// most. Its accessible name and its tooltip are the whole path.

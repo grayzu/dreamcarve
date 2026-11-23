@@ -752,7 +752,7 @@ fn points_snap_and_sizes_are_shown() {
     );
     click(&mut app, pt(30.9, 59.3));
     move_to(&mut app, pt(30.0, 64.0));
-    assert_eq!(app.draft().labels[0].text, "⌀ 8");
+    assert_eq!(app.draft().labels[0].text, "Ø 8");
     click(&mut app, pt(30.0, 64.0));
     assert_box(&placed(&app), (26.0, 56.0), (34.0, 64.0));
 

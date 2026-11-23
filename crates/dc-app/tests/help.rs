@@ -47,6 +47,20 @@ fn every_field() -> Vec<(String, StrKey, StrKey)> {
             all.push((format!("{kind:?} {}", row.key), row.label, row.help));
         }
     }
+    // Phase 5: a drawing tool's sizes and a drawn shape's, and the
+    // choices beside them.
+    for field in dc_app::tool::SizeField::ALL {
+        all.push((format!("size {field:?}"), field.label(), field.help()));
+    }
+    for (label, help) in [
+        (StrKey::DrawChoiceCorners, StrKey::DrawChoiceCornersHelp),
+        (StrKey::DrawChoiceMeasure, StrKey::DrawChoiceMeasureHelp),
+        (StrKey::DrawChoiceFlanks, StrKey::DrawChoiceFlanksHelp),
+        (StrKey::DrawChoiceRoot, StrKey::DrawChoiceRootHelp),
+        (StrKey::DrawChoiceCrest, StrKey::DrawChoiceCrestHelp),
+    ] {
+        all.push((format!("choice {label:?}"), label, help));
+    }
     for row in fields::CLEARING_PASS {
         all.push((format!("clearing pass {}", row.key), row.label, row.help));
     }
@@ -181,6 +195,30 @@ fn a_help_string_names_the_validators_range() {
         (
             StrKey::ProjectOriginXHelp,
             format!("from -{0} to {0} mm", dc_geometry::MAX_COORDINATE_MM),
+        ),
+        (
+            StrKey::DrawHelpSides,
+            format!(
+                "{} to {}",
+                dc_project::MIN_POLYGON_SIDES,
+                dc_project::MAX_POLYGON_SIDES
+            ),
+        ),
+        (
+            StrKey::DrawHelpTeeth,
+            format!(
+                "{} to {}",
+                dc_project::MIN_GEAR_TEETH,
+                dc_project::MAX_GEAR_TEETH
+            ),
+        ),
+        (
+            StrKey::DrawHelpPressureAngle,
+            format!(
+                "{} to {} degrees",
+                dc_project::MIN_PRESSURE_ANGLE_DEG,
+                dc_project::MAX_PRESSURE_ANGLE_DEG
+            ),
         ),
     ] {
         assert!(

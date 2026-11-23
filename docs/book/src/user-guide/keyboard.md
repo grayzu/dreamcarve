@@ -42,10 +42,21 @@ except in an open sheet.
 | Ctrl+4 | ⌘4 | Open the Operations step | View ▸ Go to Operations |
 | Ctrl+5 | ⌘5 | Open the Export step | View ▸ Go to Export |
 | T | T | Turn the Tab tool on or off: a click on a shape's outline adds a tab | — |
+| V | V | Take up the Select tool, putting down the tool in use | — |
+| P | P | Draw lines: a path of straight segments, a click a point. While a path is being drawn, the next segment is a line | Draw ▸ Line |
+| A | A | Draw arcs: its end, then a point it passes through. While a path is being drawn, the next segment is an arc | Draw ▸ Arc |
+| S | S | Draw a smooth curve through the points clicked. While a path is being drawn, the next segments are curves | Draw ▸ Spline |
+| M | M | Draw rectangles | Draw ▸ Rectangle |
+| C | C | Draw circles | Draw ▸ Circle |
+| E | E | Draw ellipses | Draw ▸ Ellipse |
+| G | G | Draw regular polygons | Draw ▸ Polygon |
+| O | O | Draw slots | Draw ▸ Slot |
+| Shift+S | ⇧S | Turn snapping on or off | View ▸ Snapping |
 | Arrow keys | Arrow keys | Nudge the selection 1 mm | — |
 | Shift+arrow keys | ⇧ arrow keys | Nudge the selection 10 mm | — |
 | Alt+arrow keys | ⌥ arrow keys | Nudge the selection 0.1 mm | — |
-| Esc | Esc | Clear the selection, turn off the Tab tool, stop picking on the Viewport, or close a menu | — |
+| Esc | Esc | Step back out of what a tool has begun, put the tool down, clear the selection, stop picking on the Viewport, or close a menu | — |
+
 <!-- shortcuts:end -->
 
 The table is generated from the app's own shortcut table, so it always

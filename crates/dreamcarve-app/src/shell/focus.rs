@@ -363,6 +363,25 @@ pub(crate) struct Shown {
     pub ring: Option<Ring>,
 }
 
+/// What had the focus when Tab (not Shift Tab) was pressed in this frame:
+/// `None` when it was not pressed, `Some(None)` when nothing had it.
+pub(crate) fn tab_from(ctx: &Context) -> Option<Option<Id>> {
+    load(ctx)
+        .tab
+        .filter(|tab| tab.forward && tab.frames == 0)
+        .map(|tab| tab.from.map(|(id, _)| id))
+}
+
+/// A control took this frame's Tab for itself and gave the focus where
+/// it belongs (the armed tool's first field): the walk has nothing to
+/// correct.
+pub(crate) fn tab_taken(ctx: &Context) {
+    let mut router = load(ctx);
+    router.tab = None;
+    router.jump = None;
+    store(ctx, router);
+}
+
 /// After the frame: `regions` were drawn there. Corrects a Tab that landed
 /// out of order, and draws the ring around the focused control when the
 /// focus came from the keyboard: 2 px of `focus.ring`, 2 px outside the

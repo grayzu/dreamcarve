@@ -115,6 +115,32 @@ impl Drawing {
     pub fn from_key(key: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|tool| tool.key() == key)
     }
+
+    /// The tool's name: the Draw popover's row, the Draw menu's, the
+    /// tool bar's heading.
+    #[must_use]
+    pub const fn name(self) -> crate::StrKey {
+        use crate::StrKey;
+        match self {
+            Self::Line => StrKey::DrawNameLine,
+            Self::Arc => StrKey::DrawNameArc,
+            Self::Spline => StrKey::DrawNameSpline,
+            Self::Rectangle => StrKey::DrawNameRectangle,
+            Self::Circle => StrKey::DrawNameCircle,
+            Self::Ellipse => StrKey::DrawNameEllipse,
+            Self::Polygon => StrKey::DrawNamePolygon,
+            Self::Slot => StrKey::DrawNameSlot,
+            Self::Gear => StrKey::DrawNameGear,
+            Self::Text => StrKey::DrawNameText,
+        }
+    }
+
+    /// Whether this build has the tool: the popover and the menu list
+    /// the ones it has. Text arrives with its fonts.
+    #[must_use]
+    pub const fn is_ready(self) -> bool {
+        !matches!(self, Self::Text)
+    }
 }
 
 /// A key a tool reads while it is armed.
@@ -182,6 +208,39 @@ pub enum Quantity {
 }
 
 impl SizeField {
+    /// Every size, in declaration order.
+    pub const ALL: [Self; 17] = [
+        Self::X,
+        Self::Y,
+        Self::Width,
+        Self::Height,
+        Self::Diameter,
+        Self::Radius,
+        Self::Angle,
+        Self::Length,
+        Self::SlotWidth,
+        Self::Teeth,
+        Self::PressureAngle,
+        Self::WholeDepth,
+        Self::RootFillet,
+        Self::CrestRadius,
+        Self::Bore,
+        Self::CornerSize,
+        Self::Sides,
+    ];
+
+    /// The size's label in the tool bar.
+    #[must_use]
+    pub const fn label(self) -> crate::StrKey {
+        draw::field_label(self)
+    }
+
+    /// What the size is: its label's tooltip.
+    #[must_use]
+    pub const fn help(self) -> crate::StrKey {
+        draw::field_help(self)
+    }
+
     /// Whether the size is a length or an angle.
     #[must_use]
     pub const fn quantity(self) -> Quantity {
@@ -206,6 +265,8 @@ pub struct SizeRow {
     pub field: SizeField,
     /// Its label: *W*, *Diameter*.
     pub label: String,
+    /// What the size is, for the label's tooltip and the help line.
+    pub help: String,
     /// Its text: the typed value while it is pinned, else what the
     /// pointer gives, in project units with no unit after it; empty
     /// while the pointer has given nothing.
@@ -243,6 +304,8 @@ pub struct ToolBar {
 pub struct Choice {
     /// What is chosen: *Flanks*.
     pub label: String,
+    /// What the choice is, for the label's tooltip and the help line.
+    pub help: String,
     /// What it can be, in order.
     pub options: Vec<ChoiceOption>,
     /// Which of `options` it is.

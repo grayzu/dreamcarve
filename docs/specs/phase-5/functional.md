@@ -92,11 +92,22 @@ capability 52); what a tool holds before it commits is not project data.
     same tools with their keys.
 
     While a tool is armed a **tool bar** floats at the Viewport's top
-    centre, as the target-editing bar does: the tool's name, one line
-    saying what the next click does (*Click the first corner*), the
-    tool's options, the fields of capability 83, and **Done** where a
-    shape can be finished early. The status bar's pointer cell shows the
-    same prompt.
+    centre, under the pills: the tool's name, one line saying what the
+    next click does (*Click the first corner*), the tool's options, the
+    fields of capability 83, and **Done** where a shape can be finished
+    early. A bar with more than fits across the Viewport (the Gear's
+    sizes) breaks into rows, a label staying with its field. The status
+    bar's pointer cell shows the same prompt. Fit leaves room for one
+    row of the bar while a drawing tool is armed, so nothing is drawn
+    under it, and a fitted view refits as the tool is taken up and put
+    down. While a drawing tool is armed the Inspector stays closed: what
+    is drawn is selected, and its Properties show when the tool is put
+    down.
+
+    In a Viewport too narrow for its two top pills, *Layers* loses its
+    label first, then the zoom percentage goes, then the two zoom
+    buttons (phase 4 dropped the label, then all three): the Draw
+    button took their room.
 82. **Snapping** (ported from PureCutCNC's `resolveSketchSnap`). Every
     point a tool takes, and every node or shape dragged, snaps when a
     candidate lies within 14 screen pixels of the pointer. The kinds,
@@ -130,8 +141,9 @@ capability 52); what a tool holds before it commits is not project data.
     and locked shapes are. A slot offers its two end centres and its
     middle as **Centre**.
 
-    **View ▸ Snapping** has a master switch (`⇧S` toggles it) and one
-    tick per kind; holding `Ctrl`/`⌘` while moving the pointer suspends
+    **View ▸ Snapping** is the master switch (`⇧S` toggles it), a row
+    of the View menu so that its key shows beside it, and **View ▸ Snap
+    To** has one tick per kind; holding `Ctrl`/`⌘` while moving the pointer suspends
     snapping for as long as it is held. The settings are app
     preferences (`gui.toml`), not project data. Holding `Shift`
     constrains the point to 15° steps about the tool's last point (the

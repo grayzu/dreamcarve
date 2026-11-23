@@ -536,3 +536,39 @@ fn the_scan_reads_literals_as_rust_does() {
         "fn a() {}\n"
     );
 }
+
+/// Every string of the table can be drawn: each of its characters has a
+/// glyph in the fonts the app bundles. A character with none stops the
+/// frame that lays it out (egui's missing-glyph policy), which a table
+/// entry no test happens to draw would do in a user's hands; the
+/// diameter sign `⌀` in a size label did (phase 5, slice 9). A
+/// placeholder's braces are not drawn, and what fills it is a number, a
+/// name the user typed, or a file's text.
+#[test]
+fn every_string_has_its_glyphs() {
+    let ctx = eframe::egui::Context::default();
+    dreamcarve_app::theme::apply(&ctx, dc_app::Theme::Dark);
+    // Fonts are loaded at the first frame.
+    let mut frame = ctx.run_ui(eframe::egui::RawInput::default(), |_| {});
+    frame.textures_delta.clear();
+    let font = eframe::egui::TextStyle::Body.resolve(&ctx.global_style());
+    // The scan can tell: the sign that was the defect has no glyph.
+    assert!(!ctx.fonts_mut(|fonts| fonts.has_glyph(&font, '\u{2300}')));
+    let mut missing = Vec::new();
+    for &key in dc_app::StrKey::ALL {
+        let text = key.english();
+        let lacking: Vec<char> = text
+            .chars()
+            .filter(|c| !c.is_control())
+            .filter(|c| !ctx.fonts_mut(|fonts| fonts.has_glyph(&font, *c)))
+            .collect();
+        if !lacking.is_empty() {
+            missing.push(format!("{}: {lacking:?} in `{text}`", key.key()));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these strings have characters no bundled font draws:\n{}",
+        missing.join("\n")
+    );
+}

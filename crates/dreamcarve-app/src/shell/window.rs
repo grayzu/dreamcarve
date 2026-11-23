@@ -475,6 +475,18 @@ pub(crate) enum Action {
     /// Save the last export's setup sheet (the result's footer, File ▸
     /// Save Setup Sheet…; capability 77b).
     SaveSetupSheet,
+    /// Arm a Viewport tool (its button in the pill, its key, the Draw
+    /// menu; phase 5, capability 81). Any tool but Select opens the
+    /// Design step.
+    Arm(dc_app::Tool),
+    /// Something the armed tool is told: where the pointer is, a click,
+    /// a key, a size typed in the tool bar (capabilities 81 and 83).
+    Tool(dc_app::tool::Event),
+    /// The snapping preferences (View ▸ Snapping, ⇧S; capability 82).
+    SetSnap(dc_app::SnapSettings),
+    /// The snap grid's spacing, mm, or `None` for the automatic one
+    /// (View ▸ Grid ▸ Spacing; capability 82a).
+    SetGridSpacing(Option<f64>),
 }
 
 impl Action {
@@ -1542,6 +1554,27 @@ impl Shell {
                 self.app.prefs_mut().sections.insert(name, true);
             }
             Action::Refused(reason) => self.message = Some(reason),
+            Action::Arm(tool) => {
+                self.app.arm(tool);
+                if self.app.tool() != dc_app::Tool::Select {
+                    // A tool works on the drawing, which is the Design
+                    // step's; a pick armed elsewhere would take its click.
+                    panels::project::arm_park_pick(ctx, false);
+                    panels::editor::arm_point_pick(ctx, None);
+                    self.go_to(Step::Design);
+                }
+                self.viewport.reset_clicks();
+                ctx.request_repaint();
+            }
+            Action::Tool(event) => {
+                let reply = self.app.tool_event(event);
+                if let Some(reason) = reply.refused {
+                    self.message = Some(reason);
+                }
+                ctx.request_repaint();
+            }
+            Action::SetSnap(snap) => self.app.prefs_mut().snap = snap.normalized(),
+            Action::SetGridSpacing(spacing) => self.app.prefs_mut().grid_spacing_mm = spacing,
             Action::OpenLibrary => {
                 self.library = Some(panels::library::Sheet::open(
                     self.config.as_ref(),
@@ -1725,8 +1758,9 @@ impl Shell {
                 self.go_to(Step::Operations);
             }
             Action::EditTargets(op) => {
-                // The mode is on the drawing: no pick stays armed under it.
-                viewport::tab_tool::arm(ctx, false);
+                // The mode is on the drawing: no tool and no pick stays
+                // armed under it.
+                self.app.arm(dc_app::Tool::Select);
                 panels::project::arm_park_pick(ctx, false);
                 panels::editor::arm_point_pick(ctx, None);
                 self.app.edit_targets(&op);
@@ -2086,11 +2120,29 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         Shortcut::GoToTools => Some(Action::GoTo(Step::Tools)),
         Shortcut::GoToOperations => Some(Action::GoTo(Step::Operations)),
         Shortcut::GoToExport => Some(Action::GoTo(Step::Export)),
-        Shortcut::TabTool
-        | Shortcut::Nudge
-        | Shortcut::NudgeCoarse
-        | Shortcut::NudgeFine
-        | Shortcut::Escape => None,
+        Shortcut::SelectTool => Some(Action::Arm(dc_app::Tool::Select)),
+        Shortcut::DrawLine
+        | Shortcut::DrawArc
+        | Shortcut::DrawSpline
+        | Shortcut::DrawRectangle
+        | Shortcut::DrawCircle
+        | Shortcut::DrawEllipse
+        | Shortcut::DrawPolygon
+        | Shortcut::DrawSlot => {
+            keyboard::drawing_of(command).map(|drawing| Action::Arm(dc_app::Tool::Draw(drawing)))
+        }
+        Shortcut::ToggleSnapping => {
+            let mut snap = app.prefs().snap.clone();
+            snap.enabled = !snap.enabled;
+            Some(Action::SetSnap(snap))
+        }
+        // On, or off again: the key and the button toggle it.
+        Shortcut::TabTool => Some(Action::Arm(if app.tool() == dc_app::Tool::Tab {
+            dc_app::Tool::Select
+        } else {
+            dc_app::Tool::Tab
+        })),
+        Shortcut::Nudge | Shortcut::NudgeCoarse | Shortcut::NudgeFine | Shortcut::Escape => None,
     }
 }
 
@@ -2193,7 +2245,11 @@ impl eframe::App for Shell {
         // Each part of the window's rectangle, for Tab's walk
         // (`shell::focus`).
         let mut regions: Vec<(Region, Rect)> = Vec::new();
-        let show_empty = steps::blank(self.app.project()) && self.step == Step::Design;
+        // A drawing tool needs the stock to draw on: the start screen
+        // stands aside for it.
+        let show_empty = steps::blank(self.app.project())
+            && self.step == Step::Design
+            && self.app.tool() == dc_app::Tool::Select;
         if show_empty && self.thumbnails.is_empty() {
             // Once, when the start screen first shows: never per frame.
             self.thumbnails = Example::ALL

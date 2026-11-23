@@ -375,12 +375,13 @@ pub(crate) const fn edit_word(shape: Option<&Shape>, edit: Edit) -> StrKey {
 /// the one that is chosen.
 fn choice(
     strings: &Strings,
-    label: StrKey,
+    (label, help): (StrKey, StrKey),
     options: &[(StrKey, ToolOption)],
     chosen: &ToolOption,
 ) -> Choice {
     Choice {
         label: strings.get(label).to_owned(),
+        help: strings.get(help).to_owned(),
         selected: options
             .iter()
             .position(|(_, option)| option == chosen)
@@ -400,7 +401,7 @@ pub(crate) fn gear_choices(strings: &Strings, gear: &Gear) -> Vec<Choice> {
     vec![
         choice(
             strings,
-            StrKey::DrawChoiceFlanks,
+            (StrKey::DrawChoiceFlanks, StrKey::DrawChoiceFlanksHelp),
             &[
                 (
                     StrKey::DrawChoiceFlanksInvolute,
@@ -415,7 +416,7 @@ pub(crate) fn gear_choices(strings: &Strings, gear: &Gear) -> Vec<Choice> {
         ),
         choice(
             strings,
-            StrKey::DrawChoiceRoot,
+            (StrKey::DrawChoiceRoot, StrKey::DrawChoiceRootHelp),
             &[
                 (
                     StrKey::DrawChoiceRootRounded,
@@ -431,7 +432,7 @@ pub(crate) fn gear_choices(strings: &Strings, gear: &Gear) -> Vec<Choice> {
         ),
         choice(
             strings,
-            StrKey::DrawChoiceCrest,
+            (StrKey::DrawChoiceCrest, StrKey::DrawChoiceCrestHelp),
             &[
                 (
                     StrKey::DrawChoiceCrestFlat,
@@ -458,7 +459,7 @@ fn choices(strings: &Strings, shape: &Shape) -> Vec<Choice> {
             };
             vec![choice(
                 strings,
-                StrKey::DrawChoiceCorners,
+                (StrKey::DrawChoiceCorners, StrKey::DrawChoiceCornersHelp),
                 &[
                     (
                         StrKey::DrawChoiceCornersSquare,
@@ -478,7 +479,7 @@ fn choices(strings: &Strings, shape: &Shape) -> Vec<Choice> {
         }
         Shape::Polygon { measured, .. } => vec![choice(
             strings,
-            StrKey::DrawChoiceMeasure,
+            (StrKey::DrawChoiceMeasure, StrKey::DrawChoiceMeasureHelp),
             &[
                 (
                     StrKey::DrawChoiceMeasureCorners,
@@ -609,6 +610,7 @@ pub fn section(project: &Project, strings: &Strings, id: &InstanceId) -> Option<
         .map(|field| SizeRow {
             field,
             label: strings.get(row_label(shape, field)).to_owned(),
+            help: strings.get(field.help()).to_owned(),
             text: size_of(shape, field).map_or_else(String::new, |value| {
                 let shown = match field.quantity() {
                     Quantity::Length => value * scale,

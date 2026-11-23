@@ -139,6 +139,20 @@ pub enum Icon {
     ZoomIn,
     /// `zoom-out`: the Viewport's Zoom out.
     ZoomOut,
+    /// `slash`: the Line tool.
+    Slash,
+    /// `radius`: the Arc tool.
+    Radius,
+    /// `ellipse`: the Ellipse tool.
+    Ellipse,
+    /// `hexagon`: the Polygon tool.
+    Hexagon,
+    /// `pill`: the Slot tool.
+    Pill,
+    /// `cog`: the Gear tool.
+    Cog,
+    /// `type`: the Text tool.
+    Type,
 }
 
 impl Icon {
@@ -208,6 +222,13 @@ impl Icon {
             Self::MousePointer => "mouse-pointer-2",
             Self::ZoomIn => "zoom-in",
             Self::ZoomOut => "zoom-out",
+            Self::Slash => "slash",
+            Self::Radius => "radius",
+            Self::Ellipse => "ellipse",
+            Self::Hexagon => "hexagon",
+            Self::Pill => "pill",
+            Self::Cog => "cog",
+            Self::Type => "type",
         }
     }
 
@@ -276,12 +297,19 @@ impl Icon {
             Self::MousePointer => '\u{e1c3}',
             Self::ZoomIn => '\u{e1b6}',
             Self::ZoomOut => '\u{e1b7}',
+            Self::Slash => '\u{e51d}',
+            Self::Radius => '\u{e52d}',
+            Self::Ellipse => '\u{e6b2}',
+            Self::Hexagon => '\u{e0f3}',
+            Self::Pill => '\u{e3bd}',
+            Self::Cog => '\u{e30b}',
+            Self::Type => '\u{e198}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 61] = [
+    pub const ALL: [Self; 68] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -343,6 +371,13 @@ impl Icon {
         Self::MousePointer,
         Self::ZoomIn,
         Self::ZoomOut,
+        Self::Slash,
+        Self::Radius,
+        Self::Ellipse,
+        Self::Hexagon,
+        Self::Pill,
+        Self::Cog,
+        Self::Type,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

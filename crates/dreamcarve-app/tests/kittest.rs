@@ -872,7 +872,16 @@ fn floating_tools_select_fit_and_zoom() {
         h.get_by_role_and_label(Role::Button, label).rect()
     };
     // One row at the pane's top left, in reading order.
-    let order = ["Select", "Tab tool", "Fit", "Zoom out", "Zoom in"];
+    // Phase 5 put Draw and its chevron between Select and the Tab tool.
+    let order = [
+        "Select",
+        "Draw: Rectangle",
+        "Drawing tools",
+        "Tab tool",
+        "Fit",
+        "Zoom out",
+        "Zoom in",
+    ];
     let rects: Vec<egui::Rect> = order.iter().map(|label| rect(&h, label)).collect();
     for (label, r) in order.iter().zip(&rects) {
         assert!(
@@ -887,7 +896,7 @@ fn floating_tools_select_fit_and_zoom() {
         "in order: {rects:?}"
     );
     let level = h.get_by_label_contains("Zoom level").rect();
-    assert!(rects[3].right() <= level.left() && level.right() <= rects[4].left());
+    assert!(rects[5].right() <= level.left() && level.right() <= rects[6].left());
     let status_top = 800.0 - STATUS_BAR_PX;
     assert!(
         h.query_all_by_label_contains("Zoom")
@@ -903,15 +912,25 @@ fn floating_tools_select_fit_and_zoom() {
                 if shape.rect == at && shape.fill == theme::DARK.surface_active)
         })
     };
-    assert!(pressed(&h, rects[0]), "Select shows pressed");
-    assert!(!pressed(&h, rects[1]));
+    assert!(pressed(&h, rect(&h, "Select")), "Select shows pressed");
+    assert!(!pressed(&h, rect(&h, "Tab tool")));
+    // Arming a tool opens the Design step, which may move the pane: the
+    // buttons are looked up again.
     h.get_by_role_and_label(Role::Button, "Tab tool").click();
     h.run();
-    assert!(pressed(&h, rects[1]), "the Tab tool shows pressed");
-    assert!(!pressed(&h, rects[0]));
+    assert_eq!(h.state().step(), dc_app::steps::Step::Design);
+    assert!(
+        pressed(&h, rect(&h, "Tab tool")),
+        "the Tab tool shows pressed"
+    );
+    assert!(!pressed(&h, rect(&h, "Select")));
     h.get_by_role_and_label(Role::Button, "Select").click();
     h.run();
-    assert!(pressed(&h, rects[0]), "Select takes the tool back");
+    assert!(
+        pressed(&h, rect(&h, "Select")),
+        "Select takes the tool back"
+    );
+    let pane = h.state().layout().viewport;
 
     // The zoom: a quarter in, a quarter out, about the pane's centre.
     let fit_view = camera(&h);
@@ -5704,6 +5723,7 @@ fn keyboard_shortcuts_reach_their_commands() {
         keyboard::Menu::File,
         keyboard::Menu::Edit,
         keyboard::Menu::Arrange,
+        keyboard::Menu::Draw,
         keyboard::Menu::View,
     ] {
         let title = h.state().app().strings().get(menu.title()).to_owned();
@@ -5916,6 +5936,39 @@ fn keyboard_shortcuts_reach_their_commands() {
         "T armed the Tab tool, so Escape disarmed it"
     );
     reached.insert(Key::TabTool);
+
+    // Phase 5: each drawing tool's key arms it, V takes Select up again,
+    // and Shift S turns snapping off and on.
+    for (key, command) in [
+        (egui::Key::P, Key::DrawLine),
+        (egui::Key::A, Key::DrawArc),
+        (egui::Key::S, Key::DrawSpline),
+        (egui::Key::M, Key::DrawRectangle),
+        (egui::Key::C, Key::DrawCircle),
+        (egui::Key::E, Key::DrawEllipse),
+        (egui::Key::G, Key::DrawPolygon),
+        (egui::Key::O, Key::DrawSlot),
+    ] {
+        h.key_press(key);
+        h.run();
+        assert_eq!(
+            Some(h.state().app().tool()),
+            keyboard::drawing_of(command).map(dc_app::Tool::Draw),
+            "{command:?}"
+        );
+        reached.insert(command);
+    }
+    h.key_press(egui::Key::V);
+    h.run();
+    assert_eq!(h.state().app().tool(), dc_app::Tool::Select, "V");
+    reached.insert(Key::SelectTool);
+    assert!(h.state().app().prefs().snap.enabled);
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::S);
+    h.run();
+    assert!(!h.state().app().prefs().snap.enabled, "Shift S");
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::S);
+    h.run();
+    reached.insert(Key::ToggleSnapping);
 
     let count = h.state().app().project().instances.len();
     h.key_press(egui::Key::Delete);
@@ -8537,6 +8590,9 @@ fn file_menu_labels_in_order() {
             "Go to Export",
             "Toolpaths…",
             "Warnings",
+            "Snapping",
+            "Snap To",
+            "Grid",
             "Fit View",
             "Zoom to Selection",
             "Appearance",

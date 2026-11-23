@@ -6,7 +6,8 @@
 //! Viewport's card shows, in place of an empty stock, while the project
 //! has no shapes, pictures or operations and the Design step is open. A
 //! heading and one sentence; **New from drawing…** (the one primary
-//! button), **New from picture…** and a quiet *Open…*; the three quick
+//! button), **New from picture…**, **Draw from scratch**, which arms the
+//! drawing tool on the empty stock (phase 5), and a quiet *Open…*; the three quick
 //! starts' projects, each a card with a thumbnail drawn from the
 //! example's own shapes; and the recent files. It goes when a shape
 //! arrives or another step is opened, where the stock shows.
@@ -144,6 +145,16 @@ fn actions(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             .tooltip(strings.get(StrKey::AppEmptyImportPictureHint));
         if button(ui, picture).clicked() {
             out.push(Action::NewFromPicture);
+        }
+        // Phase 5: a design can start on the empty stock (capability 81).
+        let draw = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppEmptyDraw))
+            .icon(Icon::PencilLine, theme::ICON_SMALL_PX)
+            .height(BUTTON_PX)
+            .tooltip(strings.get(StrKey::AppEmptyDrawHint));
+        if button(ui, draw).clicked() {
+            out.push(Action::Arm(dc_app::Tool::Draw(
+                crate::viewport::held_drawing(state.app),
+            )));
         }
         let shortcut = shortcut_text(ui.ctx(), Modifiers::COMMAND, Key::O);
         let open = ButtonSpec::new(Kind::Quiet, strings.get(StrKey::AppEmptyOpenProject))

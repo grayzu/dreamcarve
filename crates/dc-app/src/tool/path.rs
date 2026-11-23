@@ -235,6 +235,7 @@ impl App {
                 SizeRow {
                     field,
                     label: strings.get(super::draw::field_label(field)).to_owned(),
+                    help: strings.get(field.help()).to_owned(),
                     text: value.map_or_else(String::new, |value| size_text(field, value, units)),
                     quantity: field.quantity(),
                     pinned: pinned.is_some(),

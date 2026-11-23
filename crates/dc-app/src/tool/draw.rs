@@ -188,6 +188,7 @@ impl App {
                 SizeRow {
                     field,
                     label: strings.get(field_label(field)).to_owned(),
+                    help: strings.get(field.help()).to_owned(),
                     text: value.map_or_else(String::new, |value| size_text(field, value, units)),
                     quantity: field.quantity(),
                     pinned: pinned.is_some(),
@@ -675,6 +676,28 @@ pub(crate) const fn field_label(field: SizeField) -> StrKey {
         SizeField::Bore => StrKey::DrawFieldBore,
         SizeField::CornerSize => StrKey::DrawFieldCornerSize,
         SizeField::Sides => StrKey::DrawFieldSides,
+    }
+}
+
+pub(crate) const fn field_help(field: SizeField) -> StrKey {
+    match field {
+        SizeField::X => StrKey::DrawHelpX,
+        SizeField::Y => StrKey::DrawHelpY,
+        SizeField::Width => StrKey::DrawHelpWidth,
+        SizeField::Height => StrKey::DrawHelpHeight,
+        SizeField::Diameter => StrKey::DrawHelpDiameter,
+        SizeField::Radius => StrKey::DrawHelpRadius,
+        SizeField::Angle => StrKey::DrawHelpAngle,
+        SizeField::Length => StrKey::DrawHelpLength,
+        SizeField::SlotWidth => StrKey::DrawHelpSlotWidth,
+        SizeField::Teeth => StrKey::DrawHelpTeeth,
+        SizeField::PressureAngle => StrKey::DrawHelpPressureAngle,
+        SizeField::WholeDepth => StrKey::DrawHelpWholeDepth,
+        SizeField::RootFillet => StrKey::DrawHelpRootFillet,
+        SizeField::CrestRadius => StrKey::DrawHelpCrestRadius,
+        SizeField::Bore => StrKey::DrawHelpBore,
+        SizeField::CornerSize => StrKey::DrawHelpCornerSize,
+        SizeField::Sides => StrKey::DrawHelpSides,
     }
 }
 

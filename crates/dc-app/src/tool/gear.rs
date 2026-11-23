@@ -160,6 +160,7 @@ impl App {
                     SizeRow {
                         field,
                         label: strings.get(gear_label(field)).to_owned(),
+                        help: strings.get(field.help()).to_owned(),
                         text: value.map_or_else(String::new, |v| units::field_text(v, units)),
                         quantity: field.quantity(),
                         pinned: pinned.is_some(),
@@ -182,6 +183,7 @@ impl App {
             .map(|field| SizeRow {
                 field,
                 label: strings.get(gear_label(field)).to_owned(),
+                help: strings.get(field.help()).to_owned(),
                 text: shape::gear_size(&gear, field)
                     .map_or_else(String::new, |value| size_text(field, value, units)),
                 quantity: field.quantity(),

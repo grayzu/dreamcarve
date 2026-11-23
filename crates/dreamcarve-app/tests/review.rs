@@ -2536,3 +2536,144 @@ fn import_checks_review() {
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Where the phase 5 drawing pictures are committed.
+fn p5_drawing_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-5/review/drawing"),
+        PathBuf::from,
+    )
+}
+
+/// Moves the pointer to project point `(x, y)`, with Ctrl/⌘ held when
+/// `free`, so the point is not snapped.
+fn point_at(h: &mut H, x: f64, y: f64, free: bool) -> egui::Pos2 {
+    let at = common::on_screen(h, dc_geometry::Point::new(x, y));
+    let modifiers = if free {
+        egui::Modifiers::COMMAND
+    } else {
+        egui::Modifiers::NONE
+    };
+    h.event(egui::Event::ModifiersChanged(modifiers));
+    h.event(egui::Event::PointerMoved(at));
+    h.run();
+    at
+}
+
+/// A click at project point `(x, y)`, snapped as the preferences say.
+fn click_mm(h: &mut H, x: f64, y: f64) {
+    let at = point_at(h, x, y, false);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run();
+}
+
+/// The phase 5 drawing set (`docs/phase-5-worklog.md`, slice 9): the
+/// start screen with *Draw from scratch*; the Draw popover; a rectangle
+/// being drawn, with the tool bar, the snap marker and the size label; a
+/// path of a line and an arc; the Gear tool's sizes; and a drawn shape's
+/// Shape section in Properties. Dark and light at 1×, written to
+/// `docs/specs/phase-5/review/drawing/`, where they are committed.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review phase5_drawing -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed phase 5 drawing review pictures; run by hand"]
+fn phase5_drawing_screenshots() {
+    let out = p5_drawing_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    let dir = scratch("review-p5-drawing");
+
+    // 01: the start screen offers Draw from scratch.
+    let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
+        return;
+    };
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "01-start-screen-draw-from-scratch", &looks);
+
+    // 02: the Draw popover, on the empty stock.
+    click(&mut h, "Draw from scratch");
+    h.get_by_role_and_label(Role::Button, "Drawing tools")
+        .click();
+    h.run();
+    shoot_in(&mut h, &out, "02-draw-popover", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 03: a rectangle being drawn: the bar, the preview, its size.
+    click_mm(&mut h, 20.0, 20.0);
+    point_at(&mut h, 80.0, 60.0, false);
+    shoot_in(&mut h, &out, "03-rectangle-being-drawn", &looks);
+    click_mm(&mut h, 80.0, 60.0);
+
+    // 04: a circle snapping to the rectangle's corner.
+    h.key_press(egui::Key::C);
+    h.run();
+    click_mm(&mut h, 90.0, 80.0);
+    point_at(&mut h, 80.5, 59.5, false);
+    shoot_in(&mut h, &out, "04-circle-snapping-to-a-corner", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 05: a path: two lines, then an arc waiting for its through point.
+    h.key_press(egui::Key::P);
+    h.run();
+    click_mm(&mut h, 10.0, 70.0);
+    click_mm(&mut h, 40.0, 70.0);
+    click_mm(&mut h, 40.0, 84.0);
+    h.key_press(egui::Key::A);
+    h.run();
+    click_mm(&mut h, 80.0, 84.0);
+    point_at(&mut h, 60.0, 76.0, true);
+    shoot_in(&mut h, &out, "05-path-with-an-arc", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 06: the Gear tool's sizes. Nothing is selected, so no Inspector
+    // lies over the stock.
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.state_mut()
+        .app_mut()
+        .arm(dc_app::Tool::Draw(dc_app::Drawing::Gear));
+    h.run();
+    click_mm(&mut h, 30.0, 78.0);
+    click_mm(&mut h, 42.0, 78.0);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "06-gear-sizes", &looks);
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.key_press(egui::Key::V);
+    h.run();
+
+    // 07: the drawn rectangle selected, its corners rounded: the Shape
+    // section in Properties.
+    let rectangle = h.state().app().project().instances[0].id.clone();
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![rectangle]));
+    h.run();
+    h.get_by_role_and_label(Role::RadioButton, "Rounded")
+        .click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "07-shape-section", &looks);
+
+    // 08: View ▸ Snap To.
+    click(&mut h, "View");
+    h.get_by_role_and_label(Role::Button, "Snap To").click();
+    h.run();
+    shoot_in(&mut h, &out, "08-view-snap-to", &looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

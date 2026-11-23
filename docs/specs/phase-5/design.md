@@ -655,6 +655,64 @@ docs/book/src/{quick-start/first-design.md, user-guide/{drawing-shapes.md, snapp
 `dc-app`'s manifest gains `dc-text`; `dreamcarve-app`'s gains nothing.
 The Tab tool's armed flag moves from egui's memory to `Tool::Tab`.
 
+### The window (slice 9)
+
+The frame reads the app and pushes `Action`s, as phase 4's does; four
+are new: `Arm(Tool)`, `Tool(tool::Event)`, `SetSnap`, `SetGridSpacing`.
+Arming any tool but Select opens the Design step and hides the start
+screen, which also offers **Draw from scratch**.
+
+- `viewport/mod.rs`: while `Tool::Draw` is armed, `tool_gestures` has
+  the pointer in place of phase 4's `gestures`: the middle button and
+  Space still pan; the primary button's press and release, a
+  double-click, and each move are `tool::Event`s in project millimetres
+  with Shift, Alt and Ctrl/⌘. A move is sent only when the pointer or a
+  held key changes; over a pill or the tool bar the tool keeps its last
+  point, so a size is typed with the preview where the pointer left it;
+  off the pane it is told `Leave`. Enter, Escape, Backspace and Delete
+  go to the tool (`keys`), so Delete deletes nothing while drawing. The
+  selection's handles are not drawn and nothing under the pointer is
+  picked.
+- `viewport/draft.rs` paints `App::draft`: outlines flattened at the
+  zoom band's tolerance, the size labels in label pills, the snap
+  marker by kind with the kind's name, the dashed guide.
+- `viewport/tool_bar.rs` draws `App::tool_bar` under the pills,
+  centred. It measures its parts each frame and breaks into rows by the
+  widths of the frame before (`rows`), since egui's own wrapping splits
+  a label from its field. A field commits on leaving it
+  (`Event::Field`); Enter then sends `Key::Enter`; Escape in a pinned
+  field unpins it. A field's text is selected as it takes the keyboard.
+  Tab from the drawing goes to the first field: `shell::focus` says
+  what had the focus when Tab was pressed (`tab_from`) and is told the
+  press was taken (`tab_taken`), so its walk does not correct it.
+- `viewport/controls.rs`: the pill gains the Draw button (the icon of
+  `Prefs::drawing_tool`) and a 24 px chevron that opens the drawing
+  tools (`Drawing::is_ready`: all but Text until slice 24), each row
+  its icon, name and key. `Fit::of` drops, in order, *Layers*' label,
+  the zoom percentage, the two zoom buttons. `ways` takes one row of
+  the tool bar off Fit's top while a drawing tool is armed.
+- `shell/menu.rs`: **Draw** (the tools, the armed one checked),
+  **Shape** (*Convert to Path*), View ▸ **Snapping** (the switch, with
+  ⇧S), **Snap To** (the kinds), **Grid** (*Show Grid*, *Automatic
+  Spacing*, and the spacing typed). A checked row's accessible name
+  ends with its keys, as a plain row's does.
+- `keyboard.rs`: `SelectTool` (V), `DrawLine` (P), `DrawArc` (A),
+  `DrawSpline` (S), `DrawRectangle` (M), `DrawCircle` (C),
+  `DrawEllipse` (E), `DrawPolygon` (G), `DrawSlot` (O),
+  `ToggleSnapping` (⇧S), and the menu `Draw`; the Keyboard chapter's
+  table follows.
+- `panels/properties.rs`: `shape_section` draws `shape::section` above
+  the placement fields for the one shape selected; a choice takes the
+  panel's width under its label. `panels/side.rs`: no Inspector for
+  shapes while a drawing tool is armed.
+- Every size and choice has a help string (`SizeField::help`,
+  `Choice::help`), held to the rule every field's help is
+  (`dc-app` `tests/help.rs`).
+- `tests/strings.rs` `every_string_has_its_glyphs`: each character of
+  each string of the table has a glyph in the bundled fonts. egui stops
+  a frame that lays out a character with none, which a size label's
+  diameter sign did; the label reads `Ø 40`.
+
 ## Visual design
 
 Phase 4's tokens and components hold. Added to the palette, in both
@@ -662,7 +720,11 @@ themes, with the spec tables' tests extended: `viewport.construction`
 (the dashed construction outline), `viewport.draft` (a shape being
 drawn; the accent), `viewport.node` and `viewport.node_selected`,
 `viewport.handle` (a curve's handle and its stem), `viewport.snap`
-(the marker and its label), `viewport.measure`. The renderer gains two
+(the marker and its label), `viewport.measure`. Slice 9 adds none of
+them yet: the draft is drawn in `accent` and the snap marker in
+`viewport.shape.hover`, which are the colours `viewport.draft` and
+`viewport.snap` were to alias; the tokens come with the first slice
+that needs a colour of its own (construction geometry, nodes). The renderer gains two
 styles, `Construction` and `ConstructionSelected`; the draft, the
 nodes, the snap marker and the size labels are egui painter overlays,
 as phase 4's handles are. A node is a 9 px square, a handle a 7 px
@@ -670,10 +732,10 @@ circle, hit within 9 px and 7 px (upstream's radii). The snap marker is
 a square (endpoint), a triangle (midpoint), a circle with a cross
 (centre), a cross (intersection), a circle on the line (on outline), a
 right-angle mark (perpendicular) or a small plus (grid). Drawing-tool
-icons are Lucide's where one reads as the shape (`Square`, `Circle`,
-`Spline`, `Type`, `Slash`, `Hexagon`, `Cog`, `Ruler`, `Scissors`), and
-painter-drawn glyphs for Slot, Arc and Ellipse, as the operation kinds
-are.
+icons are Lucide's: `slash` (Line), `radius` (Arc), `spline`, `square`,
+`circle`, `ellipse`, `hexagon` (Polygon), `pill` (Slot), `cog` (Gear),
+`type` (Text); `ruler` and `scissors` come with Measure and Trim. The
+bundled Lucide has an ellipse and a pill, so no glyph is painter-drawn.
 
 ## Bundled fonts
 
@@ -848,11 +910,17 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `scale_by_two_points`, `pick::a_locked_picture_is_not_picked`,
 `tool::measure::distance_deltas_angle`, `length_and_area_of_a_shape` (acc 126).
 
-**The window (slices 9, 17, 24, 27)** `kittest::` `the_draw_popover_lists_the_tools`,
+**The window (slices 9, 17, 24, 27)** `dreamcarve-app` `tests/drawing.rs`
+(slice 9): `the_draw_popover_lists_the_tools`,
 `arming_a_tool_shows_its_bar`, `two_clicks_draw_a_rectangle`,
-`typed_sizes_commit_on_enter`, `a_double_click_shows_nodes`,
-`the_snapping_menu_toggles_a_kind`, `draw_from_scratch_opens_design`,
-`tool_keys_arm_and_escape_disarms`, `folders_drag_and_drop`,
+`typed_sizes_commit_on_enter`, `the_snapping_menu_toggles_a_kind`,
+`draw_from_scratch_opens_design`, `tool_keys_arm_and_escape_disarms`,
+`the_shape_section_edits_a_size`, `the_gear_tool_shows_its_sizes`;
+`kittest::` `keyboard_shortcuts_reach_their_commands`,
+`file_menu_labels_in_order` and `floating_tools_select_fit_and_zoom`
+extended; `review::phase5_drawing_screenshots` writes
+`docs/specs/phase-5/review/drawing/`; later slices
+`a_double_click_shows_nodes`, `folders_drag_and_drop`,
 `the_text_tool_previews_as_typed` (acc 129, 130); `strings::` and
 `theme::` scans as phase 4. `gui_equality::the_hook_plate_drawn_equals_the_cli`
 and `drawn_equals_imported` (acc 128).

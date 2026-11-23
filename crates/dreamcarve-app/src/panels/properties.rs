@@ -26,6 +26,13 @@
 //! selection and W or H resizes the one picture about its centre, each
 //! one undo step.
 //!
+//! With the one shape selected keeping its sizes (phase 5, capability 84)
+//! a **Shape** section stands above the placement fields
+//! ([`shape_section`]): the sizes it was drawn with, as it is placed, and
+//! its choices. A typed size or a choice is one `SetOutline`
+//! (`dc_app::shape`), and a size the shape cannot have is refused in the
+//! status bar.
+//!
 //! The link is view state, not project state: it lives in egui's memory,
 //! and the Viewport's corner handles read it too ([`proportions_free`]).
 
@@ -461,6 +468,117 @@ pub(crate) fn pictures(
         });
 }
 
+/// The unit a size of `quantity` shows in its field.
+const fn size_unit(quantity: dc_app::tool::Quantity, units: dc_project::Units) -> &'static str {
+    match quantity {
+        dc_app::tool::Quantity::Length => units::suffix(units),
+        dc_app::tool::Quantity::Angle => "°",
+        dc_app::tool::Quantity::Count => "",
+    }
+}
+
+/// The Shape section of the one selected shape `id` (capability 84): its
+/// kind as a heading, a row per size, a segmented control per choice,
+/// and the note under them. Nothing for a shape that keeps no sizes.
+fn shape_section(ui: &mut Ui, state: &FrameState<'_>, id: &InstanceId, out: &mut Vec<Action>) {
+    let app = state.app;
+    let strings = app.strings();
+    let project = app.project();
+    let palette = Palette::current(ui);
+    let Some(section) = dc_app::shape::section(project, strings, id) else {
+        return;
+    };
+    let units = project.display_units;
+    text(
+        ui,
+        &section.title,
+        TextStyle::Name(theme::TITLE.into()),
+        palette.text_primary,
+    );
+    ui.add_space(4.0);
+    let push = |result: Result<dc_app::Command, CommandError>, out: &mut Vec<Action>| match result {
+        Ok(command) => out.push(Action::Run(Box::new(command))),
+        Err(CommandError::NothingToDo) => {}
+        Err(e) => out.push(Action::Refused(e.to_string())),
+    };
+    for choice in &section.choices {
+        let labels: Vec<&str> = choice.options.iter().map(|o| o.label.as_str()).collect();
+        // The label over the control, which takes the panel's width: three
+        // words as long as *Chamfered* do not fit beside a label.
+        let label = crate::widgets::row::inline_label(ui, &choice.label, &choice.help);
+        let shown = ui.scope(|ui| {
+            if section.read_only {
+                ui.disable();
+            }
+            segmented(
+                ui,
+                Id::unique(("shape_choice", choice.label.as_str())),
+                &labels,
+                choice.selected,
+                ui.available_width(),
+            )
+        });
+        let picked = shown.inner;
+        let _ =
+            crate::widgets::help::control(ui, shown.response, &choice.label).labelled_by(label.id);
+        ui.add_space(4.0);
+        if let Some(option) = picked.and_then(|i| choice.options.get(i)) {
+            push(
+                dc_app::shape::set_option(project, strings, id, &option.option),
+                out,
+            );
+        }
+    }
+    // Why the sizes cannot be typed: the shape is stretched, which the
+    // note says, or it, or a linked copy of it, is locked.
+    let stretched = project
+        .instances
+        .iter()
+        .find(|instance| &instance.id == id)
+        .is_some_and(|instance| dc_app::shape::even_scale(instance.transform).is_none());
+    let read_only_reason = match &section.note {
+        Some(note) if stretched => note.as_str(),
+        _ => strings.get(StrKey::PlacementLockedNote),
+    };
+    for size in &section.rows {
+        let field_id = Id::unique(("shape_field", size.field));
+        let (label, output) = row(ui, &size.label, &size.help, |ui| {
+            unit_field(
+                ui,
+                UnitField {
+                    enabled: !section.read_only,
+                    disabled_reason: section.read_only.then_some(read_only_reason),
+                    ..UnitField::new(
+                        field_id,
+                        &size.label,
+                        &size.text,
+                        size_unit(size.quantity, units),
+                    )
+                },
+            )
+        });
+        let _ = output.response.labelled_by(label.id);
+        if let Some(typed) = output.committed {
+            push(
+                dc_app::shape::set_size(project, strings, id, size.field, &typed),
+                out,
+            );
+        }
+    }
+    if let Some(note) = &section.note {
+        text(ui, note, TextStyle::Small, palette.text_secondary);
+    }
+    ui.add_space(8.0);
+    let (rule, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().hline(
+        rule.x_range(),
+        rule.center().y,
+        Stroke::new(1.0, palette.border_default),
+    );
+    ui.add_space(8.0);
+}
+
 /// Draws the placement of `ids`.
 pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out: &mut Vec<Action>) {
     let strings = state.app.strings();
@@ -472,6 +590,10 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out:
     egui::Frame::NONE
         .inner_margin(INSPECTOR_MARGIN)
         .show(ui, |ui| {
+            // The sizes the one shape was drawn with, above where it is.
+            if let [id] = ids {
+                shape_section(ui, state, id, out);
+            }
             let mut middles = [0.0; 4];
             for (field, middle) in properties::fields(&placement).iter().zip(&mut middles) {
                 *middle = field_row(ui, state, &placement, ids, *field, out);

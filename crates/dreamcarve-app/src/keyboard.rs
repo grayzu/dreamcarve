@@ -70,6 +70,26 @@ pub enum Command {
     GoToExport,
     /// The Viewport's Tab tool, on or off (#546).
     TabTool,
+    /// The Viewport's Select tool (phase 5, capability 81).
+    SelectTool,
+    /// Draw ▸ Line.
+    DrawLine,
+    /// Draw ▸ Arc.
+    DrawArc,
+    /// Draw ▸ Spline.
+    DrawSpline,
+    /// Draw ▸ Rectangle.
+    DrawRectangle,
+    /// Draw ▸ Circle.
+    DrawCircle,
+    /// Draw ▸ Ellipse.
+    DrawEllipse,
+    /// Draw ▸ Polygon.
+    DrawPolygon,
+    /// Draw ▸ Slot.
+    DrawSlot,
+    /// View ▸ Snapping ▸ Snap, on or off (capability 82).
+    ToggleSnapping,
     /// Nudge the selection 1 mm.
     Nudge,
     /// Nudge the selection 10 mm.
@@ -89,6 +109,8 @@ pub enum Menu {
     Edit,
     /// Arrange (#617).
     Arrange,
+    /// Draw (phase 5, capability 81).
+    Draw,
     /// View.
     View,
 }
@@ -101,6 +123,7 @@ impl Menu {
             Self::File => StrKey::AppMenuFile,
             Self::Edit => StrKey::AppMenuEdit,
             Self::Arrange => StrKey::AppMenuArrange,
+            Self::Draw => StrKey::AppMenuDraw,
             Self::View => StrKey::AppMenuView,
         }
     }
@@ -455,6 +478,93 @@ pub const SHORTCUTS: &[Shortcut] = &[
         &[Key::T],
         "Turn the Tab tool on or off: a click on a shape's outline adds a tab",
     ),
+    key_only(
+        Command::SelectTool,
+        NONE,
+        &[Key::V],
+        "Take up the Select tool, putting down the tool in use",
+    ),
+    menu_row(
+        Command::DrawLine,
+        NONE,
+        &[Key::P],
+        Menu::Draw,
+        StrKey::DrawNameLine,
+        "Draw lines: a path of straight segments, a click a point. While a path is being drawn, the next segment is a line",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::DrawArc,
+        NONE,
+        &[Key::A],
+        Menu::Draw,
+        StrKey::DrawNameArc,
+        "Draw arcs: its end, then a point it passes through. While a path is being drawn, the next segment is an arc",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::DrawSpline,
+        NONE,
+        &[Key::S],
+        Menu::Draw,
+        StrKey::DrawNameSpline,
+        "Draw a smooth curve through the points clicked. While a path is being drawn, the next segments are curves",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::DrawRectangle,
+        NONE,
+        &[Key::M],
+        Menu::Draw,
+        StrKey::DrawNameRectangle,
+        "Draw rectangles",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::DrawCircle,
+        NONE,
+        &[Key::C],
+        Menu::Draw,
+        StrKey::DrawNameCircle,
+        "Draw circles",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::DrawEllipse,
+        NONE,
+        &[Key::E],
+        Menu::Draw,
+        StrKey::DrawNameEllipse,
+        "Draw ellipses",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::DrawPolygon,
+        NONE,
+        &[Key::G],
+        Menu::Draw,
+        StrKey::DrawNamePolygon,
+        "Draw regular polygons",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::DrawSlot,
+        NONE,
+        &[Key::O],
+        Menu::Draw,
+        StrKey::DrawNameSlot,
+        "Draw slots",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::ToggleSnapping,
+        SHIFT,
+        &[Key::S],
+        Menu::View,
+        StrKey::AppMenuSnap,
+        "Turn snapping on or off",
+        Scope::OutsideFields,
+    ),
     key_only(Command::Nudge, NONE, ARROWS, "Nudge the selection 1 mm"),
     key_only(
         Command::NudgeCoarse,
@@ -472,9 +582,44 @@ pub const SHORTCUTS: &[Shortcut] = &[
         Command::Escape,
         NONE,
         &[Key::Escape],
-        "Clear the selection, turn off the Tab tool, stop picking on the Viewport, or close a menu",
+        "Step back out of what a tool has begun, put the tool down, clear the selection, stop picking on the Viewport, or close a menu",
     ),
 ];
+
+/// The drawing tool `command` arms, for the Draw menu's commands.
+#[must_use]
+pub const fn drawing_of(command: Command) -> Option<dc_app::Drawing> {
+    use dc_app::Drawing;
+    Some(match command {
+        Command::DrawLine => Drawing::Line,
+        Command::DrawArc => Drawing::Arc,
+        Command::DrawSpline => Drawing::Spline,
+        Command::DrawRectangle => Drawing::Rectangle,
+        Command::DrawCircle => Drawing::Circle,
+        Command::DrawEllipse => Drawing::Ellipse,
+        Command::DrawPolygon => Drawing::Polygon,
+        Command::DrawSlot => Drawing::Slot,
+        _ => return None,
+    })
+}
+
+/// The command that arms `drawing`, when it has a key: the Gear tool is
+/// in the menu and the popover only.
+#[must_use]
+pub const fn command_of(drawing: dc_app::Drawing) -> Option<Command> {
+    use dc_app::Drawing;
+    Some(match drawing {
+        Drawing::Line => Command::DrawLine,
+        Drawing::Arc => Command::DrawArc,
+        Drawing::Spline => Command::DrawSpline,
+        Drawing::Rectangle => Command::DrawRectangle,
+        Drawing::Circle => Command::DrawCircle,
+        Drawing::Ellipse => Command::DrawEllipse,
+        Drawing::Polygon => Command::DrawPolygon,
+        Drawing::Slot => Command::DrawSlot,
+        Drawing::Gear | Drawing::Text => return None,
+    })
+}
 
 /// The shortcut of `command` (every command has one row).
 #[must_use]
