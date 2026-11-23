@@ -87,6 +87,9 @@ fn name(strings: &dc_app::Strings, bar: &ToolBar) -> String {
         Tool::Adjust(dc_app::tool::Adjust::Array) => {
             strings.get(StrKey::AdjustNameArray).to_owned()
         }
+        Tool::Adjust(dc_app::tool::Adjust::PictureScale) => {
+            strings.get(StrKey::ScaleName).to_owned()
+        }
         Tool::Select | Tool::Tab | Tool::Measure => String::new(),
     }
 }

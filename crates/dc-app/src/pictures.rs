@@ -30,11 +30,13 @@
 //! [`crate::App::click_picture`], [`crate::viewport::pick::Hit::Bitmap`]
 //! and [`crate::tree::bitmap_menu`].
 
-use dc_geometry::{Point, Rect};
+use dc_geometry::{Point, Rect, approx_eq};
 use dc_job::picture::PictureSize;
 use dc_project::{Bitmap, BitmapId, Operation, Project};
 
-use crate::command::{Command, check_bitmap_move, check_bitmap_resize};
+use crate::command::{
+    Command, check_bitmap_move, check_bitmap_opacity, check_bitmap_place, check_bitmap_resize,
+};
 use crate::error::CommandError;
 use crate::mixed::common_bool;
 use crate::properties::{Edit, Field, Placement};
@@ -57,6 +59,9 @@ pub struct PictureProperties {
     /// The one selected picture's size, pixels, width then height; `None`
     /// for several.
     pub pixels: Option<(u32, u32)>,
+    /// How strongly the pictures show on the Viewport, 0.1 to 1 (phase 5,
+    /// capability 101); `None` when they differ.
+    pub opacity_fraction: Option<f64>,
 }
 
 /// `bitmap`'s footprint in project space, mm, Y-up.
@@ -120,6 +125,125 @@ pub fn properties(project: &Project, ids: &[BitmapId]) -> Option<PictureProperti
         },
         name: one.map(|b| b.name.clone()),
         pixels: one.map(|b| (b.width_px, b.height_px)),
+        opacity_fraction: common_opacity(&pictures),
+    })
+}
+
+/// The opacity `pictures` all have; `None` when they differ or there are
+/// none.
+fn common_opacity(pictures: &[&Bitmap]) -> Option<f64> {
+    let (first, rest) = pictures.split_first()?;
+    rest.iter()
+        .all(|b| approx_eq(b.opacity_fraction, first.opacity_fraction, 1e-9))
+        .then_some(first.opacity_fraction)
+}
+
+/// What the Opacity field shows: the pictures' opacity as a percentage,
+/// `40`; empty when they differ.
+#[must_use]
+pub fn opacity_text(properties: &PictureProperties) -> String {
+    properties
+        .opacity_fraction
+        .map_or_else(String::new, |opacity| {
+            crate::units::field_text(opacity * 100.0, dc_project::Units::Mm)
+        })
+}
+
+/// The command `text`, typed into the Opacity field as a percentage with
+/// or without its sign, makes for the pictures `ids` (capability 101).
+/// A locked picture takes it: a lock stops moves, not looks.
+///
+/// # Errors
+///
+/// [`CommandError::NotAQuantity`], saying what is accepted, for text
+/// that is not a percentage from 10 to 100; otherwise what
+/// [`Command::SetBitmapOpacity`] would refuse, found before it runs:
+/// [`CommandError::NothingSelected`], [`CommandError::UnknownBitmap`],
+/// and [`CommandError::NothingToDo`] for the opacity they have (no undo
+/// step).
+pub fn opacity(
+    project: &Project,
+    strings: &Strings,
+    ids: &[BitmapId],
+    text: &str,
+) -> Result<Command, CommandError> {
+    let refused = || CommandError::NotAQuantity {
+        text: text.to_owned(),
+        reason: strings.fmt(
+            StrKey::PlacementPictureOpacityRefused,
+            &[("text", text.trim())],
+        ),
+    };
+    let percent: f64 = text
+        .trim()
+        .trim_end_matches('%')
+        .trim_end()
+        .parse()
+        .map_err(|_| refused())?;
+    let opacity_fraction = percent / 100.0;
+    if !(dc_project::MIN_BITMAP_OPACITY..=1.0).contains(&opacity_fraction) {
+        return Err(refused());
+    }
+    check_bitmap_opacity(project, ids, opacity_fraction)?;
+    Ok(Command::SetBitmapOpacity {
+        ids: ids.to_vec(),
+        opacity_fraction,
+    })
+}
+
+/// Two points nearer than this, mm, are one: there is no distance
+/// between them to scale by.
+pub const MIN_SCALE_SPAN_MM: f64 = 1e-6;
+
+/// Picture `id` scaled by two points (capability 101; PureCutCNC's
+/// calibration is a resize by reference with a typed factor): `first`
+/// and `second` are points on it, mm, and `distance_mm` is how far apart
+/// they really are. The picture is resized about `first`, proportions
+/// kept, so that they are that far apart, as one command.
+///
+/// # Errors
+///
+/// [`CommandError::InvalidValue`] for a distance that is not a positive
+/// length, or two points that are one ([`MIN_SCALE_SPAN_MM`]); otherwise
+/// what [`Command::PlaceBitmap`] would refuse, found before it runs:
+/// [`CommandError::UnknownBitmap`], [`CommandError::PictureLocked`],
+/// [`CommandError::Job`] for a footprint past the coordinate limit, and
+/// [`CommandError::NothingToDo`] for the distance they have (no undo
+/// step).
+pub fn scale_by_two_points(
+    project: &Project,
+    id: &BitmapId,
+    first: Point,
+    second: Point,
+    distance_mm: f64,
+) -> Result<Command, CommandError> {
+    let Some(bitmap) = project.bitmaps.iter().find(|b| b.id == *id) else {
+        return Err(CommandError::UnknownBitmap { id: id.clone() });
+    };
+    if !(distance_mm.is_finite() && distance_mm > 0.0) {
+        return Err(CommandError::InvalidValue {
+            field: "scale.distance_mm",
+            value: distance_mm,
+        });
+    }
+    let apart_mm = first.distance_to(second);
+    if !(apart_mm.is_finite() && apart_mm >= MIN_SCALE_SPAN_MM) {
+        return Err(CommandError::InvalidValue {
+            field: "scale.points_apart_mm",
+            value: apart_mm,
+        });
+    }
+    let factor = distance_mm / apart_mm;
+    // The first point stays where it is on the stock and on the picture.
+    let x_mm = first.x - (first.x - bitmap.x_mm) * factor;
+    let y_mm = first.y - (first.y - bitmap.y_mm) * factor;
+    let width_mm = bitmap.width_mm * factor;
+    check_bitmap_place(project, id, x_mm, y_mm, width_mm)?;
+    Ok(Command::PlaceBitmap {
+        id: id.clone(),
+        x_mm,
+        y_mm,
+        width_mm,
     })
 }
 

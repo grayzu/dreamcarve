@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 24: 3,711.
+`0.5.0-alpha.1`. After slice 25: 3,716.
 
 ## Decisions waiting for the maintainer
 
@@ -264,6 +264,16 @@ Decisions made while building are added here.
   is no longer also taken by the armed tool as a point. The words in
   Properties are written when the field is left, not as they are
   typed, so one edit is one undo step.
+- Slice 25: *Set scale…* is a mode with the tool bar, as Offset… and
+  Array… are, not a popover. Its two points do not snap: they are marks
+  in the picture. Opacity can be set on a locked picture (a lock stops
+  moves, not looks), and for several pictures at once. A locked picture
+  is left out of a marquee as well as a click; phase 4 picked a locked
+  picture as it picks a locked shape, and that test now says otherwise.
+  A locked *shape* is still picked on the Viewport. Fading a picture
+  regenerates no Photo V-Carve: the digest reads the bitmap with its
+  opacity left out. **Done** is offered once the distance typed
+  differs from the one the points have.
 
 ## Slices
 
@@ -319,7 +329,7 @@ The numbers are the design spec's.
 
 | Slice | What | Status |
 | --- | --- | --- |
-| 25 | Backdrops: opacity, scale by two points | todo |
+| 25 | Backdrops: `SetBitmapOpacity` and `PlaceBitmap`, `pictures::{opacity, scale_by_two_points}`, the digest without opacity, a locked picture not picked on the Viewport, *Set scale…* (`tool::scale`), the Opacity field and *Set scale…* in Properties, the backdrop review pictures. Gate: 3,716 tests | done |
 | 26 | Measure and live sizes | todo |
 
 ### 5.6 Release

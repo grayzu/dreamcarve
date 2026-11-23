@@ -2597,8 +2597,10 @@ fn picture_project(dir: &std::path::Path) -> std::path::PathBuf {
 /// step; the arrow keys nudge it; X typed in Properties moves it and W
 /// resizes it about its centre with the height following; a corner
 /// handle resizes it the same way; a marquee from empty stage takes it;
-/// locked, it refuses a drag with the reason in the status bar; Escape
-/// clears the selection.
+/// Escape clears the selection. Locked, it is a backdrop (phase 5,
+/// capability 101): a drag across it is a marquee that takes nothing,
+/// and, selected from its row, it refuses a nudge with the reason in the
+/// status bar.
 #[test]
 fn picture_is_selected_and_moved_on_the_viewport() {
     let dir = scratch("picture-move");
@@ -2740,7 +2742,8 @@ fn picture_is_selected_and_moved_on_the_viewport() {
     common::drag(&mut h, outside, across, egui::PointerButton::Primary);
     assert_eq!(selected_pictures(&h), ["b1"], "the marquee touched it");
 
-    // Locked, from its Properties: a drag is refused, and says why.
+    // Locked, from its Properties, it is a backdrop: a drag across it
+    // moves nothing and is a marquee over nothing.
     h.get_by_role_and_label(Role::Switch, "Locked").click();
     h.run();
     assert!(bitmap_of(&h, "b1").locked);
@@ -2760,6 +2763,15 @@ fn picture_is_selected_and_moved_on_the_viewport() {
         egui::PointerButton::Primary,
     );
     assert_eq!(bitmap_of(&h, "b1"), locked, "a locked picture stays");
+    assert_eq!(undo_steps(&h), steps);
+    assert!(selected_pictures(&h).is_empty(), "and is not picked");
+    // Its row still selects it; a nudge is refused, and says why.
+    h.get_by_role_and_label(Role::TreeItem, "gradient").click();
+    h.run();
+    assert_eq!(selected_pictures(&h), ["b1"]);
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(bitmap_of(&h, "b1"), locked);
     assert_eq!(undo_steps(&h), steps);
     assert_eq!(h.state().message(), Some("picture “gradient” is locked"));
     assert!(

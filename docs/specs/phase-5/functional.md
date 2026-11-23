@@ -640,15 +640,20 @@ capability 52); what a tool holds before it commits is not project data.
     traced over; this phase gives it what tracing needs:
     - **Opacity** (Properties, 10 % to 100 %): how strongly the picture
       shows on the Viewport. It is saved with the project and changes
-      nothing a Photo V-Carve carves.
-    - **Scale by two points** (Properties ▸ *Set scale…*): click two
-      points on the picture and type the real distance between them;
-      the picture is resized about the first point so that they are
-      that far apart. PureCutCNC's calibration is a resize by reference
+      nothing a Photo V-Carve carves, so no toolpath is regenerated for
+      it. A locked picture can still be faded.
+    - **Scale by two points** (Properties ▸ *Set scale…*, for one
+      picture): click two points on the picture and type the real
+      distance between them in the tool bar; the picture is resized
+      about the first point so that they are that far apart, its
+      proportions kept, as one undo step. The points are taken where
+      the pointer is, with no snapping; a third click moves the second
+      point, and `Escape` takes the last point back. A locked picture
+      is not scaled. PureCutCNC's calibration is a resize by reference
       with a typed factor.
     - A picture does not snap, and a locked one cannot be selected by a
-      click on the Viewport, so that drawing over it never grabs it; its
-      row in the Design Tree still selects it.
+      click or a marquee on the Viewport, so that drawing over it never
+      grabs it; its row in the Design Tree still selects it.
 
     Rotating a picture stays out of scope (phase 3's decision): a
     crooked scan is straightened before it is added.

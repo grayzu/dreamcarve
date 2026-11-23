@@ -419,7 +419,9 @@ fn two_pictures_ready() -> Harness {
 
 /// Slice 15 (#544); capabilities 56 and 57: a click inside a picture's
 /// footprint picks it: the one drawn on top where two overlap (the last
-/// in file order), a locked one too, a hidden one never. A picture is
+/// in file order), a hidden one never. A locked one was picked too until
+/// phase 5 made a locked picture a backdrop (capability 101;
+/// `backdrops::a_locked_picture_is_not_picked`). A picture is
 /// under everything else, so it is picked only where the click lands on
 /// no shape, tab or toolpath.
 #[test]
@@ -450,7 +452,7 @@ fn a_click_inside_a_footprint_picks_the_picture_under_everything_else() {
         "its edge is its own"
     );
 
-    // Hidden: not picked, so the picture under it is. Locked: picked.
+    // Hidden: not picked, so the picture under it is.
     harness
         .run(Command::SetBitmapFlags {
             ids: vec![b("b2")],
@@ -458,6 +460,13 @@ fn a_click_inside_a_footprint_picks_the_picture_under_everything_else() {
             locked: None,
         })
         .expect("hides");
+    let scene = harness.app.scene().clone();
+    assert_eq!(pick::picture_at(&scene, &camera, at(5.0, 5.0)), None);
+    assert_eq!(
+        pick::picture_at(&scene, &camera, at(15.0, 15.0)),
+        Some(b("b1"))
+    );
+    // Locked: a backdrop, which a click does not pick.
     harness
         .run(Command::SetBitmapFlags {
             ids: vec![b("b1")],
@@ -466,11 +475,7 @@ fn a_click_inside_a_footprint_picks_the_picture_under_everything_else() {
         })
         .expect("locks");
     let scene = harness.app.scene().clone();
-    assert_eq!(pick::picture_at(&scene, &camera, at(5.0, 5.0)), None);
-    assert_eq!(
-        pick::picture_at(&scene, &camera, at(15.0, 15.0)),
-        Some(b("b1"))
-    );
+    assert_eq!(pick::picture_at(&scene, &camera, at(15.0, 15.0)), None);
 
     // Under the shapes: on the plaque with a picture across it, a click
     // on a shape is the shape's, and the picture's only on empty stock.

@@ -387,9 +387,59 @@ fn picture_text_row(
     output.committed
 }
 
+/// What a picture traced over needs (phase 5, capability 101): the
+/// pictures' **Opacity**, a percentage, which a lock does not stop; and,
+/// for one picture, **Set scale…**, which arms the Viewport's mode that
+/// scales it by two points (`dc_app::tool::Adjust::PictureScale`).
+fn backdrop_rows(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    shown: &PictureProperties,
+    ids: &[BitmapId],
+    out: &mut Vec<Action>,
+) {
+    let strings = state.app.strings();
+    let label = strings.get(StrKey::PlacementPictureOpacity);
+    let help = strings.get(StrKey::PlacementPictureOpacityHelp);
+    let value = pictures::opacity_text(shown);
+    let (label_response, output) = row(ui, label, help, |ui| {
+        ui.set_max_width((ui.available_width() - LINK_GAP_PX - LINK_COLUMN_PX).max(0.0));
+        let id = Id::unique(("picture_field", "opacity"));
+        unit_field(ui, UnitField::new(id, label, &value, "%"))
+    });
+    let _ = output.response.labelled_by(label_response.id);
+    if let Some(typed) = output.committed {
+        match pictures::opacity(state.app.project(), strings, ids, &typed) {
+            Ok(command) => out.push(Action::run(command)),
+            Err(CommandError::NothingToDo) => {}
+            Err(e) => out.push(Action::Refused(e.to_string())),
+        }
+    }
+    if shown.placement.count == 1 {
+        let name = strings.get(StrKey::PlacementPictureSetScale);
+        let locked = shown.placement.any_locked;
+        let help = if locked {
+            strings.get(StrKey::PlacementLockedNote)
+        } else {
+            strings.get(StrKey::PlacementPictureSetScaleHelp)
+        };
+        ui.add_space(4.0);
+        let spec = ButtonSpec::new(Kind::Secondary, name)
+            .tooltip(help)
+            .enabled(!locked);
+        if button(ui, spec).clicked() {
+            out.push(Action::Arm(dc_app::Tool::Adjust(
+                dc_app::tool::Adjust::PictureScale,
+            )));
+        }
+        ui.add_space(4.0);
+    }
+}
+
 /// Draws the Properties of the pictures `ids` (capabilities 56 and 58):
 /// the one picture's name; X and Y; W and H with the link closed; its
-/// pixels, read-only; its lock; and the Photo V-Carves that carve it.
+/// pixels, read-only; its opacity and *Set scale…* ([`backdrop_rows`]);
+/// its lock; and the Photo V-Carves that carve it.
 pub(crate) fn pictures(
     ui: &mut Ui,
     state: &FrameState<'_>,
@@ -430,6 +480,7 @@ pub(crate) fn pictures(
                 let help = strings.get(StrKey::PlacementPicturePixelsHelp);
                 picture_text_row(ui, (label, "pixels", help), &pixels, false);
             }
+            backdrop_rows(ui, state, &shown, ids, out);
             // The lock: a switch, and what it stops while it is on.
             let locked = shown.placement.locked == Some(true);
             let lock_label = strings.get(StrKey::PlacementPictureLocked);

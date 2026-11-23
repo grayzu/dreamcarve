@@ -128,6 +128,8 @@ fn kind(command: &Command) -> &'static str {
         Command::DeleteBitmaps(_) => "DeleteBitmaps",
         Command::MoveBitmaps { .. } => "MoveBitmaps",
         Command::ResizeBitmap { .. } => "ResizeBitmap",
+        Command::SetBitmapOpacity { .. } => "SetBitmapOpacity",
+        Command::PlaceBitmap { .. } => "PlaceBitmap",
         Command::TransformInstances { .. } => "TransformInstances",
         Command::RotateInstances { .. } => "RotateInstances",
         Command::FlipInstances { .. } => "FlipInstances",
@@ -313,10 +315,26 @@ fn every_command() -> Vec<(Project, Command)> {
             },
         ),
         (
-            with_picture,
+            with_picture.clone(),
             Command::ResizeBitmap {
                 id: BitmapId::new("b1"),
                 size: PictureSize::Height { height_mm: 33.3 },
+            },
+        ),
+        (
+            with_picture.clone(),
+            Command::SetBitmapOpacity {
+                ids: vec![BitmapId::new("b1")],
+                opacity_fraction: 0.4,
+            },
+        ),
+        (
+            with_picture,
+            Command::PlaceBitmap {
+                id: BitmapId::new("b1"),
+                x_mm: -5.0,
+                y_mm: 2.5,
+                width_mm: 64.0,
             },
         ),
         (

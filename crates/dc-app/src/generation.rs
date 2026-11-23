@@ -312,7 +312,18 @@ pub fn digest(project: &Project, op: &OperationId) -> u64 {
     }
     for id in bitmaps {
         hash.put("bitmap", id);
-        hash.put("is", &project.bitmaps.iter().find(|b| &b.id == id));
+        // How strongly a picture shows is not what it is: fading a
+        // backdrop regenerates nothing (phase 5, capability 101).
+        let carved =
+            project
+                .bitmaps
+                .iter()
+                .find(|b| &b.id == id)
+                .map(|bitmap| dc_project::Bitmap {
+                    opacity_fraction: 1.0,
+                    ..bitmap.clone()
+                });
+        hash.put("is", &carved);
     }
     hash.put("stock", &project.stock);
     hash.put("origin", &project.origin);

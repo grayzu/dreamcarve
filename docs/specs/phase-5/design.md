@@ -1087,6 +1087,48 @@ the tool bar of slice 9 is its form.
   with `words_field`, whose draft is kept beside the field until it is
   left. `keyboard.rs`: `DrawText` (⇧T).
 
+### Backdrops (slice 25)
+
+- `Command::SetBitmapOpacity { ids, opacity_fraction }`
+  (`command::bitmaps::check_opacity`): 0.1 to 1, refused outside it and
+  when nothing would change. A lock does not refuse it: a lock stops a
+  picture moving, and its opacity moves nothing.
+  `Command::PlaceBitmap { id, x_mm, y_mm, width_mm }`
+  (`check_place`): a corner and a width, the height following the
+  pixels as at import; refused when locked, out of range, or already
+  there.
+- `dc_app::pictures`: `PictureProperties::opacity_fraction` (`None`
+  when the pictures differ), `opacity_text`, `opacity(project, strings,
+  ids, text)` (a percentage typed with or without its sign), and
+  `scale_by_two_points(project, id, first, second, distance_mm)`:
+  `factor = distance / |second − first|`, the corner moved so that
+  `first` stays where it is on the stock and on the picture, the width
+  multiplied; one `PlaceBitmap`. Two points nearer than
+  `MIN_SCALE_SPAN_MM` (1e-6) are one.
+- `generation::digest` hashes each bitmap an operation carves with its
+  opacity set to 1, so fading a backdrop regenerates nothing.
+  `SceneBitmap::opacity_fraction` is what the Viewport multiplies a
+  picture quad's strength by.
+- `viewport::pick::picture_at` and `pictures_touching` leave out a
+  locked picture: neither a click nor a marquee on the Viewport takes
+  it. `App::select` (the Design Tree's row) still does.
+- *Set scale…* is `Tool::Adjust(Adjust::PictureScale)` (`tool::scale`,
+  `ScaleDraft { first, second, distance_mm }`), a mode with the tool
+  bar as Offset… and Array… are. It acts on the one picture selected.
+  A press is a point, taken where the pointer is with no snapping (what
+  is clicked is a mark in the picture, which nothing snaps to); a third
+  press moves the second point. With both, the bar has one field,
+  *Distance*, holding the distance the points have now; a different one
+  typed makes **Done** possible. `Escape` takes the last point back,
+  and with none leaves the mode. The draft is the line between the
+  points (to the pointer until there are two), its length, and a mark
+  on each point (`Draft::nodes`).
+- The window: `panels::properties::backdrop_rows` under a picture's
+  Pixels row: *Opacity* (a `%` field, for one picture or several) and,
+  for one picture, the *Set scale…* button, disabled while it is
+  locked. `viewport::pictures::quads` multiplies each quad's opacity by
+  the picture's own.
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the
@@ -1316,8 +1358,11 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `a_name_with_a_path_stays_in_the_folder`; in the window `editing::the_text_tool_previews_as_typed`
 and `add_font_copies_the_file_and_chooses_it`, and `review::phase5_text_screenshots`.
 
-**Tracing and measuring (slices 25–26)** `dc_app::pictures::opacity_is_saved_and_cuts_nothing`,
-`scale_by_two_points`, `pick::a_locked_picture_is_not_picked`,
+**Tracing and measuring (slices 25–26)** `dc-app` `tests/backdrops.rs`:
+`opacity_is_saved_and_cuts_nothing`, `scale_by_two_points`,
+`set_scale_is_two_clicks_and_a_distance`, `a_locked_picture_is_not_picked`;
+in the window `editing::a_backdrop_is_faded_and_scaled_by_two_points`
+and `review::phase5_backdrop_screenshots`;
 `tool::measure::distance_deltas_angle`, `length_and_area_of_a_shape` (acc 126).
 
 **The window (slices 9, 17, 24, 27)** `dreamcarve-app` `tests/drawing.rs`

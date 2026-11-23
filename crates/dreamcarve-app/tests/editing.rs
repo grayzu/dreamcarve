@@ -1233,3 +1233,118 @@ fn add_font_copies_the_file_and_chooses_it() {
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Types `text` over what the field `label` holds, then `Enter`.
+fn retype(h: &mut Harness<'_, Shell>, label: &str, text: &str) {
+    h.get_by_role_and_label(Role::TextInput, label).focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text(text.to_owned()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(8);
+}
+
+/// Slice 25 (capability 101, acceptance 126): a picture as a backdrop.
+/// Its Properties fade it, and *Set scale…* scales it by two clicks on
+/// the Viewport and the distance typed in the tool bar. Locked, a click
+/// on it selects nothing.
+#[test]
+fn a_backdrop_is_faded_and_scaled_by_two_points() {
+    let (mut h, dir) = plaque("backdrop");
+    common::go_to(&mut h, "Design");
+    let mut sheet = dc_app::import::PictureImport::open(
+        dc_import::ImageFormat::Png,
+        "gradient.png",
+        &std::fs::read(common::fixture("photo/gradient.png")).unwrap(),
+        dc_app::import::Purpose::Import,
+    );
+    sheet.set_width_mm(100.0);
+    h.state_mut().app_mut().import_picture(&sheet).unwrap();
+    h.run_steps(8);
+    let footprint = |h: &Harness<'_, Shell>| {
+        let bitmap = &h.state().app().project().bitmaps[0];
+        (bitmap.x_mm, bitmap.y_mm, bitmap.width_mm, bitmap.height_mm)
+    };
+    let (x, y, width, height) = footprint(&h);
+    assert_eq!((width, height), (100.0, 50.0));
+    h.get_by_role_and_label(Role::TreeItem, "gradient").click();
+    h.run_steps(8);
+
+    // Opacity: a percentage, 100 until it is faded.
+    let opacity = h.get_by_role_and_label(Role::TextInput, "Opacity");
+    assert_eq!(opacity.accesskit_node().value().as_deref(), Some("100"));
+    retype(&mut h, "Opacity", "40");
+    let app = h.state().app();
+    assert_eq!(app.undo_label(), Some("Set opacity of “gradient”"));
+    assert_eq!(app.project().bitmaps[0].opacity_fraction, 0.4);
+    assert_eq!(app.scene().bitmaps()[0].opacity_fraction, 0.4);
+    retype(&mut h, "Opacity", "5");
+    assert_eq!(
+        h.state().app().project().bitmaps[0].opacity_fraction,
+        0.4,
+        "under 10 % is refused"
+    );
+
+    // Set scale…: two points 40 mm apart that are really 80 apart.
+    h.get_by_role_and_label(Role::Button, "Set scale…").click();
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Adjust(Adjust::PictureScale));
+    assert!(
+        h.query_all_by_label("Click a point on the picture")
+            .next()
+            .is_some()
+    );
+    let first = Point::new(x + 20.0, y + 20.0);
+    let at = on_screen(&h, first);
+    click_at(&mut h, at, egui::Modifiers::NONE);
+    h.run_steps(30);
+    let at = on_screen(&h, Point::new(x + 60.0, y + 20.0));
+    click_at(&mut h, at, egui::Modifiers::NONE);
+    h.run_steps(8);
+    assert_eq!(h.state().app().draft().outlines.len(), 1);
+    let distance = h.get_by_role_and_label(Role::TextInput, "Distance");
+    assert_eq!(distance.accesskit_node().value().as_deref(), Some("40"));
+    retype(&mut h, "Distance", "80");
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(8);
+    let app = h.state().app();
+    assert_eq!(app.undo_label(), Some("Scale “gradient”"));
+    assert_eq!(tool(&h), Tool::Select);
+    // The clicks are whole pixels, so the points are 40 mm apart to a
+    // few microns, and the picture twice its size to as much.
+    let (to_x, to_y, to_width, to_height) = footprint(&h);
+    for (got, wanted) in [
+        (to_x, x - 20.0),
+        (to_y, y - 20.0),
+        (to_width, 200.0),
+        (to_height, 100.0),
+    ] {
+        assert!((got - wanted).abs() < 1e-3, "{got} for {wanted}");
+    }
+    assert_eq!(app.selected_pictures().len(), 1, "still selected");
+
+    // Locked, it is a backdrop: a click on it picks nothing, and its
+    // row still selects it.
+    let id = app.project().bitmaps[0].id.clone();
+    let lock = dc_app::tree::toggle_bitmap_locked(app.project(), std::slice::from_ref(&id));
+    h.state_mut().app_mut().run(lock.unwrap()).unwrap();
+    h.state_mut().app_mut().select(Selection::Nothing);
+    h.run_steps(30);
+    let (x, y, ..) = footprint(&h);
+    let at = on_screen(&h, Point::new(x + 2.0, y + 2.0));
+    click_at(&mut h, at, egui::Modifiers::NONE);
+    h.run_steps(8);
+    assert!(h.state().app().selected_pictures().is_empty());
+    h.get_by_role_and_label(Role::TreeItem, "gradient").click();
+    h.run_steps(8);
+    assert_eq!(h.state().app().selected_pictures(), [id]);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Set scale…")
+            .accesskit_node()
+            .is_disabled(),
+        "a locked picture is not scaled"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

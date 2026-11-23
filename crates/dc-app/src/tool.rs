@@ -21,6 +21,7 @@ mod draw;
 mod gear;
 mod node;
 mod path;
+mod scale;
 mod text;
 mod trim;
 
@@ -77,6 +78,9 @@ pub enum Adjust {
     /// **Array…** (the Arrange menu's): a grid's counts and spacing, or
     /// a circular array's count, centre and angle.
     Array,
+    /// **Set scale…** (a picture's Properties; capability 101): two
+    /// points on the picture, and the real distance between them.
+    PictureScale,
 }
 
 /// A drawing tool (CONTEXT: Drawing Tool), in the order the Draw popover
@@ -585,6 +589,8 @@ pub(crate) struct Session {
     array_centre: Option<Point>,
     /// The text being typed: where it starts, and its words.
     text: text::TextDraft,
+    /// The two points a picture is being scaled by (capability 101).
+    scale: scale::ScaleDraft,
 }
 
 impl App {

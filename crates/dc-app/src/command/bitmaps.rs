@@ -10,7 +10,7 @@
 use dc_geometry::{MAX_COORDINATE_MM, approx_eq};
 use dc_job::JobError;
 use dc_job::picture::{PictureSize, picture_into};
-use dc_project::{Bitmap, BitmapId, Grayscale, Project, round_length_mm};
+use dc_project::{Bitmap, BitmapId, Grayscale, MIN_BITMAP_OPACITY, Project, round_length_mm};
 
 use crate::error::CommandError;
 use crate::import::{PICTURE_CORNER, stem};
@@ -18,6 +18,9 @@ use crate::strings::{StrKey, Strings};
 
 /// A move shorter than this on both axes, mm, moves nothing.
 const NO_MOVE_MM: f64 = 1e-9;
+
+/// Two opacities nearer than this are one.
+const SAME_OPACITY: f64 = 1e-9;
 
 /// `project` with the picture `pixels`, from the file `name`, appended as
 /// its next bitmap: named by the file's stem, at `size`, its bottom-left
@@ -180,12 +183,120 @@ pub(super) fn resize(
     id: &BitmapId,
     size: PictureSize,
 ) -> Result<(), CommandError> {
-    let [x_mm, y_mm, width_mm, height_mm] = resize_to(project, id, size)?;
-    let bitmap = find_mut(project, id)?;
-    bitmap.x_mm = x_mm;
-    bitmap.y_mm = y_mm;
-    bitmap.width_mm = width_mm;
-    bitmap.height_mm = height_mm;
+    let to = resize_to(project, id, size)?;
+    set_footprint(find_mut(project, id)?, to);
+    Ok(())
+}
+
+/// Gives `bitmap` the footprint `to`: its corner, then its size.
+fn set_footprint(bitmap: &mut Bitmap, to: [f64; 4]) {
+    [bitmap.x_mm, bitmap.y_mm, bitmap.width_mm, bitmap.height_mm] = to;
+}
+
+/// Whether `PlaceBitmap` can put bitmap `id` at (`x_mm`, `y_mm`),
+/// `width_mm` wide, and the footprint it then has: the project has it,
+/// it is not locked, the width is a positive length and the footprint
+/// within the coordinate limit, and it is not where it is already. The
+/// height follows the pixels, as at import.
+fn place_at(
+    project: &Project,
+    id: &BitmapId,
+    x_mm: f64,
+    y_mm: f64,
+    width_mm: f64,
+) -> Result<[f64; 4], CommandError> {
+    let bitmap = find(project, id)?;
+    refuse_locked(project, std::slice::from_ref(id))?;
+    super::finite("bitmaps[].x_mm", x_mm)?;
+    super::finite("bitmaps[].y_mm", y_mm)?;
+    let (width_mm, height_mm) =
+        PictureSize::Width { width_mm }.footprint_mm(bitmap.width_px, bitmap.height_px)?;
+    let (x_mm, y_mm) = (round_length_mm(x_mm), round_length_mm(y_mm));
+    in_range(x_mm, y_mm, width_mm, height_mm)?;
+    let to = [x_mm, y_mm, width_mm, height_mm];
+    let from = [bitmap.x_mm, bitmap.y_mm, bitmap.width_mm, bitmap.height_mm];
+    if to
+        .iter()
+        .zip(from)
+        .all(|(to, from)| approx_eq(*to, from, NO_MOVE_MM))
+    {
+        return Err(CommandError::NothingToDo);
+    }
+    Ok(to)
+}
+
+/// Whether `PlaceBitmap` can put bitmap `id` there ([`place_at`]).
+pub(crate) fn check_place(
+    project: &Project,
+    id: &BitmapId,
+    x_mm: f64,
+    y_mm: f64,
+    width_mm: f64,
+) -> Result<(), CommandError> {
+    place_at(project, id, x_mm, y_mm, width_mm).map(|_| ())
+}
+
+/// `PlaceBitmap`: bitmap `id` at a corner and a width, its pixels
+/// untouched ([`place_at`]).
+pub(super) fn place(
+    project: &mut Project,
+    id: &BitmapId,
+    x_mm: f64,
+    y_mm: f64,
+    width_mm: f64,
+) -> Result<(), CommandError> {
+    let to = place_at(project, id, x_mm, y_mm, width_mm)?;
+    set_footprint(find_mut(project, id)?, to);
+    Ok(())
+}
+
+/// Whether `SetBitmapOpacity` can set `ids` to `opacity_fraction`: some
+/// are named, the project has each, the opacity is one the file takes
+/// ([`MIN_BITMAP_OPACITY`] to 1), and it is not the one they all have. A
+/// lock does not refuse it: a lock stops a picture moving, and its
+/// opacity moves nothing.
+pub(crate) fn check_opacity(
+    project: &Project,
+    ids: &[BitmapId],
+    opacity_fraction: f64,
+) -> Result<(), CommandError> {
+    const FIELD: &str = "bitmaps[].opacity_fraction";
+    if ids.is_empty() {
+        return Err(CommandError::NothingSelected);
+    }
+    super::finite(FIELD, opacity_fraction)?;
+    if !(MIN_BITMAP_OPACITY..=1.0).contains(&opacity_fraction) {
+        return Err(CommandError::InvalidValue {
+            field: FIELD,
+            value: opacity_fraction,
+        });
+    }
+    let mut changes = false;
+    for id in ids {
+        changes |= !approx_eq(
+            find(project, id)?.opacity_fraction,
+            opacity_fraction,
+            SAME_OPACITY,
+        );
+    }
+    if changes {
+        Ok(())
+    } else {
+        Err(CommandError::NothingToDo)
+    }
+}
+
+/// `SetBitmapOpacity`: each of `ids` at `opacity_fraction`
+/// ([`check_opacity`]).
+pub(super) fn set_opacity(
+    project: &mut Project,
+    ids: &[BitmapId],
+    opacity_fraction: f64,
+) -> Result<(), CommandError> {
+    check_opacity(project, ids, opacity_fraction)?;
+    for bitmap in project.bitmaps.iter_mut().filter(|b| ids.contains(&b.id)) {
+        bitmap.opacity_fraction = opacity_fraction;
+    }
     Ok(())
 }
 

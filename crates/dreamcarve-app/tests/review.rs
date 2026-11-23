@@ -3052,3 +3052,111 @@ fn phase5_text_screenshots() {
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Where the phase 5 backdrop review pictures go.
+fn p5_backdrop_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-5/review/backdrop"),
+        PathBuf::from,
+    )
+}
+
+/// The phase 5 backdrop set (`docs/phase-5-worklog.md`, slice 25): a
+/// picture's Properties with Opacity and *Set scale…*; the picture faded
+/// to 40 % with a shape drawn over it; *Set scale…* with its two points
+/// clicked and the distance to type; and the picture after, locked.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review phase5_backdrop -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed phase 5 backdrop review pictures; run by hand"]
+fn phase5_backdrop_screenshots() {
+    let out = p5_backdrop_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    let dir = scratch("review-p5-backdrop");
+    let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
+        return;
+    };
+    click(&mut h, "Draw from scratch");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(8);
+    let picture = common::write_colour_png(&dir, "sketch.png", &common::landscape(480, 320));
+    let mut sheet = dc_app::import::PictureImport::open(
+        dc_import::ImageFormat::Png,
+        "sketch.png",
+        &std::fs::read(&picture).unwrap(),
+        dc_app::import::Purpose::Import,
+    );
+    sheet.set_width_mm(120.0);
+    h.state_mut().app_mut().import_picture(&sheet).unwrap();
+    let id = h.state().app().project().bitmaps[0].id.clone();
+    let select = |h: &mut H| {
+        h.state_mut()
+            .app_mut()
+            .select(dc_app::Selection::Bitmaps(vec![id.clone()]));
+        h.run_steps(8);
+    };
+
+    // 01: the picture's Properties: Opacity and Set scale….
+    select(&mut h);
+    h.key_press(egui::Key::F);
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "01-picture-properties", &looks);
+
+    // 02: faded to 40 %, and a shape drawn over it.
+    {
+        let app = h.state_mut().app_mut();
+        app.run(dc_app::Command::SetBitmapOpacity {
+            ids: vec![id.clone()],
+            opacity_fraction: 0.4,
+        })
+        .unwrap();
+        app.arm(dc_app::Tool::Draw(dc_app::Drawing::Rectangle));
+    }
+    h.run_steps(8);
+    click_mm(&mut h, 30.0, 20.0);
+    h.run_steps(30);
+    click_mm(&mut h, 90.0, 60.0);
+    h.run_steps(8);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(8);
+    select(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "02-faded-with-a-shape-drawn-over", &looks);
+
+    // 03: Set scale…, its two points clicked.
+    h.get_by_role_and_label(Role::Button, "Set scale…").click();
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "03-set-scale-first-point", &looks);
+    click_mm(&mut h, 20.0, 15.0);
+    h.run_steps(30);
+    click_mm(&mut h, 100.0, 15.0);
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "04-set-scale-distance", &looks);
+
+    // 05: scaled, then locked: a backdrop.
+    h.state_mut()
+        .app_mut()
+        .tool_event(dc_app::tool::Event::Field {
+            field: dc_app::tool::SizeField::Distance,
+            text: "100".to_owned(),
+        });
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(8);
+    let lock =
+        dc_app::tree::toggle_bitmap_locked(h.state().app().project(), std::slice::from_ref(&id))
+            .unwrap();
+    h.state_mut().app_mut().run(lock).unwrap();
+    select(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "05-scaled-and-locked", &looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

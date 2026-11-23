@@ -21,7 +21,10 @@ mod instances;
 mod operations;
 mod shapes;
 
-pub(crate) use bitmaps::{check_move as check_bitmap_move, check_resize as check_bitmap_resize};
+pub(crate) use bitmaps::{
+    check_move as check_bitmap_move, check_opacity as check_bitmap_opacity,
+    check_place as check_bitmap_place, check_resize as check_bitmap_resize,
+};
 pub use instances::Placing;
 pub(crate) use instances::{
     about, bounds as selection_bounds, centre, copy_name, find as find_instance, next_free_id,
@@ -148,6 +151,30 @@ pub enum Command {
         id: BitmapId,
         /// The footprint's new width or height.
         size: PictureSize,
+    },
+    /// Set how strongly bitmaps show on the Viewport (phase 5,
+    /// capability 101): a backdrop faded to be traced over. A display
+    /// value, from [`dc_project::MIN_BITMAP_OPACITY`] to 1: nothing that
+    /// is carved reads it, so a locked picture takes it too.
+    SetBitmapOpacity {
+        /// The bitmaps.
+        ids: Vec<BitmapId>,
+        /// How strongly they show, 0.1 to 1.
+        opacity_fraction: f64,
+    },
+    /// Put a bitmap's footprint at a corner and a width, the height
+    /// following the pixels (capability 101): what scaling a picture by
+    /// two points comes to ([`crate::pictures::scale_by_two_points`]).
+    /// Refused when it is locked.
+    PlaceBitmap {
+        /// The bitmap.
+        id: BitmapId,
+        /// The footprint's left edge, mm.
+        x_mm: f64,
+        /// The footprint's bottom edge, mm (Y-up).
+        y_mm: f64,
+        /// The footprint's width, mm.
+        width_mm: f64,
     },
     /// Apply `delta` to each instance about the selection's joint
     /// bounding-box centre. Refused when any instance is locked. A delta
@@ -469,6 +496,16 @@ impl Command {
                 bitmaps::move_by(&mut next, ids, *dx_mm, *dy_mm)?;
             }
             Self::ResizeBitmap { id, size } => bitmaps::resize(&mut next, id, *size)?,
+            Self::SetBitmapOpacity {
+                ids,
+                opacity_fraction,
+            } => bitmaps::set_opacity(&mut next, ids, *opacity_fraction)?,
+            Self::PlaceBitmap {
+                id,
+                x_mm,
+                y_mm,
+                width_mm,
+            } => bitmaps::place(&mut next, id, *x_mm, *y_mm, *width_mm)?,
             Self::TransformInstances { ids, delta } => {
                 next = instances::transform(project, ids, *delta)?;
             }
@@ -709,6 +746,14 @@ impl Command {
             ),
             Self::ResizeBitmap { id, .. } => with_subject(
                 StrKey::CommandLabelResize,
+                &bitmaps::subject(strings, before, std::slice::from_ref(id)),
+            ),
+            Self::SetBitmapOpacity { ids, .. } => with_subject(
+                StrKey::CommandLabelOpacity,
+                &bitmaps::subject(strings, before, ids),
+            ),
+            Self::PlaceBitmap { id, .. } => with_subject(
+                StrKey::CommandLabelScale,
                 &bitmaps::subject(strings, before, std::slice::from_ref(id)),
             ),
             Self::TransformInstances { ids, delta } => {

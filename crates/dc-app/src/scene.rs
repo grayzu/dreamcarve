@@ -108,6 +108,8 @@ pub struct SceneBitmap {
     pub name: String,
     /// Locked, as its row's padlock shows.
     pub locked: bool,
+    /// How strongly it is drawn, 0.1 to 1 (phase 5, capability 101).
+    pub opacity_fraction: f64,
     /// Its footprint in project space, mm, Y-up: `min` is the bottom-left
     /// corner, `max` the top-right.
     pub footprint: Rect,
@@ -145,6 +147,7 @@ fn bitmaps(project: &Project, previous: &[SceneBitmap]) -> Vec<SceneBitmap> {
                 id: bitmap.id.clone(),
                 name: bitmap.name.clone(),
                 locked: bitmap.locked,
+                opacity_fraction: bitmap.opacity_fraction,
                 footprint: Rect {
                     min: Point::new(bitmap.x_mm, bitmap.y_mm),
                     max: Point::new(

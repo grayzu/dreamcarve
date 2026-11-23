@@ -39,6 +39,8 @@ move = "Move {subject}"
 resize = "Resize {subject}"
 rotate = "Rotate {subject}"
 scale = "Scale {subject}"
+# Phase 5, capability 101: a backdrop faded to be traced over.
+opacity = "Set opacity of {subject}"
 mirror = "Mirror {subject}"
 transform = "Transform {subject}"
 show = "Show {subject}"
@@ -1370,6 +1372,12 @@ picture_x_help = "Where the left edge of the picture is, measured from the origi
 picture_y_help = "Where the bottom edge of the picture is, measured from the origin, Y up: from -6000 to 6000 mm (236 in). Typing it moves the picture."
 picture_w_help = "The picture's width on the stock: above 0. A picture keeps its proportions, so the height follows, about the picture's centre."
 picture_h_help = "The picture's height on the stock: above 0. A picture keeps its proportions, so the width follows, about the picture's centre."
+# Phase 5, capability 101: a picture as a backdrop to trace over.
+picture_opacity = "Opacity"
+picture_opacity_help = "How strongly the picture shows on the Viewport, from 10 to 100 %. Fade a picture to draw over it. Nothing that is carved reads it."
+picture_opacity_refused = "`{text}` is not an opacity: type a percentage from 10 to 100"
+picture_set_scale = "Set scale…"
+picture_set_scale_help = "Scale the picture by two points: click two points on it, then type the real distance between them. The picture is resized about the first point."
 picture_locked_help = "On, the picture cannot be moved or resized by a drag or a typed value; a Photo V-Carve still carves it."
 picture_proportions = "A picture keeps its proportions: the other side follows"
 picture_locked = "Locked"
@@ -1853,6 +1861,17 @@ join = "Join the selected open paths whose ends are this near, then Done"
 
 [adjust.refused]
 one_shape = "Fillet Corners takes one shape at a time: select one."
+
+# Set scale… (capability 101): a picture scaled by two points.
+[scale]
+name = "Set scale"
+distance_help = "How far apart the two points really are. The picture is resized about the first point until they are."
+
+[scale.prompt]
+select = "Select one picture first, then choose this again"
+first = "Click a point on the picture"
+second = "Click a second point, a known distance from the first"
+distance = "Type the real distance between the points, then Done"
 
 [trim]
 prompt = "Click the part of an outline to trim away, between two crossings"

@@ -70,8 +70,9 @@ impl AdjustPrefs {
             Adjust::Offset => self.offset_mm.unwrap_or(default),
             Adjust::FilletCorners => self.fillet_mm.unwrap_or(default),
             Adjust::Join => self.join_tolerance_mm,
-            // An array's values are its own (`tool::arrays`).
-            Adjust::Array => 0.0,
+            // An array's values are its own (`tool::arrays`), and a
+            // picture's scale its own (`tool::scale`).
+            Adjust::Array | Adjust::PictureScale => 0.0,
         }
     }
 }
@@ -83,6 +84,7 @@ const fn field_of(adjust: Adjust) -> SizeField {
         Adjust::FilletCorners => SizeField::Radius,
         Adjust::Join => SizeField::Tolerance,
         Adjust::Array => SizeField::Columns,
+        Adjust::PictureScale => SizeField::Distance,
     }
 }
 
@@ -127,7 +129,7 @@ impl App {
                 let text = units::field_text(radius, units);
                 Ok((edit::fillet_corners(project, strings, id, &text)?, None))
             }
-            Adjust::Array => Err(CommandError::NothingToDo),
+            Adjust::Array | Adjust::PictureScale => Err(CommandError::NothingToDo),
             Adjust::Join => {
                 let joined =
                     edit::join(project, strings, ids, self.prefs().adjust.join_tolerance_mm)?;
@@ -144,8 +146,10 @@ impl App {
 
     /// Hands `event` to the armed Shape command `adjust`.
     pub(super) fn adjust_event(&mut self, adjust: Adjust, event: Event) -> Reply {
-        if adjust == Adjust::Array {
-            return self.array_event(event);
+        match adjust {
+            Adjust::Array => return self.array_event(event),
+            Adjust::PictureScale => return self.scale_event(event),
+            _ => {}
         }
         let reply = match event {
             Event::Key(Key::Escape) => {
@@ -203,7 +207,7 @@ impl App {
                     Adjust::Offset => prefs.offset_mm = Some(value),
                     Adjust::FilletCorners => prefs.fillet_mm = Some(value),
                     Adjust::Join => prefs.join_tolerance_mm = value,
-                    Adjust::Array => {}
+                    Adjust::Array | Adjust::PictureScale => {}
                 }
             }
             Ok(_) => {
@@ -221,9 +225,10 @@ impl App {
 
     /// The preview: an offset as it would be made.
     pub(super) fn refresh_adjust_draft(&mut self, adjust: Adjust) {
-        if adjust == Adjust::Array {
-            self.refresh_array_draft();
-            return;
+        match adjust {
+            Adjust::Array => return self.refresh_array_draft(),
+            Adjust::PictureScale => return self.refresh_scale_draft(),
+            _ => {}
         }
         let mut draft = Draft::default();
         if adjust == Adjust::Offset {
@@ -258,8 +263,10 @@ impl App {
 
     /// The tool bar for the armed Shape command `adjust`.
     pub(super) fn adjust_bar(&self, adjust: Adjust) -> ToolBar {
-        if adjust == Adjust::Array {
-            return self.array_bar();
+        match adjust {
+            Adjust::Array => return self.array_bar(),
+            Adjust::PictureScale => return self.scale_bar(),
+            _ => {}
         }
         let strings = self.strings();
         let units = self.project().display_units;
@@ -270,7 +277,7 @@ impl App {
             (_, Err(CommandError::NothingSelected)) => StrKey::AdjustPromptSelect,
             (Adjust::Offset, _) => StrKey::AdjustPromptOffset,
             (Adjust::FilletCorners, _) => StrKey::AdjustPromptFillet,
-            (Adjust::Join | Adjust::Array, _) => StrKey::AdjustPromptJoin,
+            (Adjust::Join | Adjust::Array | Adjust::PictureScale, _) => StrKey::AdjustPromptJoin,
         };
         let choice = |label: StrKey,
                       help: StrKey,

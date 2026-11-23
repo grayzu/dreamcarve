@@ -302,7 +302,8 @@ fn start(pixels: &Arc<Grayscale>) -> Chain {
 
 /// The frame's picture quads, bottom first: every visible bitmap the
 /// Scene holds pixels for, at its footprint, or where `preview` puts it,
-/// drawn at `opacity`.
+/// drawn at `opacity` times its own (a backdrop's, phase 5 capability
+/// 101).
 pub(super) fn quads(
     bitmaps: &[SceneBitmap],
     mips: &Mips,
@@ -324,7 +325,7 @@ pub(super) fn quads(
                     renderer::gpu_f32(rect.max.x),
                     renderer::gpu_f32(rect.max.y),
                 ],
-                opacity,
+                opacity: opacity * renderer::gpu_f32(bitmap.opacity_fraction),
             })
         })
         .collect()

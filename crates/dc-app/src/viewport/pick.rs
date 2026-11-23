@@ -367,8 +367,10 @@ fn under_everything(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64) 
 /// The picture whose footprint holds pane point `at` (functional spec,
 /// capability 56; slice 15, #544): the one drawn on top where footprints
 /// overlap, the last in file order. A footprint's edge is its own; a
-/// hidden picture is not in the Scene and so never picked, and a locked
-/// one is, as a locked shape is. There is no tolerance: a picture is its
+/// hidden picture is not in the Scene and so never picked. Nor is a
+/// locked one (phase 5, capability 101): a picture locked is a backdrop,
+/// and drawing or selecting over it must not grab it; its row in the
+/// Design Tree still selects it. There is no tolerance: a picture is its
 /// whole footprint, not an outline to aim at.
 #[must_use]
 pub fn picture_at(scene: &Scene, camera: &Camera, at: Pos) -> Option<BitmapId> {
@@ -377,6 +379,7 @@ pub fn picture_at(scene: &Scene, camera: &Camera, at: Pos) -> Option<BitmapId> {
         .bitmaps()
         .iter()
         .rev()
+        .filter(|bitmap| !bitmap.locked)
         .find(|bitmap| {
             let (min, max) = (bitmap.footprint.min, bitmap.footprint.max);
             p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y
@@ -459,7 +462,8 @@ pub fn touching(scene: &Scene, rect: Rect) -> Vec<InstanceId> {
 }
 
 /// The pictures a marquee over `rect` (mm) touches: every visible picture
-/// whose footprint overlaps the rectangle, in file order. The Viewport
+/// that is not locked ([`picture_at`]) and whose footprint overlaps the
+/// rectangle, in file order. The Viewport
 /// selects them only when the marquee touches no shape ([`touching`]),
 /// since pictures are selected on their own (capability 57).
 #[must_use]
@@ -467,6 +471,7 @@ pub fn pictures_touching(scene: &Scene, rect: Rect) -> Vec<BitmapId> {
     scene
         .bitmaps()
         .iter()
+        .filter(|bitmap| !bitmap.locked)
         .filter(|bitmap| {
             let b = bitmap.footprint;
             b.max.x >= rect.min.x
