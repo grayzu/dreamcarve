@@ -1498,3 +1498,59 @@ fn an_operation_that_cuts_nothing_is_announced() {
     assert!(row.cuts_nothing && row.detail.starts_with("Cuts nothing"));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// The maintainer's review of 2026-11-23: the origin of a selection, the
+/// point changes to it are made about, is chosen in Properties from nine
+/// points of its box. A typed width then grows the shape away from it,
+/// and a turn from the Arrange menu swings the shape round it.
+#[test]
+fn the_origin_is_chosen_and_changes_are_about_it() {
+    use dc_app::origin::Origin;
+    let (mut h, dir) = plaque("origin");
+    common::go_to(&mut h, "Design");
+    select(&mut h, &["i4"]);
+    h.run_steps(8);
+    let before = box_of(&h, "i4");
+    assert_eq!(h.state().app().prefs().origin, Origin::Centre);
+    let centre = h.get_by_role_and_label(Role::RadioButton, "Origin: Centre");
+    assert_eq!(
+        centre.accesskit_node().toggled(),
+        Some(eframe::egui::accesskit::Toggled::True)
+    );
+    h.get_by_role_and_label(Role::RadioButton, "Origin: Bottom left")
+        .click();
+    h.run_steps(8);
+    assert_eq!(h.state().app().prefs().origin, Origin::BottomLeft);
+    assert!(
+        h.state().app().undo_label() != Some("Origin"),
+        "choosing it is no change to the project"
+    );
+
+    // A typed width, with the proportions kept: the corner stays.
+    retype(&mut h, "W", "60");
+    let wider = box_of(&h, "i4");
+    assert!((wider.min.x - before.min.x).abs() < 1e-6 && (wider.min.y - before.min.y).abs() < 1e-6);
+    assert!((wider.width_mm() - 60.0).abs() < 1e-6, "{wider:?}");
+    h.state_mut().app_mut().undo();
+    h.run_steps(8);
+
+    // A quarter turn anticlockwise from the Arrange menu: the square
+    // lands to the left of the corner it turned about.
+    h.get_by_role_and_label(Role::Button, "Arrange").click();
+    h.run();
+    h.query_all_by_role(Role::Button)
+        .find(|node| {
+            node.accesskit_node()
+                .label()
+                .is_some_and(|label| label.starts_with("Rotate 90° Anticlockwise"))
+        })
+        .expect("Arrange has the turn")
+        .click();
+    h.run_steps(8);
+    let turned = box_of(&h, "i4");
+    assert!(
+        (turned.max.x - before.min.x).abs() < 1e-6 && (turned.min.y - before.min.y).abs() < 1e-6,
+        "swung round its bottom-left corner: {turned:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

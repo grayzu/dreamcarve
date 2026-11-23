@@ -42,7 +42,7 @@ use dc_app::units;
 use dc_app::viewport::tabs::TabEdit;
 use dc_app::{CommandError, StrKey};
 use dc_project::{BitmapId, InstanceId, TabId, TabShape};
-use eframe::egui::{self, Id, Rect, Stroke, TextStyle, Ui, UiBuilder};
+use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui, UiBuilder};
 
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
@@ -145,15 +145,80 @@ fn field_row(
     let _ = output.response.labelled_by(label.id);
     if let Some(typed) = output.committed {
         let uniform = !proportions_free(ui.ctx());
-        match properties::parse(placement, field, &typed, units, uniform)
-            .and_then(|edit| properties::edit(state.app.project(), ids, edit))
-        {
+        match properties::parse(placement, field, &typed, units, uniform).and_then(|edit| {
+            properties::edit_about(state.app.project(), ids, edit, state.prefs.origin)
+        }) {
             Ok(command) => out.push(Action::Run(Box::new(command))),
             Err(CommandError::NothingToDo) => {}
             Err(e) => out.push(Action::Refused(e.to_string())),
         }
     }
     middle
+}
+
+/// A dot of the Origin chooser, px across its button.
+const ORIGIN_DOT_PX: f32 = 18.0;
+
+/// The **Origin** row (the maintainer's review of 2026-11-23;
+/// `dc_app::origin`): nine dots laid out as the selection's box is seen,
+/// its corners, the middles of its sides and its centre. The one chosen
+/// is the point a typed W or H, a turn and a flip hold still, and the
+/// Viewport marks it on the selection.
+fn origin_row(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    use dc_app::origin::Origin;
+    let strings = state.app.strings();
+    let palette = Palette::current(ui);
+    let chosen = state.prefs.origin;
+    let name = strings.get(StrKey::OriginLabel);
+    let _ = row(ui, name, strings.get(StrKey::OriginHelp), |ui| {
+        let side = 3.0 * ORIGIN_DOT_PX;
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(side, side), Sense::hover());
+        // The box the dots are points of.
+        let inner = rect.shrink(ORIGIN_DOT_PX / 2.0);
+        ui.painter().rect_stroke(
+            inner,
+            0.0,
+            Stroke::new(1.0, palette.border_strong),
+            egui::StrokeKind::Middle,
+        );
+        for (at, origin) in Origin::ALL.into_iter().enumerate() {
+            #[allow(clippy::cast_precision_loss, reason = "a row or a column of three")]
+            let (column, line) = ((at % 3) as f32, (at / 3) as f32);
+            let centre =
+                rect.min + egui::vec2((column + 0.5) * ORIGIN_DOT_PX, (line + 0.5) * ORIGIN_DOT_PX);
+            let dot = Rect::from_center_size(centre, egui::vec2(ORIGIN_DOT_PX, ORIGIN_DOT_PX));
+            let label = strings.get(origin.name());
+            let response = ui.interact(dot, Id::unique(("dc.origin", at)), Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::Role::RadioButton,
+                    true,
+                    origin == chosen,
+                    strings.fmt(StrKey::OriginNamed, &[("point", label)]),
+                )
+            });
+            let (radius, fill, stroke) = if origin == chosen {
+                (4.5, palette.accent, Stroke::new(1.0, palette.accent))
+            } else if response.hovered() || response.has_focus() {
+                (
+                    4.0,
+                    palette.surface_hover,
+                    Stroke::new(1.0, palette.text_primary),
+                )
+            } else {
+                (
+                    3.0,
+                    palette.surface_raised,
+                    Stroke::new(1.0, palette.text_secondary),
+                )
+            };
+            ui.painter().circle(centre, radius, fill, stroke);
+            crate::widgets::button::focus_ring(ui, &response);
+            if response.on_hover_text(label).clicked() && origin != chosen {
+                out.push(Action::SetOrigin(origin));
+            }
+        }
+    });
 }
 
 /// The proportion link right of W and H (`experience.md`, section 7): a
@@ -916,6 +981,9 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out:
             proportion_link(ui, state, (w_y, h_y), !properties::read_only(&placement));
             if properties::read_only(&placement) {
                 locked_note(ui, state, ids, out);
+            }
+            if !properties::read_only(&placement) {
+                origin_row(ui, state, out);
             }
             construction_row(ui, state, ids, out);
             align_section(ui, state, ids, out);

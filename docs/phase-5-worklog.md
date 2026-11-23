@@ -372,23 +372,16 @@ items. Each is tracked here.
 | What the Tab tool on Design is for | Question | Answered; the tool moves beside Trim and Measure in the regrouping |
 | A more prominent division of the tool bar | Change | Done: the view's controls keep the top pill; the strip under it has a rule between each of its four segments |
 | Control of snapping | Feature | Exists in View ▸ Snapping and Snap To; now also the strip's Snapping button, with the switch and a tick per kind |
-| An origin for an object | Feature | Waits for the maintainer: which origin is meant (below) |
+| An origin for an object | Feature | Done, as the maintainer answered: the point a resize, a turn and a flip are made about. `dc_app::origin`, the Origin row in Properties, the mark on the selection |
 | Folder and group | Question | Answered; one concept with a *Select together* switch is offered, not done |
 | A tool added in an operation should be chosen | Bug | Done: `Command::AddToolForOperation`, `editor::add_from_library_for` |
-| Start and stop points for an operation | Feature | Waits for the maintainer (below) |
+| Start and stop points for an operation | Feature | Skipped for now, at the maintainer's word |
 | An operation that cuts nothing is too quiet | Bug | Done: `operations::cuts_nothing`, the row's second line, the editor's banner |
 | Stretch one way in the UI | Bug | Done: `Grab::Side`, a handle at the middle of each side |
 
 Open, waiting for the maintainer's answer:
 
-- **An origin for an object.** Read as a reference point for a shape's
-  position: a nine-point chooser in Properties (corners, sides'
-  middles, centre) that X and Y are measured to and that a typed W, H
-  or rotation holds still, where today X and Y are always the box's
-  bottom-left corner and a resize or a turn is about its centre. If
-  what is meant is something else (the work origin on the Stock step,
-  or a shape's own zero for an operation), it is a different job.
-- **Start and stop points for an operation.** A Profile has **Start**
+- **Start and stop points for an operation** (skipped for now). A Profile has **Start**
   in its Strategy group (*Auto*, *First vertex*, *Near* a typed point).
   Missing: picking the point on the Viewport, a start for the other
   operations (a Pocket's entry, an Engrave's first path), and for an
@@ -411,6 +404,13 @@ Decisions taken with these, for the maintainer:
   warning code, so `dreamcarve check` prints what it printed.
 - With several tools ticked, *Add from library…* adds them all and
   chooses none.
+- The origin is a preference of the app, not of a shape or of the
+  project: it stays as set for whatever is selected next, and is the
+  centre again when the app is started. X and Y still read the
+  bottom-left corner, so no position in the book or in a saved habit
+  changes meaning. A turn or a flip about a point other than the centre
+  is labelled *Rotate “name”* or *Mirror “name”* in Undo, without the
+  angle that a turn about the centre names.
 - The tools are a vertical strip, not a wider top pill: ten buttons and
   three lists do not fit across the Viewport beside the *By operation /
   By depth* pill, and Affinity's tools run down the side. The picture

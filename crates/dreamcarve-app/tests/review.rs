@@ -3311,6 +3311,17 @@ fn phase5_feedback_screenshots() {
     park_pointer(&mut h);
     shoot_in(&mut h, &out, "01-side-handles", &looks);
 
+    // 05: the Origin chooser in Properties, the bottom-left corner
+    // chosen, and its mark on the selection.
+    h.get_by_role_and_label(Role::RadioButton, "Origin: Bottom left")
+        .click();
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "05-origin", &looks);
+    h.get_by_role_and_label(Role::RadioButton, "Origin: Centre")
+        .click();
+    h.run_steps(8);
+
     // 03: the tool strip, with the shapes' list open beside its button.
     h.state_mut().app_mut().select(dc_app::Selection::Nothing);
     h.key_press(egui::Key::F);

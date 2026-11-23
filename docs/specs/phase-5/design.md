@@ -1236,6 +1236,23 @@ the tool bar of slice 9 is its form.
   it, with *Cuts nothing* for its detail's kind, a warning status and
   the note first among its messages; the editor opens with
   `widgets::row::warning_banner`. No new warning code.
+- **The origin.** `dc_app::origin::Origin`, nine points of a
+  selection's box and `Centre` by default, in `Prefs::origin` (kept
+  while the app runs). `Origin::about(bounds, change)` is `change` made
+  about that point as the delta `TransformInstances` takes, which is
+  about the box's centre: the change, then the move that puts the point
+  back; so no command learned of origins. `properties::edit_about`
+  (typed W and H), `arrange::arrange_about` (about the centre the turn
+  and the flip are `RotateInstances` and `FlipInstances` as before;
+  about another point each is one `TransformInstances`, labelled
+  *Rotate* or *Mirror*), and `Handles::about(origin)`, which sets
+  `Handles::pivot` for a corner's scale and the rotation handle's
+  turn; a corner that is the pivot scales from the opposite corner, and
+  a side handle reads no origin. X and Y are still the box's
+  bottom-left corner. In the window `panels::properties::origin_row`
+  draws the chooser (nine radio buttons named *Origin: Top left* …)
+  and the selection's handles carry a ring at the pivot. Tests:
+  `dc-app` `tests/origin.rs`; `editing::the_origin_is_chosen_and_changes_are_about_it`.
 - **Array… in the menu.** `tree::MenuItem::Array`, after Duplicate; the
   window arms `Adjust::Array`.
 - Tests: `dc-app` `handles::a_side_handle_stretches_one_way_and_keeps_the_far_side`,

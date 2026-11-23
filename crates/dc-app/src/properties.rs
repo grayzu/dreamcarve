@@ -32,6 +32,7 @@ use crate::command::{Command, centre, find_instance, selection_bounds};
 use crate::error::CommandError;
 use crate::library::trimmed;
 use crate::mixed::{common_bool, common_number};
+use crate::origin::Origin;
 use crate::strings::StrKey;
 use crate::units;
 
@@ -339,6 +340,22 @@ fn factor(field: &'static str, typed_mm: f64, current_mm: f64) -> Result<f64, Co
 /// positive; the selection's own errors (nothing selected, no outline).
 /// A locked instance is refused when the command is applied.
 pub fn edit(project: &Project, ids: &[InstanceId], edit: Edit) -> Result<Command, CommandError> {
+    edit_about(project, ids, edit, Origin::Centre)
+}
+
+/// [`edit`] with a typed width or height made about `origin`, which stays
+/// where it is ([`crate::origin`]); a typed X or Y moves the selection
+/// whatever the origin.
+///
+/// # Errors
+///
+/// As [`edit`].
+pub fn edit_about(
+    project: &Project,
+    ids: &[InstanceId],
+    edit: Edit,
+    origin: Origin,
+) -> Result<Command, CommandError> {
     let b = selection_bounds(project, ids)?;
     let moved = |d: f64| -> Result<f64, CommandError> {
         if approx_eq(d, 0.0, NO_CHANGE_MM) {
@@ -359,11 +376,11 @@ pub fn edit(project: &Project, ids: &[InstanceId], edit: Edit) -> Result<Command
         Edit::Y { mm } => Transform::translate(0.0, moved(mm - b.min.y)?),
         Edit::W { mm, uniform } => {
             let s = scaled(factor("width", mm, b.width_mm())?)?;
-            Transform::scale(s, if uniform { s } else { 1.0 })
+            origin.about(b, Transform::scale(s, if uniform { s } else { 1.0 }))
         }
         Edit::H { mm, uniform } => {
             let s = scaled(factor("height", mm, b.height_mm())?)?;
-            Transform::scale(if uniform { s } else { 1.0 }, s)
+            origin.about(b, Transform::scale(if uniform { s } else { 1.0 }, s))
         }
     };
     Ok(Command::TransformInstances {

@@ -519,6 +519,9 @@ pub(crate) enum Action {
     /// Properties panel's switch, Arrange ▸ Align ▸ To Stock; capability
     /// 98a).
     SetAlignToStock(bool),
+    /// Choose the point of a selection's box that a resize, a turn and a
+    /// flip are made about (`dc_app::origin`).
+    SetOrigin(dc_app::origin::Origin),
     /// Edit ▸ Cut: the selected shapes to the clipboard and out of the
     /// project (capability 98).
     Cut,
@@ -1157,7 +1160,8 @@ impl Shell {
     /// nothing.
     fn arrange(&mut self, action: dc_app::arrange::Action) {
         let selected = self.app.selection().instances().to_vec();
-        match dc_app::arrange::arrange(self.app.project(), &selected, 0, action) {
+        let origin = self.app.prefs().origin;
+        match dc_app::arrange::arrange_about(self.app.project(), &selected, 0, action, origin) {
             Ok(arranged) => match self.app.run(arranged.command) {
                 Ok(_) => {
                     if let Some(line) =
@@ -1767,6 +1771,7 @@ impl Shell {
             }
             Action::SetSnap(snap) => self.app.prefs_mut().snap = snap.normalized(),
             Action::SetAlignToStock(on) => self.app.prefs_mut().adjust.align_to_stock = on,
+            Action::SetOrigin(origin) => self.app.prefs_mut().origin = origin,
             Action::AddFont => self.add_font(),
             Action::EditText(edit) => self.edit_text(&edit),
             Action::Copy => {

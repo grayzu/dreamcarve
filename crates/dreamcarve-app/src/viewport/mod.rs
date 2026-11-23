@@ -157,6 +157,8 @@ const TARGET_BAR_PX: f32 = 48.0;
 const PARK_RADIUS_PX: f32 = 6.0;
 /// A transform handle's square and circle, px (`experience.md`, section 8).
 const HANDLE_PX: f32 = 8.0;
+/// The radius of the mark at a selection's origin, px.
+const ORIGIN_MARK_PX: f32 = 4.0;
 /// The arrow keys' nudge, mm: plain, with Shift, with Alt (capability 54).
 const NUDGE_MM: f64 = 1.0;
 /// The nudge with Shift held, mm.
@@ -850,7 +852,8 @@ fn press_target(state: &FrameState<'_>, camera: &Camera, pane: Rect, pos: Pos2) 
     let app = state.app;
     let at = pane_pos(pane, pos);
     let selected = app.selection().instances();
-    if let Some(h) = handles::handles(app.project(), selected, camera)
+    if let Some(h) =
+        handles::handles(app.project(), selected, camera).map(|h| h.about(app.prefs().origin))
         && let Some(grab @ (Grab::Corner(_) | Grab::Side(_) | Grab::Rotate { .. })) =
             handles::grab_at(&h, camera, at)
     {
@@ -919,7 +922,8 @@ fn start_transform(
         out.push(Action::Refused(refusal.to_string()));
         return Drag::Refused;
     }
-    match handles::handles(project, &ids, camera) {
+    let origin = state.app.prefs().origin;
+    match handles::handles(project, &ids, camera).map(|h| h.about(origin)) {
         Some(handles) => Drag::Transform {
             start,
             ids,
@@ -1815,6 +1819,7 @@ fn transform_handles(
     let Some(h) = handles::handles(app.project(), ids, camera) else {
         return;
     };
+    let h = h.about(app.prefs().origin);
     let placed = view
         .preview
         .as_ref()
@@ -1848,6 +1853,13 @@ fn transform_handles(
         );
     }
     painter.circle(knob, HANDLE_PX / 2.0, palette.viewport_handle_fill, stroke);
+    // The origin: the point a resize, a turn and a flip are made about,
+    // a ring with a dot at its middle.
+    if !h.locked {
+        let pivot = at(h.pivot);
+        painter.circle(pivot, ORIGIN_MARK_PX, palette.viewport_handle_fill, stroke);
+        painter.circle_filled(pivot, 1.5, colour);
+    }
 }
 
 /// The overlay over the GPU layers: the origin crosshair and its label,

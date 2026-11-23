@@ -587,6 +587,20 @@ capability 52); what a tool holds before it commits is not project data.
       array of one, copies that would lie on one another, a centre at
       the selection's own middle, and more than 1000 copies are refused
       at the field that mends them.
+98b. **Origin** (the maintainer's review of 2026-11-23). A resize, a
+    turn and a flip of a selection are made about its **origin**, one
+    of nine points of its box: its corners, the middles of its sides,
+    and its centre, which it is until another is chosen. Properties has
+    an **Origin** row of nine dots laid out as the box is, shown while
+    the selection can be changed, and the Viewport marks the origin on
+    the selection. It governs a typed W or H, the Arrange turns and
+    flips and the typed angle, a corner handle's drag and the rotation
+    handle's; a corner that is the origin scales from the opposite
+    corner, and a side handle keeps its opposite side whatever the
+    origin. X and Y are measured to the box's bottom-left corner
+    whatever the origin. It is an app preference, kept while the app
+    runs, not project data. Pictures have no origin: they resize about
+    their centre and do not turn.
 98a. **Align and distribute** (Properties, under the placement fields,
     and the Arrange menu; PureCutCNC's, with Y re-derived for Y-up).
     **Align** Left, Centre, Right, Top, Middle, Bottom moves each

@@ -176,6 +176,7 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
             .grid_spacing_mm
             .filter(|spacing| spacing.is_finite() && *spacing > 0.0),
         drawing_tool: dc_app::Drawing::from_key(&file.drawing.tool).unwrap_or_default(),
+        origin: dc_app::origin::Origin::default(),
         held_tools: {
             // The tool last used is the one its group holds.
             let mut held = dc_app::tool::HeldTools::default();

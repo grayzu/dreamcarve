@@ -1341,8 +1341,8 @@ w = "W"
 h = "H"
 x_help = "Where the left edge of the selection's box is, measured from the origin: from -6000 to 6000 mm (236 in). Typing it moves the selection. Empty while the selected shapes differ."
 y_help = "Where the bottom edge of the selection's box is, measured from the origin, Y up: from -6000 to 6000 mm (236 in). Typing it moves the selection. Empty while the selected shapes differ."
-w_help = "The width of the selection's box, along X: above 0. Typing it scales the selection about the middle of its box, and the height with it while Keep proportions is on."
-h_help = "The height of the selection's box, along Y: above 0. Typing it scales the selection about the middle of its box, and the width with it while Keep proportions is on."
+w_help = "The width of the selection's box, along X: above 0. Typing it scales the selection about its Origin, the middle of its box unless you choose another point, and the height with it while Keep proportions is on."
+h_help = "The height of the selection's box, along Y: above 0. Typing it scales the selection about its Origin, the middle of its box unless you choose another point, and the width with it while Keep proportions is on."
 keep_proportions = "Keep proportions"
 mixed = "Mixed"
 # Slice 25 (#617): a locked selection's fields are read-only under this.
@@ -1409,7 +1409,7 @@ flip_horizontal = "Flip horizontal"
 flip_vertical = "Flip vertical"
 angle = "Angle"
 rotate = "Rotate"
-angle_help = "How far Rotate turns the selection about the middle of its box, in degrees: any number, positive anticlockwise, negative clockwise."
+angle_help = "How far Rotate turns the selection about its Origin, the middle of its box unless you choose another point, in degrees: any number, positive anticlockwise, negative clockwise."
 menu_rotate_clockwise = "Rotate 90° Clockwise"
 menu_rotate_anticlockwise = "Rotate 90° Anticlockwise"
 menu_rotate = "Rotate…"
@@ -1968,6 +1968,22 @@ no_arc = "No arc passes through three points in a line. Click a point to one sid
 lines = "Line tools"
 shapes = "Shape tools"
 special = "Slot and gear tools"
+
+# The origin of a selection (review feedback, 2026-11-23): the point of
+# its box that a resize, a turn and a flip are made about.
+[origin]
+label = "Origin"
+help = "The point of the selection's box that stays where it is when you resize, turn or flip it: a corner, the middle of a side, or the centre. X and Y are still measured to the bottom-left corner."
+named = "Origin: {point}"
+top_left = "Top left"
+top = "Top"
+top_right = "Top right"
+left = "Left"
+centre = "Centre"
+right = "Right"
+bottom_left = "Bottom left"
+bottom = "Bottom"
+bottom_right = "Bottom right"
 
 [draw.label]
 box = "{width} × {height}"

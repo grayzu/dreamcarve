@@ -80,20 +80,43 @@ commands.
 To make the stock fit the shapes instead, use **Fit to shapes** on the
 [Stock step](stock-and-origin.md#fit-to-shapes).
 
+## The origin
+
+A resize, a turn and a flip are each made about one point of the
+selection's box, its **origin**. That point stays where it is and the
+rest of the selection moves round it.
+
+The origin is the centre of the box until you choose another. The
+**Origin** row of the Properties panel has nine dots, laid out as the
+box is: its four corners, the middles of its four sides and its centre.
+Click one to make it the origin. The Viewport marks it on the
+selection with a small ring.
+
+- With the origin at the **centre**, typing a larger W grows the shape
+  to the left and to the right alike.
+- With the origin at the **bottom-left corner**, the same W grows it to
+  the right only, and a quarter turn swings it round that corner.
+
+The origin is a setting of the app. It stays as you set it for whatever
+you select next, and it is not saved with the project. **X** and **Y**
+are measured to the bottom-left corner of the box whatever the origin.
+
 ## Resizing
 
-A shape is resized about the centre of its box, so its middle stays where
-it is.
+A shape is resized about its [origin](#the-origin): the centre of its
+box, unless you chose another point.
 
 - Type **W** or **H**. With the link closed, typing 20 into W makes the
   30 mm square 20 × 20 mm, at X 75, Y 23. With the link open, typing 40
   into H leaves W at 30.
 - **Drag a corner handle.** The shape keeps its proportions while the
-  link is closed. Hold Alt (⌥) while you drag to stretch it freely.
+  link is closed. Hold Alt (⌥) while you drag to stretch it freely. The
+  origin stays where it is; a corner that is itself the origin resizes
+  the shape from the opposite corner.
 - **Drag a side handle**, the one at the middle of a side, to stretch
   the shape one way. That side follows the pointer and the opposite
-  side stays where it is, whatever the link says. A side too short on
-  screen to carry a handle has none: zoom in.
+  side stays where it is, whatever the link and the origin say. A side
+  too short on screen to carry a handle has none: zoom in.
 
 Resizing changes what is cut: a 20 mm square pocket is a different
 pocket. A circle stretched with the link open is no longer a circle, so a
@@ -112,14 +135,16 @@ Drill or a Bore skips it, with a warning.
 - **Drag the round handle** above the box. Hold Shift to turn in steps of
   15°.
 
-The selection turns about the centre of its box. After a turn that is
+The selection turns about its [origin](#the-origin). After a turn that is
 not a multiple of 90°, W and H are the size of the box round the turned
 shape: the square turned by 30° reads 40.9808 × 40.9808 mm.
 
 ## Flipping
 
 **Flip horizontal** mirrors the selection left to right, and **Flip
-vertical** top to bottom, each about the centre of its box. The keys are
+vertical** top to bottom, each about its [origin](#the-origin): with the
+origin on the left side, Flip horizontal lays the shape over to the left
+of where it was. The keys are
 Ctrl Shift H and Ctrl Shift V (⇧⌘H and ⇧⌘V on macOS).
 
 Flip lettering only when you mean to: mirrored text cuts mirrored. An

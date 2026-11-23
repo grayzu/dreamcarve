@@ -16,11 +16,13 @@
 //! group is [`Disabled`] with a reason. The angle follows the Y-up file:
 //! positive anticlockwise.
 
+use dc_geometry::Transform;
 use dc_project::{InstanceId, Project};
 
 pub use crate::align::{Align, Axis, Spacing};
 use crate::command::{Command, Placing, find_instance};
 use crate::error::CommandError;
+use crate::origin::Origin;
 use crate::strings::{StrKey, Strings};
 
 /// A quarter turn, degrees.
@@ -138,6 +140,26 @@ pub fn arrange(
     pictures: usize,
     action: Action,
 ) -> Result<Arranged, Disabled> {
+    arrange_about(project, instances, pictures, action, Origin::Centre)
+}
+
+/// [`arrange`] with a turn or a flip made about `origin`, which stays
+/// where it is ([`crate::origin`]). About the centre they are the
+/// commands they always were, `RotateInstances` and `FlipInstances`;
+/// about another point each is one `TransformInstances` of the turn or
+/// the mirror and the move that keeps the point, labelled *Rotate* or
+/// *Mirror*. Align, Distribute and Centre on Stock read no origin.
+///
+/// # Errors
+///
+/// As [`arrange`].
+pub fn arrange_about(
+    project: &Project,
+    instances: &[InstanceId],
+    pictures: usize,
+    action: Action,
+    origin: Origin,
+) -> Result<Arranged, Disabled> {
     if let Some(why) = disabled(project, instances, pictures) {
         return Err(why);
     }
@@ -149,13 +171,33 @@ pub fn arrange(
             _ => ids.push(id.clone()),
         }
     }
-    let rotate = |angle_deg| Command::RotateInstances {
-        ids: ids.clone(),
-        angle_deg,
+    // The box of what is turned: the unlocked shapes, as the command's.
+    let pivoted = (origin != Origin::Centre)
+        .then(|| crate::command::selection_bounds(project, &ids).ok())
+        .flatten();
+    let about = |change: Transform| {
+        pivoted.map(|bounds| Command::TransformInstances {
+            ids: ids.clone(),
+            delta: origin.about(bounds, change),
+        })
     };
-    let flip = |flip| Command::FlipInstances {
-        ids: ids.clone(),
-        flip,
+    let rotate = |angle_deg: f64| {
+        about(Transform::rotate(angle_deg.to_radians())).unwrap_or_else(|| {
+            Command::RotateInstances {
+                ids: ids.clone(),
+                angle_deg,
+            }
+        })
+    };
+    let flip = |flip: Flip| {
+        let mirror = match flip {
+            Flip::Horizontal => Transform::scale(-1.0, 1.0),
+            Flip::Vertical => Transform::scale(1.0, -1.0),
+        };
+        about(mirror).unwrap_or_else(|| Command::FlipInstances {
+            ids: ids.clone(),
+            flip,
+        })
     };
     let command = match action {
         Action::RotateClockwise => rotate(-QUARTER_DEG),

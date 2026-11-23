@@ -23,6 +23,12 @@ before that; its changes are those under Unreleased.
   design](docs/book/src/quick-start/first-design.md) draws a hook plate
   from nothing to G-code, and its values and pictures are read and taken
   by the tests.
+- **An origin for a selection.** The Properties panel has an **Origin**
+  row: nine points of the selection's box, its corners, the middles of
+  its sides and its centre. A typed W or H, a turn, a flip, and a drag
+  of a corner or of the rotation handle are made about the one chosen,
+  and the Viewport marks it. It is the centre until changed, which is
+  what those changes were always about.
 - **Text and fonts.** The Text tool sets lettering in a font that comes
   with the app (a sans serif, a serif, a slab, a script, a stencil, and
   the single-line *Simple Stroke* for Engrave) or one you add from a

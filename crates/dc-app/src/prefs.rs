@@ -58,6 +58,10 @@ pub struct Prefs {
     /// The drawing tool the Draw button holds: the last one armed
     /// (capability 81).
     pub drawing_tool: Drawing,
+    /// The point of a selection's box that a resize, a turn and a flip
+    /// are made about ([`crate::origin`]); the centre until another is
+    /// chosen. Kept while the app runs; not written to `gui.toml`.
+    pub origin: crate::origin::Origin,
     /// The tool each group of drawing tools holds: the one of it last
     /// armed. Kept while the app runs; not written to `gui.toml`.
     pub held_tools: crate::tool::HeldTools,

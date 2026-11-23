@@ -21,6 +21,7 @@ use dc_project::{InstanceId, Project, Units};
 
 use crate::command::{about, centre, selection_bounds};
 use crate::error::CommandError;
+use crate::origin::Origin;
 use crate::strings::{StrKey, Strings};
 use crate::tool::Label;
 use crate::viewport::camera::{Camera, Pos};
@@ -124,6 +125,10 @@ pub struct Handles {
     /// Some instance in the selection is locked: the handles are grey and
     /// every drag is refused.
     pub locked: bool,
+    /// The point a corner's scale and the rotation handle's turn are
+    /// about: the box's centre, until [`Handles::about`] sets the
+    /// selection's origin ([`crate::origin`]).
+    pub pivot: Point,
 }
 
 impl Handles {
@@ -168,7 +173,14 @@ impl Handles {
             .collect()
     }
 
-    /// The box's centre: the pivot of every scale and turn.
+    /// These handles with the selection's `origin` for their pivot.
+    #[must_use]
+    pub fn about(mut self, origin: Origin) -> Self {
+        self.pivot = origin.point(self.bounds);
+        self
+    }
+
+    /// The box's centre: the pivot until an origin is chosen.
     #[must_use]
     pub fn centre(&self) -> Point {
         centre(self.bounds)
@@ -186,6 +198,7 @@ pub fn handles(project: &Project, ids: &[InstanceId], camera: &Camera) -> Option
         bounds,
         corners: [min, Point::new(max.x, min.y), max, Point::new(min.x, max.y)],
         rotation: Point::new(mid_x, max.y + camera.px_to_mm(STEM_PX)),
+        pivot: centre(bounds),
         locked: project
             .instances
             .iter()
@@ -306,7 +319,21 @@ pub fn drag_delta(
     to: Point,
     uniform: bool,
 ) -> Transform {
-    let c = handles.centre();
+    // A corner that is the pivot has nothing to pull against there, so
+    // it scales from the opposite corner.
+    let c = match grab {
+        Grab::Corner(corner)
+            if handles.corner(corner).distance_to(handles.pivot) < DEGENERATE_MM =>
+        {
+            let grabbed = handles.corner(corner);
+            let middle = handles.centre();
+            Point::new(2.0 * middle.x - grabbed.x, 2.0 * middle.y - grabbed.y)
+        }
+        _ => handles.pivot,
+    };
+    // The change is made about `c`; the command takes it about the
+    // box's centre.
+    let placed = |change: Transform| crate::origin::about_point(handles.bounds, c, change);
     let (fx, fy) = (from.x - c.x, from.y - c.y);
     let (tx, ty) = (to.x - c.x, to.y - c.y);
     match grab {
@@ -317,7 +344,7 @@ pub fn drag_delta(
                 return Transform::IDENTITY;
             }
             let s = ((tx * fx + ty * fy) / length_sq).max(MIN_SCALE);
-            Transform::scale(s, s)
+            placed(Transform::scale(s, s))
         }
         Grab::Corner(_) => {
             let ratio = |t: f64, f: f64| {
@@ -327,7 +354,7 @@ pub fn drag_delta(
                     (t / f).max(MIN_SCALE)
                 }
             };
-            Transform::scale(ratio(tx, fx), ratio(ty, fy))
+            placed(Transform::scale(ratio(tx, fx), ratio(ty, fy)))
         }
         Grab::Side(side) => {
             // The side goes where the pointer goes along its own axis;
@@ -363,7 +390,7 @@ pub fn drag_delta(
             } else {
                 swept
             };
-            Transform::rotate(angle)
+            placed(Transform::rotate(angle))
         }
     }
 }

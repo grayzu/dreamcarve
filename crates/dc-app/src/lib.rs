@@ -21,6 +21,7 @@ pub mod library;
 pub mod mixed;
 pub mod onboarding;
 pub mod operations;
+pub mod origin;
 pub mod pictures;
 pub mod prefs;
 pub mod problems;
