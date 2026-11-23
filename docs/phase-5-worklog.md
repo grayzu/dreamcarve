@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 26: 3,722.
+`0.5.0-alpha.1`. After slice 27: 3,727.
 
 ## Decisions waiting for the maintainer
 
@@ -286,6 +286,35 @@ Decisions made while building are added here.
   shows one as a shape does. The Draw menu of the menu bar lists the
   drawing tools only: Trim and Measure are reached from the popover
   and, for Measure, `K`.
+- Slice 27, the test part: the two slots are an array of two (a linked
+  copy at a pitch of 70 mm), not "drawn once and mirrored": a slot is
+  its own mirror image, so a mirrored copy in place is the same slot.
+  The holes are a Drill with a 5 mm drill; the chapter says to use a
+  Bore and the 1/8 end mill where the spindle cannot run slowly enough
+  for a twist drill. The lettering is centred with Align ▸ Centre and a
+  typed Y, since the Text tool's start is a click. The plate's Profile
+  uses the 1/4 end mill and the pockets the 1/8, so the part needs four
+  bits. The feeds and speeds in the chapter are starting values for
+  plywood of my choosing, as the first chapter's are: **check them
+  before the bench cut**.
+- Slice 27, acceptance 128: "drawn equals imported" holds byte for byte
+  for the drawn part with its sizes removed, which is what S21 claims.
+  Through a real SVG file it holds move for move to the last decimal
+  place, but not byte for byte: the importer rounds coordinates to a
+  millionth of a millimetre, which tips a coordinate on a rounding tie
+  (`Y34.608`, `Y34.607`), and is enough to change the order a V-Carve
+  takes two equally near strokes in. The lettering is compared as a
+  carve (as many moves, the same box, the same cut length). The spec
+  says so now. If byte equality through a file matters, the drawing
+  tools would have to round a new outline as the importer does; they do
+  not today, and a saved project round-trips exactly as it is.
+- Slice 27: found while building the part and fixed test-first: an open
+  construction line raised `open_profile` ("no operation cuts it").
+  Construction-only open paths are no longer reported.
+- Slice 27, the book: every drawing chapter's pictures are of the hook
+  plate. The chapters reuse the quick start's pictures where one shows
+  the thing. The README's status line still names `v0.4.0-alpha.2`: the
+  version there is the maintainer's to change when a tag is cut.
 
 ## Slices
 
@@ -348,4 +377,4 @@ The numbers are the design spec's.
 
 | Slice | What | Status |
 | --- | --- | --- |
-| 27 | The hook plate, the quick start, the chapters, the review pictures, the audit | todo |
+| 27 | The hook plate from the quick start's own tables (`design_steps`), through the window (`design_window`, `first_design.rs`) and against the CLI on six post-processors (`gui_equality`); the quick start "Your first design" with 20 pictures; nine user-guide chapters with 8 pictures, and The app, Placing shapes, Images, Overview, Warnings, Porting, Crate map, README, `CONTEXT.md` and the changelog brought up to date; construction-only open paths no longer warned about. Gate: 3,727 tests | done |

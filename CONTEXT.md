@@ -104,6 +104,13 @@ nodes, the Tab tool, Trim and Measure. A bare **Tool** is a cutting tool.
 _Avoid_: Mode, command
 _PureCutCNC_: pendingAdd, creation shape
 
+**Tool Bar**:
+The bar that floats at the top of the Viewport while a tool other than
+Select is armed: the tool's name, what the next click does, its choices
+and fields, its readings, and **Done**. Commands that take a value
+first (Offset…, Fillet Corners…, Join…, Array…, Set scale…) use it too.
+_Avoid_: Options bar, property bar, popover (for these commands)
+
 **Backdrop**:
 A bitmap used to draw over: faded by its `opacity_fraction`, sized by two
 points, usually locked. A use of a bitmap, not a kind of one.

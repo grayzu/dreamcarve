@@ -2565,6 +2565,19 @@ impl Validator {
             .filter_map(|id| p.instances.iter().find(|i| &i.id == id))
             .map(|i| &i.definition)
             .collect();
+        // Construction geometry is drawn to draw by and never cut (phase
+        // 5, capability 100), so an open path that only construction
+        // shapes place is not one that was meant to be cut and was not.
+        let mut placed_to_cut: BTreeSet<&DefinitionId> = BTreeSet::new();
+        let mut placed: BTreeSet<&DefinitionId> = BTreeSet::new();
+        for instance in &p.instances {
+            placed.insert(&instance.definition);
+            if !instance.construction {
+                placed_to_cut.insert(&instance.definition);
+            }
+        }
+        let construction_only =
+            |id: &DefinitionId| placed.contains(id) && !placed_to_cut.contains(id);
         for (key, def) in &p.definitions {
             if *key != def.id {
                 self.problems.push(Problem::DefinitionKeyMismatch {
@@ -2592,7 +2605,10 @@ impl Validator {
                 }
             }
             for (i, profile) in def.profiles.iter().enumerate() {
-                if !profile.is_closed() && !engraved.contains(&def.id) {
+                if !profile.is_closed()
+                    && !engraved.contains(&def.id)
+                    && !construction_only(&def.id)
+                {
                     self.problems.push(Problem::OpenProfile {
                         definition: def.id.clone(),
                         name: def.name.clone(),

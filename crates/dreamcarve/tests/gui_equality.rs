@@ -36,6 +36,7 @@
 )]
 
 mod app_steps;
+mod design_steps;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -807,4 +808,371 @@ fn quick_start_parts_from_the_app() {
             }
         }
     }
+}
+
+/// The hook plate (phase 5 functional spec, "Test part"), drawn in the
+/// app with no import by the steps of the quick start "Your first
+/// design", read from the chapter's own tables (`design_steps`), and
+/// generated.
+fn hook_plate() -> Harness {
+    let text = design_steps::chapter();
+    let lib = app_steps::library(&text);
+    let mut harness = Harness {
+        app: design_steps::build(&text, &lib),
+    };
+    harness.generate();
+    harness
+}
+
+/// Acceptance 128 (S21; exit criteria): the hook plate drawn in the app,
+/// saved, and exported by `dreamcarve export` gives the programs the app
+/// writes, byte for byte, on all six post-processors and with each
+/// program-split override. Nothing of it was imported: the rectangle, the
+/// slots, the circles, the hexagon and the text are shapes that keep
+/// their sizes, cut by their saved outlines.
+#[test]
+fn the_hook_plate_drawn_equals_the_cli() {
+    let root = work_dir("the_hook_plate_drawn_equals_the_cli");
+    let harness = hook_plate();
+    assert_eq!(harness.warnings(), [], "the part has nothing to report");
+    let project = harness.app.project();
+    // What the chapter says was drawn: seven kinds of thing, none
+    // imported, each but the construction line keeping its sizes.
+    let kept = project
+        .definitions
+        .values()
+        .filter(|definition| definition.shape.is_some())
+        .count();
+    assert_eq!((project.definitions.len(), kept), (6, 5));
+    assert_eq!(project.instances.len(), 10);
+    assert!(project.bitmaps.is_empty());
+    assert_eq!(project.operations.len(), 5);
+    let saved = harness.save().expect("saves");
+    let compared: usize = std::thread::scope(|scope| {
+        let handles: Vec<_> = POSTS
+            .iter()
+            .map(|post| {
+                let (root, saved) = (&root, &saved);
+                scope.spawn(move || export_case(root, "hook-plate", saved.as_bytes(), post))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("case passes"))
+            .sum()
+    });
+    assert!(compared >= POSTS.len(), "every post wrote a program");
+}
+
+/// `project`'s shapes that are cut, as an SVG a drawing program would
+/// save: one path a shape, its outlines as they are placed, lines and
+/// circular arcs, millimetres, Y down. Construction geometry is left
+/// out, as it is from everything that is cut.
+fn svg_of(project: &dc_project::Project) -> String {
+    use std::fmt::Write as _;
+    let (width, height) = (project.stock.width_mm, project.stock.height_mm);
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}mm\" height=\"{height}mm\" \
+         viewBox=\"0 0 {width} {height}\">\n"
+    );
+    for instance in project.instances.iter().filter(|i| !i.construction) {
+        let definition = &project.definitions[&instance.definition];
+        let mut d = String::new();
+        for profile in &definition.profiles {
+            let placed = instance
+                .transform
+                .apply_polyline(profile)
+                .expect("a placed outline");
+            for (at, segment) in placed.segments().enumerate() {
+                if at == 0 {
+                    let _ = write!(d, "M{:?} {:?} ", segment.start.x, height - segment.start.y);
+                }
+                let (x, y) = (segment.end.x, height - segment.end.y);
+                match segment.arc() {
+                    None => {
+                        let _ = write!(d, "L{x:?} {y:?} ");
+                    }
+                    Some(arc) => {
+                        let large = u8::from(arc.sweep_rad.abs() > std::f64::consts::PI);
+                        // Anticlockwise with Y up is sweep 0 with Y down.
+                        let sweep = u8::from(arc.sweep_rad < 0.0);
+                        let r = arc.radius_mm;
+                        let _ = write!(d, "A{r:?} {r:?} 0 {large} {sweep} {x:?} {y:?} ");
+                    }
+                }
+            }
+            if placed.is_closed() {
+                d.push_str("Z ");
+            }
+        }
+        let id = instance.name.replace(' ', "-");
+        let _ = writeln!(
+            svg,
+            "  <path id=\"{id}\" fill=\"black\" d=\"{}\"/>",
+            d.trim_end()
+        );
+    }
+    svg.push_str("</svg>\n");
+    svg
+}
+
+/// Acceptance 128, its second half (S21): the outlines of the hook plate
+/// imported from an SVG of the part, with the same stock, tools and
+/// operations, give the programs the drawn part gives: move for move,
+/// every coordinate within its last decimal place ([`first_difference`]),
+/// and nothing else different but the project's name in a comment; the
+/// V-Carve of the text is the same carve with its strokes in an order of
+/// its own ([`Cut`]). Then, exactly: the drawn part with its sizes taken
+/// away gives the drawn part's programs byte for byte. A generator reads
+/// a shape's saved outline and nothing else of it, so what was drawn and
+/// what was imported cut alike.
+#[test]
+fn drawn_equals_imported() {
+    use dc_app::import::{DrawingFormat, DrawingImport, Purpose};
+    let text = design_steps::chapter();
+    let lib = app_steps::library(&text);
+    let drawn = hook_plate();
+    let svg = svg_of(drawn.app.project());
+
+    let sheet = DrawingImport::open(
+        DrawingFormat::Svg,
+        "hook-plate.svg",
+        svg.clone().into_bytes(),
+        Purpose::New,
+    );
+    assert_eq!(sheet.blocked(), None, "the SVG imports");
+    let mut app = dc_app::App::new(
+        dc_app::App::new_project().expect("a new project"),
+        dc_app::Strings::english(),
+        dc_app::Prefs::default(),
+    );
+    app.new_from_drawing(&sheet)
+        .expect("a project from the SVG");
+    // The same board: the import's own stock is the part and 10 mm round
+    // it, which is the stock the chapter sets.
+    app_steps::set_stock(&mut app, &design_steps::part_cell(&text, "Stock"));
+    assert_eq!(app.project().stock, drawn.app.project().stock);
+    // The shapes, named as the drawn ones are, so the operations' table
+    // finds them; none keeps sizes, since an import has none to keep.
+    let cut: Vec<&dc_project::FeatureInstance> = drawn
+        .app
+        .project()
+        .instances
+        .iter()
+        .filter(|i| !i.construction)
+        .collect();
+    let imported: Vec<dc_project::InstanceId> = app
+        .project()
+        .instances
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    assert_eq!(imported.len(), cut.len(), "a shape for a path");
+    for (id, like) in imported.iter().zip(&cut) {
+        app.run(dc_app::Command::RenameInstance {
+            id: id.clone(),
+            name: like.name.clone(),
+        })
+        .expect("renamed");
+    }
+    assert!(
+        app.project()
+            .definitions
+            .values()
+            .all(|d| d.shape.is_none()),
+        "an imported outline keeps no sizes"
+    );
+    design_steps::finish(&mut app, &text, &lib);
+    let mut imported = Harness { app };
+    imported.generate();
+
+    let drawn_programs = app_programs(&drawn, "hook-plate");
+    let imported_programs = app_programs(&imported, "hook-plate");
+    assert_eq!(drawn_programs.len(), imported_programs.len());
+    let root = work_dir("drawn_equals_imported");
+    // The names in comments are the projects' own: one is named by its
+    // file, the other has no file yet.
+    let named = |program: &str, project: &dc_project::Project| {
+        program.replace(&format!("( Project: {} )", project.name), "( Project )")
+    };
+    let (mut moves, mut lettering) = (0, 0);
+    for ((name, drawn_program), (other, imported_program)) in
+        drawn_programs.iter().zip(&imported_programs)
+    {
+        assert_eq!(name, other);
+        let drawn = named(drawn_program, drawn.app.project());
+        let imported = named(imported_program, imported.app.project());
+        assert_ne!(&drawn, drawn_program, "{name} names its project");
+        let keep = || {
+            std::fs::write(root.join(format!("{name}.drawn")), &drawn).expect("kept");
+            std::fs::write(root.join(format!("{name}.imported")), &imported).expect("kept");
+            std::fs::write(root.join("hook-plate.svg"), &svg).expect("kept");
+            root.display()
+        };
+        if drawn.contains(": Lettering )") {
+            // The V-Carve: the same carve, its strokes in an order of
+            // its own ([`Cut`]).
+            let (a, b) = (Cut::of(&drawn), Cut::of(&imported));
+            lettering += 1;
+            assert!(
+                a.same_as(&b),
+                "{name}: the imported lettering is another carve: {a:?} and {b:?}; both \
+                 are in {}",
+                keep()
+            );
+        } else if let Some(line) = first_difference(&drawn, &imported) {
+            panic!(
+                "{name}, line {line}: the imported part's program differs from the drawn \
+                 part's; both are in {}",
+                keep()
+            );
+        }
+        moves += drawn.lines().count();
+    }
+    assert!(moves > 500, "the programs were compared: {moves} lines");
+    assert_eq!(lettering, 1, "one program carves the lettering");
+
+    // And exactly: the drawn part with every shape's sizes taken away,
+    // which leaves the outlines an import would have made of them, gives
+    // the drawn part's programs byte for byte. Nothing a generator reads
+    // was among the sizes (S21, ADR-0006).
+    let mut plain = drawn.app.project().clone();
+    for definition in plain.definitions.values_mut() {
+        definition.shape = None;
+    }
+    let mut plain = Harness::from_project(plain);
+    plain.generate();
+    assert!(
+        app_programs(&plain, "hook-plate") == drawn_programs,
+        "a shape's sizes reached a program"
+    );
+}
+
+/// What a program cuts, whatever order it cuts it in: how many lines it
+/// has, the box its feed moves stay in, and how far they travel.
+///
+/// A V-Carve follows the middle lines of each letter, and where two
+/// strokes are as near to hand as each other it takes one first. The
+/// millionth of a millimetre an import rounds a coordinate by is enough
+/// to make it take the other, so the imported lettering is the same
+/// strokes in another order here and there, which no line-by-line
+/// comparison shows. This does: the same count of moves, within the same
+/// box, cutting the same length.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Cut {
+    lines: usize,
+    min: [f64; 3],
+    max: [f64; 3],
+    length_mm: f64,
+}
+
+impl Cut {
+    /// Reads `program`: linear moves only, as a V-Carve's are.
+    fn of(program: &str) -> Self {
+        let mut at = [0.0_f64; 3];
+        let mut feeding = false;
+        let mut cut = Self {
+            lines: program.lines().count(),
+            min: [f64::INFINITY; 3],
+            max: [f64::NEG_INFINITY; 3],
+            length_mm: 0.0,
+        };
+        for line in program.lines().filter(|line| !line.starts_with('(')) {
+            let from = at;
+            let mut moved = false;
+            for word in line.split_whitespace() {
+                match word {
+                    "G0" | "G00" => feeding = false,
+                    "G1" | "G01" => feeding = true,
+                    "G2" | "G02" | "G3" | "G03" => {
+                        panic!("an arc in a program read as lines: {line}")
+                    }
+                    _ => {}
+                }
+                let (letter, value) = word.split_at(1);
+                match (letter, value.parse::<f64>()) {
+                    ("X", Ok(v)) => (at[0], moved) = (v, true),
+                    ("Y", Ok(v)) => (at[1], moved) = (v, true),
+                    ("Z", Ok(v)) => (at[2], moved) = (v, true),
+                    _ => {}
+                }
+            }
+            if feeding && moved {
+                let squares: f64 = at.iter().zip(from).map(|(a, b)| (a - b).powi(2)).sum();
+                cut.length_mm += squares.sqrt();
+                for (axis, value) in at.iter().enumerate() {
+                    cut.min[axis] = cut.min[axis].min(*value);
+                    cut.max[axis] = cut.max[axis].max(*value);
+                }
+            }
+        }
+        cut
+    }
+
+    /// Whether `other` is the same carve: as many lines, the same box to
+    /// two units of a coordinate's last place, the same length of cut to
+    /// a tenth of a millimetre.
+    fn same_as(&self, other: &Self) -> bool {
+        let near =
+            |a: &[f64; 3], b: &[f64; 3]| a.iter().zip(b).all(|(a, b)| (a - b).abs() <= 0.002);
+        self.lines == other.lines
+            && near(&self.min, &other.min)
+            && near(&self.max, &other.max)
+            && (self.length_mm - other.length_mm).abs() <= 0.1
+    }
+}
+
+/// The first line, from 1, at which programs `a` and `b` differ by more
+/// than the last decimal place of a coordinate; `None` when they are the
+/// same program. An import rounds a drawing's coordinates to a millionth
+/// of a millimetre, so a coordinate that falls on a rounding tie can be
+/// written one unit of its last place apart (`Y34.608`, `Y34.607`). A
+/// V-Carve's feed is worked out from the lengths of moves a few
+/// hundredths of a millimetre long, where that millionth shows as a few
+/// thousandths of a millimetre a minute (`F465.016`, `F465.020`); a
+/// hundredth is allowed. Every word that is not a number, and every
+/// number's letter, must be the same.
+fn first_difference(a: &str, b: &str) -> Option<usize> {
+    /// One unit in the last place of a millimetre coordinate, and a hair.
+    const LAST_PLACE: f64 = 0.001_000_1;
+    /// What a feed may differ by, mm/min.
+    const FEED: f64 = 0.01;
+    let same_word = |a: &str, b: &str| {
+        if a == b {
+            return true;
+        }
+        let (Some(letter_a), Some(letter_b)) = (a.chars().next(), b.chars().next()) else {
+            return false;
+        };
+        let numbers = (
+            a[letter_a.len_utf8()..].parse::<f64>(),
+            b[letter_b.len_utf8()..].parse::<f64>(),
+        );
+        match numbers {
+            (Ok(x), Ok(y)) => {
+                let allowed = if letter_a == 'F' { FEED } else { LAST_PLACE };
+                letter_a == letter_b && (x - y).abs() <= allowed
+            }
+            _ => false,
+        }
+    };
+    let (mut lines_a, mut lines_b) = (a.lines(), b.lines());
+    for line in 1.. {
+        match (lines_a.next(), lines_b.next()) {
+            (None, None) => return None,
+            (Some(a), Some(b)) => {
+                let (words_a, words_b): (Vec<&str>, Vec<&str>) = (
+                    a.split_whitespace().collect(),
+                    b.split_whitespace().collect(),
+                );
+                let same = words_a.len() == words_b.len()
+                    && words_a.iter().zip(&words_b).all(|(a, b)| same_word(a, b));
+                if !same {
+                    return Some(line);
+                }
+            }
+            _ => return Some(line),
+        }
+    }
+    None
 }

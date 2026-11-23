@@ -12,6 +12,9 @@ modeled on what hobbyists use in commercial tools such as VCarve.
 
 ## What works today
 
+- **Draw:** rectangles, circles, ellipses, polygons, slots, gears, lines,
+  arcs, curves and text in the app, with typed sizes and snapping; edit
+  nodes, fillet, offset, weld, trim, arrays and alignment
 - **Import:** SVG and DXF drawings, and PNG or JPEG pictures
 - **Toolpaths:** Profile (with tabs, lead-ins, ramps and dogbones), Pocket,
   Drill, Bore, Engrave, V-Carve, Inlay, and Photo V-Carve
@@ -22,8 +25,7 @@ modeled on what hobbyists use in commercial tools such as VCarve.
 - **Output:** G-code for grblHAL, GRBL 1.1, LinuxCNC, Mach3, UCCNC, and
   generic RS274/NGC
 
-Drawing in the app, 3D carving and the material-removal simulation are
-planned; the roadmap is [`docs/plan.md`](docs/plan.md).
+3D carving and the material-removal simulation are planned; the roadmap is [`docs/plan.md`](docs/plan.md).
 
 ## Try it
 

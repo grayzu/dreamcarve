@@ -1,0 +1,177 @@
+# Drawing shapes
+
+You can draw a part in the app instead of importing a drawing. This
+chapter covers the drawing tools, the tool bar they share, and what each
+shape's sizes are. For a part drawn start to finish, see the quick start
+[Your first design](../quick-start/first-design.md).
+
+A drawn shape is a shape like any other: it is listed on the **Design**
+step, placed and arranged as [Placing shapes](placing-shapes.md) says,
+and cut by any operation. Nothing about how it was made reaches the
+machine. An operation cuts the outline you see.
+
+## The tools
+
+The Viewport has one tool in hand at a time, shown pressed in the pill
+at its top left:
+
+| Tool | Key | What it does |
+| --- | --- | --- |
+| **Select** | V | Selects, moves, resizes and turns shapes |
+| **Edit nodes** | N | Reshapes a path ([Editing nodes](editing-nodes.md)) |
+| **Draw** | | Holds the drawing tool you used last |
+| **Tab tool** | T | Places a tab on an outline ([Tabs](tabs.md)) |
+
+The arrow beside the Draw button opens the list of drawing tools, with
+**Trim** ([Changing shapes](changing-shapes.md#trim)) and **Measure**
+([Measuring](measuring.md)) under them. The **Draw** menu in the menu
+bar lists the drawing tools too.
+
+![The list under the Draw button: Line, Arc, Spline, Rectangle, Circle, Ellipse, Polygon, Slot, Gear and Text with their keys, and under a rule Trim and Measure](figures/app/draw-tools.png)
+
+| Tool | Key | You give it |
+| --- | --- | --- |
+| **Line** | P | A point for each corner |
+| **Arc** | A | The arc's end, then a point it passes through |
+| **Spline** | S | Points the curve passes through |
+| **Rectangle** | M | Two opposite corners |
+| **Circle** | C | The centre, then a point on the circle |
+| **Ellipse** | E | The centre, then a corner of its box |
+| **Polygon** | G | The centre, then where a corner points |
+| **Slot** | O | The centres of its two ends, then its width |
+| **Gear** | | The centre and the outside radius, then its sizes |
+| **Text** | Shift+T | Where the text starts, then its words ([Text and fonts](text.md)) |
+
+A drawing tool **stays in hand** after each shape, with the choices you
+last made, so you can draw several. **V**, or **Escape** with nothing
+begun, puts it down. While a tool is in hand, clicks are the tool's:
+nothing is selected or moved by a click.
+
+Each new shape is named for its kind and the next free number,
+`Rectangle 1`, `Slot 2`. A six-sided polygon is `Hexagon 1`.
+
+## The tool bar
+
+While a tool is in hand, a **tool bar** floats at the top of the
+Viewport. It has the tool's name, a line saying what the next click
+does, the tool's choices, and the fields of the step you are on.
+
+![The Rectangle tool's bar: Corners with Rounded chosen, Construction off, W 160, H 80 and Corner size 8, with the rectangle previewed on the stock and its size written under it](../quick-start/figures/app/design-05-rectangle-typed.png)
+
+Every step of every tool can be **typed** instead of clicked:
+
+- Before the first point the fields are **X** and **Y**, measured from
+  the origin.
+- After it they are the sizes of the shape: **W** and **H** for a
+  rectangle, **Diameter** for a circle, **Length** and **Angle** for the
+  next piece of a line.
+- **Tab** puts the keyboard in the bar's first field, and moves from
+  field to field. **Enter** takes the step with the fields as they
+  read.
+- A value you type is **pinned**: the preview keeps it while the rest
+  follows the pointer. Type a width, and the height still follows the
+  mouse. **Escape** in a field unpins it.
+- A field takes what any length field takes: `6.35`, `1/4 in`,
+  `2 1/2 in`. An angle is in degrees, anticlockwise from the X axis.
+- A value the tool cannot use, such as a width of zero, marks its field
+  and draws nothing.
+
+The shape being drawn shows its size beside it, and so does a selection
+while you drag or resize it.
+
+You can also use the pointer alone. Click each point, or press at the
+first and drag to the second. **Shift** makes a rectangle square and an
+ellipse a circle, and holds a line to steps of 15°. **Alt** draws a
+rectangle from its centre. The pointer snaps as you move it; see
+[Snapping and the grid](snapping.md).
+
+## Shapes that keep their sizes
+
+A rectangle, circle, ellipse, polygon, slot, gear and text **keep the
+sizes they were drawn with**. Select one, and the **Properties** panel
+has a section named for it above X, Y, W and H:
+
+| Shape | Sizes |
+| --- | --- |
+| Rectangle | **Width**, **Height**, **Corners** (Square, Rounded, Chamfered), **Corner size** |
+| Circle | **Diameter** |
+| Ellipse | **Width**, **Height** |
+| Polygon | **Sides** (3 to 50), **Radius**, measured **To the corners** or **To the flats** |
+| Slot | **Length**, between the centres of its ends, and **Width** |
+| Gear | See [Gears](#gears) |
+| Text | See [Text and fonts](text.md) |
+
+Typing a size changes the shape about its own centre, in one undo step.
+Every [linked copy](copies-and-arrays.md) changes with it.
+
+Some notes on the sizes:
+
+- A **Corner size** is at most half the shorter side.
+- A polygon measured **To the flats** has its radius to the middle of a
+  side. A hexagon of radius 6.5 is then 13 mm across the flats, the
+  size of the spanner that fits it.
+- A rounded corner and a slot's ends are true arcs, and reach the
+  program as arc moves.
+- A size the shape cannot have is refused at its field, with the
+  reason.
+
+Dragging a corner handle with the proportion link open stretches a
+rectangle, an ellipse and a slot into another of the same kind. A circle
+stretched becomes an ellipse. A polygon, a gear and a text scale evenly
+or not at all, and so does any of these once it is rotated.
+
+These shapes are not edited node by node. To reshape one freely, choose
+**Shape ▸ Convert to Path**. It becomes a plain path with the same
+outline and no sizes to type. That cannot be reversed except with Undo.
+
+## Lines, arcs and curves
+
+**Line**, **Arc** and **Spline** draw one path between them. Each click
+adds a point.
+
+- With **Line**, the point is joined to the last by a straight piece.
+- Press **A**, and the next piece is an arc: click its end, then a
+  point it passes through. A typed **Radius** takes the place of the
+  second click.
+- Press **S**, and the pieces that follow are a smooth curve through
+  the points you click. **P** goes back to straight pieces.
+
+To finish:
+
+- Click the first point again to **close** the outline. That needs
+  three points or more.
+- Press **Enter**, click **Done**, or double-click to finish it
+  **open**.
+- **Backspace** takes back the last point. **Escape** throws the whole
+  path away.
+
+An open path is drawn dashed. A Profile set to **On line** or an
+Engrave cuts it; a Pocket or an Outside Profile needs a closed outline.
+
+## Gears
+
+The **Gear** tool takes a click for the centre and one for the outside
+radius. The tool bar then holds the gear's sizes, previewed as you type,
+and **Done** draws it:
+
+| Size | What it is |
+| --- | --- |
+| **Teeth** | 6 to 200 |
+| **Outside diameter** | Across the tips of the teeth |
+| **Pressure angle** | 10° to 35°, for involute flanks |
+| **Flanks** | Involute or Straight |
+| **Whole depth** | From the tip of a tooth to its root |
+| **Root** | Rounded, Flat or Sharp, with a **Root fillet** when rounded |
+| **Crest** | Flat or Rounded, with a **Crest radius** when rounded |
+| **Bore diameter** | A hole at the centre; 0 for none |
+
+The **module** is shown under the fields: the outside diameter divided
+by the number of teeth plus two. Two gears mesh when their modules and
+pressure angles are the same.
+
+## Construction geometry
+
+The **Construction** choice at the end of every drawing tool's bar makes
+the shapes that follow construction geometry: lines to draw by, which
+are never cut. It stays as you set it. See
+[Folders, groups and construction geometry](folders-and-construction.md).

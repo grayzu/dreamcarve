@@ -678,6 +678,49 @@ fn open_profile_engraved_is_not_reported() {
     assert!(open(&p), "a disabled Engrave cuts nothing");
 }
 
+/// Phase 5, capability 100: construction geometry is drawn to draw by
+/// and is never cut, so an open path that only construction shapes place
+/// is not reported as one no operation cuts. A shape of it that is not
+/// construction brings the warning back.
+#[test]
+fn open_profile_of_construction_geometry_is_not_reported() {
+    let mut p = sample_project();
+    p.definitions.insert(
+        DefinitionId::new("d2"),
+        crate::FeatureDefinition {
+            id: DefinitionId::new("d2"),
+            name: "Centre line".into(),
+            shape: None,
+            profiles: vec![Polyline::new(
+                vec![Vertex::new(0.0, 0.0, 0.0), Vertex::new(0.0, 40.0, 0.0)],
+                false,
+            )],
+        },
+    );
+    let mut line = p.instances[0].clone();
+    line.id = InstanceId::new("i2");
+    line.definition = DefinitionId::new("d2");
+    line.name = "Centre line".into();
+    line.construction = true;
+    p.instances.push(line.clone());
+    let open = |p: &Project| {
+        validate(p)
+            .iter()
+            .filter(|q| matches!(q, Problem::OpenProfile { .. }))
+            .count()
+    };
+    assert_eq!(open(&p), 0, "{:?}", validate(&p));
+    // A linked copy that is not construction is a shape to cut.
+    let mut copy = line;
+    copy.id = InstanceId::new("i3");
+    copy.construction = false;
+    p.instances.push(copy);
+    assert_eq!(open(&p), 1);
+    p.instances.pop();
+    p.instances[1].construction = false;
+    assert_eq!(open(&p), 1, "no longer construction");
+}
+
 /// An On line Profile cuts open paths too, so an open profile of
 /// a definition an enabled On line Profile targets is not reported.
 /// Inside and Outside skip open paths, so the warning stays for them,

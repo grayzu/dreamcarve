@@ -31,6 +31,11 @@
 //! `dc_app::operations::add`, `dc_app::editor::Slot`), so a label the
 //! app does not have, or a value a field refuses, fails here.
 //!
+//! The quick start "Your first design" gives its stock, tools and
+//! operations in the same tables, and draws its shapes besides
+//! (`design_steps`), so the pieces here take the chapter's text and are
+//! shared: [`set_stock`], [`add_tools`], [`add_operations`].
+//!
 //! Shared by `gui_equality.rs`, which compares the programs with the
 //! committed ones, and by `dreamcarve-app`'s `tests/book.rs`, which opens
 //! the projects these steps build in the window for the book's pictures.
@@ -120,7 +125,7 @@ pub fn settings(cell: &str) -> Vec<(String, String)> {
 }
 
 /// The position among `options` of the one whose text is `label`.
-fn position_of<T: Copy>(
+pub fn position_of<T: Copy>(
     options: &[T],
     label: &str,
     text: impl Fn(T) -> String,
@@ -306,7 +311,6 @@ fn set_in_editor(app: &mut App, id: &dc_project::OperationId, label: &str, value
 /// generated yet.
 pub fn build(text: &str, part: &str, lib: &Library) -> App {
     use dc_app::import::{DrawingFormat, DrawingImport, Purpose};
-    let strings = dc_app::Strings::english();
     let mut app = App::new(
         App::new_project().expect("a new project"),
         dc_app::Strings::english(),
@@ -334,30 +338,58 @@ pub fn build(text: &str, part: &str, lib: &Library) -> App {
                 app.new_from_drawing(&sheet)
                     .expect("a project from the drawing");
             }
-            "Stock" => {
-                for (label, value) in settings(what) {
-                    assert_eq!(label, strings.get(dc_app::StrKey::ProjectStockThickness));
-                    let command = dc_app::project::Field::StockThickness
-                        .set(app.project(), &value)
-                        .expect("a thickness")
-                        .expect("a command");
-                    app.run(command).expect("the thickness sets");
-                }
-            }
-            "Tools" => {
-                for name in names(what) {
-                    let entry = dc_library::find(lib, &name)
-                        .unwrap_or_else(|_| panic!("{CHAPTER}: the tools table has no `{name}`"));
-                    let ticked = BTreeSet::from([entry.id.clone()]);
-                    let command = dc_app::tools::add_from_library(app.project(), lib, &ticked)
-                        .expect("a tool to add");
-                    app.run(command).expect("the tool is added");
-                }
-            }
+            "Stock" => set_stock(&mut app, what),
+            "Tools" => add_tools(&mut app, lib, what),
             other => panic!("{CHAPTER}: a part has no step `{other}`"),
         }
     }
+    add_operations(&mut app, text, part);
+    app
+}
 
+/// The Stock step's fields set as the cell `what` gives them, `**Label**
+/// value` pairs: **Width**, **Height** and **Thickness**.
+pub fn set_stock(app: &mut App, what: &str) {
+    use dc_app::StrKey;
+    use dc_app::project::Field;
+    let strings = dc_app::Strings::english();
+    for (label, value) in settings(what) {
+        let field = [
+            (StrKey::ProjectStockWidth, Field::StockWidth),
+            (StrKey::ProjectStockHeight, Field::StockHeight),
+            (StrKey::ProjectStockThickness, Field::StockThickness),
+        ]
+        .into_iter()
+        .find(|(key, _)| strings.get(*key) == label)
+        .unwrap_or_else(|| panic!("{CHAPTER}: the Stock step has no field `{label}`"))
+        .1;
+        let command = field
+            .set(app.project(), &value)
+            .unwrap_or_else(|e| panic!("{CHAPTER}: Stock, {label} `{value}`: {e}"));
+        if let Some(command) = command {
+            app.run(command).expect("the stock sets");
+        }
+    }
+}
+
+/// The library tools the cell `what` names, added to the project one at
+/// a time in that order, as *Add from library* adds a ticked row.
+pub fn add_tools(app: &mut App, lib: &Library, what: &str) {
+    for name in names(what) {
+        let entry = dc_library::find(lib, &name)
+            .unwrap_or_else(|_| panic!("{CHAPTER}: the tools table has no `{name}`"));
+        let ticked = BTreeSet::from([entry.id.clone()]);
+        let command =
+            dc_app::tools::add_from_library(app.project(), lib, &ticked).expect("a tool to add");
+        app.run(command).expect("the tool is added");
+    }
+}
+
+/// Each operation of the table `operations PART`, added to `app`'s
+/// project: its shapes selected in order, *Add ▸ kind*, its name typed,
+/// its tool picked and its fields set.
+pub fn add_operations(app: &mut App, text: &str, part: &str) {
+    let strings = dc_app::Strings::english();
     for row in table(text, &format!("operations {part}")) {
         let [name, kind, shapes, tool, then] = &row[..] else {
             panic!("{CHAPTER}: an operation's row has five cells");
@@ -392,16 +424,14 @@ pub fn build(text: &str, part: &str, lib: &Library) -> App {
             .expect("the new operation")
             .id()
             .clone();
-        if let Some(rename) = dc_app::editor::rename(&operation(&app, &id), &name).expect("a name")
-        {
+        if let Some(rename) = dc_app::editor::rename(&operation(app, &id), &name).expect("a name") {
             app.run(rename).expect("renamed");
         }
-        assert_eq!(operation(&app, &id).name(), name);
+        assert_eq!(operation(app, &id).name(), name);
         let tool_label = strings.get(dc_app::StrKey::EditorFieldTool);
-        set_in_editor(&mut app, &id, tool_label, &names(tool).remove(0));
+        set_in_editor(app, &id, tool_label, &names(tool).remove(0));
         for (label, value) in settings(then) {
-            set_in_editor(&mut app, &id, &label, &value);
+            set_in_editor(app, &id, &label, &value);
         }
     }
-    app
 }

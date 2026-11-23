@@ -10,6 +10,41 @@ before that; its changes are those under Unreleased.
 
 ### Added
 
+- **Drawing in the app.** A part can now be designed in DreamCarve with
+  no drawing to import. **Draw from scratch** on the start screen opens
+  a blank project, and the Viewport has drawing tools: Line, Arc and
+  Spline (one path between them), Rectangle (square, rounded or
+  chamfered corners), Circle, Ellipse, Polygon (measured to the corners
+  or to the flats), Slot, Gear and Text. Every point and every size can
+  be typed in the tool bar instead of clicked, and the pointer snaps to
+  endpoints, midpoints, centres, intersections, outlines and a grid that
+  follows the zoom. A drawn shape keeps its sizes, which Properties
+  shows and takes. The quick start [Your first
+  design](docs/book/src/quick-start/first-design.md) draws a hook plate
+  from nothing to G-code, and its values and pictures are read and taken
+  by the tests.
+- **Text and fonts.** The Text tool sets lettering in a font that comes
+  with the app (a sans serif, a serif, a slab, a script, a stencil, and
+  the single-line *Simple Stroke* for Engrave) or one you add from a
+  `.ttf` or `.otf` file. A project saves a text's outline, so it opens
+  and cuts on a computer without the font.
+- **Editing shapes.** Edit nodes (move, add and delete nodes, bend an
+  arc, shape a curve, break and join paths, fillet and chamfer a
+  corner); **Shape ▸ Offset…**, **Fillet Corners…**, **Weld**,
+  **Subtract**, **Intersect** and **Join…**; and the Trim tool. An edit
+  to a shape an operation cuts marks that operation out of date, and
+  export waits until it is cut again.
+- **Copies and order.** Make Unique for a linked copy; cut, copy and
+  paste, also between projects; Alt-drag to copy; **Arrange ▸ Array…**
+  for copies in a grid or round a centre; Align and Distribute, to each
+  other or to the stock; folders and groups in the Shapes list; and
+  construction geometry, drawn dashed, snapped to and never cut.
+- **Tracing and measuring.** A picture's **Opacity** and **Set
+  scale…** (two points and the real distance between them) make it a
+  backdrop to draw over, and a locked picture is no longer picked on the
+  Viewport. The Measure tool (`K`) reads a distance, its ΔX, ΔY and
+  angle, and the length and area of the selected shape. A selection
+  shows its size while it is dragged or resized.
 - **Project format 29: what drawing in the app saves.** A definition
   gains `shape`: `null` for an outline from a drawing, or the sizes a
   shape drawn in the app keeps (a rectangle's width, height and corners,
@@ -21,8 +56,7 @@ before that; its changes are those under Unreleased.
   `folder`; the project gains `folders`; a bitmap gains
   `opacity_fraction`. A version 28 project upgrades with each of these
   empty and exports the same programs, byte for byte; an older DreamCarve
-  refuses a version 29 file. The drawing tools that write these fields
-  arrive with the rest of phase 5.
+  refuses a version 29 file.
 - **The app is in the releases.** From `v0.4.0-alpha.2` every release has
   an archive of `dreamcarve-app` for Linux, macOS (Intel and Apple
   silicon) and Windows beside the command line program's, with its own
@@ -416,6 +450,13 @@ before that; its changes are those under Unreleased.
 
 ### Changed
 
+- **A locked picture is not picked on the Viewport.** A click or a
+  marquee over a locked picture selects nothing, so drawing over a
+  backdrop never grabs it. Its row in the Pictures list still selects
+  it, and it still refuses a move.
+- **An open construction line raises no `open_profile` warning.** An
+  open path that only construction shapes place is not one that was
+  meant to be cut.
 - **The male Inlay's band edge is cut upright by the end mill.** When a
   male Inlay has a clearing pass whose end mill fits the band's flat floor
   (`margin_mm − plug_depth_mm · tan(α/2)` at least its diameter, and room

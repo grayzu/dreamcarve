@@ -105,7 +105,9 @@ Pictures are selected on their own, never together with shapes.
 | **X**, **Y** | The bottom-left corner of the picture's footprint, from the stock's bottom-left corner |
 | **W**, **H** | The footprint's width and height. The link beside them is always closed: type one and the other follows |
 | **Pixels** | The picture's size in pixels. It cannot be changed |
-| **Locked** | On, the picture cannot be moved or resized |
+| **Opacity** | How strongly the picture shows on the Viewport, from 10 to 100 %. It changes nothing that is carved, and a locked picture can still be faded |
+| **Set scale…** | Resizes the picture by two points on it and the real distance between them ([Tracing a picture](tracing.md#3-set-its-scale)) |
+| **Locked** | On, the picture cannot be moved or resized, and cannot be picked on the Viewport |
 | **Carved by** | The Photo V-Carves that carve this picture |
 
 ### Moving and resizing
@@ -120,8 +122,11 @@ Pictures are selected on their own, never together with shapes.
 A picture has no rotate handle and no Arrange buttons: it cannot be
 turned or flipped. Turn it in an image editor before you add it.
 
-A locked picture refuses a move with `picture “landscape” is locked` in
-the status bar. Rename, hide, lock and delete a picture as you would a
+A locked picture is a backdrop to draw over
+([Tracing a picture](tracing.md)): a click or a drag on it on the
+Viewport selects nothing, and its row in the Pictures list still selects
+it. Selected from its row, it refuses a move with `picture “landscape”
+is locked` in the status bar. Rename, hide, lock and delete a picture as you would a
 shape ([Placing shapes](placing-shapes.md#hiding-and-locking)).
 
 Each move or resize is one step for Undo, and the Photo V-Carve that

@@ -78,6 +78,26 @@ beside it, while an error blocks export. Opening a
 project opens its first step that is not complete, so a finished project
 opens on Export.
 
+## Tools
+
+The pill at the top left of the Viewport holds the **tools**. One is in
+hand at a time, and it decides what a click on the Viewport does:
+
+- **Select** (V) is the tool for everything in this chapter: it selects,
+  moves, resizes and turns.
+- **Edit nodes** (N) reshapes a path ([Editing nodes](editing-nodes.md)).
+- The **Draw** button holds a drawing tool, and the arrow beside it
+  lists them all, with **Trim** and **Measure**
+  ([Drawing shapes](drawing-shapes.md)). The **Draw** menu lists the
+  drawing tools too.
+- The **Tab tool** (T) places tabs ([Tabs](tabs.md)).
+
+While any tool but Select is in hand, a **tool bar** under the pill
+says what the next click does and holds the tool's fields, and the
+Inspector stays closed. Some menu commands take their values in the
+same bar: **Shape ▸ Offset…**, **Fillet Corners…** and **Join…**, and
+**Arrange ▸ Array…**. **V**, or **Escape**, gives you Select back.
+
 ## Selecting
 
 There is one selection, shared by the Viewport, the step panel and the

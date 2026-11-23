@@ -170,6 +170,12 @@ No operation cuts a new copy: its row counts 0. Add it to an operation's
 targets, or select it and add an operation for it
 ([Adding an operation](operations.md#adding-an-operation)).
 
+To change one copy without the others, choose **Shape ▸ Make Unique**.
+**Alt**-drag a shape to drag a linked copy out of it. Cut, copy and
+paste, copies in rows and rings, and **Align** and **Distribute**, which
+line shapes up with each other or with the stock, are in
+[Copies, arrays and alignment](copies-and-arrays.md).
+
 A copy 10 mm from its original lies over it, unless the shape is smaller
 than that. The app says so while it does: a `shapes_overlap` warning in
 the Warnings drawer, and an amber dot on the Design step. Drag the copy

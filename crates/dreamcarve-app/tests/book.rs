@@ -44,6 +44,9 @@ mod common;
 
 #[path = "../../dreamcarve/tests/app_steps/mod.rs"]
 mod app_steps;
+#[path = "../../dreamcarve/tests/design_steps/mod.rs"]
+mod design_steps;
+mod design_window;
 
 use std::path::{Path, PathBuf};
 
@@ -673,6 +676,313 @@ fn quick_start_screenshots() {
     for folder in ["coaster", "plaque", "sign", "dc"] {
         std::fs::remove_dir_all(dir.with_file_name(folder)).ok();
     }
+}
+
+/// As [`settle`] while a tool is in hand: the checking is done before a
+/// picture is taken, and the window is then drawn a fixed number of
+/// frames, since a tool bar that is laying itself out asks for more
+/// frames than `run` allows.
+fn steady(h: &mut H) {
+    while h.state().app().generation().busy()
+        || h.state().worker_busy()
+        || h.state().export_planning()
+    {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run_steps(12);
+}
+
+/// The pictures of the quick start "Your first design": the hook plate
+/// drawn in the window by the chapter's own steps (`design_window`), a
+/// picture at each point the chapter shows one; then its tools and
+/// operations, and the Export step. The window's project is held to the
+/// one the steps build with no window, as `first_design.rs` holds it.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn first_design_screenshots() {
+    use design_window::Stage;
+    let out = out_dir("quick-start");
+    let dir = std::env::temp_dir().join("hook-plate");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = design_steps::chapter();
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = window(&dir, None, &dialogs) else {
+        return;
+    };
+    shoot(&mut h, &out, "design-01-start-screen", Crop::Window);
+    h.get_by_label("Draw from scratch").click();
+    h.run_steps(12);
+    shoot(&mut h, &out, "design-02-draw-from-scratch", Crop::Window);
+
+    // The board: the Stock step's three sizes.
+    go_to(&mut h, "Stock");
+    for (label, value) in app_steps::settings(&design_steps::part_cell(&text, "Stock")) {
+        type_in(&mut h, &label, &value);
+        h.run_steps(12);
+    }
+    shoot(&mut h, &out, "design-03-stock", Crop::Window);
+    go_to(&mut h, "Design");
+    h.key_press(egui::Key::F);
+    h.run_steps(12);
+
+    design_window::draw_all(&mut h, &text, &mut |h, stage| {
+        let name = match stage {
+            Stage::Armed("Rectangle 1") => "design-04-rectangle-tool",
+            Stage::Typed("Rectangle 1") => "design-05-rectangle-typed",
+            Stage::Drawn("Rectangle 1") => "design-06-plate",
+            Stage::Typed("Line 1") => "design-07-construction-line",
+            Stage::Typed("Slot 1") => "design-08-slot",
+            Stage::Typed("Circle 1") => "design-09-hole",
+            Stage::Typed("Hexagon 1") => "design-10-hexagon",
+            Stage::Typed("Text 1") => "design-11-text",
+            Stage::Set("Slot 1") => "design-12-array-slots",
+            Stage::Set("Circle 1") => "design-13-array-holes",
+            Stage::Arranged("Text 1") => "design-14-text-centred",
+            _ => return,
+        };
+        steady(h);
+        capture(h, &out, name, Crop::Window);
+    });
+    let steps = design_steps::drawn(&text);
+    design_window::assert_same_drawing(h.state().app().project(), steps.project());
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.run_steps(12);
+    shoot(&mut h, &out, "design-15-drawn", Crop::Window);
+    // Saved, as the chapter says, so the programs carry the part's name.
+    let saved = dir.join("hook-plate.dcv");
+    dialogs.answer(&saved);
+    common::command_key(&h, egui::Key::S);
+    h.run_steps(12);
+    settle(&mut h);
+    assert!(saved.exists(), "⌘S saved the project");
+
+    // A week later: the slot's width typed in Properties, and both slots
+    // follow, since they are linked copies.
+    h.get_by_role_and_label(Role::TreeItem, "Slot 1").click();
+    h.run_steps(12);
+    shoot(
+        &mut h,
+        &out,
+        "design-16-slot-properties",
+        Crop::ViewportAndInspector,
+    );
+
+    // The rest of the chapter: tools and operations, then Export.
+    let lib = app_steps::library(&text);
+    design_steps::finish(h.state_mut().app_mut(), &text, &lib);
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    go_to(&mut h, "Tools");
+    settle(&mut h);
+    shoot(&mut h, &out, "design-17-tools", Crop::StepPanel);
+    go_to(&mut h, "Operations");
+    settle(&mut h);
+    shoot(&mut h, &out, "design-18-operations", Crop::Window);
+    open_operation(&mut h, "Lettering");
+    settle(&mut h);
+    shoot(&mut h, &out, "design-19-lettering", Crop::Window);
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    open_program_details(&mut h);
+    shoot(&mut h, &out, "design-20-export", Crop::StepPanel);
+    drop(h);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The pictures of the user guide's drawing chapters (phase 5,
+/// "Documentation deliverables"): the Draw button's list, a snapped
+/// point, the Font list, a path's nodes, an offset previewed, a picture
+/// being scaled to trace over, and the Measure tool's tape. Each is
+/// taken on the hook plate the quick start "Your first design" draws
+/// (`design_steps::drawn`), so the chapters show a part the reader has.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn drawing_guide_screenshots() {
+    let out = out_dir("user-guide");
+    let dir = std::env::temp_dir().join("hook-plate-guide");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = design_steps::chapter();
+    let project = dir.join("hook-plate.dcv");
+    std::fs::write(
+        &project,
+        design_steps::drawn(&text)
+            .serialize()
+            .expect("the project saves"),
+    )
+    .unwrap();
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = window(&dir, Some(project), &dialogs) else {
+        return;
+    };
+    go_to(&mut h, "Design");
+    h.key_press(egui::Key::F);
+    h.run_steps(12);
+    // The pointer at a project point, with the frames a tool bar takes
+    // to lay itself out.
+    let move_to = |h: &mut H, x: f64, y: f64| {
+        let at = at_mm(h, x, y);
+        h.event(egui::Event::PointerMoved(at));
+        h.run_steps(12);
+        at
+    };
+    let press = |h: &mut H, at: egui::Pos2| {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.run_steps(12);
+    };
+    let menu = |h: &mut H, path: &[&str]| {
+        // A row with a key carries the key in its label.
+        for item in path {
+            h.query_all_by_role(Role::Button)
+                .find(|node| {
+                    node.accesskit_node()
+                        .label()
+                        .is_some_and(|label| label.starts_with(item))
+                })
+                .unwrap_or_else(|| panic!("no menu row {item}"))
+                .click();
+            h.run_steps(12);
+        }
+        h.event(egui::Event::PointerGone);
+        h.run_steps(12);
+    };
+    let select = |h: &mut H, name: &str| {
+        let id = h
+            .state()
+            .app()
+            .project()
+            .instances
+            .iter()
+            .find(|i| i.name == name)
+            .expect("the shape")
+            .id
+            .clone();
+        h.state_mut()
+            .app_mut()
+            .select(dc_app::Selection::Instances(vec![id]));
+        h.run_steps(12);
+    };
+
+    // The Draw button's list: the drawing tools, then Trim and Measure.
+    h.get_by_role_and_label(Role::Button, "Drawing tools")
+        .click();
+    h.run_steps(12);
+    steady(&mut h);
+    capture(&mut h, &out, "draw-tools", Crop::Window);
+    h.get_by_role_and_label(Role::Button, "Line").click();
+    h.run_steps(12);
+
+    // A point about to be taken, snapped to the centre of a hole.
+    move_to(&mut h, 18.6, 18.4);
+    steady(&mut h);
+    capture(&mut h, &out, "draw-snap", Crop::Window);
+
+    // The Font list of the Text tool.
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::T);
+    h.run_steps(12);
+    h.event(egui::Event::PointerGone);
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::ComboBox, "Font").click();
+    h.run_steps(12);
+    steady(&mut h);
+    capture(&mut h, &out, "draw-fonts", Crop::Window);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(12);
+    h.key_press(egui::Key::V);
+    h.run_steps(12);
+
+    // Measure: from one hole's centre to the next.
+    h.key_press(egui::Key::K);
+    h.run_steps(12);
+    let at = move_to(&mut h, 18.0, 18.0);
+    press(&mut h, at);
+    let at = move_to(&mut h, 162.0, 18.0);
+    press(&mut h, at);
+    select(&mut h, "Rectangle 1");
+    h.event(egui::Event::PointerGone);
+    h.run_steps(12);
+    steady(&mut h);
+    capture(&mut h, &out, "draw-measure", Crop::Window);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(12);
+
+    // Offset…: the plate, 5 mm inward, previewed.
+    select(&mut h, "Rectangle 1");
+    menu(&mut h, &["Shape", "Offset…"]);
+    h.get_by_role_and_label(Role::RadioButton, "Inward").click();
+    h.run_steps(12);
+    h.event(egui::Event::PointerGone);
+    h.run_steps(12);
+    steady(&mut h);
+    capture(&mut h, &out, "draw-offset", Crop::Window);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(12);
+
+    // Edit nodes: the plate as a path, one corner's nodes selected.
+    select(&mut h, "Rectangle 1");
+    menu(&mut h, &["Shape", "Convert to Path"]);
+    h.key_press(egui::Key::N);
+    h.run_steps(12);
+    let at = move_to(&mut h, 170.0, 82.0);
+    press(&mut h, at);
+    h.event(egui::Event::PointerGone);
+    h.run_steps(12);
+    steady(&mut h);
+    capture(&mut h, &out, "draw-nodes", Crop::Window);
+    drop(h);
+
+    // Tracing: a picture on a blank project, faded, with Set scale…'s
+    // two points clicked.
+    let Some(mut h) = window(&dir, None, &dialogs) else {
+        return;
+    };
+    h.get_by_label("Draw from scratch").click();
+    h.run_steps(12);
+    let picture = common::write_colour_png(&dir, "sketch.png", &common::landscape(480, 320));
+    let mut sheet = dc_app::import::PictureImport::open(
+        dc_import::ImageFormat::Png,
+        "sketch.png",
+        &std::fs::read(&picture).unwrap(),
+        dc_app::import::Purpose::Import,
+    );
+    sheet.set_width_mm(90.0);
+    {
+        let app = h.state_mut().app_mut();
+        app.import_picture(&sheet).unwrap();
+        let id = app.project().bitmaps[0].id.clone();
+        app.run(dc_app::Command::SetBitmapOpacity {
+            ids: vec![id.clone()],
+            opacity_fraction: 0.4,
+        })
+        .unwrap();
+        app.arm(dc_app::Tool::Select);
+        app.select(dc_app::Selection::Bitmaps(vec![id]));
+    }
+    go_to(&mut h, "Design");
+    h.run_steps(12);
+    steady(&mut h);
+    capture(&mut h, &out, "draw-backdrop", Crop::ViewportAndInspector);
+    h.get_by_role_and_label(Role::Button, "Set scale…").click();
+    h.run_steps(12);
+    let at = move_to(&mut h, 10.0, 12.0);
+    press(&mut h, at);
+    h.run_steps(30);
+    let at = move_to(&mut h, 80.0, 12.0);
+    press(&mut h, at);
+    h.event(egui::Event::PointerGone);
+    h.run_steps(12);
+    steady(&mut h);
+    capture(&mut h, &out, "draw-set-scale", Crop::Window);
+    drop(h);
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// The plaque as the quick start's tables build it, in a folder named

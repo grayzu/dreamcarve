@@ -21,11 +21,14 @@ the order listed.
 
 ## The workflow
 
-Draw your part in Inkscape or any SVG editor and save it as SVG, or in a
-CAD program and save it as DXF. Then, in the app, the job is the five
-steps in its rail:
+Draw your part in the app ([Drawing shapes](drawing-shapes.md); the
+quick start [Your first design](../quick-start/first-design.md) draws
+one from nothing), or draw it in Inkscape or any SVG editor and save it
+as SVG, or in a CAD program and save it as DXF. Then, in the app, the
+job is the five steps in its rail:
 
-1. **Design**: **New from drawing…** makes a project round the drawing.
+1. **Design**: **Draw from scratch** opens a blank project to draw in;
+   **New from drawing…** makes a project round a drawing.
 2. **Stock**: type the material's thickness, and say where work zero is.
 3. **Tools**: add the bits from your [tool library](tool-library.md), or
    make them.

@@ -1164,6 +1164,41 @@ the tool bar of slice 9 is its form.
   The Viewport writes the size label while a `Drag::Transform` or a
   picture drag has a preview (`pictures::size_label`).
 
+### The hook plate and the book (slice 27)
+
+- The quick start `docs/book/src/quick-start/first-design.md` is the
+  test part's definition. Its tables are read by
+  `crates/dreamcarve/tests/design_steps` (beside `app_steps`, which it
+  shares the stock, tools and operations tables with): `draw NAME`, a
+  row a shape (the tool by its name, then `**Label** value` pairs set
+  in the tool bar: a field typed, a choice picked, a text's words;
+  the start typed into X and Y, or clicked where the tool takes no
+  typing; then the sizes, Enter, and **Done** when the tool still
+  waits), and `arrange NAME` (the shapes, a menu path, and the Array
+  bar's values or Properties' X and Y). Every value goes through the
+  event or function the window sends for that control.
+  `design_steps::drawn` is the drawing, `finish` the tools and
+  operations, `build` both.
+- `crates/dreamcarve-app/tests/design_window` follows the same two
+  tables through the window: the Draw button's popover, the bar's
+  fields with Tab between and Enter after, radio buttons and the Font
+  list, the Design Tree's rows, the menu bar, Properties.
+  `first_design.rs` holds the project the window leaves to
+  `design_steps::drawn` (names, folders, sizes; positions to 1e-6 mm,
+  since the Text tool's click is a whole pixel); `book.rs` takes the
+  chapter's pictures at the stages the driver names.
+- `gui_equality::the_hook_plate_drawn_equals_the_cli` runs the part
+  through `export_case` on the six post-processors.
+  `drawn_equals_imported` writes the part's cut shapes as an SVG
+  (`svg_of`: lines and circular arcs, Y down), imports it, and compares
+  the programs: `first_difference` allows a coordinate one unit of its
+  last place and a feed a hundredth, and `Cut` compares the V-Carve as
+  a carve (lines, box, cut length), for the reasons acceptance 128
+  gives; then the drawn part with every `shape` set to `None` must give
+  the drawn part's programs byte for byte.
+- `dc_project::validate`: an open profile of a definition that only
+  construction instances place is not an `OpenProfile` problem.
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the
@@ -1422,7 +1457,13 @@ extended; `review::phase5_drawing_screenshots` writes
 `folders_drag_and_drop`,
 `the_text_tool_previews_as_typed` (acc 129, 130); `strings::` and
 `theme::` scans as phase 4. `gui_equality::the_hook_plate_drawn_equals_the_cli`
-and `drawn_equals_imported` (acc 128).
+and `drawn_equals_imported` (acc 128), on the part `design_steps` builds
+from the quick start's own tables; in the window
+`first_design::the_hook_plate_is_designed_in_the_window` and
+`a_shape_is_drawn_from_the_keyboard_alone`; `dc_project`
+`validate::open_profile_of_construction_geometry_is_not_reported`;
+`book::first_design_screenshots` and `drawing_guide_screenshots`
+(ignored: they write the book's pictures).
 
 ## Slices
 

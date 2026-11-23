@@ -131,6 +131,47 @@ in each module's doc comment, under "What changed in the port".
 | Picture rows | A bitmap's top row is at its footprint's highest Y, as it shows on screen: row 0 is the top row, at the highest Y. | None (no Photo V-Carve). RasterCarve's origin is the picture's top-left corner, Y up, so its picture lies at negative Y. | `dc_cam::photo`; test `top_row_is_at_the_highest_y` |
 | Photo groove family | One groove passes through the picture's top-left corner, RasterCarve's origin, so the goldens compare groove for groove. | None. | `dc_cam::photo`; test `one_groove_passes_through_the_top_left_corner` |
 
+## The drawing tools (phase 5)
+
+Phase 5 ports PureCutCNC's sketch layer, and takes some behaviour from a
+second reference. `docs/specs/phase-5/design.md`, "Reference sources",
+has the table of which DreamCarve module follows which upstream file.
+
+**Ported from PureCutCNC**, with the ported-file header: the shape
+constructions (rectangle, ellipse, polygon, slot, gear), the path edits
+(split, delete, break, fillet, chamfer, the spline through points),
+segment intersections, snapping's kinds and ranks, the drawing tools'
+click sequences and typed fields, node editing, arrays, align and
+distribute, Make Unique, flat folders, the tape measure, and the
+single-line font *Simple Stroke*.
+
+**Not ported**: the constraint solver and everything that calls it,
+driving and named dimensions, dimension annotations, regions and feature
+roles other than construction, text on arcs and paths, canned models,
+the second face and rotary work. They are out of the phase's scope.
+
+**Graphite** ([GraphiteEditor/Graphite](https://github.com/GraphiteEditor/Graphite),
+Apache-2.0) is the second reference, for how a vector editor behaves
+where PureCutCNC has nothing: press, drag and release as a second way
+to give two points, `Shift` and `Alt` on the box tools, several nodes
+selected and moved together, a corner node beside a smooth one, and
+changing a segment between line, arc and curve. That behaviour was
+re-implemented from a written survey
+(`docs/research/graphite-tools-digest.md`), not transcribed, so those
+files carry the DreamCarve header. A file that does transcribe a
+Graphite file takes the ported-file header with `Copyright (c) Graphite
+contributors` and Graphite's path and commit, and `NOTICE` gains
+Graphite in the same change.
+
+Two things are DreamCarve's own: the Text tool's layout, on the
+`ttf-parser` crate and the bundled fonts ([Licensing](licensing.md#bundled-fonts)),
+and trimming a piece from the middle of an outline, which upstream
+leaves undone.
+
+Every winding and direction was re-derived for Y-up: every drawn outline
+is anticlockwise, an array's rows advance upwards, and Align's **Top**
+is the greatest Y.
+
 ## What is not a port
 
 Some of DreamCarve's features have no PureCutCNC code behind them. They

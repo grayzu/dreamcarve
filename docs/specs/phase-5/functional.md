@@ -632,7 +632,9 @@ capability 52); what a tool holds before it commits is not project data.
     *Add operation* on a selection that holds construction geometry
     makes the operation for the other shapes, and says why not when
     there are none; *Add to* an operation and target editing pass a
-    construction shape by. Turning Construction off does not put a
+    construction shape by. An open path that only construction shapes
+    place raises no `open_profile` warning: it is not a path that was
+    meant to be cut. Turning Construction off does not put a
     shape back in the operations it left. A project file that names a construction shape as a
     target is an error, and nothing is exported (S21). The tree shows
     its row with the construction glyph.
@@ -890,8 +892,17 @@ saves. Tolerances are `EPS_MM` (1e-6 mm) unless stated.
 128. **Drawn equals imported** (105, S21). The test part (below) drawn
      in the app, saved, and exported by `dreamcarve export` gives the
      programs the app writes, byte for byte, on all six
-     post-processors; the same outlines imported from an SVG of the
-     part give the same programs but for the names in comments.
+     post-processors. The drawn part with every shape's sizes removed,
+     which leaves the plain outlines an import makes, gives the same
+     programs byte for byte. The same outlines imported from an SVG of
+     the part give the same programs but for the project's name in a
+     comment, move for move, each coordinate within the last decimal
+     place a program writes: an import rounds a coordinate to a
+     millionth of a millimetre, which can tip one that falls on a
+     rounding tie. The V-Carve of the text is then the same carve (as
+     many moves, in the same box, cutting the same length) with some
+     strokes in another order, since that millionth is enough to change
+     which of two equally near strokes it takes first.
 129. **Tools and keys** (81, 106). Each tool's key arms it and `Escape`
      returns to Select; a drawing tool stays armed after a shape with
      its options; while a tool is armed a click selects nothing; the
