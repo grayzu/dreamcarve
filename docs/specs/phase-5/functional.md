@@ -342,41 +342,61 @@ capability 52); what a tool holds before it commits is not project data.
     shapes that follow construction geometry until it is turned off. A
     shape too small to be one (under 0.01 mm across, PureCutCNC's
     minimum) is not made, and the tool stays as it was.
-91. **Text** (`⇧T`). A click sets where the text's baseline starts; the
-    tool bar's field takes the words, previewed as they are typed, and
-    `Ctrl`/`⌘ Enter` or **Done** commits. Its sizes (84):
-    - **Text**, one line or several (`Enter` in the field starts a
+91. **Text** (`⇧T`). A click sets where the text's baseline starts
+    (a second click moves it); the tool bar's **Words** field then
+    takes the keyboard and the words, previewed as they are typed, and
+    `Ctrl`/`⌘ Enter` or **Done** commits. `Escape` takes the click
+    back, and with no click puts the tool down. The shape is named
+    *Text 1*. Its sizes (84), which the tool keeps for the texts that
+    follow and across sessions:
+    - **Words**, one line or several (`Enter` in the field starts a
       line; PureCutCNC's text is one line);
     - **Font**: one of the bundled fonts, or a font the user has added
-      (below);
+      (below), in a list that drops down, a style other than the
+      regular one named with its family (*Inter*, *Inter Bold*);
     - **Height**: the height of a capital letter, in project units
       (default 10 mm or 0.4 in), so 12 mm lettering is 12 mm tall on the
-      board whatever the font;
+      board whatever the font. It is measured on the font's own *H*; a
+      round letter reaches a little over, as type does;
     - **Letter spacing** (extra space between letters, as a percentage
       of the height; 0 by default, the font's own spacing and kerning
       pairs applied first) and **Line spacing** (a percentage of the
       font's own line height, default 100);
-    - **Align**: Left, Centre or Right, for several lines.
+    - **Lines**: Left, Centre or Right, for several lines.
 
     An outline font gives closed outlines, the counters of letters as
     holes, so a V-Carve or a Pocket of text does what it does for
-    imported lettering. A **single-line font** gives open paths for
-    Engrave: *Simple Stroke*, PureCutCNC's own, with capitals, digits
-    and `. - _ / ?`.
+    imported lettering; letters that overlap, as a script's do where
+    they join, are one outline. A **single-line font** gives open paths
+    for Engrave: *Simple Stroke*, PureCutCNC's own, with capitals,
+    digits and `. - _ / ?`; a small letter is set as its capital. A
+    character the font has no glyph for is drawn as the font's own
+    missing-glyph mark (Simple Stroke's `?`) and said under the bar's
+    fields.
 
-    **Bundled fonts** are open-licensed (SIL OFL 1.1) and travel in the
-    app; the design spec lists them with their licences. **Add font…**
-    (in the Font dropdown) takes a `.ttf` or `.otf` file and copies it
-    to the app's fonts folder in the user config directory; the app
-    never lists the system's fonts (`docs/plan.md`, settled decisions).
-    A font file the app cannot read is refused with the reason.
+    In Properties a text's Shape section has the same fields: the words
+    are written when the field is left or on `Ctrl`/`⌘ Enter`, each
+    change is one undo step, and the outline is laid out again where
+    the text is, for its linked copies too. A text keeps its
+    proportions: it scales evenly or not at all, and is edited node by
+    node only once it is converted to a path.
+
+    **Bundled fonts** are open-licensed (SIL OFL 1.1, and Apache-2.0 for
+    one) and travel in the app; the design spec lists them with their
+    licences. **Add font…** (the last row of the Font list) takes a
+    `.ttf` or `.otf` file, checks that it is a font, copies it to the
+    app's fonts folder in the user config directory and chooses it; the
+    folder is read when the app starts. The app never lists the
+    system's fonts (`docs/plan.md`, settled decisions). A font file the
+    app cannot read is refused with the reason, and not copied. A
+    variable font is used at its default instance.
 
     A project does not carry its fonts. The text's outline is saved, so
     the project opens, shows and cuts anywhere (ADR-0006); on a
     computer without the text's font its Properties say *Font “Name” is
-    not on this computer: the outline is kept*, the Text fields are
-    read-only, and choosing another font, or adding that one, makes the
-    text editable again. Text on a curve, bold or italic made
+    not on this computer: the outline is kept*, the fields are
+    read-only but the Font list, and choosing another font there, or
+    adding that one, makes the text editable again. Text on a curve, bold or italic made
     by slanting, and system fonts are out of scope.
 
 ### Editing shapes

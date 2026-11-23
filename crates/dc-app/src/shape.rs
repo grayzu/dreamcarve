@@ -56,6 +56,9 @@ pub struct Section {
     /// Its choices: a rectangle's corners, what a polygon's radius
     /// reaches, a gear's forms.
     pub choices: Vec<Choice>,
+    /// A text's words ([`crate::text::section`]); `None` for every other
+    /// shape.
+    pub text: Option<crate::tool::TextRow>,
     /// A line that is read, not typed: a gear's module, or why the sizes
     /// are read-only.
     pub note: Option<String>,
@@ -349,6 +352,7 @@ const fn row_label(shape: &Shape, field: SizeField) -> StrKey {
 pub(crate) const fn edit_word(shape: Option<&Shape>, edit: Edit) -> StrKey {
     match edit {
         Edit::MoveNodes { .. }
+        | Edit::Text
         | Edit::Reshape
         | Edit::AddNode
         | Edit::DeleteNodes { .. }
@@ -392,9 +396,14 @@ pub(crate) const fn edit_word(shape: Option<&Shape>, edit: Edit) -> StrKey {
             | SizeField::SpacingX
             | SizeField::SpacingY
             | SizeField::Copies => StrKey::ShapeSizeSize,
+            SizeField::TextHeight => StrKey::ShapeSizeHeight,
+            SizeField::LetterSpacing => StrKey::ShapeSizeLetterSpacing,
+            SizeField::LineSpacing => StrKey::ShapeSizeLineSpacing,
         },
         Edit::Corners => StrKey::ShapeSizeCorners,
         Edit::Measured => StrKey::ShapeSizeMeasure,
+        Edit::Font => StrKey::ShapeSizeFont,
+        Edit::Align => StrKey::ShapeSizeAlignment,
         Edit::Flanks => StrKey::ShapeSizeFlanks,
         Edit::Root => StrKey::ShapeSizeRoot,
         Edit::Crest => StrKey::ShapeSizeCrest,
@@ -412,6 +421,7 @@ fn choice(
     Choice {
         label: strings.get(label).to_owned(),
         help: strings.get(help).to_owned(),
+        list: false,
         selected: options
             .iter()
             .position(|(_, option)| option == chosen)
@@ -637,6 +647,15 @@ pub(crate) fn read_size(
             .parse::<u32>()
             .map(f64::from)
             .map_err(|_| strings.fmt(StrKey::DrawProblemNotACount, &[("text", text)])),
+        // A share, typed as a percentage with or without its sign.
+        Quantity::Percent => text
+            .trim_end_matches('%')
+            .trim_end()
+            .parse::<f64>()
+            .ok()
+            .filter(|percent| percent.is_finite())
+            .map(|percent| percent / 100.0)
+            .ok_or_else(|| strings.fmt(StrKey::DrawProblemNotAPercentage, &[("text", text)])),
     }
 }
 
@@ -677,7 +696,7 @@ pub fn section(project: &Project, strings: &Strings, id: &InstanceId) -> Option<
             text: size_of(shape, field).map_or_else(String::new, |value| {
                 let shown = match field.quantity() {
                     Quantity::Length => value * scale,
-                    Quantity::Angle | Quantity::Count => value,
+                    Quantity::Angle | Quantity::Count | Quantity::Percent => value,
                 };
                 size_text(field, shown, units)
             }),
@@ -698,6 +717,7 @@ pub fn section(project: &Project, strings: &Strings, id: &InstanceId) -> Option<
         title: strings.get(title(shape)).to_owned(),
         rows,
         choices: choices(strings, shape),
+        text: None,
         note,
         read_only: placed.is_none() || copies(project, instance).iter().any(|copy| copy.locked),
     })
@@ -793,7 +813,7 @@ pub fn set_size(
         let typed = read_size(strings, units, field, text).map_err(|why| refused(text, why))?;
         Some(match field.quantity() {
             Quantity::Length => typed / scale,
-            Quantity::Angle | Quantity::Count => typed,
+            Quantity::Angle | Quantity::Count | Quantity::Percent => typed,
         })
     };
     // A gear's sizes are the gear's to refuse, each with its own reason.

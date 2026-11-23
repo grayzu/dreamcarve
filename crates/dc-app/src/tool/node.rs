@@ -422,7 +422,7 @@ impl App {
             Event::Key(Key::Backspace | Key::Delete) => self.delete_selected(),
             Event::Field { field, text } => self.type_node_size(field, &text),
             Event::Node(action) => self.node_action(action),
-            Event::Option(_) => Reply::default(),
+            Event::Option(_) | Event::Text(_) => Reply::default(),
         };
         self.refresh_node_draft();
         reply
@@ -1158,6 +1158,7 @@ impl App {
             actions: Vec::new(),
             note: None,
             can_finish: true,
+            text: None,
         };
         let edited = match self.node_subject() {
             Subject::Nothing => {
@@ -1189,7 +1190,7 @@ impl App {
             help: strings.get(field.help()).to_owned(),
             text: match field.quantity() {
                 Quantity::Length => units::field_text(value, units),
-                Quantity::Angle | Quantity::Count => String::new(),
+                Quantity::Angle | Quantity::Count | Quantity::Percent => String::new(),
             },
             quantity: field.quantity(),
             pinned: false,

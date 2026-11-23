@@ -6018,6 +6018,15 @@ fn keyboard_shortcuts_reach_their_commands() {
         );
         reached.insert(command);
     }
+    // Shift T takes up the Text tool.
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::T);
+    h.run();
+    assert_eq!(
+        h.state().app().tool(),
+        dc_app::Tool::Draw(dc_app::Drawing::Text),
+        "Shift T"
+    );
+    reached.insert(Key::DrawText);
     h.key_press(egui::Key::V);
     h.run();
     assert_eq!(h.state().app().tool(), dc_app::Tool::Select, "V");

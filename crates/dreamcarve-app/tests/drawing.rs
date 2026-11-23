@@ -112,8 +112,7 @@ fn the_draw_popover_lists_the_tools() {
     h.get_by_role_and_label(Role::Button, "Drawing tools")
         .click();
     h.run();
-    // Every tool this build has, in the popover's order; Text is not
-    // here until its fonts are.
+    // Every drawing tool, in the popover's order.
     let rows: Vec<String> = [
         "Line",
         "Arc",
@@ -124,6 +123,7 @@ fn the_draw_popover_lists_the_tools() {
         "Polygon",
         "Slot",
         "Gear",
+        "Text",
     ]
     .iter()
     .map(|name| (*name).to_owned())
@@ -133,7 +133,6 @@ fn the_draw_popover_lists_the_tools() {
         .filter(|label| rows.contains(label))
         .collect();
     assert_eq!(listed, rows);
-    assert!(h.query_by_role_and_label(Role::Button, "Text").is_none());
     h.get_by_role_and_label(Role::Button, "Slot").click();
     h.run();
     assert_eq!(tool(&h), Tool::Draw(Drawing::Slot));

@@ -194,6 +194,27 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
         // Session state: what Offset…, Fillet Corners… and Join were last
         // given is not in `gui.toml`.
         adjust: dc_app::tool::AdjustPrefs::default(),
+        text: dc_app::prefs::TextPrefs {
+            font: dc_project::FontRef {
+                family: file.text.family.clone(),
+                style: file.text.style.clone(),
+            },
+            height_mm: file
+                .text
+                .height_mm
+                .filter(|height| height.is_finite() && *height > 0.0),
+            letter_spacing_fraction: Some(file.text.letter_spacing)
+                .filter(|spacing| spacing.is_finite())
+                .unwrap_or(0.0),
+            line_spacing_fraction: Some(file.text.line_spacing)
+                .filter(|spacing| spacing.is_finite() && *spacing > 0.0)
+                .unwrap_or(1.0),
+            align: match file.text.align.as_str() {
+                "centre" => dc_project::Align::Centre,
+                "right" => dc_project::Align::Right,
+                _ => dc_project::Align::Left,
+            },
+        },
     }
 }
 
@@ -277,6 +298,19 @@ pub fn prefs_to_file(prefs: &Prefs) -> GuiPrefs {
             }
             .to_owned(),
         },
+        text: gui_prefs::Text {
+            family: prefs.text.font.family.clone(),
+            style: prefs.text.font.style.clone(),
+            height_mm: prefs.text.height_mm,
+            letter_spacing: prefs.text.letter_spacing_fraction,
+            line_spacing: prefs.text.line_spacing_fraction,
+            align: match prefs.text.align {
+                dc_project::Align::Left => "left",
+                dc_project::Align::Centre => "centre",
+                dc_project::Align::Right => "right",
+            }
+            .to_owned(),
+        },
     }
 }
 
@@ -322,6 +356,16 @@ mod tests {
             corner_mm: Some(6.35),
             polygon_sides: 8,
             polygon_measured: dc_project::Measured::Flats,
+        };
+        prefs.text = dc_app::prefs::TextPrefs {
+            font: dc_project::FontRef {
+                family: "Pacifico".to_owned(),
+                style: "Regular".to_owned(),
+            },
+            height_mm: Some(12.5),
+            letter_spacing_fraction: 0.1,
+            line_spacing_fraction: 1.5,
+            align: dc_project::Align::Right,
         };
         assert_eq!(prefs_from_file(&prefs_to_file(&prefs)), prefs);
         assert_eq!(prefs_from_file(&GuiPrefs::default()), Prefs::default());

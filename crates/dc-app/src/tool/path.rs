@@ -203,6 +203,8 @@ impl App {
                 self.set_option(option);
                 Reply::default()
             }
+            // Words are the Text tool's.
+            Event::Text(_) => Reply::default(),
         };
         self.refresh_path_draft(drawing);
         reply
@@ -252,6 +254,7 @@ impl App {
             actions: Vec::new(),
             note: None,
             can_finish: draft.points.len() >= 2,
+            text: None,
         }
     }
 

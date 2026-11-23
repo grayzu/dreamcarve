@@ -33,6 +33,12 @@ pub enum Edit {
     Root,
     /// The form of a gear's crest.
     Crest,
+    /// A text's words (capability 91).
+    Text,
+    /// A text's font.
+    Font,
+    /// How a text's lines are set.
+    Align,
     /// Nodes of a path moved (capability 92): by a drag, a nudge or
     /// typed coordinates.
     MoveNodes {
@@ -122,9 +128,12 @@ pub(super) fn edit_label(
         Edit::SegmentKind(dc_geometry::SpanKind::Line) => with(StrKey::CommandLabelMakeStraight),
         Edit::SegmentKind(dc_geometry::SpanKind::Arc) => with(StrKey::CommandLabelMakeArc),
         Edit::SegmentKind(dc_geometry::SpanKind::Cubic) => with(StrKey::CommandLabelMakeCurve),
+        Edit::Text => with(StrKey::CommandLabelEditText),
         Edit::Size(_)
         | Edit::Corners
         | Edit::Measured
+        | Edit::Font
+        | Edit::Align
         | Edit::Flanks
         | Edit::Root
         | Edit::Crest => strings.fmt(

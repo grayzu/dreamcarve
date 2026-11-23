@@ -63,6 +63,41 @@ pub struct Prefs {
     /// What the Shape menu's Offset…, Fillet Corners… and Join were last
     /// given. Kept while the app runs; not written to `gui.toml`.
     pub adjust: crate::tool::AdjustPrefs,
+    /// What the Text tool sets a text in, as last set (capability 91).
+    pub text: TextPrefs,
+}
+
+/// What the Text tool remembers between texts: the font, the height,
+/// the spacings and the alignment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextPrefs {
+    /// The font; the first font on hand when this one is not.
+    pub font: dc_project::FontRef,
+    /// The height of a capital letter, mm; `None` until one is typed,
+    /// and then 10 mm, or 0.4 in in an inch project.
+    pub height_mm: Option<f64>,
+    /// Extra space between letters, a share of the height.
+    pub letter_spacing_fraction: f64,
+    /// The distance between lines, a share of the font's own.
+    pub line_spacing_fraction: f64,
+    /// How several lines are set.
+    pub align: dc_project::Align,
+}
+
+impl Default for TextPrefs {
+    /// Inter, the font's own spacings, set left.
+    fn default() -> Self {
+        Self {
+            font: dc_project::FontRef {
+                family: "Inter".to_owned(),
+                style: "Regular".to_owned(),
+            },
+            height_mm: None,
+            letter_spacing_fraction: 0.0,
+            line_spacing_fraction: 1.0,
+            align: dc_project::Align::Left,
+        }
+    }
 }
 
 /// A new rectangle's corner size in a millimetre project, mm

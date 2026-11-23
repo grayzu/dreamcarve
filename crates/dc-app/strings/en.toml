@@ -56,6 +56,7 @@ align = "Align {subject}"
 distribute = "Distribute {subject}"
 array = "Array {subject}"
 mark_construction = "Turn Construction on for {subject}"
+edit_text = "Edit the text of {subject}"
 unmark_construction = "Turn Construction off for {subject}"
 new_folder = "New folder {subject}"
 group = "Group {subject}"
@@ -428,6 +429,8 @@ new_from_picture_title = "New project from a picture"
 project_filter = "DreamCarve project"
 drawing_filter = "Drawing"
 picture_filter = "Picture"
+font_title = "Add a font"
+font_filter = "Font"
 library_import_title = "Import a tool library"
 library_export_title = "Export the tool library"
 library_filter = "Tool library"
@@ -450,6 +453,8 @@ prefs_failed = "Cannot save preferences: {reason}"
 prefs_unread = "Defaults are in use: the preferences file could not be read ({reason}). It is left as it is until you change a preference."
 about = "DreamCarve {version}"
 copied = "Copied {subject}"
+font_added = "Added the font {name}"
+font_failed = "Cannot add {name}: {reason}"
 
 [app.viewport]
 origin = "0,0"
@@ -1634,6 +1639,9 @@ rows = "Rows"
 spacing_x = "Spacing X"
 spacing_y = "Spacing Y"
 copies = "Count"
+text_height = "Height"
+letter_spacing = "Letter spacing"
+line_spacing = "Line spacing"
 
 # What each size is: its label's tooltip in the tool bar and in the
 # Properties panel's Shape section (capabilities 83 and 84).
@@ -1662,6 +1670,9 @@ rows = "How many rows of copies there are along Y, the selection's row counted a
 spacing_x = "How far apart the columns are, as a gap between copies or as their pitch; below 0 goes to the left."
 spacing_y = "How far apart the rows are, as a gap between copies or as their pitch; below 0 goes downward."
 copies = "How many there are round the centre, the selection counted as the first: 2 or more."
+text_height = "The height of a capital letter, in the project's units, whatever the font: above 0."
+letter_spacing = "Space added between letters, as a percentage of the height, after the font's own spacing and kerning; 0 for the font's own."
+line_spacing = "The distance from one line to the next, as a percentage of the font's own line height: above 0; 100 for the font's own."
 
 # A tool's choices in the tool bar, and what each can be (capability 86).
 [draw.choice]
@@ -1700,6 +1711,7 @@ module = "Module {module}"
 [draw.problem]
 not_positive = "a size must be greater than 0"
 not_a_count = "`{text}` is not a whole number"
+not_a_percentage = "`{text}` is not a percentage"
 root_fillet_too_large = "the root fillet is too large for the tooth spacing; the largest that fits is {max}"
 crest_radius_too_large = "the crest radius is too large for the tooth spacing; the largest that fits is {max}"
 bore_too_large = "the bore diameter must be smaller than the root diameter, {root}"
@@ -1734,6 +1746,10 @@ whole_depth = "whole depth"
 root_fillet = "root fillet"
 crest_radius = "crest radius"
 bore = "bore diameter"
+letter_spacing = "letter spacing"
+line_spacing = "line spacing"
+font = "font"
+alignment = "alignment"
 size = "size"
 corners = "corners"
 measure = "measure"
@@ -1772,6 +1788,27 @@ offset = "Offset"
 fillet = "Fillet Corners"
 join = "Join"
 array = "Array"
+
+# The Text tool and a text's Properties (phase 5, capability 91).
+[text]
+words = "Words"
+words_help = "What the text says. Enter starts a line; Ctrl or ⌘ with Enter makes the text."
+font = "Font"
+font_help = "The font the text is set in: one that travels with the app, or one you have added. Simple Stroke is single lines, for Engrave."
+align = "Lines"
+align_help = "How several lines are set against the widest: starting together at the left, centred, or ending together at the right."
+align_left = "Left"
+align_centre = "Centre"
+align_right = "Right"
+add_font = "Add font…"
+
+[text.prompt]
+place = "Click where the text starts"
+type = "Type the text, then Done"
+
+[text.note]
+missing_glyph = "The font has no glyph for “{character}”"
+font_missing = "Font “{name}” is not on this computer: the outline is kept"
 
 # Arrange ▸ Array… (phase 5, capability 98): the tool bar is its form.
 [array]

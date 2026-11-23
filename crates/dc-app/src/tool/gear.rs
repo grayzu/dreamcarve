@@ -129,6 +129,8 @@ impl App {
                 self.set_option(option);
                 Reply::default()
             }
+            // Words are the Text tool's.
+            Event::Text(_) => Reply::default(),
         };
         self.refresh_gear_draft();
         reply
@@ -177,6 +179,7 @@ impl App {
                 actions: Vec::new(),
                 note: None,
                 can_finish: false,
+                text: None,
             };
         };
         let problems = gear.problems();
@@ -213,6 +216,7 @@ impl App {
             actions: Vec::new(),
             note,
             can_finish: problems.is_empty(),
+            text: None,
         }
     }
 

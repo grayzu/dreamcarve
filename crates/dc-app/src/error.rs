@@ -61,6 +61,17 @@ pub enum CommandError {
     /// definition (functional spec, capability 98).
     #[error("nothing selected is a linked copy")]
     NotLinked,
+    /// A text's font is not on this computer, so the text cannot be
+    /// laid out again (capability 91): its outline is kept.
+    #[error("font “{name}” is not on this computer: choose another font, or add it")]
+    FontMissing {
+        /// The font, as a list names it.
+        name: String,
+    },
+    /// A text that cannot be laid out, or a font file that cannot be
+    /// read.
+    #[error(transparent)]
+    Text(#[from] dc_text::TextError),
     /// An array that is no array (functional spec, capability 98).
     #[error(transparent)]
     Array(#[from] crate::array::ArrayError),

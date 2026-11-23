@@ -474,6 +474,7 @@ const fn size_unit(quantity: dc_app::tool::Quantity, units: dc_project::Units) -
         dc_app::tool::Quantity::Length => units::suffix(units),
         dc_app::tool::Quantity::Angle => "°",
         dc_app::tool::Quantity::Count => "",
+        dc_app::tool::Quantity::Percent => "%",
     }
 }
 
@@ -485,9 +486,13 @@ fn shape_section(ui: &mut Ui, state: &FrameState<'_>, id: &InstanceId, out: &mut
     let strings = app.strings();
     let project = app.project();
     let palette = Palette::current(ui);
-    let Some(section) = dc_app::shape::section(project, strings, id) else {
+    // A text's sizes need the fonts on hand (capability 91).
+    let Some(section) = dc_app::shape::section(project, strings, id)
+        .or_else(|| dc_app::text::section(project, strings, app.fonts(), id))
+    else {
         return;
     };
+    let is_text = section.text.is_some();
     let units = project.display_units;
     text(
         ui,
@@ -501,7 +506,28 @@ fn shape_section(ui: &mut Ui, state: &FrameState<'_>, id: &InstanceId, out: &mut
         Err(CommandError::NothingToDo) => {}
         Err(e) => out.push(Action::Refused(e.to_string())),
     };
+    if let Some(words) = &section.text {
+        words_field(ui, id, words, section.read_only, out);
+    }
     for choice in &section.choices {
+        // A text's font: a list that drops down, with *Add font…*. The
+        // list stays open to a text whose font is not on this computer,
+        // since choosing another is how it is made a text again.
+        if choice.list {
+            use crate::viewport::tool_bar::{ListPick, list_choice};
+            let label = crate::widgets::row::inline_label(ui, &choice.label, &choice.help);
+            let (picked, response) = list_choice(ui, strings, choice, ui.available_width());
+            let _ = response.labelled_by(label.id);
+            ui.add_space(4.0);
+            match picked {
+                Some(ListPick::Option(dc_app::tool::ToolOption::Font(font))) => {
+                    out.push(Action::EditText(dc_app::text::TextEdit::Font(font)));
+                }
+                Some(ListPick::AddFont) => out.push(Action::AddFont),
+                _ => {}
+            }
+            continue;
+        }
         let labels: Vec<&str> = choice.options.iter().map(|o| o.label.as_str()).collect();
         // The label over the control, which takes the panel's width: three
         // words as long as *Chamfered* do not fit beside a label.
@@ -523,10 +549,14 @@ fn shape_section(ui: &mut Ui, state: &FrameState<'_>, id: &InstanceId, out: &mut
             crate::widgets::help::control(ui, shown.response, &choice.label).labelled_by(label.id);
         ui.add_space(4.0);
         if let Some(option) = picked.and_then(|i| choice.options.get(i)) {
-            push(
-                dc_app::shape::set_option(project, strings, id, &option.option),
-                out,
-            );
+            if let dc_app::tool::ToolOption::TextAlign(align) = option.option {
+                out.push(Action::EditText(dc_app::text::TextEdit::Align(align)));
+            } else {
+                push(
+                    dc_app::shape::set_option(project, strings, id, &option.option),
+                    out,
+                );
+            }
         }
     }
     // Why the sizes cannot be typed: the shape is stretched, which the
@@ -559,14 +589,25 @@ fn shape_section(ui: &mut Ui, state: &FrameState<'_>, id: &InstanceId, out: &mut
         });
         let _ = output.response.labelled_by(label.id);
         if let Some(typed) = output.committed {
-            push(
-                dc_app::shape::set_size(project, strings, id, size.field, &typed),
-                out,
-            );
+            if is_text {
+                out.push(Action::EditText(dc_app::text::TextEdit::Size(
+                    size.field, typed,
+                )));
+            } else {
+                push(
+                    dc_app::shape::set_size(project, strings, id, size.field, &typed),
+                    out,
+                );
+            }
         }
     }
     if let Some(note) = &section.note {
-        text(ui, note, TextStyle::Small, palette.text_secondary);
+        if is_text {
+            // A sentence, which wraps: why the text cannot be edited.
+            crate::widgets::row::line(ui, false, note);
+        } else {
+            text(ui, note, TextStyle::Small, palette.text_secondary);
+        }
     }
     ui.add_space(8.0);
     let (rule, _) =
@@ -577,6 +618,55 @@ fn shape_section(ui: &mut Ui, state: &FrameState<'_>, id: &InstanceId, out: &mut
         Stroke::new(1.0, palette.border_default),
     );
     ui.add_space(8.0);
+}
+
+/// A text's words in Properties (capability 91): a field of several
+/// lines. What is typed is kept beside the field until the field is
+/// left, or `Ctrl`/`⌘ Enter` is pressed, and then written as one undo
+/// step; `Escape` puts the words back.
+fn words_field(
+    ui: &mut Ui,
+    id: &InstanceId,
+    words: &dc_app::tool::TextRow,
+    read_only: bool,
+    out: &mut Vec<Action>,
+) {
+    let field_id = Id::unique(("shape_words", id.as_str()));
+    let draft_id = field_id.with("draft");
+    let label = crate::widgets::row::inline_label(ui, &words.label, &words.help);
+    let mut text: String = ui
+        .data(|d| d.get_temp(draft_id))
+        .unwrap_or_else(|| words.text.clone());
+    let focused = ui.memory(|m| m.has_focus(field_id));
+    let commit_key =
+        focused && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
+    let reverted = focused && ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let edit = ui.add_enabled(
+        !read_only,
+        egui::TextEdit::multiline(&mut text)
+            .id(field_id)
+            .font(TextStyle::Body)
+            .desired_width(ui.available_width())
+            .desired_rows(2),
+    );
+    let edit = edit.accessible_name(&words.label).labelled_by(label.id);
+    ui.add_space(4.0);
+    if reverted {
+        ui.data_mut(|d| d.remove::<String>(draft_id));
+    } else if edit.lost_focus() || commit_key {
+        ui.data_mut(|d| d.remove::<String>(draft_id));
+        if text != words.text {
+            out.push(Action::EditText(dc_app::text::TextEdit::Text(text)));
+        }
+        if commit_key {
+            edit.surrender_focus();
+        }
+    } else if edit.has_focus() || edit.changed() {
+        ui.data_mut(|d| d.insert_temp(draft_id, text));
+    } else {
+        // Not being typed in: it shows what the text holds.
+        ui.data_mut(|d| d.remove::<String>(draft_id));
+    }
 }
 
 /// The **Construction** switch for the selected shapes `ids` (phase 5,

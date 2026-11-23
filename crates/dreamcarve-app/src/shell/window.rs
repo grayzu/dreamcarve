@@ -163,6 +163,10 @@ pub trait Dialogs {
     fn open_library(&mut self, _title: &str) -> Option<PathBuf> {
         None
     }
+    /// Asks for a font file to add: a `.ttf` or an `.otf`.
+    fn open_font(&mut self, _title: &str) -> Option<PathBuf> {
+        None
+    }
     /// Asks where to export the tool library, suggesting `file_name`.
     fn save_library(&mut self, _title: &str, _file_name: &str) -> Option<PathBuf> {
         None
@@ -186,6 +190,7 @@ pub struct NativeDialogs {
     picture_filter: String,
     library_filter: String,
     setup_sheet_filter: String,
+    font_filter: String,
 }
 
 impl NativeDialogs {
@@ -198,6 +203,7 @@ impl NativeDialogs {
             picture_filter: strings.get(StrKey::AppDialogPictureFilter).to_owned(),
             library_filter: strings.get(StrKey::AppDialogLibraryFilter).to_owned(),
             setup_sheet_filter: strings.get(StrKey::ExportSetupSheetFilter).to_owned(),
+            font_filter: strings.get(StrKey::AppDialogFontFilter).to_owned(),
         }
     }
 }
@@ -236,6 +242,13 @@ impl Dialogs for NativeDialogs {
         rfd::FileDialog::new()
             .set_title(title)
             .add_filter(&self.library_filter, &["tools", "json"])
+            .pick_file()
+    }
+
+    fn open_font(&mut self, title: &str) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title(title)
+            .add_filter(&self.font_filter, &["ttf", "otf"])
             .pick_file()
     }
 
@@ -487,6 +500,12 @@ pub(crate) enum Action {
     /// Turn a folder's name into a field in its Design Tree row (its
     /// menu's *Rename*; capability 99).
     RenameFolder(dc_project::FolderId),
+    /// *Add font…* in a Font list (capability 91): asks for a `.ttf` or
+    /// `.otf`, copies it to the user's fonts folder and sets the text in
+    /// it.
+    AddFont,
+    /// A change to the selected text's sizes, from Properties.
+    EditText(dc_app::text::TextEdit),
     /// Whether Align aligns to the stock whatever is selected (the
     /// Properties panel's switch, Arrange ▸ Align ▸ To Stock; capability
     /// 98a).
@@ -714,7 +733,16 @@ impl Shell {
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             viewport::renderer::install(render_state);
         }
-        let app = App::new(App::new_project()?, Strings::english(), prefs);
+        let mut app = App::new(App::new_project()?, Strings::english(), prefs);
+        // The fonts the user has added (capability 91). One that cannot
+        // be read is passed by: the bundled fonts are always there.
+        if let Some(paths) = options.config.as_ref() {
+            for path in dreamcarve_shell::fonts::list(paths) {
+                if let Ok(bytes) = dreamcarve_shell::fonts::read(&path) {
+                    let _ = app.add_font(std::sync::Arc::from(bytes.as_slice()));
+                }
+            }
+        }
         let export =
             panels::export::Export::new(&app, dreamcarve_shell::clock::today_utc(), estimate);
         let mut shell = Self {
@@ -1527,6 +1555,78 @@ impl Shell {
         self.message = Some(strings.fmt(StrKey::AppMessageCopied, &[("subject", &subject)]));
     }
 
+    /// *Add font…*: the file the user picks is read, checked to be a
+    /// font, copied to the user's fonts folder, and chosen: for the Text
+    /// tool while it is armed, else for the one text selected. A file
+    /// that is no font is refused with the reason, and not copied.
+    fn add_font(&mut self) {
+        let title = self.strings().get(StrKey::AppDialogFontTitle).to_owned();
+        let Some(path) = self.dialogs.open_font(&title) else {
+            return;
+        };
+        let name = files::file_name(&path);
+        let failed = |strings: &Strings, reason: String| {
+            strings.fmt(
+                StrKey::AppMessageFontFailed,
+                &[("name", &name), ("reason", &reason)],
+            )
+        };
+        let bytes = match dreamcarve_shell::fonts::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                self.message = Some(failed(self.strings(), e.to_string()));
+                return;
+            }
+        };
+        let font = match self.app.add_font(std::sync::Arc::from(bytes.as_slice())) {
+            Ok(font) => font,
+            Err(e) => {
+                self.message = Some(failed(self.strings(), e.to_string()));
+                return;
+            }
+        };
+        // Kept for the next run; without a config directory the font is
+        // on hand until the app is closed.
+        if let Some(paths) = &self.config
+            && let Err(e) = dreamcarve_shell::fonts::add(paths, &name, &bytes)
+        {
+            self.message = Some(failed(self.strings(), e.to_string()));
+            return;
+        }
+        let label = dc_app::fonts::label(&font.family, &font.style);
+        self.message = Some(
+            self.strings()
+                .fmt(StrKey::AppMessageFontAdded, &[("name", &label)]),
+        );
+        if self.app.tool() == dc_app::Tool::Draw(dc_app::Drawing::Text) {
+            self.app
+                .tool_event(dc_app::tool::Event::Option(dc_app::tool::ToolOption::Font(
+                    font,
+                )));
+        } else {
+            self.edit_text(&dc_app::text::TextEdit::Font(font));
+        }
+    }
+
+    /// A change to the one selected text's sizes, as one undo step;
+    /// what changes nothing says nothing.
+    fn edit_text(&mut self, edit: &dc_app::text::TextEdit) {
+        let [id] = self.app.selection().instances() else {
+            return;
+        };
+        let command = dc_app::text::set(
+            self.app.project(),
+            self.app.strings(),
+            self.app.fonts(),
+            id,
+            edit,
+        );
+        match command.and_then(|command| self.app.run(command)) {
+            Ok(_) | Err(dc_app::CommandError::NothingToDo) => {}
+            Err(e) => self.message = Some(e.to_string()),
+        }
+    }
+
     /// Arms Select when another tool has the pointer: what it was
     /// working on has just been cut, or is no longer what is selected.
     fn put_down_tool(&mut self, ctx: &egui::Context) {
@@ -1658,6 +1758,8 @@ impl Shell {
             }
             Action::SetSnap(snap) => self.app.prefs_mut().snap = snap.normalized(),
             Action::SetAlignToStock(on) => self.app.prefs_mut().adjust.align_to_stock = on,
+            Action::AddFont => self.add_font(),
+            Action::EditText(edit) => self.edit_text(&edit),
             Action::Copy => {
                 if self.app.copy_selection() > 0 {
                     self.clipboard_filled(ctx);
@@ -2114,6 +2216,7 @@ fn user_set(file: &GuiPrefs) -> impl PartialEq + '_ {
         &file.sizes,
         &file.snap,
         &file.drawing,
+        &file.text,
     )
 }
 
@@ -2265,7 +2368,8 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         | Shortcut::DrawCircle
         | Shortcut::DrawEllipse
         | Shortcut::DrawPolygon
-        | Shortcut::DrawSlot => {
+        | Shortcut::DrawSlot
+        | Shortcut::DrawText => {
             keyboard::drawing_of(command).map(|drawing| Action::Arm(dc_app::Tool::Draw(drawing)))
         }
         Shortcut::ToggleSnapping => {

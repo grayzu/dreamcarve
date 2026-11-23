@@ -21,6 +21,7 @@ mod draw;
 mod gear;
 mod node;
 mod path;
+mod text;
 mod trim;
 
 use std::collections::BTreeMap;
@@ -164,10 +165,10 @@ impl Drawing {
     }
 
     /// Whether this build has the tool: the popover and the menu list
-    /// the ones it has. Text arrives with its fonts.
+    /// the ones it has: every one.
     #[must_use]
     pub const fn is_ready(self) -> bool {
-        !matches!(self, Self::Text)
+        true
     }
 }
 
@@ -236,6 +237,12 @@ pub enum SizeField {
     SpacingY,
     /// How many copies a circular array has, the source among them.
     Copies,
+    /// A text's height: the height of a capital letter.
+    TextHeight,
+    /// Extra space between a text's letters, a share of its height.
+    LetterSpacing,
+    /// The distance between a text's lines, a share of the font's own.
+    LineSpacing,
 }
 
 /// How a size's text is read and shown.
@@ -247,11 +254,13 @@ pub enum Quantity {
     Angle,
     /// A whole number of things, with no unit.
     Count,
+    /// A share, typed and shown as a percentage: 50 is a half.
+    Percent,
 }
 
 impl SizeField {
     /// Every size, in declaration order.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 27] = [
         Self::X,
         Self::Y,
         Self::Width,
@@ -276,6 +285,9 @@ impl SizeField {
         Self::SpacingX,
         Self::SpacingY,
         Self::Copies,
+        Self::TextHeight,
+        Self::LetterSpacing,
+        Self::LineSpacing,
     ];
 
     /// The size's label in the tool bar.
@@ -298,6 +310,7 @@ impl SizeField {
             Self::Teeth | Self::Sides | Self::Columns | Self::Rows | Self::Copies => {
                 Quantity::Count
             }
+            Self::LetterSpacing | Self::LineSpacing => Quantity::Percent,
             _ => Quantity::Length,
         }
     }
@@ -307,7 +320,7 @@ impl SizeField {
     const fn must_be_positive(self) -> bool {
         !matches!(
             self,
-            Self::X | Self::Y | Self::Angle | Self::SpacingX | Self::SpacingY
+            Self::X | Self::Y | Self::Angle | Self::SpacingX | Self::SpacingY | Self::LetterSpacing
         )
     }
 }
@@ -358,6 +371,9 @@ pub struct ToolBar {
     /// Whether **Done** would make a shape now: a box tool's shape with
     /// the sizes as they read, a path with the points it has.
     pub can_finish: bool,
+    /// The words a Text is made of, while they are typed: a field of
+    /// several lines.
+    pub text: Option<TextRow>,
 }
 
 /// One of a tool's choices in the tool bar: a label and the few things
@@ -372,6 +388,21 @@ pub struct Choice {
     pub options: Vec<ChoiceOption>,
     /// Which of `options` it is.
     pub selected: usize,
+    /// More than fit side by side: drawn as a list that drops down (the
+    /// fonts).
+    pub list: bool,
+}
+
+/// The words of a text: a field of several lines, in the tool bar while
+/// the Text tool has a place for them, and in Properties.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextRow {
+    /// Its label: *Text*.
+    pub label: String,
+    /// What it is, for the label's tooltip.
+    pub help: String,
+    /// The words so far; a line feed starts a line.
+    pub text: String,
 }
 
 /// One thing a [`Choice`] can be.
@@ -447,6 +478,10 @@ pub enum ToolOption {
     ArraySpacing(crate::array::GridSpacing),
     /// Whether a circular array's copies are turned.
     ArrayTurn(bool),
+    /// The font a text is set in.
+    Font(dc_project::FontRef),
+    /// How a text's lines are set.
+    TextAlign(dc_project::Align),
 }
 
 /// What the window tells the tool.
@@ -473,6 +508,8 @@ pub enum Event {
     },
     /// An option set in the tool bar.
     Option(ToolOption),
+    /// The words typed in the tool bar's text field, as they stand.
+    Text(String),
     /// The tool bar's **Done**: finish with the sizes as they read.
     Done,
     /// Something asked of the Edit nodes tool: a key, a menu's row, a
@@ -546,6 +583,8 @@ pub(crate) struct Session {
     /// The centre of the circular array being set, once it is typed or
     /// clicked (capability 98).
     array_centre: Option<Point>,
+    /// The text being typed: where it starts, and its words.
+    text: text::TextDraft,
 }
 
 impl App {
@@ -617,6 +656,7 @@ impl App {
             (Tool::Draw(drawing), event) if gear::draws(drawing) => {
                 return self.gear_event(event);
             }
+            (Tool::Draw(Drawing::Text), event) => return self.text_event(event),
             (Tool::Nodes, event) => return self.node_event(event),
             (Tool::Trim, event) => return self.trim_event(event),
             (Tool::Adjust(adjust), event) => return self.adjust_event(adjust, event),
@@ -638,6 +678,7 @@ impl App {
             Tool::Draw(drawing) if draw::draws(drawing) => self.draw_bar(drawing),
             Tool::Draw(drawing) if path::draws(drawing) => self.path_bar(drawing),
             Tool::Draw(drawing) if gear::draws(drawing) => self.gear_bar(),
+            Tool::Draw(Drawing::Text) => self.text_bar(),
             Tool::Nodes => self.node_bar(),
             Tool::Trim => self.trim_bar(),
             Tool::Adjust(adjust) => self.adjust_bar(adjust),

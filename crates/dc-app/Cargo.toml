@@ -27,6 +27,8 @@ dc-import.workspace = true
 # copies (capability 64).
 dc-library.workspace = true
 dc-project.workspace = true
+# The fonts on hand and the outlines of a text (phase 5, capability 91).
+dc-text.workspace = true
 # The generation digest serializes the model records it covers
 # (`generation::digest`).
 serde.workspace = true

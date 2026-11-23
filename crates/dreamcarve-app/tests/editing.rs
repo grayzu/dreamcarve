@@ -1083,3 +1083,153 @@ fn construction_geometry_in_the_window() {
     assert!(drawn.construction, "{}", drawn.name);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 91 in the window (acceptance 129): ⇧T takes up the Text
+/// tool; a click places the text and the bar's field takes the words,
+/// previewed as they are typed; Done makes the shape, whose words, font
+/// and sizes Properties then show and edit.
+#[test]
+fn the_text_tool_previews_as_typed() {
+    let (mut h, dir) = plaque("text-tool");
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::T);
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Draw(dc_app::Drawing::Text));
+    assert!(
+        h.query_all_by_label("Click where the text starts")
+            .next()
+            .is_some()
+    );
+    assert!(
+        h.query_by_role_and_label(Role::ComboBox, "Font").is_some(),
+        "the Font list"
+    );
+    for field in ["Height", "Letter spacing", "Line spacing"] {
+        assert!(
+            h.query_by_role_and_label(Role::TextInput, field).is_some(),
+            "{field}"
+        );
+    }
+    let at = on_screen(&h, Point::new(20.0, 100.0));
+    click_at(&mut h, at, egui::Modifiers::NONE);
+    h.run_steps(8);
+    let words = h.get_by_role_and_label(Role::MultilineTextInput, "Words");
+    assert!(words.is_focused(), "the words field takes the keyboard");
+    words.type_text("Hook");
+    h.run_steps(8);
+    assert!(
+        !h.state().app().draft().outlines.is_empty(),
+        "previewed as typed"
+    );
+    let count = h.state().app().project().instances.len();
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(8);
+    let app = h.state().app();
+    assert_eq!(app.undo_label(), Some("Draw “Text 1”"));
+    assert_eq!(app.project().instances.len(), count + 1);
+
+    // Put the tool down: the text is selected, and Properties has it.
+    key(&mut h, egui::Key::Escape);
+    assert_eq!(tool(&h), Tool::Select);
+    assert_eq!(h.state().app().selection().instances().len(), 1);
+    common::go_to(&mut h, "Design");
+    let words = h.get_by_role_and_label(Role::MultilineTextInput, "Words");
+    assert_eq!(words.accesskit_node().value().as_deref(), Some("Hook"));
+    let height = h.get_by_role_and_label(Role::TextInput, "Height");
+    height.focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text("15".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(8);
+    assert_eq!(h.state().app().undo_label(), Some("Set height of “Text 1”"));
+    // The words, edited in place: written when the field is left.
+    let words = h.get_by_role_and_label(Role::MultilineTextInput, "Words");
+    words.focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text("Hooks".to_owned()));
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
+    h.run_steps(8);
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Edit the text of “Text 1”")
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// *Add font…* (capability 91): the file is checked to be a font, copied
+/// to the app's fonts folder and chosen; it is on hand again when the
+/// app is next started. A file that is no font is refused, and not
+/// copied.
+#[test]
+fn add_font_copies_the_file_and_chooses_it() {
+    let dir = scratch("add-font");
+    let config = dir.join("config");
+    let font = common::repo_root()
+        .join("crates/dreamcarve-app/assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf");
+    let not_a_font = dir.join("notes.ttf");
+    std::fs::write(&not_a_font, b"these are notes").unwrap();
+    let dialogs = QueuedDialogs::default();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe({
+            let options = options(&config, None, &dialogs);
+            move |cc| Shell::new(cc, options).expect("the shell starts")
+        });
+    h.run();
+    common::settle(&mut h);
+    assert_eq!(h.state().app().fonts().entries().len(), 8);
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::T);
+    h.run_steps(8);
+    let add = |h: &mut Harness<'_, Shell>| {
+        h.get_by_role_and_label(Role::ComboBox, "Font").click();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, "Add font…")
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, "Add font…").click();
+        h.run_steps(8);
+    };
+
+    dialogs.answer(&not_a_font);
+    add(&mut h);
+    let said = h.state().message().unwrap_or_default().to_owned();
+    assert!(
+        said.starts_with("Cannot add notes.ttf: this is not a font file the app can read"),
+        "{said}"
+    );
+    assert_eq!(h.state().app().fonts().entries().len(), 8);
+    assert!(!config.join("fonts").join("notes.ttf").exists());
+
+    dialogs.answer(&font);
+    add(&mut h);
+    assert_eq!(h.state().message(), Some("Added the font JetBrains Mono"));
+    let app = h.state().app();
+    assert_eq!(app.fonts().entries().len(), 9);
+    assert_eq!(app.prefs().text.font.family, "JetBrains Mono", "chosen");
+    assert!(
+        config
+            .join("fonts")
+            .join("JetBrainsMono-Regular.ttf")
+            .is_file()
+    );
+    assert!(dialogs.asked().iter().all(|asked| asked == "open_font"));
+    drop(h);
+
+    // The next start reads the folder.
+    let dialogs = QueuedDialogs::default();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe({
+            let options = options(&config, None, &dialogs);
+            move |cc| Shell::new(cc, options).expect("the shell starts")
+        });
+    h.run();
+    assert_eq!(h.state().app().fonts().entries().len(), 9);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

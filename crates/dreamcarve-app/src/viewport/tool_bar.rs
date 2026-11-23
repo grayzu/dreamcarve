@@ -67,6 +67,7 @@ const fn unit(quantity: Quantity, units: dc_project::Units) -> &'static str {
         Quantity::Length => units::suffix(units),
         Quantity::Angle => "°",
         Quantity::Count => "",
+        Quantity::Percent => "%",
     }
 }
 
@@ -95,6 +96,8 @@ fn name(strings: &dc_app::Strings, bar: &ToolBar) -> String {
 enum Part {
     /// The tool's name and what the next click does.
     Head,
+    /// The words of a text: a field of several lines.
+    Words,
     /// The choice at this index.
     Choice(usize),
     /// The field at this index, with its label.
@@ -160,7 +163,7 @@ fn field_part(
     let id = field_id(row.field);
     let wide = match row.quantity {
         Quantity::Length => FIELD_PX,
-        Quantity::Angle | Quantity::Count => SHORT_FIELD_PX,
+        Quantity::Angle | Quantity::Count | Quantity::Percent => SHORT_FIELD_PX,
     };
     let problems = row
         .problem
@@ -213,8 +216,136 @@ fn field_part(
     }
 }
 
+/// What a list that drops down was asked for.
+pub(crate) enum ListPick {
+    /// One of its options.
+    Option(dc_app::tool::ToolOption),
+    /// *Add font…*, the last row of a list of fonts.
+    AddFont,
+}
+
+/// A choice with more options than fit side by side, as a list that
+/// drops down (the fonts): `width` wide, the chosen one shown, a dash
+/// when none of the list is chosen (a text whose font is not on this
+/// computer). A list of fonts ends with *Add font…*.
+pub(crate) fn list_choice(
+    ui: &mut Ui,
+    strings: &dc_app::Strings,
+    choice: &dc_app::tool::Choice,
+    width: f32,
+) -> (Option<ListPick>, egui::Response) {
+    use dc_app::tool::ToolOption;
+    let shown = choice
+        .options
+        .get(choice.selected)
+        .map_or("—", |option| option.label.as_str());
+    let fonts = choice
+        .options
+        .iter()
+        .any(|option| matches!(option.option, ToolOption::Font(_)));
+    let mut picked = None;
+    let response = egui::ComboBox::from_id_salt(("dc.list_choice", choice.label.as_str()))
+        .icon(crate::widgets::icon::combo_chevron)
+        .truncate()
+        .selected_text(shown)
+        .width(width)
+        // Tall enough for the bundled fonts and *Add font…* without
+        // scrolling; a longer list scrolls.
+        .height(LIST_HEIGHT_PX)
+        .show_ui(ui, |ui| {
+            for (index, option) in choice.options.iter().enumerate() {
+                if ui
+                    .selectable_label(index == choice.selected, &option.label)
+                    .clicked()
+                {
+                    picked = Some(ListPick::Option(option.option.clone()));
+                }
+            }
+            if fonts {
+                ui.separator();
+                if ui.button(strings.get(StrKey::TextAddFont)).clicked() {
+                    picked = Some(ListPick::AddFont);
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .accessible_name(&choice.label)
+        .on_hover_text(&choice.help);
+    (picked, response)
+}
+
+/// The width of the bar's Font list.
+const LIST_PX: f32 = 168.0;
+/// The most a list that drops down shows before it scrolls.
+const LIST_HEIGHT_PX: f32 = 420.0;
+/// The width of the bar's words field.
+const WORDS_PX: f32 = 220.0;
+
+/// The id of the bar's words field.
+fn words_id() -> Id {
+    Id::unique("dc.viewport.tool_bar.words")
+}
+
+/// Draws the words of a text: a field of several lines, which takes the
+/// keyboard as it appears. Each change is told to the tool, so the
+/// preview follows the typing; `Enter` starts a line and `Ctrl`/`⌘
+/// Enter` is Done.
+fn words_part(ui: &mut Ui, row: &dc_app::tool::TextRow, fresh: bool, out: &mut Vec<Action>) {
+    let id = words_id();
+    ui.spacing_mut().item_spacing.x = LABEL_GAP_PX;
+    let label = crate::widgets::row::inline_label(ui, &row.label, &row.help);
+    if ui.memory(|m| m.has_focus(id))
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Enter))
+    {
+        out.push(Action::Tool(Event::Done));
+    }
+    let mut words = row.text.clone();
+    let edit = ui.add(
+        egui::TextEdit::multiline(&mut words)
+            .id(id)
+            .font(TextStyle::Body)
+            .desired_width(WORDS_PX)
+            .desired_rows(1),
+    );
+    let edit = edit.accessible_name(&row.label).labelled_by(label.id);
+    // The field appears in the frame of the click that placed the text,
+    // and egui takes the keyboard from a field when a click lands
+    // elsewhere: it is asked for once that click is over.
+    let wanted_id = id.with("wants_focus");
+    let wanted = fresh || ui.data(|d| d.get_temp::<bool>(wanted_id)).unwrap_or(false);
+    let clicking = ui.input(|i| i.pointer.any_down() || i.pointer.any_click());
+    if wanted && !clicking {
+        edit.request_focus();
+    }
+    ui.data_mut(|d| d.insert_temp(wanted_id, wanted && clicking));
+    if wanted && clicking {
+        ui.ctx().request_repaint();
+    }
+    if edit.changed() {
+        out.push(Action::Tool(Event::Text(words)));
+    }
+}
+
 /// Draws one choice of the bar, with its label.
-fn choice_part(ui: &mut Ui, choice: &dc_app::tool::Choice, out: &mut Vec<Action>) {
+fn choice_part(
+    ui: &mut Ui,
+    strings: &dc_app::Strings,
+    choice: &dc_app::tool::Choice,
+    out: &mut Vec<Action>,
+) {
+    if choice.list {
+        ui.spacing_mut().item_spacing.x = LABEL_GAP_PX;
+        let label = crate::widgets::row::inline_label(ui, &choice.label, &choice.help);
+        let (picked, response) = list_choice(ui, strings, choice, LIST_PX);
+        let _ = response.labelled_by(label.id);
+        match picked {
+            Some(ListPick::Option(option)) => out.push(Action::Tool(Event::Option(option))),
+            Some(ListPick::AddFont) => out.push(Action::AddFont),
+            None => {}
+        }
+        return;
+    }
     let labels: Vec<&str> = choice.options.iter().map(|o| o.label.as_str()).collect();
     #[allow(
         clippy::cast_precision_loss,
@@ -285,6 +416,15 @@ pub(super) fn show(
     );
 
     let mut parts = vec![Part::Head];
+    // The words field takes the keyboard on the frame it appears.
+    let had_words: bool = ui
+        .data(|d| d.get_temp(words_id().with("shown")))
+        .unwrap_or(false);
+    ui.data_mut(|d| d.insert_temp(words_id().with("shown"), bar.text.is_some()));
+    let fresh_words = bar.text.is_some() && !had_words;
+    if bar.text.is_some() {
+        parts.push(Part::Words);
+    }
     parts.extend((0..bar.choices.len()).map(Part::Choice));
     parts.extend((0..bar.fields.len()).map(Part::Field));
     parts.extend((0..bar.actions.len()).map(Part::Action));
@@ -323,9 +463,14 @@ pub(super) fn show(
                                 egui::WidgetInfo::labeled(egui::Role::Label, true, &bar.prompt)
                             });
                         }
+                        Part::Words => {
+                            if let Some(row) = &bar.text {
+                                words_part(ui, row, fresh_words, out);
+                            }
+                        }
                         Part::Choice(index) => {
                             if let Some(choice) = bar.choices.get(index) {
-                                choice_part(ui, choice, out);
+                                choice_part(ui, strings, choice, out);
                             }
                         }
                         Part::Field(index) => {

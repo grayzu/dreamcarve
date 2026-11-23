@@ -108,6 +108,8 @@ pub enum Command {
     DrawPolygon,
     /// Draw ▸ Slot.
     DrawSlot,
+    /// Draw ▸ Text (phase 5, capability 91).
+    DrawText,
     /// View ▸ Snapping ▸ Snap, on or off (capability 82).
     ToggleSnapping,
     /// Nudge the selection 1 mm.
@@ -655,6 +657,15 @@ pub const SHORTCUTS: &[Shortcut] = &[
         Scope::OutsideFields,
     ),
     menu_row(
+        Command::DrawText,
+        SHIFT,
+        &[Key::T],
+        Menu::Draw,
+        StrKey::DrawNameText,
+        "Set text in a font",
+        Scope::OutsideFields,
+    ),
+    menu_row(
         Command::ToggleSnapping,
         SHIFT,
         &[Key::S],
@@ -697,6 +708,7 @@ pub const fn drawing_of(command: Command) -> Option<dc_app::Drawing> {
         Command::DrawEllipse => Drawing::Ellipse,
         Command::DrawPolygon => Drawing::Polygon,
         Command::DrawSlot => Drawing::Slot,
+        Command::DrawText => Drawing::Text,
         _ => return None,
     })
 }
@@ -715,7 +727,8 @@ pub const fn command_of(drawing: dc_app::Drawing) -> Option<Command> {
         Drawing::Ellipse => Command::DrawEllipse,
         Drawing::Polygon => Command::DrawPolygon,
         Drawing::Slot => Command::DrawSlot,
-        Drawing::Gear | Drawing::Text => return None,
+        Drawing::Text => Command::DrawText,
+        Drawing::Gear => return None,
     })
 }
 

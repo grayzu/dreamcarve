@@ -60,6 +60,7 @@ except in an open sheet.
 | E | E | Draw ellipses | Draw ▸ Ellipse |
 | G | G | Draw regular polygons | Draw ▸ Polygon |
 | O | O | Draw slots | Draw ▸ Slot |
+| Shift+T | ⇧T | Set text in a font | Draw ▸ Text |
 | Shift+S | ⇧S | Turn snapping on or off | View ▸ Snapping |
 | Arrow keys | Arrow keys | Nudge the selection 1 mm | — |
 | Shift+arrow keys | ⇧ arrow keys | Nudge the selection 10 mm | — |

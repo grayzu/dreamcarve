@@ -2932,3 +2932,123 @@ fn phase5_editing_screenshots() {
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Where the phase 5 text pictures are committed.
+fn p5_text_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-5/review/text"),
+        PathBuf::from,
+    )
+}
+
+/// The phase 5 text set (`docs/phase-5-worklog.md`, slice 24): the Text
+/// tool with words typed and previewed; the Font list; two lines centred
+/// in a script; the single-line font; a text's Properties; and a text
+/// whose font is not on this computer. Dark and light at 1×, written to
+/// `docs/specs/phase-5/review/text/`, where they are committed.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review phase5_text -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed phase 5 text review pictures; run by hand"]
+fn phase5_text_screenshots() {
+    let out = p5_text_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    let dir = scratch("review-p5-text");
+    let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
+        return;
+    };
+    click(&mut h, "Draw from scratch");
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::T);
+    h.run_steps(8);
+
+    // 01: the words typed, previewed where the click put them.
+    click_mm(&mut h, 10.0, 70.0);
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::MultilineTextInput, "Words")
+        .type_text("Hook plate");
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "01-text-typed-and-previewed", &looks);
+
+    // 02: the Font list, with Add font… last.
+    h.get_by_role_and_label(Role::ComboBox, "Font").click();
+    h.run_steps(8);
+    shoot_in(&mut h, &out, "02-font-list", &looks);
+    h.get_by_label("Pacifico").click();
+    h.run_steps(8);
+
+    // 03: two lines, centred, in the script.
+    h.state_mut()
+        .app_mut()
+        .tool_event(dc_app::tool::Event::Text("Hook\nplate".to_owned()));
+    h.get_by_role_and_label(Role::RadioButton, "Centre").click();
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "03-two-lines-centred-script", &looks);
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(8);
+
+    // 04: the single-line font, for Engrave.
+    {
+        let app = h.state_mut().app_mut();
+        app.tool_event(dc_app::tool::Event::Option(dc_app::tool::ToolOption::Font(
+            dc_project::FontRef {
+                family: "Simple Stroke".to_owned(),
+                style: "Regular".to_owned(),
+            },
+        )));
+        app.tool_event(dc_app::tool::Event::Option(
+            dc_app::tool::ToolOption::TextAlign(dc_project::Align::Left),
+        ));
+    }
+    click_mm(&mut h, 10.0, 20.0);
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::MultilineTextInput, "Words")
+        .type_text("NO. 7");
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "04-single-line-font", &looks);
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(8);
+
+    // 05: a text's Properties.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let first = h.state().app().project().instances[0].id.clone();
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![first.clone()]));
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "05-text-properties", &looks);
+
+    // 06: the same text on a computer without its font: the file names
+    // a font that is not on hand.
+    let mut project = h.state().app().project().clone();
+    for definition in project.definitions.values_mut() {
+        if let Some(dc_project::Shape::Text { font, .. }) = &mut definition.shape
+            && font.family == "Pacifico"
+        {
+            font.family = "Brush Script Std".to_owned();
+        }
+    }
+    let saved = dir.join("elsewhere.dcv");
+    std::fs::write(&saved, dc_project::save(&project).unwrap()).unwrap();
+    drop(h);
+    let Some(mut h) = window(&dir, Some(saved), 1280.0, 800.0) else {
+        return;
+    };
+    go_to(&mut h, "Design");
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![first]));
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "06-font-not-on-this-computer", &looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

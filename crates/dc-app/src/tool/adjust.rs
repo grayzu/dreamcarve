@@ -278,6 +278,7 @@ impl App {
                       chosen: ToolOption| Choice {
             label: strings.get(label).to_owned(),
             help: strings.get(help).to_owned(),
+            list: false,
             selected: options
                 .iter()
                 .position(|(_, option)| *option == chosen)
@@ -351,6 +352,7 @@ impl App {
             actions: Vec::new(),
             note: None,
             can_finish: ready.is_ok(),
+            text: None,
         }
     }
 }

@@ -334,6 +334,7 @@ impl App {
                       chosen: ToolOption| Choice {
             label: strings.get(label).to_owned(),
             help: strings.get(help).to_owned(),
+            list: false,
             selected: options
                 .iter()
                 .position(|(_, option)| *option == chosen)
@@ -416,6 +417,7 @@ impl App {
             tool: Tool::Adjust(Adjust::Array),
             prompt: strings.get(prompt).to_owned(),
             can_finish: ready.is_ok() && self.tool.problems.is_empty(),
+            text: None,
             fields,
             choices: vec![kind, second],
             actions: Vec::new(),

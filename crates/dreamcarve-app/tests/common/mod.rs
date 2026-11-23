@@ -96,6 +96,10 @@ impl Dialogs for QueuedDialogs {
         self.next("open_library".to_owned())
     }
 
+    fn open_font(&mut self, _title: &str) -> Option<PathBuf> {
+        self.next("open_font".to_owned())
+    }
+
     fn save_library(&mut self, _title: &str, file_name: &str) -> Option<PathBuf> {
         self.next(format!("save_library {file_name}"))
     }

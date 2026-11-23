@@ -213,6 +213,7 @@ impl App {
             actions: Vec::new(),
             note: None,
             can_finish: true,
+            text: None,
         }
     }
 }

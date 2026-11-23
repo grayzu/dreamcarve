@@ -151,6 +151,8 @@ impl App {
                 self.set_option(option);
                 self.refresh_draft(drawing);
             }
+            // Words are the Text tool's.
+            Event::Text(_) => {}
         }
         Reply::default()
     }
@@ -239,6 +241,7 @@ impl App {
             actions: Vec::new(),
             note: None,
             can_finish: self.made(drawing).is_some(),
+            text: None,
         }
     }
 
@@ -673,6 +676,8 @@ impl App {
             | ToolOption::ArrayKind(_)
             | ToolOption::ArraySpacing(_)
             | ToolOption::ArrayTurn(_) => {}
+            // The Text tool's, and a text's in Properties.
+            ToolOption::Font(_) | ToolOption::TextAlign(_) => {}
         }
     }
 
@@ -765,6 +770,9 @@ pub(crate) const fn field_label(field: SizeField) -> StrKey {
         SizeField::SpacingX => StrKey::DrawFieldSpacingX,
         SizeField::SpacingY => StrKey::DrawFieldSpacingY,
         SizeField::Copies => StrKey::DrawFieldCopies,
+        SizeField::TextHeight => StrKey::DrawFieldTextHeight,
+        SizeField::LetterSpacing => StrKey::DrawFieldLetterSpacing,
+        SizeField::LineSpacing => StrKey::DrawFieldLineSpacing,
     }
 }
 
@@ -794,6 +802,9 @@ pub(crate) const fn field_help(field: SizeField) -> StrKey {
         SizeField::SpacingX => StrKey::DrawHelpSpacingX,
         SizeField::SpacingY => StrKey::DrawHelpSpacingY,
         SizeField::Copies => StrKey::DrawHelpCopies,
+        SizeField::TextHeight => StrKey::DrawHelpTextHeight,
+        SizeField::LetterSpacing => StrKey::DrawHelpLetterSpacing,
+        SizeField::LineSpacing => StrKey::DrawHelpLineSpacing,
     }
 }
 
@@ -892,6 +903,8 @@ pub(crate) fn size_text(field: SizeField, value: f64, units: Units) -> String {
         Quantity::Length => units::field_text(value, units),
         Quantity::Angle => angle_text(value),
         Quantity::Count => format!("{value:.0}"),
+        // A share as a percentage, to two places.
+        Quantity::Percent => angle_text(value * 100.0),
     }
 }
 

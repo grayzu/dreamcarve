@@ -22,6 +22,7 @@ pub mod clock;
 pub mod config;
 pub mod config_dir;
 mod error;
+pub mod fonts;
 pub mod gui_prefs;
 pub mod library;
 pub mod read;

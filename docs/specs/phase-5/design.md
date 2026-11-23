@@ -1047,6 +1047,46 @@ the tool bar of slice 9 is its form.
   fields; Shape ▸ **Construction**, ticked while every selected shape
   is.
 
+### Text (slice 24)
+
+- `dc_app::fonts::Fonts`: the fonts on hand, the bundled ones
+  (`Fonts::bundled`) and then those added (`add(bytes)`, which parses,
+  names the font from its own name table, and adds a family and style
+  once). `App` holds one, which a new project leaves alone;
+  `App::add_font` is how the shell hands it a file's bytes. `dc-app`
+  reads no file.
+- `dc_app::text`: `TextSizes` (a `Shape::Text`'s fields), `outline`
+  (`dc_text::layout` in the font on hand, else
+  `CommandError::FontMissing`), `section` (the Shape section of a text:
+  the words as `Section::text`, the Font list, *Lines*, and three size
+  rows; read-only with a note when the font is missing, a copy is
+  locked, or the placement is no even scale) and `set(…, TextEdit)`,
+  one `SetOutline` with the outline laid out again. `Edit` gains
+  `Text`, `Font` and `Align` for the undo labels.
+- The tool (`tool::text`): `TextDraft { at, words }`; a press takes the
+  snapped point; `Event::Text` is the words as they stand;
+  `ToolOption::Font` and `TextAlign` and the fields `SizeField::
+  {TextHeight, LetterSpacing, LineSpacing}` write `Prefs::text`
+  (`TextPrefs`: font, height, spacings, alignment), which `gui.toml`
+  keeps in `[text]`. `Quantity::Percent` is a share typed and shown as
+  a percentage. The bar gains `ToolBar::text` (`TextRow`, a field of
+  several lines) and `Choice::list` (a list that drops down).
+- `dreamcarve_shell::fonts`: the `fonts/` folder of the config
+  directory: `list`, `read` (capped at 64 MB) and `add` (a file's bytes
+  under its own name).
+- The window: `Dialogs::open_font`; `Action::AddFont` (read, parse,
+  copy, choose; a failure says why and copies nothing) and
+  `Action::EditText`; the folder read in `Shell::new`.
+  `tool_bar::list_choice` draws a `Choice::list` as an egui `ComboBox`
+  420 px high at most, with *Add font…* last when its options are
+  fonts; `words_part` is the multi-line field, which takes the
+  keyboard once the click that placed the text is over (egui takes
+  focus from a field when a click lands elsewhere in the same frame).
+  A press on the stock while any popup is open closes the popup and is
+  not sent to the tool. `panels::properties` draws a text's section
+  with `words_field`, whose draft is kept beside the field until it is
+  left. `keyboard.rs`: `DrawText` (⇧T).
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the
@@ -1269,8 +1309,12 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `letter_spacing_adds_per_gap`, `kerning_pairs_apply`, `layout_is_deterministic`,
 `every_bundled_font_parses`, `a_file_that_is_not_a_font_is_refused`,
 `a_missing_glyph_is_noted`, `a_bad_height_is_refused_and_no_text_is_nothing`,
-`simple_stroke_is_open_paths` (port of the glyph table's coverage); `dc_app::tool::text_places_and_edits`,
-`fonts::a_missing_font_keeps_the_outline_and_refuses_edits` (acc 116).
+`simple_stroke_is_open_paths` (port of the glyph table's coverage); `dc_app` `tests/text.rs` (slice
+24): `text_places_and_edits`, `the_text_tools_options`, `a_font_the_user_adds_is_offered`,
+`a_texts_sizes_are_edited_in_properties`, `a_missing_font_keeps_the_outline_and_refuses_edits`
+(acc 116); `dreamcarve_shell::fonts::` `a_font_added_is_copied_and_listed`,
+`a_name_with_a_path_stays_in_the_folder`; in the window `editing::the_text_tool_previews_as_typed`
+and `add_font_copies_the_file_and_chooses_it`, and `review::phase5_text_screenshots`.
 
 **Tracing and measuring (slices 25–26)** `dc_app::pictures::opacity_is_saved_and_cuts_nothing`,
 `scale_by_two_points`, `pick::a_locked_picture_is_not_picked`,

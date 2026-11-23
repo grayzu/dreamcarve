@@ -59,6 +59,9 @@ pub struct App {
     /// What was last cut or copied (phase 5, capability 98): kept when
     /// another project is opened.
     pub(crate) clipboard: crate::clipboard::Clipboard,
+    /// The fonts on hand (capability 91): the bundled ones, and those
+    /// the shell read from the user's fonts folder.
+    fonts: crate::fonts::Fonts,
     view: View,
     generation: Generation,
     strings: Strings,
@@ -133,6 +136,7 @@ impl App {
             target_edit: None,
             tool: crate::tool::Session::default(),
             clipboard: crate::clipboard::Clipboard::default(),
+            fonts: crate::fonts::Fonts::bundled(),
             view,
             generation,
             strings,
@@ -951,6 +955,27 @@ impl App {
             editing.boxed(ids, remove);
             self.refresh_marks();
         }
+    }
+
+    /// The fonts on hand: what the Text tool and a text's Properties
+    /// offer (capability 91).
+    #[must_use]
+    pub const fn fonts(&self) -> &crate::fonts::Fonts {
+        &self.fonts
+    }
+
+    /// Adds a font file the shell read (the user's fonts folder, or
+    /// *Add font…*), and says what it is named.
+    ///
+    /// # Errors
+    ///
+    /// [`dc_text::TextError`] when the bytes are no font the app can
+    /// read.
+    pub fn add_font(
+        &mut self,
+        bytes: std::sync::Arc<[u8]>,
+    ) -> Result<dc_project::FontRef, dc_text::TextError> {
+        self.fonts.add(bytes)
     }
 
     /// *Done*: ends target editing and writes the draft as one undo step

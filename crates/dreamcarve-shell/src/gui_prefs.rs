@@ -66,6 +66,41 @@ pub struct GuiPrefs {
     /// What the drawing tools remember (phase 5, capabilities 81 and
     /// 82a).
     pub drawing: Drawing,
+    /// What the Text tool sets a text in (phase 5, capability 91).
+    pub text: Text,
+}
+
+/// What the Text tool remembers between sessions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Text {
+    /// The font's family, as the font names itself. A font that is not
+    /// on hand when the app starts gives way to the first that is.
+    pub family: String,
+    /// The font's style: `Regular`, `Bold`.
+    pub style: String,
+    /// The height of a capital letter, mm; missing until one is typed,
+    /// and then 10 mm, or 0.4 in in an inch project.
+    pub height_mm: Option<f64>,
+    /// Extra space between letters, as a fraction of the height.
+    pub letter_spacing: f64,
+    /// The distance between lines, as a fraction of the font's own.
+    pub line_spacing: f64,
+    /// How several lines are set: `left`, `centre` or `right`.
+    pub align: String,
+}
+
+impl Default for Text {
+    fn default() -> Self {
+        Self {
+            family: "Inter".to_owned(),
+            style: "Regular".to_owned(),
+            height_mm: None,
+            letter_spacing: 0.0,
+            line_spacing: 1.0,
+            align: "left".to_owned(),
+        }
+    }
 }
 
 /// Snapping: the master switch, the kinds that are on, and how near the
@@ -419,6 +454,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "sizes",
         "snap",
         "drawing",
+        "text",
     ];
     const WINDOW: &[&str] = &["x", "y", "width", "height", "maximized"];
     const PANELS: &[&str] = &[
@@ -449,6 +485,14 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "polygon_sides",
         "polygon_measured",
     ];
+    const TEXT: &[&str] = &[
+        "family",
+        "style",
+        "height_mm",
+        "letter_spacing",
+        "line_spacing",
+        "align",
+    ];
     let mut unknown = Vec::new();
     for (key, value) in table {
         if !TOP.contains(&key.as_str()) {
@@ -462,6 +506,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
             "tab" => TAB,
             "snap" => SNAP,
             "drawing" => DRAWING,
+            "text" => TEXT,
             _ => continue,
         };
         if let toml::Value::Table(inner) = value {
@@ -596,6 +641,14 @@ mod tests {
                 corner_mm: Some(3.0),
                 polygon_sides: 8,
                 polygon_measured: "flats".to_owned(),
+            },
+            text: Text {
+                family: "Source Serif 4".to_owned(),
+                style: "Bold".to_owned(),
+                height_mm: Some(12.5),
+                letter_spacing: 0.1,
+                line_spacing: 1.2,
+                align: "centre".to_owned(),
             },
         };
         save(&paths, &prefs).unwrap();

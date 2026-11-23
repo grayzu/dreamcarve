@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 23: 3,702.
+`0.5.0-alpha.1`. After slice 24: 3,711.
 
 ## Decisions waiting for the maintainer
 
@@ -249,6 +249,21 @@ Decisions made while building are added here.
   to right with no shaping, so Arabic, Indic and other scripts that
   need it are out of scope. *Simple Stroke* is ported without its
   italic and condensed variants.
+- Slice 24: the words' field is labelled *Words* and the alignment
+  *Lines* (the spec had *Text* and *Align*): the tool and the section
+  are already headed *Text*, and Properties has an *Align* of its own
+  for shapes. A new text is named *Text 1*, not after its words. The
+  Font list names a style only when it is not the regular one. A font
+  the user adds under the family and style of one already on hand is
+  not added twice (the one on hand stands), though its file is still
+  copied to the fonts folder. Without a config directory an added font
+  lasts until the app is closed. Removing a font from the app is done
+  by deleting its file from the folder; there is no button for it. A
+  text whose font is missing keeps its Font list open and everything
+  else closed. A click on the stock that closes an open list or menu
+  is no longer also taken by the armed tool as a point. The words in
+  Properties are written when the field is left, not as they are
+  typed, so one edit is one undo step.
 
 ## Slices
 
@@ -298,7 +313,7 @@ The numbers are the design spec's.
 | Slice | What | Status |
 | --- | --- | --- |
 | 23 | `dc-text`: `Font` (a file's bytes, or Simple Stroke), `bundled` (seven font files compiled in, with their licences, `fonts/README.md` and `NOTICE`), `layout` (capital height, kerning, alignment, counters as holes, overlaps welded), the ported stroke table; `ttf-parser` added. Gate: 3,702 tests | done |
-| 24 | The Text tool and user fonts | todo |
+| 24 | The Text tool and user fonts: `dc_app::fonts` (the fonts on hand), `dc_app::text` (a text's section and edits), the tool (`tool::text`), `Prefs::text` in `gui.toml`, `dreamcarve_shell::fonts` (the user's fonts folder), the bar's words field and Font list, Add font…, a text's Properties, the missing-font state, ⇧T, the text review pictures. Gate: 3,711 tests | done |
 
 ### 5.5 Tracing and measuring
 

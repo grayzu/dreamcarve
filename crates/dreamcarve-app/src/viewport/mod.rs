@@ -63,7 +63,7 @@ mod lod;
 mod pictures;
 pub(crate) mod renderer;
 pub(crate) mod tab_tool;
-mod tool_bar;
+pub(crate) mod tool_bar;
 
 use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
@@ -668,6 +668,7 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             Shortcut::DrawEllipse,
             Shortcut::DrawPolygon,
             Shortcut::DrawSlot,
+            Shortcut::DrawText,
             Shortcut::EditNodes,
             Shortcut::BreakPath,
             Shortcut::Offset,
@@ -1318,7 +1319,10 @@ fn tool_gestures(
         view.tool_pointer = Some(pointer);
         out.push(Action::Tool(Event::Move(pointer)));
     }
-    if pressed && response.hovered() && view.drag.is_none() {
+    // A click that closes a list or a menu is that list's, and takes no
+    // point.
+    let closes_a_popup = egui::Popup::is_any_open(ui.ctx());
+    if pressed && response.hovered() && view.drag.is_none() && !closes_a_popup {
         view.drag = Some(Drag::Tool);
         out.push(Action::Tool(Event::Press(pointer)));
     }
