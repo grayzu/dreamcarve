@@ -1,0 +1,21 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "dc-text"
+description = "DreamCarve text: fonts and the outlines of laid-out text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+dc-geometry.workspace = true
+kurbo.workspace = true
+thiserror.workspace = true
+ttf-parser.workspace = true
+
+[lints]
+workspace = true

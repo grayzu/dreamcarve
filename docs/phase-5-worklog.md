@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 22: 3,690.
+`0.5.0-alpha.1`. After slice 23: 3,702.
 
 ## Decisions waiting for the maintainer
 
@@ -223,6 +223,32 @@ Decisions made while building are added here.
   Construction off does not put a shape back in the operations it
   left. A new shape drawn while a group's shapes are selected joins the
   group, as capability 90 says of any folder.
+- Slice 23, the fonts (functional open question 2, the maintainer's to
+  settle): the first proposal is bundled as it stood, Inter Regular and
+  Bold, Source Serif 4 Regular and Bold, Roboto Slab Bold, Pacifico,
+  Allerta Stencil, each fetched from its publisher on 2026-11-23 and
+  unmodified. **Roboto Slab is Apache-2.0, not OFL** as the design
+  said; the design now says so. The fonts add about 1.9 MB to a binary.
+  **For the maintainer to decide before a release:** the Open Font
+  License asks that its text travel with a bundled font; a release
+  archive carries `NOTICE` and `THIRD-PARTY-LICENSES`, and neither
+  holds the OFL's text (`about.toml` lists crates, not assets). Phase
+  4's interface fonts are in the same position. The licence files are
+  in the source tree and `NOTICE` names every font and its copyright.
+- Slice 23, the layout: the capital height is measured on the font's
+  own `H`, with `capHeight` second, so an H is the height asked in a
+  script too (the design had them the other way round). Kerning reads
+  GPOS pair adjustments as well as the old `kern` table, which none of
+  the bundled fonts has. Winding and overlaps are resolved by the
+  non-zero fill the SVG importer uses, not by counting containment, so
+  a script's joined letters are one outline; the vertices are then the
+  boolean's, a few micrometres from the flattened curve. `layout`
+  returns the outlines with the widest line's width and the warnings
+  (a missing glyph, once a character). A variable font is read at its
+  default instance, a collection at its first face; text is laid left
+  to right with no shaping, so Arabic, Indic and other scripts that
+  need it are out of scope. *Simple Stroke* is ported without its
+  italic and condensed variants.
 
 ## Slices
 
@@ -271,7 +297,7 @@ The numbers are the design spec's.
 
 | Slice | What | Status |
 | --- | --- | --- |
-| 23 | `dc-text`: fonts, layout, Simple Stroke, the bundled fonts | todo |
+| 23 | `dc-text`: `Font` (a file's bytes, or Simple Stroke), `bundled` (seven font files compiled in, with their licences, `fonts/README.md` and `NOTICE`), `layout` (capital height, kerning, alignment, counters as holes, overlaps welded), the ported stroke table; `ttf-parser` added. Gate: 3,702 tests | done |
 | 24 | The Text tool and user fonts | todo |
 
 ### 5.5 Tracing and measuring

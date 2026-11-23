@@ -983,6 +983,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dc-text"
+version = "0.5.0-alpha.1"
+dependencies = [
+ "dc-geometry",
+ "kurbo",
+ "thiserror 2.0.21",
+ "ttf-parser",
+]
+
+[[package]]
 name = "delaunator"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3901,6 +3911,12 @@ dependencies = [
  "nom",
  "petgraph",
 ]
+
+[[package]]
+name = "ttf-parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "type-map"

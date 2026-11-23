@@ -10,6 +10,7 @@ members = [
     "crates/dc-gcode",
     "crates/dc-import",
     "crates/dc-library",
+    "crates/dc-text",
     "crates/dc-job",
     "crates/dc-app",
     "crates/dreamcarve-shell",
@@ -43,6 +44,7 @@ dc-cam = { path = "crates/dc-cam", version = "0.5.0-alpha.1" }
 dc-gcode = { path = "crates/dc-gcode", version = "0.5.0-alpha.1" }
 dc-import = { path = "crates/dc-import", version = "0.5.0-alpha.1" }
 dc-library = { path = "crates/dc-library", version = "0.5.0-alpha.1" }
+dc-text = { path = "crates/dc-text", version = "0.5.0-alpha.1" }
 dc-job = { path = "crates/dc-job", version = "0.5.0-alpha.1" }
 dc-app = { path = "crates/dc-app", version = "0.5.0-alpha.1" }
 dreamcarve-shell = { path = "crates/dreamcarve-shell", version = "0.5.0-alpha.1" }
@@ -58,6 +60,13 @@ thiserror = "2.0"
 serde_path_to_error = "0.1"
 clap = { version = "4.6", features = ["derive", "cargo"] }
 kurbo = "0.13"
+# Reads TrueType and OpenType fonts for `dc-text` (phase 5 design, "dc-text
+# (new crate)"): the crate `docs/rust-guidelines.md` names for fonts. MIT OR
+# Apache-2.0, no dependencies, no `unsafe`. Default features are off:
+# `opentype-layout` reads the GPOS table a font keeps its kerning pairs
+# in; `variable-fonts`, `apple-layout` and `glyph-names` serve nothing
+# here (the bundled fonts are static instances).
+ttf-parser = { version = "0.25", default-features = false, features = ["std", "opentype-layout"] }
 cavalier_contours = "0.9"
 # Polygon booleans for pockets (phase 2 design, "Algorithms → Pocket").
 # Default features are off: they pull in a glam/serde bridge and f32

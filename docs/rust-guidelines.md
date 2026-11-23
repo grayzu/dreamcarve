@@ -45,10 +45,13 @@ Dependency direction is one way:
 dc-geometry → dc-project → { dc-cam, dc-import, dc-library } → dc-job → dc-app → dreamcarve-app
 dc-project → dc-cam → dc-gcode → dc-job → dreamcarve
 dreamcarve-shell → { dreamcarve, dreamcarve-app }
+dc-geometry → dc-text → dc-app
 ```
 
 `dc-gcode` depends on `dc-cam` for the `Toolpath` type it writes out, and for
-nothing else. `dc-job` is the pipeline both shells drive (phase 4 design,
+nothing else. `dc-text` (phase 5) reads fonts and lays text out as
+outlines; it knows `dc-geometry` alone, and `dc-app` gives it what a
+project's text holds. `dc-job` is the pipeline both shells drive (phase 4 design,
 "Overview"): validation, generation, the order and tab checks, emission,
 program names, summaries, the preview, a project from a drawing, the
 artwork checks of a drawing and of a project's shapes, placed tabs. `dreamcarve-shell` is the file I/O the two binaries share (staged

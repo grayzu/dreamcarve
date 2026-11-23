@@ -85,6 +85,36 @@ giving the release and checksums:
   Copyright (c) 2013-present Cole Bemis
   The icon font lucide.ttf, unmodified.
 
+The dc-text crate bundles the fonts the Text tool offers, under
+crates/dc-text/fonts/ with their license texts and a README giving each
+file's source and checksum. Every binary that links dc-text carries them.
+None is renamed or modified:
+
+- Inter 4.1 (SIL Open Font License 1.1), https://github.com/rsms/inter
+  Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+  Inter-Regular and Inter-Bold; the license has no Reserved Font Name.
+- Source Serif 4, version 4.005 (SIL Open Font License 1.1),
+  https://github.com/adobe-fonts/source-serif
+  Copyright 2014 - 2023 Adobe (http://www.adobe.com/), with Reserved Font
+  Name 'Source'. Source is a trademark of Adobe in the United States
+  and/or other countries.
+  SourceSerif4-Regular and SourceSerif4-Bold.
+- Roboto Slab, version 2.002 (Apache License 2.0),
+  https://github.com/googlefonts/robotoslab
+  Copyright 2018 The Roboto Slab Project Authors
+  (https://github.com/googlefonts/robotoslab)
+  RobotoSlab-Bold.
+- Pacifico, version 3.001 (SIL Open Font License 1.1),
+  https://github.com/googlefonts/Pacifico
+  Copyright 2018 The Pacifico Project Authors
+  (https://github.com/googlefonts/Pacifico)
+  Pacifico-Regular.
+- Allerta Stencil, version 1.02 (SIL Open Font License 1.1),
+  https://github.com/google/fonts (ofl/allertastencil)
+  Copyright (c) 2010, Matt McInerney (matt@pixelspread.com), with Reserved
+  Font Name Allerta.
+  AllertaStencil-Regular.
+
 Third-party crates the dreamcarve-app binary adds whose license requires
 attribution:
 

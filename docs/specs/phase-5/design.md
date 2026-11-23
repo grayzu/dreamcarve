@@ -217,12 +217,18 @@ pub fn bundled_font(family: &str, style: &str) -> Option<Font>;
 pub struct TextSpec<'a> { pub text: &'a str, pub height_mm: f64, pub letter_spacing_fraction: f64,
                           pub line_spacing_fraction: f64, pub align: Align }
 /// Outers anticlockwise with their counters clockwise after them; open paths for a single-line font.
-pub fn layout(font: &Font, spec: &TextSpec<'_>, flatten_tolerance_mm: f64) -> Result<Vec<Polyline>, TextError>;
+pub struct Laid { pub outlines: Vec<Polyline>, pub width_mm: f64, pub warnings: Vec<TextWarning> }
+pub fn layout(font: &Font, spec: &TextSpec<'_>, flatten_tolerance_mm: f64) -> Result<Laid, TextError>;
+pub enum TextWarning { MissingGlyph { character: char } }            // once a character
+pub enum TextError { NotAFont { reason }, NoOutlines, BadHeight { height_mm }, BadSpacing }
 ```
 
-It depends on `dc-geometry` and `ttf-parser` (0.25, Apache-2.0 OR MIT,
+`Font::simple_stroke()` is the single-line font, a table in the crate
+and no file. It depends on `dc-geometry`, `kurbo` (the workspace's, for
+a glyph's curves) and `ttf-parser` (0.25, Apache-2.0 OR MIT,
 no dependencies, no unsafe in its public use, the crate
-`docs/rust-guidelines.md` names for fonts). It does not depend on
+`docs/rust-guidelines.md` names for fonts; default features off, with
+`opentype-layout` for the GPOS table kerning pairs are kept in). It does not depend on
 `dc-project`; `dc-app` maps `Shape::Text` to a `TextSpec`. The crate
 graph gains `dc-geometry → dc-text → dc-app`.
 
@@ -719,24 +725,35 @@ through the transform, arcs are refused with the geometry's reason.
 
 ### Text layout (`dc_text::layout`)
 
-1. Scale: `height_mm / cap_height`, the font's `capHeight` (OS/2), or
-   the height of `H` when the table lacks it.
+1. Scale: `height_mm / cap_height`, where the capital height is the
+   top of the font's `H` (so an H is the height asked in every font, a
+   script's too), else its `capHeight` (OS/2), else its ascender.
 2. For each line, for each character: the glyph by `cmap`, a missing
-   one by the font's `.notdef` and a note; advance by `hmtx`, plus the
-   `kern` table's pair value when the font has one, plus
-   `letter_spacing_fraction · height_mm`.
+   one by the font's `.notdef` and a `TextWarning::MissingGlyph`;
+   advance by `hmtx`, plus the pair's kerning (the `kern` table's when
+   the font has one, else the first GPOS pair adjustment, format 1 or
+   2, of its `kern` features that covers the pair: none of the bundled
+   fonts has a `kern` table), plus `letter_spacing_fraction ·
+   height_mm` between letters.
 3. Each glyph's outline through `ttf_parser::OutlineBuilder` into a
    `kurbo::BezPath` (quadratics and cubics), flattened by
    `dc_geometry::flatten`.
 4. Lines are offset down by `line_spacing_fraction ·
    (ascender − descender + line_gap)` and shifted by `align` against
-   the widest line.
-5. Contours are oriented by containment: depth 0 anticlockwise, depth 1
-   clockwise, and so on, so a counter is a hole whatever the font's own
-   winding; each outer is followed by its holes.
+   the widest line. The origin is the start of the first baseline.
+5. The contours are resolved by the non-zero rule a font fills by
+   (`dc_geometry::resolve_fill`, the SVG importer's): outers
+   anticlockwise, each followed by its holes, clockwise, whatever the
+   font's own winding, in a canonical order; and contours that overlap
+   (a script's joins between letters, an accent on its base) become one
+   outline, so text always nests and a pocket of a script word is one
+   area.
 
 A single-line font skips steps 3 and 5 and emits its strokes as open
-polylines.
+polylines: *Simple Stroke* is PureCutCNC's glyph table, value for
+value, its Y turned up; a small letter is its capital, a character it
+lacks is `?` and a warning, a letter is followed by 0.18 of the height
+and lines are 1.45 heights apart, as upstream.
 
 ### Arrays, align, distribute
 
@@ -1060,23 +1077,25 @@ bundled Lucide has an ellipse and a pill, so no glyph is painter-drawn.
 ## Bundled fonts
 
 Under `crates/dc-text/fonts/`, each with its licence file, each named in
-`NOTICE`, `about.toml` and the Licensing chapter. All are SIL OFL 1.1,
-which permits bundling and embedding; none is renamed or modified. The
-choice is the maintainer's (functional open question 2); this is the
-first proposal, one family per job a carved sign has:
+`NOTICE` and the Licensing chapter. All permit bundling and embedding;
+none is renamed or modified. The choice is the maintainer's (functional
+open question 2); this is the first proposal, one family per job a
+carved sign has:
 
-| Family | Styles | For |
-| --- | --- | --- |
-| Inter | Regular, Bold | A plain sans; already bundled for the interface |
-| Source Serif 4 | Regular, Bold | A serif |
-| Roboto Slab | Bold | A slab, for sturdy lettering |
-| Pacifico | Regular | A script |
-| Allerta Stencil | Regular | A stencil: letters whose counters do not fall out when cut through |
-| Simple Stroke | (single line) | Engraving; PureCutCNC's, Apache-2.0 |
+| Family | Styles | Licence | For |
+| --- | --- | --- | --- |
+| Inter | Regular, Bold | SIL OFL 1.1 | A plain sans; the interface's face, here unmodified |
+| Source Serif 4 | Regular, Bold | SIL OFL 1.1 (Reserved Font Name *Source*) | A serif |
+| Roboto Slab | Bold | Apache-2.0 | A slab, for sturdy lettering |
+| Pacifico | Regular | SIL OFL 1.1 | A script |
+| Allerta Stencil | Regular | SIL OFL 1.1 (Reserved Font Name *Allerta*) | A stencil: letters whose counters do not fall out when cut through |
+| Simple Stroke | (single line) | Apache-2.0 | Engraving; PureCutCNC's table, ported |
 
-Each file is fetched from its publisher's repository at slice time, its
-licence and reserved names read then, and its checksum recorded in
-`crates/dc-text/fonts/README.md`.
+Each file was fetched from its publisher's repository on 2026-11-23, its
+licence and reserved names read then, and its source, version and
+checksum recorded in `crates/dc-text/fonts/README.md`. Together they add
+about 1.9 MB to a binary. `about.toml` lists crates, not assets, so the
+fonts are in `NOTICE` and not there.
 
 ## Test plan
 
@@ -1245,11 +1264,12 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `dc_job::checks::construction_is_not_checked`, and in the window
 `editing::construction_geometry_in_the_window` (acc 122–125).
 
-**Text (slices 23–24)** `dc_text::` `capital_height_is_the_asked_height`,
-`counters_nest_as_holes`, `lines_align`, `letter_spacing_adds_per_gap`,
-`kerning_pairs_apply`, `layout_is_deterministic`, `every_bundled_font_parses`,
-`a_file_that_is_not_a_font_is_refused`, `simple_stroke_is_open_paths`
-(port of the glyph table's coverage); `dc_app::tool::text_places_and_edits`,
+**Text (slices 23–24)** `dc-text` `tests/text.rs`: `capital_height_is_the_asked_height`,
+`counters_nest_as_holes`, `overlapping_letters_are_one_outline`, `lines_align`,
+`letter_spacing_adds_per_gap`, `kerning_pairs_apply`, `layout_is_deterministic`,
+`every_bundled_font_parses`, `a_file_that_is_not_a_font_is_refused`,
+`a_missing_glyph_is_noted`, `a_bad_height_is_refused_and_no_text_is_nothing`,
+`simple_stroke_is_open_paths` (port of the glyph table's coverage); `dc_app::tool::text_places_and_edits`,
 `fonts::a_missing_font_keeps_the_outline_and_refuses_edits` (acc 116).
 
 **Tracing and measuring (slices 25–26)** `dc_app::pictures::opacity_is_saved_and_cuts_nothing`,

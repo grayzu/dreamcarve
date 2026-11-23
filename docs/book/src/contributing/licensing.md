@@ -45,6 +45,24 @@ behaviour reference, as RasterCarve is for Photo V-Carve: its
 documentation and its output on our own inputs may be used, its source
 may not ([What is not a port](porting.md#what-is-not-a-port)).
 
+## Bundled fonts
+
+The Text tool's fonts are compiled into `dc-text` from
+`crates/dc-text/fonts/`. Each is open-licensed, as its publisher released
+it, with its licence in its folder; `fonts/README.md` gives each file's
+source, version and checksum, and `NOTICE` lists them all. Most are under
+the SIL Open Font License 1.1, which lets a font be bundled and embedded
+with software and asks that its copyright notice and licence travel with
+it; Roboto Slab is under the Apache License 2.0. A font is added only
+with its licence read first: one that forbids bundling or embedding stays
+out, and a font with a Reserved Font Name is never modified. The
+interface's own typefaces, under `crates/dreamcarve-app/assets/`, follow
+the same rules.
+
+The app never reads the system's fonts. A font the user adds is copied
+to the app's own fonts folder and stays the user's: it is not bundled,
+and a project carries the outline it made, not the font.
+
 ## Interoperability, not reverse engineering
 
 Reading a data file a user owns is interoperability. DreamCarve imports
