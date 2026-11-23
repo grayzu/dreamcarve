@@ -259,8 +259,8 @@ pub struct NewShape { pub name: String, pub shape: Option<Shape>, pub profiles: 
 pub enum Edit { Size(SizeField), Corners, Measured, Flanks, Root, Crest,   // slice 8
                 MoveNodes { count }, Reshape, AddNode, DeleteNodes { count }, Break, DeleteSegment,
                 CloseEnds, JoinEnds,                                      // slice 10
-                SegmentKind,
-                Fillet, Chamfer, Offset, Weld, Subtract, Intersect, Trim, Join, JoinEnds,
+                Fillet { count }, Chamfer { count }, SegmentKind(SpanKind), // slices 11, 12
+                Offset, Weld, Subtract, Intersect, Trim, Join, JoinEnds,
                 Align(Side), Distribute(Axis), Regenerate }   // the undo label's words
 ```
 
@@ -591,6 +591,21 @@ path of its own; a path of a shape with other outlines, or with linked
 copies, stays in its definition as two outlines, so the copies follow.
 `Draft` carries what the overlay paints: `nodes`, `handles`,
 `highlights` (the selected span) and `marquee`.
+
+**Fillet, Chamfer, segment kinds** (slices 11 and 12). The bar's
+buttons are data (`ToolBar::actions`, each a `NodeAction`): *Fillet*
+and *Chamfer* cut the selected corners by the tool's corner size, an
+option row of the bar that is the Rectangle tool's own preference
+(`Prefs::drawing.corner_mm`), read as the shape is placed. Corners are
+cut from each path's last node back, since a cut corner is two nodes;
+one that cannot take the size is left, and the reply carries both the
+undo label and the reason. With a span selected the bar offers *Make
+Straight*, *Make Arc* and *Make Curve*, the one it is disabled
+(`Path::with_span_kind`). **Shape ▸ Fillet Corners…** is
+`dc_app::edit::fillet_corners`, a pure function giving one
+`SetOutline`: every corner of the one shape that can take the radius.
+`dc_app::edit` also holds what a path shape is (`paths_of`,
+`outline_of`), which the node tool reads.
 
 A committed shape is `AddShapes` with the shape's outline in definition
 space and the instance transform that places it: a translation to the
@@ -927,7 +942,7 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `dc_geometry::path::edit` `a_path_follows_a_transform`,
 `open_paths_join_end_to_end`;
 `fillet_and_chamfer_a_corner`, `fillet_corners_of_a_shape`,
-`segment_kinds`, `tabs_follow_an_edited_outline`,
+`segment_kinds`,
 `an_edit_regenerates_only_what_targets_it` (acc 117, 118, 127).
 
 **Changing shapes (slices 13–16)** `dc_app::edit::` `offset_outward_rounds_corners`,

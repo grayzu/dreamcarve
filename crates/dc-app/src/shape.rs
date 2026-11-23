@@ -355,7 +355,10 @@ pub(crate) const fn edit_word(shape: Option<&Shape>, edit: Edit) -> StrKey {
         | Edit::Break
         | Edit::DeleteSegment
         | Edit::CloseEnds
-        | Edit::JoinEnds => StrKey::ShapeSizeSize,
+        | Edit::JoinEnds
+        | Edit::Fillet { .. }
+        | Edit::Chamfer { .. }
+        | Edit::SegmentKind(_) => StrKey::ShapeSizeSize,
         Edit::Size(field) => match field {
             SizeField::Width | SizeField::SlotWidth => StrKey::ShapeSizeWidth,
             SizeField::Height => StrKey::ShapeSizeHeight,

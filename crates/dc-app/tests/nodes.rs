@@ -145,6 +145,28 @@ fn assert_points(got: &[(f64, f64)], want: &[(f64, f64)]) {
     }
 }
 
+/// The tool bar's rows that are sizes of what is selected, less the
+/// corner size, which is the tool's option and always there.
+fn sizes(app: &App) -> Vec<(SizeField, String)> {
+    app.tool_bar()
+        .unwrap()
+        .fields
+        .into_iter()
+        .filter(|row| !row.option)
+        .map(|row| (row.field, row.text))
+        .collect()
+}
+
+/// The tool bar's button `label`.
+fn action(app: &App, label: &str) -> dc_app::tool::BarAction {
+    app.tool_bar()
+        .unwrap()
+        .actions
+        .into_iter()
+        .find(|action| action.label == label)
+        .unwrap_or_else(|| panic!("no {label} button"))
+}
+
 fn steps(app: &App) -> usize {
     app.history().undo_labels().count()
 }
@@ -165,7 +187,7 @@ fn a_click_selects_a_node() {
         bar.prompt,
         "Drag a node or a handle; double-click a segment to add a node"
     );
-    assert!(bar.fields.is_empty() && bar.can_finish);
+    assert!(sizes(&app).is_empty() && bar.can_finish);
 
     // What the pointer takes hold of: a node within 9 px, then a span.
     assert_eq!(
@@ -182,15 +204,8 @@ fn a_click_selects_a_node() {
     click(&mut app, pt(50.5, 10.0));
     assert_eq!(selected(&app), [1]);
     assert!(app.draft().nodes[1].selected);
-    let fields: Vec<(SizeField, String)> = app
-        .tool_bar()
-        .unwrap()
-        .fields
-        .into_iter()
-        .map(|row| (row.field, row.text))
-        .collect();
     assert_eq!(
-        fields,
+        sizes(&app),
         [
             (SizeField::X, "50".to_owned()),
             (SizeField::Y, "10".to_owned())
@@ -198,7 +213,7 @@ fn a_click_selects_a_node() {
     );
     shift_click(&mut app, pt(50.0, 40.0));
     assert_eq!(selected(&app), [1, 2]);
-    assert!(app.tool_bar().unwrap().fields.is_empty(), "two nodes");
+    assert!(sizes(&app).is_empty(), "two nodes");
     shift_click(&mut app, pt(50.0, 10.0));
     assert_eq!(selected(&app), [2], "Shift takes one away");
     click(&mut app, pt(10.0, 10.0));
@@ -594,14 +609,9 @@ fn break_and_delete_segment() {
         false,
     );
     let mut app = editing(vec![square(), line]);
-    assert_eq!(
-        app.tool_bar().unwrap().actions[0].label,
-        "Break",
-        "the bar's button"
-    );
-    assert!(!app.tool_bar().unwrap().actions[0].enabled, "no node yet");
+    assert!(!action(&app, "Break").enabled, "no node yet");
     click(&mut app, pt(50.0, 40.0));
-    assert!(app.tool_bar().unwrap().actions[0].enabled);
+    assert!(action(&app, "Break").enabled);
     let reply = app.tool_event(Event::Node(NodeAction::Break));
     assert_eq!(reply.ran.as_deref(), Some("Break “Square”"));
     let opened = &definition(&app, "Square").profiles[0];
@@ -817,4 +827,249 @@ fn a_sized_shape_is_converted_and_the_tool_is_left() {
     );
     click(&mut app, pt(75.0, 60.0));
     assert_eq!(app.node_editing(), Some(InstanceId::new("i2")));
+}
+
+/// Acceptance 118 (ports `profileEdit.test.ts`'s fillet and chamfer
+/// through the tool): a 5 mm fillet at the corner of a 40 × 30 rectangle
+/// path shortens both sides by 5 and joins them with an arc of radius 5
+/// tangent to both; a 5 mm chamfer joins points 5 mm along each side; a
+/// size both sides cannot take is refused and named; a corner next to an
+/// arc is refused.
+#[test]
+fn fillet_and_chamfer_a_corner() {
+    let mut app = editing(vec![square()]);
+    // The size is the tool's option: 5 mm until one is typed.
+    let corner = app
+        .tool_bar()
+        .unwrap()
+        .fields
+        .into_iter()
+        .find(|row| row.field == SizeField::CornerSize)
+        .unwrap();
+    assert!(corner.option);
+    assert_eq!(corner.text, "5");
+    assert!(!action(&app, "Fillet").enabled, "no corner selected");
+    click(&mut app, pt(50.0, 10.0));
+    assert!(action(&app, "Fillet").enabled && action(&app, "Chamfer").enabled);
+
+    let reply = app.tool_event(Event::Node(NodeAction::Fillet));
+    assert_eq!(reply.ran.as_deref(), Some("Fillet corner of “Square”"));
+    assert_eq!(reply.refused, None);
+    assert_points(
+        &vertices(&app, "Square"),
+        &[
+            (10.0, 10.0),
+            (45.0, 10.0),
+            (50.0, 15.0),
+            (50.0, 40.0),
+            (10.0, 40.0),
+        ],
+    );
+    let arcs: Vec<_> = definition(&app, "Square").profiles[0]
+        .segments()
+        .filter_map(|segment| segment.arc())
+        .collect();
+    assert_eq!(arcs.len(), 1);
+    assert!((arcs[0].radius_mm - 5.0).abs() < 1e-9);
+    // Tangent to both sides: its centre is 5 from each.
+    assert!((arcs[0].centre.x - 45.0).abs() < 1e-9 && (arcs[0].centre.y - 15.0).abs() < 1e-9);
+    assert!(selected(&app).is_empty(), "the nodes are renumbered");
+
+    // A chamfer of 8 at the opposite corner, the size typed in the bar.
+    app.tool_event(Event::Field {
+        field: SizeField::CornerSize,
+        text: "8".to_owned(),
+    });
+    assert_eq!(app.prefs().drawing.corner_mm, Some(8.0));
+    click(&mut app, pt(10.0, 40.0));
+    let reply = app.tool_event(Event::Node(NodeAction::Chamfer));
+    assert_eq!(reply.ran.as_deref(), Some("Chamfer corner of “Square”"));
+    assert_points(
+        &vertices(&app, "Square"),
+        &[
+            (10.0, 10.0),
+            (45.0, 10.0),
+            (50.0, 15.0),
+            (50.0, 40.0),
+            (18.0, 40.0),
+            (10.0, 32.0),
+        ],
+    );
+
+    // A corner next to the arc, and a size the sides cannot take.
+    click(&mut app, pt(45.0, 10.0));
+    let reply = app.tool_event(Event::Node(NodeAction::Fillet));
+    assert_eq!(reply.ran, None);
+    assert_eq!(
+        reply.refused.as_deref(),
+        Some("a corner next to an arc or a curve cannot be rounded or chamfered")
+    );
+    app.tool_event(Event::Field {
+        field: SizeField::CornerSize,
+        text: "40".to_owned(),
+    });
+    click(&mut app, pt(10.0, 10.0));
+    let before = steps(&app);
+    let reply = app.tool_event(Event::Node(NodeAction::Chamfer));
+    assert_eq!(reply.ran, None);
+    // The shorter side at this corner is 22 long, to the chamfer.
+    assert_eq!(
+        reply.refused.as_deref(),
+        Some("the sides are too short: this corner takes less than 22")
+    );
+    assert_eq!(steps(&app), before);
+
+    // Several at once: those that can are cut, and the reply says one
+    // was left.
+    let mut app = editing(vec![square()]);
+    app.tool_event(Event::Node(NodeAction::SelectAll));
+    let reply = app.tool_event(Event::Node(NodeAction::Fillet));
+    assert_eq!(reply.ran.as_deref(), Some("Fillet 4 corners of “Square”"));
+    assert_eq!(reply.refused, None);
+    assert_eq!(vertices(&app, "Square").len(), 8);
+    let open = outline("Elbow", &[(10.0, 10.0), (40.0, 10.0), (40.0, 30.0)], false);
+    let mut app = editing(vec![open]);
+    app.tool_event(Event::Node(NodeAction::SelectAll));
+    let reply = app.tool_event(Event::Node(NodeAction::Fillet));
+    assert_eq!(reply.ran.as_deref(), Some("Fillet corner of “Elbow”"));
+    assert_eq!(
+        reply.refused.as_deref(),
+        Some("Some corners were left as they are: the end of an open path is not a corner")
+    );
+    // With nothing selected there is nothing to cut.
+    let reply = app.tool_event(Event::Node(NodeAction::Chamfer));
+    assert!(reply.ran.is_none() && reply.refused.is_some());
+}
+
+/// Acceptance 118: Fillet Corners at 3 on an L-shaped path rounds all
+/// six corners, in one undo step; a shape that keeps its sizes is
+/// converted first, and a radius no corner can take is refused.
+#[test]
+fn fillet_corners_of_a_shape() {
+    let ell = outline(
+        "Ell",
+        &[
+            (10.0, 10.0),
+            (50.0, 10.0),
+            (50.0, 25.0),
+            (30.0, 25.0),
+            (30.0, 50.0),
+            (10.0, 50.0),
+        ],
+        true,
+    );
+    let mut app = editing(vec![ell]);
+    app.arm(Tool::Select);
+    let id = InstanceId::new("i1");
+    let command = dc_app::edit::fillet_corners(app.project(), app.strings(), &id, "3").unwrap();
+    assert_eq!(
+        app.run(command).as_deref().ok(),
+        Some("Fillet 6 corners of “Ell”")
+    );
+    let outline_now = &definition(&app, "Ell").profiles[0];
+    let arcs: Vec<_> = outline_now.segments().filter_map(|s| s.arc()).collect();
+    assert_eq!(arcs.len(), 6);
+    assert!(arcs.iter().all(|arc| (arc.radius_mm - 3.0).abs() < 1e-9));
+    // Five turn with the outline and the inside corner against it.
+    assert_eq!(arcs.iter().filter(|arc| arc.sweep_rad > 0.0).count(), 5);
+    assert_eq!(outline_now.segments().count(), 12);
+    assert_eq!(definition(&app, "Ell").shape, None);
+
+    // Too large for any corner, no length, and a shape with sizes.
+    let refused = |app: &App, text: &str| {
+        dc_app::edit::fillet_corners(app.project(), app.strings(), &id, text)
+            .expect_err("refused")
+            .to_string()
+    };
+    app.undo();
+    // 45 is more than the longest side: the first corner looked at is
+    // the one whose shorter side is 20.
+    assert_eq!(
+        refused(&app, "45"),
+        "the sides are too short: this corner takes less than 20"
+    );
+    assert_eq!(refused(&app, "0"), "a size must be greater than 0");
+    assert!(dc_app::edit::fillet_corners(app.project(), app.strings(), &id, "wide").is_err());
+    let rectangle = Shape::Rectangle {
+        width_mm: 40.0,
+        height_mm: 30.0,
+        corner: dc_project::Corner::Square,
+    };
+    let sized = NewShape {
+        name: "Rectangle 1".to_owned(),
+        profiles: rectangle.outline(0.01).unwrap().unwrap(),
+        shape: Some(rectangle),
+        transform: Transform::translate(30.0, 25.0),
+        construction: false,
+        folder: None,
+    };
+    let app = editing(vec![sized]);
+    assert_eq!(
+        refused(&app, "3"),
+        "“Rectangle 1” keeps its sizes: convert it to a path to edit its nodes"
+    );
+}
+
+/// Capability 92, Segment kind: the selected segment is made straight,
+/// an arc or a curve, its two ends where they were; the bar offers the
+/// kinds it is not.
+#[test]
+fn segment_kinds() {
+    let mut app = editing(vec![square()]);
+    let reply = app.tool_event(Event::Node(NodeAction::SpanKind(
+        dc_geometry::SpanKind::Arc,
+    )));
+    assert_eq!(
+        reply.refused.as_deref(),
+        Some("Select a segment to change what it is.")
+    );
+    click(&mut app, pt(30.0, 10.0));
+    assert!(!action(&app, "Make Straight").enabled, "it is straight");
+    assert!(action(&app, "Make Arc").enabled && action(&app, "Make Curve").enabled);
+
+    // A line bows out by an eighth of its length, to be dragged.
+    let reply = app.tool_event(Event::Node(NodeAction::SpanKind(
+        dc_geometry::SpanKind::Arc,
+    )));
+    assert_eq!(
+        reply.ran.as_deref(),
+        Some("Make segment of “Square” an arc")
+    );
+    let v = definition(&app, "Square").profiles[0].vertices().to_vec();
+    assert_eq!((v[0].x, v[0].y, v[1].x, v[1].y), (10.0, 10.0, 50.0, 10.0));
+    assert!((v[0].bulge.abs() - 0.25).abs() < 1e-9, "{v:?}");
+    assert_eq!(definition(&app, "Square").shape, None, "an arc is outline");
+    assert!(!action(&app, "Make Arc").enabled);
+
+    // To a curve: the path keeps its nodes now, and the outline is
+    // flattened from them.
+    let reply = app.tool_event(Event::Node(NodeAction::SpanKind(
+        dc_geometry::SpanKind::Cubic,
+    )));
+    assert_eq!(
+        reply.ran.as_deref(),
+        Some("Make segment of “Square” a curve")
+    );
+    let Some(Shape::Path { paths }) = &definition(&app, "Square").shape else {
+        panic!("a curve keeps its nodes");
+    };
+    assert!(matches!(paths[0].nodes()[0].span, Span::Cubic { .. }));
+    assert_eq!(paths[0].nodes().len(), 4, "under a quarter turn: one curve");
+    assert!(definition(&app, "Square").profiles[0].vertices().len() > 4);
+
+    // And straight again: the four lines it was.
+    let reply = app.tool_event(Event::Node(NodeAction::SpanKind(
+        dc_geometry::SpanKind::Line,
+    )));
+    assert_eq!(reply.ran.as_deref(), Some("Straighten segment of “Square”"));
+    assert_eq!(definition(&app, "Square").shape, None);
+    assert_points(
+        &vertices(&app, "Square"),
+        &[(10.0, 10.0), (50.0, 10.0), (50.0, 40.0), (10.0, 40.0)],
+    );
+    let before = steps(&app);
+    app.tool_event(Event::Node(NodeAction::SpanKind(
+        dc_geometry::SpanKind::Line,
+    )));
+    assert_eq!(steps(&app), before, "already straight: nothing to do");
 }

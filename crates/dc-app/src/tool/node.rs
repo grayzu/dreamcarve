@@ -30,12 +30,13 @@
 
 use std::collections::BTreeSet;
 
-use dc_geometry::{HandleSide, Path, Point, Polyline, Rect, Span, Transform, Vec2};
-use dc_project::{FeatureInstance, InstanceId, Shape};
+use dc_geometry::{HandleSide, Path, Point, Polyline, Rect, Span, SpanKind, Transform, Vec2};
+use dc_project::{FeatureInstance, InstanceId};
 
 use super::draw::DRAG_PX;
 use super::{Draft, Event, Key, Quantity, Reply, SizeField, SizeRow, ToolBar};
 use crate::command::{Edit, NewShape, copy_name};
+use crate::edit::{corner_reason, outline_of, paths_of};
 use crate::snap::{Pointer, Snapped};
 use crate::strings::StrKey;
 use crate::viewport::pick::{self, Hit, PICK_TOLERANCE_PX};
@@ -111,6 +112,13 @@ pub enum NodeAction {
     /// Make the selected shape, which keeps its sizes, a path, and edit
     /// it.
     Convert,
+    /// Round the selected corners by the bar's corner size (capability
+    /// 93).
+    Fillet,
+    /// Cut the selected corners back by the bar's corner size.
+    Chamfer,
+    /// Make the selected span a line, an arc or a curve.
+    SpanKind(SpanKind),
 }
 
 /// A button of the tool bar.
@@ -320,22 +328,6 @@ impl Edited {
                 },
             )
         })
-    }
-}
-
-/// The paths a definition's outline is: its own, when it keeps curves,
-/// else each profile as a path. `None` for a shape that keeps its sizes.
-fn paths_of(definition: &dc_project::FeatureDefinition) -> Option<Vec<Path>> {
-    match &definition.shape {
-        Some(Shape::Path { paths }) => Some(paths.clone()),
-        Some(_) => None,
-        None => Some(
-            definition
-                .profiles
-                .iter()
-                .map(Path::from_polyline)
-                .collect(),
-        ),
     }
 }
 
@@ -925,6 +917,31 @@ impl App {
                 }
                 reply
             }
+            NodeAction::Fillet => self.cut_corners(true),
+            NodeAction::Chamfer => self.cut_corners(false),
+            NodeAction::SpanKind(kind) => {
+                let Some(edited) = self.edited() else {
+                    return Reply::default();
+                };
+                let Some((path, span)) = self.tool.node.span else {
+                    return self.refuse(StrKey::NodeRefusedNoSegment);
+                };
+                let Some(changed) = edited
+                    .paths
+                    .get(path)
+                    .and_then(|p| p.with_span_kind(span, kind))
+                else {
+                    return Reply::default();
+                };
+                if edited.paths.get(path) == Some(&changed) {
+                    return Reply::default();
+                }
+                let mut paths = edited.paths.clone();
+                if let Some(slot) = paths.get_mut(path) {
+                    *slot = changed;
+                }
+                self.run_node_command(self.outline_command(&edited, paths, Edit::SegmentKind(kind)))
+            }
             NodeAction::Nudge { dx_mm, dy_mm } => {
                 let Some(edited) = self.edited() else {
                     return Reply::default();
@@ -937,6 +954,77 @@ impl App {
                 self.move_selected(&edited, delta)
             }
         }
+    }
+
+    /// **Fillet** or **Chamfer**: each selected corner rounded by an arc,
+    /// or cut back straight, by the bar's corner size as the shape is
+    /// placed. A corner that cannot take it is left as it is, and the
+    /// reply says why; one undo step for those that could.
+    fn cut_corners(&mut self, fillet: bool) -> Reply {
+        let Some(edited) = self.edited() else {
+            return Reply::default();
+        };
+        if self.tool.node.selected.is_empty() {
+            return self.refuse(StrKey::NodeRefusedNoCorner);
+        }
+        let units = self.project().display_units;
+        let Some(scale) = crate::shape::even_scale(edited.to_project) else {
+            return Reply {
+                ran: None,
+                refused: Some(
+                    crate::CommandError::Stretched {
+                        name: edited.instance.name.clone(),
+                    }
+                    .to_string(),
+                ),
+            };
+        };
+        let size_mm = self.prefs().drawing.corner_size_mm(units) / scale;
+        let mut paths = edited.paths.clone();
+        let mut cut = 0;
+        let mut left = None;
+        // From each path's last node back: a cut corner is two nodes.
+        for node in self.tool.node.selected.iter().rev() {
+            let Some(slot) = paths.get_mut(node.path) else {
+                continue;
+            };
+            let made = if fillet {
+                slot.fillet(node.node, size_mm)
+            } else {
+                slot.chamfer(node.node, size_mm)
+            };
+            match made {
+                Ok(path) => {
+                    *slot = path;
+                    cut += 1;
+                }
+                Err(error) => left = left.or(Some(error)),
+            }
+        }
+        let why = left.map(|error| corner_reason(self.strings(), units, error, scale));
+        if cut == 0 {
+            return Reply {
+                ran: None,
+                refused: why,
+            };
+        }
+        let what = if fillet {
+            Edit::Fillet { count: cut }
+        } else {
+            Edit::Chamfer { count: cut }
+        };
+        let mut reply = self.run_node_command(self.outline_command(&edited, paths, what));
+        if reply.ran.is_some() {
+            // The nodes are renumbered: nothing stays selected.
+            self.tool.node.selected.clear();
+            // Some corners were cut and some were not: say which were
+            // left, and why.
+            reply.refused = why.map(|why| {
+                self.strings()
+                    .fmt(StrKey::NodeRefusedSomeCorners, &[("reason", &why)])
+            });
+        }
+        reply
     }
 
     /// Moves the selected nodes by `delta`, in definition space: one
@@ -985,6 +1073,11 @@ impl App {
     /// A coordinate typed for the one selected node, from the origin, or
     /// a radius for the selected arc.
     fn type_node_size(&mut self, field: SizeField, text: &str) -> Reply {
+        // The corner size is the tool's option, as the Rectangle's is.
+        if field == SizeField::CornerSize {
+            self.type_size(field, text);
+            return Reply::default();
+        }
         self.tool.problems.remove(&field);
         let Some(edited) = self.edited() else {
             return Reply::default();
@@ -1115,6 +1208,52 @@ impl App {
             let scale = crate::shape::even_scale(edited.to_project).unwrap_or(1.0);
             bar.fields.push(row(SizeField::Radius, radius * scale));
         }
+        // The corner size Fillet and Chamfer cut by: the tool's option.
+        let mut corner = row(
+            SizeField::CornerSize,
+            self.prefs().drawing.corner_size_mm(units),
+        );
+        corner.option = true;
+        bar.fields.push(corner);
+        let any = !self.tool.node.selected.is_empty();
+        bar.actions.push(action(
+            StrKey::NodeFillet,
+            StrKey::NodeFilletHelp,
+            NodeAction::Fillet,
+            any,
+        ));
+        bar.actions.push(action(
+            StrKey::NodeChamfer,
+            StrKey::NodeChamferHelp,
+            NodeAction::Chamfer,
+            any,
+        ));
+        // What the selected span can be made.
+        if let Some(kind) = self.tool.node.span.and_then(|(path, span)| {
+            let node = edited.paths.get(path)?.nodes().get(span)?;
+            Some(match node.span {
+                Span::Line => SpanKind::Line,
+                Span::Arc { .. } => SpanKind::Arc,
+                Span::Cubic { .. } => SpanKind::Cubic,
+            })
+        }) {
+            for (label, help, to) in [
+                (
+                    StrKey::NodeMakeStraight,
+                    StrKey::NodeMakeStraightHelp,
+                    SpanKind::Line,
+                ),
+                (StrKey::NodeMakeArc, StrKey::NodeMakeArcHelp, SpanKind::Arc),
+                (
+                    StrKey::NodeMakeCurve,
+                    StrKey::NodeMakeCurveHelp,
+                    SpanKind::Cubic,
+                ),
+            ] {
+                bar.actions
+                    .push(action(label, help, NodeAction::SpanKind(to), to != kind));
+            }
+        }
         let can_break = one.is_some_and(|node| {
             edited
                 .paths
@@ -1221,21 +1360,6 @@ impl App {
     pub(super) fn begin_nodes(&mut self) {
         self.refresh_node_draft();
     }
-}
-
-/// The outline `paths` give, flattened to `tolerance_mm`, and the shape
-/// that keeps them: the paths where one has a curve, else nothing, since
-/// lines and arcs are the outline itself (ADR-0006).
-fn outline_of(paths: Vec<Path>, tolerance_mm: f64) -> (Option<Shape>, Vec<Polyline>) {
-    let profiles = paths
-        .iter()
-        .map(|path| path.to_polyline(tolerance_mm))
-        .collect();
-    let shape = paths
-        .iter()
-        .any(Path::has_curves)
-        .then_some(Shape::Path { paths });
-    (shape, profiles)
 }
 
 /// Span `span` of path `path`, placed, as an outline of its own: the

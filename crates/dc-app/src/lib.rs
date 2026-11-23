@@ -6,6 +6,7 @@
 pub mod app;
 pub mod arrange;
 pub mod command;
+pub mod edit;
 pub mod editor;
 mod error;
 pub mod export;

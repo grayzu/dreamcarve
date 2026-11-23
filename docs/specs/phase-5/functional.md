@@ -424,15 +424,19 @@ capability 52); what a tool holds before it commits is not project data.
     `applyLineCornerFillet` and `applyLineCornerChamfer`). In Edit
     nodes, with one or more corner nodes selected, **Fillet** (the tool bar, or
     the context menu) rounds each corner with an
-    arc tangent to both sides, by a **Radius** typed or dragged out from
-    the corner; **Chamfer** cuts each corner back by a **Distance**
+    arc tangent to both sides, by the **Corner size** typed in the tool
+    bar (the one size, kept as the Rectangle tool's is; PureCutCNC also
+    drags the radius out from the corner, which is not ported);
+    **Chamfer** cuts each corner back by the same size
     along both sides. Both need a corner between two straight segments
     and a size both sides can take; a corner that cannot take it is
-    left as it is and named in the status bar. The result is ordinary
+    left as it is and named in the status bar, the others being cut in
+    the same undo step. The result is ordinary
     geometry: an arc and two shortened sides. A whole shape selected
     with the Select tool takes **Shape ▸ Fillet Corners…**, which rounds
     every corner that can take the radius, the way a dogbone-free
-    inside pocket is prepared.
+    inside pocket is prepared. It takes one shape at a time, and a
+    shape that keeps its sizes is converted first.
 94. **Offset** (**Shape ▸ Offset…**, `⇧O`). With shapes selected, a
     popover takes a **Distance**, a side (**Outward**, **Inward**; for
     an open path **Left**, **Right** or **Both** of its direction) and

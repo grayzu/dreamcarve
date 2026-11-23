@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 10: 3,622.
+`0.5.0-alpha.1`. After slice 12: 3,625.
 
 ## Decisions waiting for the maintainer
 
@@ -125,6 +125,11 @@ Decisions made while building are added here.
   one path of its own with no linked copy; otherwise the definition
   gains an outline. The context menu rows and the `B` key are the
   window's (slice 17); the app core takes them as `NodeAction`s.
+- Slices 11 and 12: a fillet's radius is typed (the bar's corner size),
+  not dragged out from the corner as upstream also allows. One size
+  serves Fillet, Chamfer and the Rectangle tool's corners. Fillet
+  Corners takes one shape at a time: several would need several
+  definitions changed in one undo step, which no command does yet.
 
 ## Slices
 
@@ -151,8 +156,8 @@ The numbers are the design spec's.
 | Slice | What | Status |
 | --- | --- | --- |
 | 10 | Edit nodes, in the app core (`dc_app::tool::node`): the one selected path's nodes, handles and arc middles; select by click, Shift and a box; drag a node, several, a straight side, a curve's handle (Alt for a corner), an arc's middle, each previewed and one undo step, through the instance's inverse transform so linked copies follow; a node's X and Y and an arc's radius typed; add a node (double-click, Ctrl-click), delete nodes or a segment, Break; an end dropped on an end closes the path or joins two shapes; a sized shape converted first; `ReplaceShapes`; `Path::transformed` and `Path::joined`. The window's side is slice 17. Gate: 3,622 tests | done |
-| 11 | Fillet and chamfer | todo |
-| 12 | Segment kinds | todo |
+| 11 | Fillet and chamfer, in the app core: the Edit nodes bar's *Fillet* and *Chamfer* on the selected corners by its corner size, those that cannot take it left and named; `dc_app::edit::fillet_corners` for Shape ▸ Fillet Corners… | done |
+| 12 | Segment kinds, in the app core: the selected segment made straight, an arc or a curve from the bar. Gate: 3,625 tests | done |
 | 13 | Offset | todo |
 | 14 | Weld, Subtract, Intersect | todo |
 | 15 | Intersections and Trim | todo |

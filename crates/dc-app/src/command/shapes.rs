@@ -57,6 +57,19 @@ pub enum Edit {
     CloseEnds,
     /// Two open paths joined at their ends into one.
     JoinEnds,
+    /// Corners rounded by arcs (capability 93).
+    Fillet {
+        /// How many.
+        count: usize,
+    },
+    /// Corners cut off straight.
+    Chamfer {
+        /// How many.
+        count: usize,
+    },
+    /// A span made a line, an arc or a curve (capability 92, Segment
+    /// kind).
+    SegmentKind(dc_geometry::SpanKind),
 }
 
 /// The undo label of `what` done to `subject`, whose shape was `shape`.
@@ -82,6 +95,13 @@ pub(super) fn edit_label(
         Edit::DeleteSegment => with(StrKey::CommandLabelDeleteSegment),
         Edit::CloseEnds => with(StrKey::CommandLabelClosePath),
         Edit::JoinEnds => with(StrKey::CommandLabelJoinPaths),
+        Edit::Fillet { count: 1 } => with(StrKey::CommandLabelFillet),
+        Edit::Fillet { count } => counted(StrKey::CommandLabelFillets, count),
+        Edit::Chamfer { count: 1 } => with(StrKey::CommandLabelChamfer),
+        Edit::Chamfer { count } => counted(StrKey::CommandLabelChamfers, count),
+        Edit::SegmentKind(dc_geometry::SpanKind::Line) => with(StrKey::CommandLabelMakeStraight),
+        Edit::SegmentKind(dc_geometry::SpanKind::Arc) => with(StrKey::CommandLabelMakeArc),
+        Edit::SegmentKind(dc_geometry::SpanKind::Cubic) => with(StrKey::CommandLabelMakeCurve),
         Edit::Size(_)
         | Edit::Corners
         | Edit::Measured
