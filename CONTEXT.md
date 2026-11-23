@@ -19,7 +19,9 @@ bottom below which no cut may go.
 _Avoid_: Workpiece, material block, blank
 
 **Feature Definition**:
-The canonical, untransformed shape shared by one or more feature instances.
+The canonical, untransformed shape shared by one or more feature instances:
+its outline (`profiles`, what is cut) and, for a shape drawn in the app, how
+the outline was made (`shape`).
 _Avoid_: Shape, definition, template
 _PureCutCNC_: FeatureDefinition
 
@@ -38,8 +40,75 @@ _PureCutCNC_: `slotProfile`, creation shape `slot`
 
 **Linked Copy**:
 A second feature instance sharing the same feature definition, so editing the
-shape updates both.
+shape updates both. *Duplicate* and an array make linked copies; *Make
+Unique* gives one a definition of its own; a pasted shape is never linked.
 _Avoid_: Reference copy, clone, component
+
+**Parametric Shape**:
+A feature definition that keeps the sizes it was drawn with in its `shape`
+(format 29): a Rectangle, Circle, Ellipse, Polygon, Slot, Gear or Text. Its
+sizes are edited in Properties; its `profiles` are generated from them and
+are what is cut (ADR-0006). Not edited node by node until it is converted to
+a path.
+_Avoid_: Primitive, smart shape, object
+_PureCutCNC_: canned shape
+
+**Path**:
+A feature definition edited node by node: an imported outline, a drawn Line,
+Arc or Spline, or a parametric shape after *Convert to Path*. Its `profiles`
+say everything unless it has a curve, which lives in `shape` (kind `path`).
+_Avoid_: Polyline (the geometry type), vector, sketch
+_PureCutCNC_: composite, polygon, spline feature kinds
+
+**Node**:
+A point of a path that Edit nodes shows and moves: the end of a line, an arc
+or a curve.
+_Avoid_: Vertex (the geometry type's word), anchor, point, control point
+_PureCutCNC_: anchor
+
+**Curve**:
+A cubic Bézier between two nodes, with a handle at each. Saved as the nodes
+and handles and cut as the outline flattened to the project's flatten
+tolerance. An arc is not a curve: it is saved and cut as an arc.
+_Avoid_: Spline (the tool that draws curves through points), Bézier (in
+user text)
+
+**Construction Geometry**:
+A feature instance marked `construction`: drawn dashed, snapped to and
+measured, never cut. No operation may name one.
+_Avoid_: Guide, helper line, reference geometry
+_PureCutCNC_: `construction` feature operation
+
+**Folder**:
+A named set of feature instances in the Design Tree (`folders`, format 29).
+Folders do not nest.
+_Avoid_: Layer (a DXF's, used only at import), directory
+_PureCutCNC_: FeatureFolder
+
+**Group**:
+A folder marked `group`: a click on one of its shapes selects them all.
+_Avoid_: Compound, block
+_PureCutCNC_: a `grouped` folder
+
+**Snap**:
+A drawing or editing point taken from nearby geometry or the grid instead of
+the pointer: Endpoint, Midpoint, Centre, Intersection, On outline,
+Perpendicular, Grid. An app preference, not project data.
+_Avoid_: Object snap, osnap, magnet
+_PureCutCNC_: SnapMode
+
+**Drawing Tool**:
+What the Viewport's pointer does while it is armed: Line, Arc, Spline,
+Rectangle, Circle, Ellipse, Polygon, Slot, Gear, Text; beside Select, Edit
+nodes, the Tab tool, Trim and Measure. A bare **Tool** is a cutting tool.
+_Avoid_: Mode, command
+_PureCutCNC_: pendingAdd, creation shape
+
+**Backdrop**:
+A bitmap used to draw over: faded by its `opacity_fraction`, sized by two
+points, usually locked. A use of a bitmap, not a kind of one.
+_Avoid_: Reference image, underlay, tracing image (in the data model)
+_PureCutCNC_: BackdropImage
 
 **Model**:
 Imported 3D surface geometry that surface operations machine: a mesh (STL,

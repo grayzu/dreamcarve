@@ -43,7 +43,7 @@ reference implementation except where this plan says otherwise.
 | Crate layout              | Cargo workspace from day one                                                                                                                                                                                                     | phase 0 design spec        |
 | 2D geometry               | Polylines with arc segments. Béziers flattened at import to a project tolerance. Arc fitting at export                                                                                                                           | phase 1 design spec        |
 | Geometry crates           | cavalier\_contours (offsets), i\_overlay (booleans), kurbo (curves)                                                                                                                                                              | phase 1 design spec        |
-| Feature model             | Definition/instance split from day one; snapshot undo history in the model                                                                                                                                                       | phase 1 design spec        |
+| Feature model             | Definition/instance split from day one; snapshot undo history in the model. A drawn shape keeps the sizes it was drawn with beside its outline; the outline is what is cut                                                      | phase 1 design spec, ADR-0006 |
 | Tools and post-processors | Projects embed copies. App-level library in user config dir from phase 2                                                                                                                                                         | phase 1 and 2 design specs |
 | Controllers               | grblHAL primary and validated on hardware. GRBL alongside in phase 1. LinuxCNC, Mach3, UCCNC, generic in phase 2                                                                                                                 | phase 1 functional spec    |
 | Operation names           | Profile, Pocket, Drill, V-Carve, Engrave; Inlay and Photo V-Carve from phase 3; Surface Rough and Surface Finish from phase 7 | `CONTEXT.md` |
@@ -280,21 +280,32 @@ circle, ellipse, polygon, regular polygon, **slot** (a first-class tool:
 two centre points and a width, since slots are fundamental to CNC joinery and
 fixturing), gear, arc, spline; text with bundled and user fonts; node editing with fillets; grid and
 object snapping (endpoint, midpoint, centre, intersection); offset, array,
-align, and distribute; join and trim; linked copies and Make Unique;
+align, and distribute; join and trim, and weld, subtract and intersect;
+linked copies and Make Unique;
 folders; construction geometry; bitmap backdrops for tracing; on-canvas
-measurements; GUI tool-library editor. The spec may split this phase into
-two releases (basic drawing, then advanced editing) if the slice list is
-too long for one; the phase number stays 5 either way.
+measurements. (The GUI tool-library editor first listed here was built in
+phase 4, capability 64a.) Parametric shapes keep the sizes they were drawn
+with beside their outline (ADR-0006, format 29).
 
-**Out:** 3D.
+**Out:** 3D; constraints and parametric dimensions; text on a curve;
+automatic tracing of a picture.
 
-**Exit:** the phase 5 test part, designed entirely in the GUI with no import,
+**Sub-phases:** delivered in order on one branch, with no tag between
+them: 5.1 Drawing (format 29, the tool model, snapping, every drawing
+tool but Text), 5.2 Editing (nodes, fillets, offset, weld, subtract,
+intersect, trim, join), 5.3 Organising (Make Unique, copy and paste,
+arrays, align, distribute, folders, construction geometry), 5.4 Text,
+5.5 Tracing and measuring, 5.6 Release. The slice list is in the phase 5
+design spec.
+
+**Exit:** the phase 5 test part (the hook plate), designed entirely in the GUI with no import,
 cut; quick start "Your first design"; `v0.5.0`.
 
 **Real cut:** optional, since machine output does not change.
 
-**Spec notes:** requirements captured ahead of the spec are in
-`docs/specs/phase-5/NOTES.md`; fold them in when writing the spec.
+**Second reference:** Graphite (MIT OR Apache-2.0) for vector-editing
+behaviour, where the phase 5 specs say so; the survey that chose it is
+`docs/research/cad-reference-survey.md`.
 
 **Read first:** `src/sketch/`, `src/text/`, `src/components/canvas/`
 drawing modes, snapping, and edit-session code, `src/commands/creationShapes.ts`,
