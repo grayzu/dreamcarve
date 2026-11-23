@@ -875,6 +875,7 @@ fn floating_tools_select_fit_and_zoom() {
     // Phase 5 put Draw and its chevron between Select and the Tab tool.
     let order = [
         "Select",
+        "Edit nodes",
         "Draw: Rectangle",
         "Drawing tools",
         "Tab tool",
@@ -896,7 +897,7 @@ fn floating_tools_select_fit_and_zoom() {
         "in order: {rects:?}"
     );
     let level = h.get_by_label_contains("Zoom level").rect();
-    assert!(rects[5].right() <= level.left() && level.right() <= rects[6].left());
+    assert!(rects[6].right() <= level.left() && level.right() <= rects[7].left());
     let status_top = 800.0 - STATUS_BAR_PX;
     assert!(
         h.query_all_by_label_contains("Zoom")
@@ -5724,6 +5725,7 @@ fn keyboard_shortcuts_reach_their_commands() {
         keyboard::Menu::Edit,
         keyboard::Menu::Arrange,
         keyboard::Menu::Draw,
+        keyboard::Menu::Shape,
         keyboard::Menu::View,
     ] {
         let title = h.state().app().strings().get(menu.title()).to_owned();
@@ -5962,6 +5964,44 @@ fn keyboard_shortcuts_reach_their_commands() {
     h.run();
     assert_eq!(h.state().app().tool(), dc_app::Tool::Select, "V");
     reached.insert(Key::SelectTool);
+    // N edits the selected shape's nodes; B, there, breaks the path at
+    // the selected node; Shift O and Ctrl J take up Offset and Join.
+    h.key_press(egui::Key::N);
+    h.run();
+    assert_eq!(h.state().app().tool(), dc_app::Tool::Nodes, "N");
+    reached.insert(Key::EditNodes);
+    h.key_press(egui::Key::B);
+    h.run();
+    assert!(
+        h.state().message().is_some(),
+        "B asks for a break: with no node selected it says so"
+    );
+    reached.insert(Key::BreakPath);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::O);
+    h.run();
+    assert_eq!(
+        h.state().app().tool(),
+        dc_app::Tool::Adjust(dc_app::tool::Adjust::Offset),
+        "Shift O"
+    );
+    reached.insert(Key::Offset);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    command_key(&h, egui::Key::A);
+    h.run();
+    command_key(&h, egui::Key::J);
+    h.run();
+    assert_eq!(
+        h.state().app().tool(),
+        dc_app::Tool::Adjust(dc_app::tool::Adjust::Join),
+        "Ctrl J"
+    );
+    reached.insert(Key::Join);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    select_only(&mut h, "i4");
     assert!(h.state().app().prefs().snap.enabled);
     h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::S);
     h.run();

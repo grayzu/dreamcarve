@@ -371,7 +371,7 @@ result is one plain path per source, `<name> offset`, placed, filed and
 marked as its source; a source whose offset is empty is returned in
 `Offsets::vanished`, and an offset that makes nothing at all is
 refused. `offset_outlines` is the same in project space for the
-popover's preview. `boolean` places every shape's outlines in project
+tool bar's preview. `boolean` places every shape's outlines in project
 space, nests them, folds `dc_geometry::boolean` over them in selection
 order at the project's flatten tolerance, and brings the result back
 into the first shape's space: one path, `<name> weld` (`subtract`,
@@ -754,14 +754,15 @@ crates/dc-text/{Cargo.toml, README.md, fonts/ (the bundled files and their licen
                 src/{lib.rs, font.rs, layout.rs, stroke.rs (port), bundled.rs}}
 crates/dc-job/src/checks.rs, project_from.rs            — skip construction instances
 crates/dc-app/src/{tool.rs, tool/{draw.rs (box shapes, slot), gear.rs, path.rs (line, arc, spline), text.rs,
-                   node.rs, trim.rs, measure.rs, fields.rs (typed sizes), bar.rs}, snap.rs, shape.rs (the Shape
+                   node.rs, trim.rs, adjust.rs (Offset…, Fillet Corners…, Join… in the tool bar), measure.rs,
+                   fields.rs (typed sizes), bar.rs}, snap.rs, shape.rs (the Shape
                    section, sizes as placed, stretch), edit.rs (offset, weld, subtract, intersect, join, fillet
                    corners as commands), array.rs (port), fonts.rs (the fonts on hand), clipboard.rs,
                    command/{shapes.rs, folders.rs}, arrange.rs (align, distribute), tree.rs (folders)}
 crates/dreamcarve-shell/src/fonts.rs                     — the user's fonts folder: list, add
 crates/dreamcarve-app/src/{viewport/{tools.rs (events to dc-app), tool_bar.rs, draw_menu.rs, draft.rs (the
                            overlay: preview, nodes, snap marker, labels)}, panels/{shape.rs (the Shape section),
-                           offset.rs, array.rs (popovers)}, shell/menu.rs (Draw, Shape), keyboard.rs}
+                           array.rs (popover)}, shell/menu.rs (Draw, Shape), keyboard.rs}
 docs/book/src/{quick-start/first-design.md, user-guide/{drawing-shapes.md, snapping.md, text.md, editing-nodes.md,
                changing-shapes.md, copies-and-arrays.md, folders-and-construction.md, tracing.md, measuring.md}}
 ```
@@ -826,6 +827,57 @@ screen, which also offers **Draw from scratch**.
   each string of the table has a glyph in the bundled fonts. egui stops
   a frame that lays out a character with none, which a size label's
   diameter sign did; the label reads `Ø 40`.
+
+### The window (slice 17)
+
+Editing adds no panel and no popover. `Tool` has `Nodes`, `Trim` and
+`Adjust(Adjust)`, with `Adjust` one of `Offset`, `FilletCorners` and
+`Join`: a Shape command that takes a value is armed as a tool is, and
+the tool bar of slice 9 is its form.
+
+- `dc_app::tool::adjust`: `AdjustPrefs` (the distance, side and
+  original of an offset, the fillet radius, the join tolerance; in
+  `Prefs`, kept for the session and not written to `gui.toml`).
+  `adjust_bar` is one field (`Distance`, `Radius` or `Tolerance`, an
+  option row, so Enter in it is not a click), Offset's two choices
+  (*Side*, whose first two options read *Left* and *Right* when every
+  selected outline is open, and *Original*), and `can_finish` when
+  `adjust_command` makes a command; the reason it cannot is the
+  field's problem. `Done` or Enter runs the command and arms Select,
+  the note (an offset that vanished, paths left alone) going to the
+  status bar; Escape arms Select. `refresh_adjust_draft` puts
+  `edit::offset_outlines` in the draft as the values change.
+- `viewport/mod.rs`: `takes_pointer` is true for `Draw`, `Nodes`,
+  `Trim` and `Adjust`, so `tool_gestures` has the pointer and the
+  selection's handles are not drawn. In Edit nodes `Ctrl`/`⌘ A` is
+  `NodeAction::SelectAll` and the arrows nudge the selected nodes by
+  the steps they nudge shapes by with Select (`Shift` and `Alt` too). With
+  Select, a double-click on a shape selects it alone and arms Edit
+  nodes (`a_double_click_shows_nodes`).
+- `viewport/draft.rs`: a node is a 9 px square, filled when selected,
+  a smooth node a circle; a handle a 7 px circle on a line from its
+  node; the piece Trim would take is 3 px in `accent`; the node
+  marquee as the selection's.
+- `viewport/tool_bar.rs`: the bar's `actions` are buttons after its
+  fields (*Fillet*, *Chamfer*, the kinds the selected segment can be
+  made, *Break*; or *Convert to Path* alone for a shape that keeps its
+  sizes), each with its help, off while no node is selected. Done is
+  drawn only when `can_finish`.
+- `viewport/controls.rs`: the pill is Select, Edit nodes, Draw and its
+  chevron, Tab. Trim is the last row of the chevron's popover, under a
+  rule, and the Draw button shows its scissors pressed while it is
+  armed: a fifth button cost the zoom buttons at the Viewport's least
+  width.
+- `shell/menu.rs`, **Shape**: *Convert to Path*, *Fillet Corners…*,
+  *Offset…* (⇧O), *Weld*, *Subtract*, *Intersect*, *Join…* (⌘J). Weld,
+  Subtract and Intersect act at once on two or more shapes and say why
+  when they cannot; the three with an ellipsis arm their mode.
+- `keyboard.rs`: `EditNodes` (N), `BreakPath` (B), `Offset` (⇧O),
+  `Join` (⌘J).
+- The context menu the functional spec names (Break, the segment
+  kinds, Fillet, Convert to Path) comes with slice 18, where cut, copy,
+  paste and Make Unique give the Viewport one; until then every row of
+  it is on the tool bar or in the Shape menu.
 
 ## Visual design
 
@@ -1042,8 +1094,13 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `kittest::` `keyboard_shortcuts_reach_their_commands`,
 `file_menu_labels_in_order` and `floating_tools_select_fit_and_zoom`
 extended; `review::phase5_drawing_screenshots` writes
-`docs/specs/phase-5/review/drawing/`; later slices
-`a_double_click_shows_nodes`, `folders_drag_and_drop`,
+`docs/specs/phase-5/review/drawing/`; `tests/editing.rs` (slice 17):
+`a_double_click_shows_nodes`,
+`a_node_is_dragged_and_a_corner_filleted`, `trim_from_the_popover`,
+`offset_and_weld_from_the_shape_menu`, `join_from_the_shape_menu`, and
+`review::phase5_editing_screenshots` writing
+`docs/specs/phase-5/review/editing/`; later slices
+`folders_drag_and_drop`,
 `the_text_tool_previews_as_typed` (acc 129, 130); `strings::` and
 `theme::` scans as phase 4. `gui_equality::the_hook_plate_drawn_equals_the_cli`
 and `drawn_equals_imported` (acc 128).
@@ -1087,8 +1144,8 @@ row in `docs/phase-5-worklog.md`. Tests first, as phase 4's.
 15. **Intersections and Trim.** [10]
 16. **Join.** `dc_geometry::join`, the stitch's rule; the importer keeps
     its own. [10]
-17. **The window, editing.** Nodes and handles on the overlay, the
-    popovers, the menus. [10–16]
+17. **The window, editing.** Nodes and handles on the overlay, Offset…,
+    Fillet Corners… and Join… in the tool bar, the Shape menu. [10–16]
 
 **5.3 Organising**
 18. **Make Unique, cut, copy, paste, Alt-drag.** [8]

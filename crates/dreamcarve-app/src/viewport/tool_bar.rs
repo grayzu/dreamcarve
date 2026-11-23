@@ -74,7 +74,16 @@ const fn unit(quantity: Quantity, units: dc_project::Units) -> &'static str {
 fn name(strings: &dc_app::Strings, bar: &ToolBar) -> String {
     match bar.tool {
         Tool::Draw(drawing) => strings.get(drawing.name()).to_owned(),
-        _ => String::new(),
+        Tool::Nodes => strings.get(StrKey::AppViewportNodes).to_owned(),
+        Tool::Trim => strings.get(StrKey::AppViewportTrim).to_owned(),
+        Tool::Adjust(dc_app::tool::Adjust::Offset) => {
+            strings.get(StrKey::AdjustNameOffset).to_owned()
+        }
+        Tool::Adjust(dc_app::tool::Adjust::FilletCorners) => {
+            strings.get(StrKey::AdjustNameFillet).to_owned()
+        }
+        Tool::Adjust(dc_app::tool::Adjust::Join) => strings.get(StrKey::AdjustNameJoin).to_owned(),
+        Tool::Select | Tool::Tab | Tool::Measure => String::new(),
     }
 }
 
@@ -87,6 +96,8 @@ enum Part {
     Choice(usize),
     /// The field at this index, with its label.
     Field(usize),
+    /// The button at this index: one of the tool's actions.
+    Action(usize),
     /// The note and **Done**.
     Tail,
 }
@@ -273,6 +284,7 @@ pub(super) fn show(
     let mut parts = vec![Part::Head];
     parts.extend((0..bar.choices.len()).map(Part::Choice));
     parts.extend((0..bar.fields.len()).map(Part::Field));
+    parts.extend((0..bar.actions.len()).map(Part::Action));
     if bar.note.is_some() || bar.can_finish {
         parts.push(Part::Tail);
     }
@@ -316,6 +328,17 @@ pub(super) fn show(
                         Part::Field(index) => {
                             if let Some(row) = bar.fields.get(index) {
                                 field_part(ui, state, row, keys, out);
+                            }
+                        }
+                        Part::Action(index) => {
+                            if let Some(action) = bar.actions.get(index) {
+                                let spec = ButtonSpec::new(Kind::Secondary, &action.label)
+                                    .height(theme::CONTROL_PX)
+                                    .tooltip(&action.help)
+                                    .enabled(action.enabled);
+                                if button(ui, spec).clicked() {
+                                    out.push(Action::Tool(Event::Node(action.action)));
+                                }
                             }
                         }
                         Part::Tail => {

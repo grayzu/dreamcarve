@@ -15,6 +15,7 @@
 //! A tool's state is not project data: it is not saved, not in the undo
 //! history, and gone when another tool is armed.
 
+mod adjust;
 mod draw;
 mod gear;
 mod node;
@@ -30,6 +31,7 @@ use dc_project::{InstanceId, Measured};
 use crate::App;
 use crate::snap::{self, Pointer, Snapped, Targets};
 
+pub use adjust::AdjustPrefs;
 pub use draw::MIN_SIZE_MM;
 pub(crate) use draw::{field_label, parse_angle_deg, polygon_name, size_text};
 pub use node::{
@@ -54,6 +56,21 @@ pub enum Tool {
     Measure,
     /// Draw a shape.
     Draw(Drawing),
+    /// A Shape menu command that takes a value first, with the tool bar
+    /// for its popover (capabilities 93, 94 and 97).
+    Adjust(Adjust),
+}
+
+/// A Shape menu command that takes a value before it acts on the
+/// selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Adjust {
+    /// **Offset…**: a distance, a side, and whether the original stays.
+    Offset,
+    /// **Fillet Corners…**: a radius.
+    FilletCorners,
+    /// **Join**: a tolerance.
+    Join,
 }
 
 /// A drawing tool (CONTEXT: Drawing Tool), in the order the Draw popover
@@ -200,6 +217,10 @@ pub enum SizeField {
     CornerSize,
     /// How many sides a polygon has.
     Sides,
+    /// How far an offset is from its outline.
+    Distance,
+    /// How near two ends must be to be joined.
+    Tolerance,
 }
 
 /// How a size's text is read and shown.
@@ -215,7 +236,7 @@ pub enum Quantity {
 
 impl SizeField {
     /// Every size, in declaration order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 19] = [
         Self::X,
         Self::Y,
         Self::Width,
@@ -233,6 +254,8 @@ impl SizeField {
         Self::Bore,
         Self::CornerSize,
         Self::Sides,
+        Self::Distance,
+        Self::Tolerance,
     ];
 
     /// The size's label in the tool bar.
@@ -389,6 +412,10 @@ pub enum ToolOption {
     Root(GearRoot),
     /// The form of the gear's crest.
     Crest(GearCrest),
+    /// Which side an offset is made on.
+    OffsetSide(crate::edit::OffsetSide),
+    /// Whether an offset's original stays.
+    KeepOriginal(bool),
 }
 
 /// What the window tells the tool.
@@ -532,6 +559,9 @@ impl App {
         if tool == Tool::Nodes {
             self.begin_nodes();
         }
+        if let Tool::Adjust(adjust) = tool {
+            self.refresh_adjust_draft(adjust);
+        }
     }
 
     /// What the tool in use wants drawn.
@@ -555,6 +585,7 @@ impl App {
             }
             (Tool::Nodes, event) => return self.node_event(event),
             (Tool::Trim, event) => return self.trim_event(event),
+            (Tool::Adjust(adjust), event) => return self.adjust_event(adjust, event),
             (_, Event::Move(pointer)) => {
                 self.tool.draft.snap = Some(self.snap_at(&pointer, None, &[]));
             }
@@ -575,6 +606,7 @@ impl App {
             Tool::Draw(drawing) if gear::draws(drawing) => Some(self.gear_bar()),
             Tool::Nodes => Some(self.node_bar()),
             Tool::Trim => Some(self.trim_bar()),
+            Tool::Adjust(adjust) => Some(self.adjust_bar(adjust)),
             _ => None,
         }
     }

@@ -226,6 +226,12 @@ grid_show = "Show Grid"
 grid_spacing = "Spacing"
 grid_automatic = "Automatic Spacing"
 convert_to_path = "Convert to Path"
+fillet_corners = "Fillet Corners…"
+offset = "Offset…"
+weld = "Weld"
+subtract = "Subtract"
+intersect = "Intersect"
+join = "Join…"
 project = "Project"
 help = "Help"
 new = "New"
@@ -437,6 +443,10 @@ name = "Viewport"
 select = "Select"
 select_help = "Select, move and resize shapes"
 fit = "Fit"
+nodes = "Edit nodes"
+nodes_help = "Edit the nodes of the selected path; a double-click on a path does the same"
+trim = "Trim"
+trim_help = "Click the part of an outline to trim away, between two crossings; Escape ends"
 draw = "Draw: {tool}"
 draw_help = "Draw with the {tool} tool: the drawing tool last used"
 draw_tools = "Drawing tools"
@@ -1548,6 +1558,8 @@ crest_radius = "Crest radius"
 bore = "Bore diameter"
 corner_size = "Corner size"
 sides = "Sides"
+distance = "Distance"
+tolerance = "Tolerance"
 
 # What each size is: its label's tooltip in the tool bar and in the
 # Properties panel's Shape section (capabilities 83 and 84).
@@ -1569,6 +1581,8 @@ crest_radius = "The radius that rounds the corners of a tooth's tip; 0 leaves th
 bore = "The diameter of the hole through the gear's centre; leave it empty, or 0, for no hole."
 corner_size = "The radius of a rounded corner, or how far a chamfered one is cut back along each side; held to half the shorter side."
 sides = "How many sides the polygon has, 3 to 50."
+distance = "How far the offset is from the outline, as the shape is seen, in the project's units; above 0."
+tolerance = "How near two ends must be to be joined; a gap that near is bridged by a straight segment."
 
 # A tool's choices in the tool bar, and what each can be (capability 86).
 [draw.choice]
@@ -1667,6 +1681,36 @@ offset = "{name} offset"
 weld = "{name} weld"
 subtract = "{name} subtract"
 intersect = "{name} intersect"
+
+# The Shape menu's commands that take a value first (capabilities 93,
+# 94 and 97): the tool bar is their popover.
+[adjust.name]
+offset = "Offset"
+fillet = "Fillet Corners"
+join = "Join"
+
+[adjust]
+side = "Side"
+side_help = "Which side of the outline the offset is made on. An open path has a left and a right, as seen along the direction it was drawn."
+side_outward = "Outward"
+side_inward = "Inward"
+side_left = "Left"
+side_right = "Right"
+side_both = "Both"
+original = "Original"
+original_help = "Whether the shape that is offset stays, or the offset takes its place with what cut it."
+original_keep = "Keep"
+original_replace = "Replace"
+join_alone = "{count} {count|path|paths} reached nothing and {count|was|were} left alone."
+
+[adjust.prompt]
+select = "Select the shapes first, then choose this again"
+offset = "Offset the selection: set the distance and the side, then Done"
+fillet = "Round every corner of the shape that can take the radius, then Done"
+join = "Join the selected open paths whose ends are this near, then Done"
+
+[adjust.refused]
+one_shape = "Fillet Corners takes one shape at a time: select one."
 
 [trim]
 prompt = "Click the part of an outline to trim away, between two crossings"

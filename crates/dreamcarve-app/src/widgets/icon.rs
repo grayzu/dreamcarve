@@ -153,6 +153,10 @@ pub enum Icon {
     Cog,
     /// `type`: the Text tool.
     Type,
+    /// `waypoints`: the Edit nodes tool.
+    Waypoints,
+    /// `scissors`: the Trim tool.
+    Scissors,
 }
 
 impl Icon {
@@ -229,6 +233,8 @@ impl Icon {
             Self::Pill => "pill",
             Self::Cog => "cog",
             Self::Type => "type",
+            Self::Waypoints => "waypoints",
+            Self::Scissors => "scissors",
         }
     }
 
@@ -304,12 +310,14 @@ impl Icon {
             Self::Pill => '\u{e3bd}',
             Self::Cog => '\u{e30b}',
             Self::Type => '\u{e198}',
+            Self::Waypoints => '\u{e542}',
+            Self::Scissors => '\u{e14e}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 68] = [
+    pub const ALL: [Self; 70] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -378,6 +386,8 @@ impl Icon {
         Self::Pill,
         Self::Cog,
         Self::Type,
+        Self::Waypoints,
+        Self::Scissors,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

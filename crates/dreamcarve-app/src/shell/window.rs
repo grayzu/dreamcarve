@@ -2121,6 +2121,17 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         Shortcut::GoToOperations => Some(Action::GoTo(Step::Operations)),
         Shortcut::GoToExport => Some(Action::GoTo(Step::Export)),
         Shortcut::SelectTool => Some(Action::Arm(dc_app::Tool::Select)),
+        Shortcut::EditNodes => Some(Action::Arm(dc_app::Tool::Nodes)),
+        // Only the Edit nodes tool has a path to break.
+        Shortcut::BreakPath => (app.tool() == dc_app::Tool::Nodes).then_some(Action::Tool(
+            dc_app::tool::Event::Node(dc_app::tool::NodeAction::Break),
+        )),
+        Shortcut::Offset => (!selected.is_empty()).then_some(Action::Arm(dc_app::Tool::Adjust(
+            dc_app::tool::Adjust::Offset,
+        ))),
+        Shortcut::Join => (selected.len() > 1).then_some(Action::Arm(dc_app::Tool::Adjust(
+            dc_app::tool::Adjust::Join,
+        ))),
         Shortcut::DrawLine
         | Shortcut::DrawArc
         | Shortcut::DrawSpline

@@ -28,6 +28,14 @@ const MARKER_PX: f32 = 5.0;
 const MARKER_STROKE_PX: f32 = 1.5;
 /// A dash and a gap of a snap's guide, px.
 const GUIDE_DASH_PX: f32 = 4.0;
+/// A node of the path being edited, px square (design, "Visual
+/// design").
+const NODE_PX: f32 = 9.0;
+/// A curve's handle and an arc's middle, px across.
+const HANDLE_PX: f32 = 7.0;
+/// The stroke of the selected span and of the piece a trim would take,
+/// px.
+const HIGHLIGHT_PX: f32 = 3.0;
 /// How far a label stands off what it names, px.
 const LABEL_OFFSET_PX: f32 = 10.0;
 
@@ -122,7 +130,10 @@ pub(super) fn paint(ui: &Ui, painter: &egui::Painter, pane: Rect, app: &App, cam
         outlines,
         snap,
         labels,
-        ..
+        nodes,
+        handles,
+        highlights,
+        marquee,
     } = app.draft();
     let at = |p: Point| window_pos(pane, camera, p);
     let tolerance_mm = layers::tolerance_mm(layers::band(camera.px_per_mm));
@@ -135,6 +146,53 @@ pub(super) fn paint(ui: &Ui, painter: &egui::Painter, pane: Rect, app: &App, cam
         } else {
             painter.add(egui::Shape::line(points, stroke));
         }
+    }
+    // The selected span, or the piece a trim would take: over the outline.
+    let highlight = Stroke::new(HIGHLIGHT_PX, palette.viewport_shape_hover);
+    for outline in highlights {
+        let flat = outline.with_arcs_flattened(tolerance_mm);
+        let points: Vec<Pos2> = flat.vertices().iter().map(|v| at(v.point())).collect();
+        painter.add(egui::Shape::line(points, highlight));
+    }
+    // The handles of the path being edited: a curve's on a stem from its
+    // node, an arc's middle alone.
+    let mark = Stroke::new(1.0, palette.accent);
+    for handle in handles {
+        let centre = at(handle.at_mm);
+        if let Some(from) = handle.from_mm {
+            painter.line_segment([at(from), centre], mark);
+        }
+        painter.circle(centre, HANDLE_PX / 2.0, palette.viewport_handle_fill, mark);
+    }
+    // Its nodes: a corner square, a smooth node round; a selected one
+    // filled.
+    for node in nodes {
+        let centre = at(node.at_mm);
+        let fill = if node.selected {
+            palette.accent
+        } else {
+            palette.viewport_handle_fill
+        };
+        if node.smooth {
+            painter.circle(centre, NODE_PX / 2.0, fill, mark);
+        } else {
+            painter.rect(
+                Rect::from_center_size(centre, egui::vec2(NODE_PX, NODE_PX)),
+                0.0,
+                fill,
+                mark,
+                egui::StrokeKind::Middle,
+            );
+        }
+    }
+    if let Some((a, b)) = marquee {
+        painter.rect(
+            Rect::from_two_pos(at(*a), at(*b)),
+            0.0,
+            palette.accent_soft,
+            Stroke::new(1.0, palette.accent),
+            egui::StrokeKind::Inside,
+        );
     }
     for size in labels {
         label(

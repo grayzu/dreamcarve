@@ -60,6 +60,9 @@ pub struct Prefs {
     pub drawing_tool: Drawing,
     /// The drawing tools' options, as last set (capabilities 85 and 85b).
     pub drawing: DrawingPrefs,
+    /// What the Shape menu's Offset…, Fillet Corners… and Join were last
+    /// given. Kept while the app runs; not written to `gui.toml`.
+    pub adjust: crate::tool::AdjustPrefs,
 }
 
 /// A new rectangle's corner size in a millimetre project, mm

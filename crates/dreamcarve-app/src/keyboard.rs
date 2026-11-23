@@ -72,6 +72,14 @@ pub enum Command {
     TabTool,
     /// The Viewport's Select tool (phase 5, capability 81).
     SelectTool,
+    /// The Viewport's Edit nodes tool (capability 92).
+    EditNodes,
+    /// Edit nodes: break the path at the selected node.
+    BreakPath,
+    /// Shape ▸ Offset… (capability 94).
+    Offset,
+    /// Shape ▸ Join… (capability 97).
+    Join,
     /// Draw ▸ Line.
     DrawLine,
     /// Draw ▸ Arc.
@@ -111,6 +119,8 @@ pub enum Menu {
     Arrange,
     /// Draw (phase 5, capability 81).
     Draw,
+    /// Shape (phase 5, capabilities 84 and 93 to 97).
+    Shape,
     /// View.
     View,
 }
@@ -124,6 +134,7 @@ impl Menu {
             Self::Edit => StrKey::AppMenuEdit,
             Self::Arrange => StrKey::AppMenuArrange,
             Self::Draw => StrKey::AppMenuDraw,
+            Self::Shape => StrKey::AppMenuShape,
             Self::View => StrKey::AppMenuView,
         }
     }
@@ -483,6 +494,36 @@ pub const SHORTCUTS: &[Shortcut] = &[
         NONE,
         &[Key::V],
         "Take up the Select tool, putting down the tool in use",
+    ),
+    key_only(
+        Command::EditNodes,
+        NONE,
+        &[Key::N],
+        "Edit the nodes of the selected path; a double-click on a path does the same",
+    ),
+    key_only(
+        Command::BreakPath,
+        NONE,
+        &[Key::B],
+        "While editing nodes, break the path at the selected node",
+    ),
+    menu_row(
+        Command::Offset,
+        SHIFT,
+        &[Key::O],
+        Menu::Shape,
+        StrKey::AppMenuOffset,
+        "Offset the selected shapes by a distance",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::Join,
+        COMMAND,
+        &[Key::J],
+        Menu::Shape,
+        StrKey::AppMenuJoin,
+        "Join the selected open paths whose ends meet",
+        Scope::OutsideFields,
     ),
     menu_row(
         Command::DrawLine,

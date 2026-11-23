@@ -191,6 +191,9 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
                 _ => dc_project::Measured::Corners,
             },
         },
+        // Session state: what Offset…, Fillet Corners… and Join were last
+        // given is not in `gui.toml`.
+        adjust: dc_app::tool::AdjustPrefs::default(),
     }
 }
 

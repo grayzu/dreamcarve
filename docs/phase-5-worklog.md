@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 16: 3,641.
+`0.5.0-alpha.1`. After slice 17: 3,649.
 
 ## Decisions waiting for the maintainer
 
@@ -144,6 +144,20 @@ Decisions made while building are added here.
   second, small implementation of the same rule serves a selection, and
   the importer and its golden corpus are untouched. Trim treats an
   outline's own end that touches another outline as no crossing.
+- Slice 17: *Offset…*, *Fillet Corners…* and *Join…* take their value
+  in the tool bar, not in popovers as the specs had them: the preview
+  is on the stock where a popover would lie over it, and the bar
+  already had fields, choices, Done and a place to say why not. Their
+  values are remembered for the session only. Trim is in the Draw
+  button's popover, not on the pill: with Edit nodes and Trim both
+  there the zoom buttons went at the Viewport's least width. An offset
+  of open paths reads *Left* and *Right*; a selection with a closed
+  shape in it reads *Outward* and *Inward* for all. The Viewport has no
+  context menu yet; the rows the spec gives it are on the tool bar and
+  in the Shape menu, and the menu itself comes with slice 18 (cut,
+  copy, paste, Make Unique). A closed path drawn with the Line tool is
+  still named *Line 1*, which reads oddly beside its square icon in the
+  Design Tree; *Path* may be the better name for a closed one.
 
 ## Slices
 
@@ -176,7 +190,7 @@ The numbers are the design spec's.
 | 14 | Weld, Subtract, Intersect, in the app core (`dc_app::edit::boolean`): the selection in order, one path named for the first, placed as it is, with what cut it. Gate: 3,630 tests | done |
 | 15 | Trim: `dc_geometry::trim` (the piece between the crossings either side of a point, on the outline's own segments, with itself too) and the Trim tool in the app core (`dc_app::tool::trim`): the piece highlighted, a click taking it out, a sized shape made a path in the same step | done |
 | 16 | Join: `dc_geometry::join_open` (chains of open outlines whose ends are within a tolerance, gaps bridged, a chain that meets itself closed) and `dc_app::edit::join`. Gate: 3,641 tests | done |
-| 17 | The window, editing | todo |
+| 17 | The window, editing: Edit nodes and Trim in the Viewport (nodes, handles, the highlight, the bar's buttons, a double-click to edit), *Offset…*, *Fillet Corners…* and *Join…* as modes of the tool bar (`dc_app::tool::adjust`), the Shape menu, the keys `N`, `B`, `⇧O`, `⌘J`, the editing review pictures. Gate: 3,649 tests | done |
 
 ### 5.3 Organising
 

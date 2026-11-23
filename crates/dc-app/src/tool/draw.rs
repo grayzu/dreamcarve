@@ -666,6 +666,8 @@ impl App {
             ToolOption::Construction(construction) => self.tool.construction = construction,
             // The Gear tool's, which holds them with the gear being set.
             ToolOption::Flanks(_) | ToolOption::Root(_) | ToolOption::Crest(_) => {}
+            // The Shape menu's Offset's, which it keeps itself.
+            ToolOption::OffsetSide(_) | ToolOption::KeepOriginal(_) => {}
         }
     }
 
@@ -751,6 +753,8 @@ pub(crate) const fn field_label(field: SizeField) -> StrKey {
         SizeField::Bore => StrKey::DrawFieldBore,
         SizeField::CornerSize => StrKey::DrawFieldCornerSize,
         SizeField::Sides => StrKey::DrawFieldSides,
+        SizeField::Distance => StrKey::DrawFieldDistance,
+        SizeField::Tolerance => StrKey::DrawFieldTolerance,
     }
 }
 
@@ -773,6 +777,8 @@ pub(crate) const fn field_help(field: SizeField) -> StrKey {
         SizeField::Bore => StrKey::DrawHelpBore,
         SizeField::CornerSize => StrKey::DrawHelpCornerSize,
         SizeField::Sides => StrKey::DrawHelpSides,
+        SizeField::Distance => StrKey::DrawHelpDistance,
+        SizeField::Tolerance => StrKey::DrawHelpTolerance,
     }
 }
 

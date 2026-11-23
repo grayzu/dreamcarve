@@ -11,7 +11,9 @@
 //!   tool* (the one in use shows pressed), then *Fit*, *Zoom out*, the
 //!   zoom as a percentage, and *Zoom in*. *Draw* holds the drawing tool
 //!   last used and arms it; the chevron beside it opens the drawing
-//!   tools, each with its icon, name and key (phase 5, capability 81). The percentage is of 96 pixels to the
+//!   tools, each with its icon, name and key (phase 5, capability 81),
+//!   and under them *Trim*. *Edit nodes* stands between *Select* and
+//!   *Draw*. The percentage is of 96 pixels to the
 //!   inch (`dc_app::viewport::camera::ACTUAL_PX_PER_MM`), about the real
 //!   size on most displays, and a click on it sets the zoom to 100 %.
 //! - **Top right**, once the project has a toolpath: the *By operation /
@@ -274,8 +276,10 @@ impl Fit {
     /// The top-left pill's width, px.
     fn tools_px(&self) -> f32 {
         let padding = PILL_PX - CONTROL_PX;
-        // Select, Draw and its chevron, the Tab tool, the rule, Fit.
-        let tools = 4.0 * CONTROL_PX + CHEVRON_PX + RULE_PX + 5.0 * GAP_PX;
+        // Select, Edit nodes, Draw and its chevron, the Tab tool, the
+        // rule, Fit. Trim is in the chevron's popover: a sixth button
+        // would cost the zoom buttons at the Viewport's least width.
+        let tools = 5.0 * CONTROL_PX + CHEVRON_PX + RULE_PX + 6.0 * GAP_PX;
         match (self.zoom, self.level) {
             (true, true) => padding + tools + 2.0 * CONTROL_PX + self.zoom_px + 3.0 * GAP_PX,
             (true, false) => padding + tools + 2.0 * CONTROL_PX + 2.0 * GAP_PX,
@@ -415,6 +419,15 @@ fn draw_menu(ui: &Ui, chevron: &egui::Response, state: &FrameState<'_>, out: &mu
                     out.push(Action::Arm(dc_app::Tool::Draw(drawing)));
                 }
             }
+            // Trim: a tool on outlines already drawn.
+            ui.separator();
+            let trimming = state.app.tool() == dc_app::Tool::Trim;
+            let trim = strings.get(StrKey::AppViewportTrim);
+            let row = draw_row(ui, Icon::Scissors, trim, "", trimming)
+                .on_hover_text(strings.get(StrKey::AppViewportTrimHelp));
+            if row.clicked() {
+                out.push(Action::Arm(dc_app::Tool::Trim));
+            }
         });
 }
 
@@ -456,6 +469,18 @@ fn tools(
         if button(ui, select).clicked() {
             out.push(Action::Arm(dc_app::Tool::Select));
         }
+        let nodes_tip = with_keys(
+            ui,
+            strings.get(StrKey::AppViewportNodesHelp),
+            Shortcut::EditNodes,
+        );
+        let nodes = tool(strings, StrKey::AppViewportNodes, Icon::Waypoints)
+            .tooltip(&nodes_tip)
+            .pressed(in_use == dc_app::Tool::Nodes)
+            .enabled(!editing_targets);
+        if button(ui, nodes).clicked() {
+            out.push(Action::Arm(dc_app::Tool::Nodes));
+        }
         // Draw: the drawing tool last used, and the chevron to the rest.
         let held = held_drawing(state.app);
         let drawing = matches!(in_use, dc_app::Tool::Draw(_));
@@ -468,13 +493,20 @@ fn tools(
             let help = strings.fmt(StrKey::AppViewportDrawHelp, &[("tool", held_name)]);
             format!("{help} ({keys})")
         };
+        // While Trim is armed, from the popover, the button shows it.
+        let trimming = in_use == dc_app::Tool::Trim;
+        let draw_icon = if trimming {
+            Icon::Scissors
+        } else {
+            drawing_icon(held)
+        };
         let draw = ButtonSpec::new(Kind::Quiet, "")
-            .icon(drawing_icon(held), theme::ICON_SMALL_PX)
+            .icon(draw_icon, theme::ICON_SMALL_PX)
             .width(CONTROL_PX)
             .height(CONTROL_PX)
             .named(&draw_name)
             .tooltip(&draw_tip)
-            .pressed(drawing)
+            .pressed(drawing || trimming)
             .enabled(!editing_targets);
         if button(ui, draw).clicked() {
             out.push(Action::Arm(dc_app::Tool::Draw(held)));
@@ -791,7 +823,7 @@ mod tests {
         let (zoom_px, layers_px) = (ZOOM_PX, 88.0);
         let wide = Fit::of(900.0 - 24.0, zoom_px, layers_px, true);
         assert!(wide.zoom && wide.level && wide.label);
-        let narrower = Fit::of(560.0 - 24.0, zoom_px, layers_px, true);
+        let narrower = Fit::of(580.0 - 24.0, zoom_px, layers_px, true);
         assert!(
             narrower.zoom && narrower.level && !narrower.label,
             "{narrower:?}"
@@ -799,9 +831,11 @@ mod tests {
         let least = Fit::of(theme::VIEWPORT_MIN_PX - 24.0, zoom_px, layers_px, true);
         assert!(least.zoom && !least.level && !least.label, "{least:?}");
         assert!(least.tools_px() + BETWEEN_PX + least.view_px() <= theme::VIEWPORT_MIN_PX - 24.0);
-        let narrow = Fit::of(400.0, zoom_px, layers_px, true);
+        // Narrower than the Viewport ever is, the zoom buttons go; the
+        // two pills still clear each other down to 427 px of room.
+        let narrow = Fit::of(440.0, zoom_px, layers_px, true);
         assert!(!narrow.zoom && !narrow.label, "{narrow:?}");
-        assert!(narrow.tools_px() + BETWEEN_PX + narrow.view_px() <= 400.0);
+        assert!(narrow.tools_px() + BETWEEN_PX + narrow.view_px() <= 440.0);
         // With no toolpath there is one pill, which keeps its zoom.
         let alone = Fit::of(400.0, zoom_px, layers_px, false);
         assert!(alone.zoom && alone.level);

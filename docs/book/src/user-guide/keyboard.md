@@ -43,6 +43,10 @@ except in an open sheet.
 | Ctrl+5 | ⌘5 | Open the Export step | View ▸ Go to Export |
 | T | T | Turn the Tab tool on or off: a click on a shape's outline adds a tab | — |
 | V | V | Take up the Select tool, putting down the tool in use | — |
+| N | N | Edit the nodes of the selected path; a double-click on a path does the same | — |
+| B | B | While editing nodes, break the path at the selected node | — |
+| Shift+O | ⇧O | Offset the selected shapes by a distance | Shape ▸ Offset… |
+| Ctrl+J | ⌘J | Join the selected open paths whose ends meet | Shape ▸ Join… |
 | P | P | Draw lines: a path of straight segments, a click a point. While a path is being drawn, the next segment is a line | Draw ▸ Line |
 | A | A | Draw arcs: its end, then a point it passes through. While a path is being drawn, the next segment is an arc | Draw ▸ Arc |
 | S | S | Draw a smooth curve through the points clicked. While a path is being drawn, the next segments are curves | Draw ▸ Spline |

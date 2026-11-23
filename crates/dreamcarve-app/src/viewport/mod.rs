@@ -543,10 +543,14 @@ impl ViewportState {
 }
 
 /// Whether the armed tool takes the pointer's clicks and moves as its own
-/// events: a drawing tool, outside target editing. Select's are phase 4's
+/// events: a drawing tool, Edit nodes, Trim, or a Shape command that is
+/// taking its value, outside target editing. Select's are phase 4's
 /// gestures and the Tab tool's its one click.
 fn takes_pointer(app: &App) -> bool {
-    matches!(app.tool(), Tool::Draw(_)) && app.target_editing().is_none()
+    matches!(
+        app.tool(),
+        Tool::Draw(_) | Tool::Nodes | Tool::Trim | Tool::Adjust(_)
+    ) && app.target_editing().is_none()
 }
 
 /// The keys the Viewport answers when no field has the keyboard
@@ -577,6 +581,7 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     // (phase 5, capabilities 81 and 87): they finish, step back and take
     // back a point, and delete nothing.
     let drawing = takes_pointer(app);
+    let editing_nodes = app.tool() == Tool::Nodes && drawing;
     let mut disarm = false;
     let mut pressed = Vec::new();
     let mut actions = Vec::new();
@@ -617,9 +622,45 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             Shortcut::DrawEllipse,
             Shortcut::DrawPolygon,
             Shortcut::DrawSlot,
+            Shortcut::EditNodes,
+            Shortcut::BreakPath,
+            Shortcut::Offset,
+            Shortcut::Join,
         ] {
+            // Select All is the nodes' while they are edited (below).
+            if editing_nodes && command == Shortcut::SelectAll {
+                continue;
+            }
             if !popup_open && keyboard::consume(input, command) > 0 {
                 pressed.push(command);
+            }
+        }
+        if editing_nodes && !popup_open {
+            use dc_app::tool::{Event, NodeAction};
+            if keyboard::consume(input, Shortcut::SelectAll) > 0 {
+                actions.push(Action::Tool(Event::Node(NodeAction::SelectAll)));
+            }
+            // The arrows nudge the selected nodes as they nudge shapes.
+            if arrows_free {
+                for (command, step_mm) in [
+                    (Shortcut::NudgeCoarse, NUDGE_SHIFT_MM),
+                    (Shortcut::NudgeFine, NUDGE_ALT_MM),
+                    (Shortcut::Nudge, NUDGE_MM),
+                ] {
+                    for (key, (dx, dy)) in [
+                        (Key::ArrowLeft, (-1.0, 0.0)),
+                        (Key::ArrowRight, (1.0, 0.0)),
+                        (Key::ArrowDown, (0.0, -1.0)),
+                        (Key::ArrowUp, (0.0, 1.0)),
+                    ] {
+                        for _ in 0..keyboard::consume_key(input, command, key) {
+                            actions.push(Action::Tool(Event::Node(NodeAction::Nudge {
+                                dx_mm: dx * step_mm,
+                                dy_mm: dy * step_mm,
+                            })));
+                        }
+                    }
+                }
             }
         }
         if !popup_open && keyboard::consume(input, Shortcut::Escape) > 0 && !escape_left_widget {
@@ -1080,6 +1121,33 @@ fn gestures(
                 pick::pick(state.app.scene(), camera, at, PICK_TOLERANCE_PX, 0)
             {
                 out.push(Action::ToggleTarget(id));
+            }
+        }
+        // A double-click on a shape edits its nodes (phase 5, capability
+        // 92): the shape alone selected, the Edit nodes tool armed.
+        Some(Drag::Marquee { .. } | Drag::Press { .. })
+            if ui.input(|i| i.pointer.button_double_clicked(PointerButton::Primary))
+                && matches!(
+                    pick::pick(
+                        state.app.scene(),
+                        camera,
+                        pane_pos(pane, pos),
+                        PICK_TOLERANCE_PX,
+                        0
+                    ),
+                    Hit::Instance(_)
+                ) =>
+        {
+            view.clicks.reset();
+            if let Hit::Instance(id) = pick::pick(
+                state.app.scene(),
+                camera,
+                pane_pos(pane, pos),
+                PICK_TOLERANCE_PX,
+                0,
+            ) {
+                out.push(Action::Select(Selection::Instances(vec![id])));
+                out.push(Action::Arm(Tool::Nodes));
             }
         }
         Some(Drag::Marquee { .. } | Drag::Press { .. }) => {

@@ -2677,3 +2677,109 @@ fn phase5_drawing_screenshots() {
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Where the phase 5 editing pictures are committed.
+fn p5_editing_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-5/review/editing"),
+        PathBuf::from,
+    )
+}
+
+/// The phase 5 editing set (`docs/phase-5-worklog.md`, slice 17): a path
+/// in the Edit nodes tool with a corner selected and the bar's buttons;
+/// the corner filleted; the Shape menu; Offset… in the tool bar with its
+/// preview; and the Trim tool over the piece a click would take out. Dark
+/// and light at 1×, written to `docs/specs/phase-5/review/editing/`,
+/// where they are committed.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review phase5_editing -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed phase 5 editing review pictures; run by hand"]
+fn phase5_editing_screenshots() {
+    let out = p5_editing_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    let dir = scratch("review-p5-editing");
+    let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
+        return;
+    };
+    click(&mut h, "Draw from scratch");
+
+    // A closed path of five corners, drawn with the Line tool.
+    h.key_press(egui::Key::P);
+    h.run();
+    for (x, y) in [
+        (20.0, 20.0),
+        (80.0, 20.0),
+        (80.0, 60.0),
+        (50.0, 78.0),
+        (20.0, 60.0),
+        (20.0, 20.0),
+    ] {
+        click_mm(&mut h, x, y);
+    }
+    assert_eq!(h.state().app().project().instances.len(), 1);
+
+    // 01: its nodes, the top corner selected.
+    h.key_press(egui::Key::N);
+    h.run();
+    click_mm(&mut h, 50.0, 78.0);
+    park_pointer(&mut h);
+    h.run_steps(8);
+    shoot_in(&mut h, &out, "01-edit-nodes-corner-selected", &looks);
+
+    // 02: that corner filleted.
+    h.get_by_role_and_label(Role::Button, "Fillet").click();
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "02-corner-filleted", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 03: the Shape menu.
+    click(&mut h, "Shape");
+    shoot_in(&mut h, &out, "03-shape-menu", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 04: Offset… in the tool bar, its preview on the stock.
+    h.state_mut()
+        .app_mut()
+        .arm(dc_app::Tool::Adjust(dc_app::tool::Adjust::Offset));
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "04-offset-in-the-tool-bar", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 05: Trim over the piece of a line that lies inside the shape.
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.key_press(egui::Key::P);
+    h.run();
+    for (x, y) in [(6.0, 40.0), (94.0, 40.0)] {
+        let at = point_at(&mut h, x, y, true);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::COMMAND,
+            });
+        }
+        h.run();
+    }
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.state_mut().app_mut().arm(dc_app::Tool::Trim);
+    h.run_steps(8);
+    point_at(&mut h, 50.0, 40.0, false);
+    shoot_in(&mut h, &out, "05-trim-the-piece-inside", &looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

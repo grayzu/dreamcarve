@@ -430,9 +430,14 @@ fn draw(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     }
 }
 
-/// Shape (capability 84): *Convert to Path*, for the selected shapes
-/// that keep their sizes.
+/// Shape (capabilities 84 and 93 to 97): *Convert to Path*; *Fillet
+/// Corners…*, *Offset…* and *Join…*, which take their value in the tool
+/// bar; and *Weld*, *Subtract* and *Intersect*, which act at once on two
+/// or more selected shapes. A command that cannot act says why in the
+/// status bar.
 fn shape(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    use dc_app::edit::Boolean;
+    use dc_app::tool::Adjust;
     let app = state.app;
     let strings = app.strings();
     let selected = app.selection().instances();
@@ -445,6 +450,51 @@ fn shape(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         None,
         sized,
         Action::run(dc_app::Command::ConvertToPath(selected.to_vec())),
+        out,
+    );
+    item_text(
+        ui,
+        strings.get(StrKey::AppMenuFilletCorners),
+        None,
+        selected.len() == 1,
+        Action::Arm(dc_app::Tool::Adjust(Adjust::FilletCorners)),
+        out,
+    );
+    ui.separator();
+    item_text(
+        ui,
+        strings.get(StrKey::AppMenuOffset),
+        keyboard::binding(Shortcut::Offset),
+        !selected.is_empty(),
+        Action::Arm(dc_app::Tool::Adjust(Adjust::Offset)),
+        out,
+    );
+    ui.separator();
+    for (label, op) in [
+        (StrKey::AppMenuWeld, Boolean::Weld),
+        (StrKey::AppMenuSubtract, Boolean::Subtract),
+        (StrKey::AppMenuIntersect, Boolean::Intersect),
+    ] {
+        let action = match dc_app::edit::boolean(app.project(), strings, selected, op) {
+            Ok(command) => Action::run(command),
+            Err(e) => Action::Refused(e.to_string()),
+        };
+        item_text(
+            ui,
+            strings.get(label),
+            None,
+            selected.len() > 1,
+            action,
+            out,
+        );
+    }
+    ui.separator();
+    item_text(
+        ui,
+        strings.get(StrKey::AppMenuJoin),
+        keyboard::binding(Shortcut::Join),
+        selected.len() > 1,
+        Action::Arm(dc_app::Tool::Adjust(Adjust::Join)),
         out,
     );
 }

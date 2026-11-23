@@ -74,14 +74,16 @@ capability 52); what a tool holds before it commits is not project data.
 
 81. **Tools.** The Viewport has one tool in use at a time, shown pressed
     in its top-left pill: **Select** (`V`), **Edit nodes** (`N`, 92),
-    one **Draw** button, the **Tab tool** (`T`, phase 4), **Trim** (96)
-    and **Measure** (`K`, 103). The Draw button holds the drawing tool
+    one **Draw** button, the **Tab tool** (`T`, phase 4) and
+    **Measure** (`K`, 103). The Draw button holds the drawing tool
     last used and arms it; its chevron opens a popover of the drawing
     tools, each with its icon, name and key: **Line** (`P`), **Arc**
     (`A`), **Spline** (`S`), **Rectangle** (`M`), **Circle** (`C`),
     **Ellipse** (`E`), **Polygon** (`G`), **Slot** (`O`), **Gear** and
-    **Text** (`⇧T`). So the pill grows by four buttons, not fourteen
-    (`redesign.md`, principle 1).
+    **Text** (`⇧T`), and under a rule **Trim** (96), which the Draw
+    button shows pressed while it is armed. So the pill grows by three
+    buttons, not fifteen (`redesign.md`, principle 1), and keeps its
+    zoom buttons in the narrowest Viewport the window allows.
 
     A drawing tool **stays armed** after each shape (PureCutCNC's sticky
     tools), with the options last used; `Escape` with nothing begun, or
@@ -96,7 +98,15 @@ capability 52); what a tool holds before it commits is not project data.
     next click does (*Click the first corner*), the tool's options, the
     fields of capability 83, and **Done** where a shape can be finished
     early. A bar with more than fits across the Viewport (the Gear's
-    sizes) breaks into rows, a label staying with its field. The status
+    sizes) breaks into rows, a label staying with its field. Edit nodes
+    and Trim have the same bar, Edit nodes with its buttons (93). The
+    Shape menu's commands that take a value (**Fillet Corners…**,
+    **Offset…**, **Join…**) take it in this bar too: the command arms
+    as a tool does, its bar shows the value and what the result will
+    be, **Done** or `Enter` makes it and returns to Select, `Escape`
+    leaves with nothing changed, and where the command cannot act the
+    bar says why in place of Done. The value last used is offered next
+    time, for the session. The status
     bar's pointer cell shows the same prompt. Fit leaves room for two
     rows of the bar while a drawing tool is armed, so nothing is drawn
     under it, and a fitted view refits as the tool is taken up and put
@@ -437,11 +447,12 @@ capability 52); what a tool holds before it commits is not project data.
     every corner that can take the radius, the way a dogbone-free
     inside pocket is prepared. It takes one shape at a time, and a
     shape that keeps its sizes is converted first.
-94. **Offset** (**Shape ▸ Offset…**, `⇧O`). With shapes selected, a
-    popover takes a **Distance**, a side (**Outward**, **Inward**; for
-    an open path **Left**, **Right** or **Both** of its direction) and
-    **Keep original** (on by default); the result previews as the
-    values change. An offset keeps arcs as arcs and rounds outside
+94. **Offset** (**Shape ▸ Offset…**, `⇧O`). With shapes selected, the
+    tool bar (81) takes a **Distance**, a **Side** (**Outward**,
+    **Inward** or **Both**; for open paths **Left**, **Right** or
+    **Both** of their direction) and whether the **Original** is kept
+    (**Keep**, the default, or **Replace**); the result previews on the
+    stock as the values change. An offset keeps arcs as arcs and rounds outside
     corners with arcs, as a toolpath does (`dc-geometry`'s offset, the
     engine's own; PureCutCNC mitres its offsets and loses the arcs).
     Each selected shape is offset by itself; an offset that vanishes
@@ -478,9 +489,9 @@ capability 52); what a tool holds before it commits is not project data.
     another outline is no crossing. An open path trimmed in its middle
     is two shapes, the second named as a copy is, when it is one outline
     of its own with no linked copy; else its shape has an outline more.
-97. **Join** (**Shape ▸ Join**, `Ctrl`/`⌘ J`). Selected open paths whose
+97. **Join** (**Shape ▸ Join…**, `Ctrl`/`⌘ J`). Selected open paths whose
     ends meet, or lie within a **Tolerance** (0.1 mm by default, in the
-    popover), become one path, end to end, a straight segment bridging
+    tool bar, 81), become one path, end to end, a straight segment bridging
     any gap; a chain whose two ends meet closes. What the DXF importer
     does to a file's loose entities, at the user's word. Paths that
     reach nothing are left alone and counted in the status bar. A shape
