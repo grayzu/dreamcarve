@@ -118,6 +118,7 @@ fn kind(command: &Command) -> &'static str {
         Command::SwitchPost { .. } => "SwitchPost",
         Command::SetPostSettings(_) => "SetPostSettings",
         Command::AddTools(_) => "AddTools",
+        Command::AddToolForOperation { .. } => "AddToolForOperation",
         Command::NewTool(_) => "NewTool",
         Command::UpdateTool(_) => "UpdateTool",
         Command::DeleteTool(_) => "DeleteTool",
@@ -275,7 +276,14 @@ fn every_command() -> Vec<(Project, Command)> {
                 ..post.clone()
             }),
         ),
-        (plaque.clone(), Command::AddTools(vec![t9])),
+        (plaque.clone(), Command::AddTools(vec![t9.clone()])),
+        (
+            plaque.clone(),
+            Command::AddToolForOperation {
+                tool: t9,
+                operation: Box::new(plaque.operations[0].clone()),
+            },
+        ),
         (plaque.clone(), dc_app::tools::new_tool(&plaque)),
         (plaque.clone(), Command::UpdateTool(renamed_t2)),
         (plaque.clone(), Command::DeleteTool(ToolId::new("t1"))),

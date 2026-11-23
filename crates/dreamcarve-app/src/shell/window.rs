@@ -393,6 +393,15 @@ pub(crate) enum Action {
     Refused(String),
     /// Open the Tool Library sheet.
     OpenLibrary,
+    /// *Add from library…* in an operation's tool picker: the Tool
+    /// Library, where a tool added to the project is chosen for the
+    /// picker at `key` of operation `op` too.
+    OpenLibraryFor {
+        /// The operation.
+        op: dc_project::OperationId,
+        /// The picker's key in the operation's record.
+        key: String,
+    },
     /// Something the Tool Library sheet asked for.
     Library(panels::library::Request),
     /// Copy a project tool into the library.
@@ -1797,6 +1806,12 @@ impl Shell {
                     self.config.as_ref(),
                     self.app.strings(),
                 ));
+            }
+            Action::OpenLibraryFor { op, key } => {
+                self.library = Some(
+                    panels::library::Sheet::open(self.config.as_ref(), self.app.strings())
+                        .choosing_for(op, key),
+                );
             }
             Action::Library(panels::library::Request::Close) => self.library = None,
             Action::Library(request) => {

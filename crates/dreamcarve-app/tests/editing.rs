@@ -1411,3 +1411,95 @@ fn measure_reads_a_tape_and_the_selected_shape() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Review feedback, 2026-11-23: a shape is stretched one way in the
+/// window by the handle at the middle of a side. The dragged side follows
+/// the pointer, the far side stays, and the other axis is untouched; it
+/// is one undo step.
+#[test]
+fn a_side_handle_stretches_a_shape_one_way() {
+    let (mut h, dir) = plaque("side-handle");
+    common::go_to(&mut h, "Design");
+    select(&mut h, &["i4"]);
+    let before = box_of(&h, "i4");
+    let middle = f64::midpoint(before.min.y, before.max.y);
+    let from = on_screen(&h, Point::new(before.max.x, middle));
+    let to = on_screen(&h, Point::new(before.max.x + 12.0, middle + 3.0));
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    h.run_steps(8);
+    let after = box_of(&h, "i4");
+    assert!(
+        (after.min.x - before.min.x).abs() < 1e-6,
+        "the left side stays"
+    );
+    assert!(
+        (after.max.x - before.max.x - 12.0).abs() < 0.3,
+        "the right side follows the pointer: {after:?}"
+    );
+    assert!((after.min.y - before.min.y).abs() < 1e-6 && (after.max.y - before.max.y).abs() < 1e-6);
+    let undo = h.state().app().undo_label().map(str::to_owned);
+    assert!(
+        undo.as_deref()
+            .is_some_and(|label| label.contains("square")),
+        "one step, named for the shape: {undo:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The plaque with a 40 mm bit of its own for *Square recess*, which no
+/// longer fits the recess at all.
+fn widen_the_recess_bit(h: &mut Harness<'_, Shell>) {
+    let app = h.state_mut().app_mut();
+    let project = app.project();
+    let op = project
+        .operations
+        .iter()
+        .find(|op| op.name() == "Square recess")
+        .unwrap();
+    let tool = project.tools.iter().find(|t| t.id == *op.tool()).unwrap();
+    let wide = dc_project::Tool {
+        id: dc_project::ToolId::new("t9"),
+        name: "wide".to_owned(),
+        number: Some(9),
+        diameter_mm: 40.0,
+        ..tool.clone()
+    };
+    let dc_project::Operation::Pocket(pocket) = op else {
+        panic!("a pocket");
+    };
+    let mut pocket = pocket.clone();
+    pocket.tool = wide.id.clone();
+    app.run(dc_app::Command::AddTools(vec![wide])).unwrap();
+    app.run(dc_app::Command::UpdateOperation(
+        dc_project::Operation::Pocket(pocket),
+    ))
+    .unwrap();
+}
+
+/// Review feedback, 2026-11-23: an operation left with nothing to cut by
+/// its tool says so in its row and at the top of its editor, as an
+/// alert, with the reason.
+#[test]
+fn an_operation_that_cuts_nothing_is_announced() {
+    let (mut h, dir) = plaque("cuts-nothing");
+    widen_the_recess_bit(&mut h);
+    common::settle(&mut h);
+    common::go_to(&mut h, "Operations");
+    common::open_operation(&mut h, "Square recess");
+    h.run_steps(8);
+    let alert = h
+        .query_all_by_role(Role::Alert)
+        .find_map(|node| node.accesskit_node().label())
+        .expect("the editor has an alert");
+    assert!(
+        alert.starts_with("This operation cuts nothing with this tool."),
+        "{alert}"
+    );
+    assert!(alert.contains("wide"), "and why: {alert}");
+    let row = dc_app::operations::rows(h.state().app())
+        .into_iter()
+        .find(|row| row.name == "Square recess")
+        .unwrap();
+    assert!(row.cuts_nothing && row.detail.starts_with("Cuts nothing"));
+    let _ = std::fs::remove_dir_all(dir);
+}

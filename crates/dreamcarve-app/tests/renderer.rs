@@ -114,7 +114,9 @@ fn segment_quad_width_is_screen_constant() {
     h.state_mut().app_mut().view_mut().visibility.grid = false;
     h.run();
     let palette = theme::Palette::of(h.ctx.theme());
-    let edge = Point::new(85.0, 40.0);
+    // A quarter of the way along the bottom edge: clear of the corners'
+    // handles and of the one at the side's middle.
+    let edge = Point::new(60.0, 40.0);
 
     let measure = |h: &mut Harness<'_, Shell>, colour: egui::Color32| {
         let at = on_screen(h, edge);

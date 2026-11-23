@@ -47,6 +47,12 @@ Reordering, ticking, duplicating and deleting are each one step for
 **Undo**: *Undo Reorder operations*, *Undo Disable “Panel”*, *Undo
 Duplicate “Cut out”*, *Undo Delete “Cut out (2)”*.
 
+A row whose second line reads **Cuts nothing** is an operation its tool
+leaves with nothing to cut: a Pocket whose bit is wider than every
+shape it was given, for instance. Its editor opens with the reason in a
+banner. The program is still written, with nothing in it for that
+operation, so look at it before you export.
+
 The order matters. Cut the inside of a part before you cut the part
 free, and cut holes and pockets while the stock is still held all round.
 [Machining order and cut order](machining-order.md) says more.
@@ -157,7 +163,10 @@ The **Tool** row lists the project's tools that suit the kind, each with
 its number and diameter. A V-Carve, an Inlay and a Photo V-Carve offer
 carving bits only. **Add from library…**, at the foot of the list, opens
 the [Tool Library](tool-library.md#the-tool-library-sheet) to bring
-another tool into the project.
+another tool into the project. Tick one tool there and click **Add 1
+tool to project**: it is added and chosen for this operation, in one
+step. Several ticked tools are added and the operation keeps the tool
+it had.
 
 To change a tool's feed or speed, go to the
 [Tools step](tool-library.md#the-tools-step): they belong to the tool,

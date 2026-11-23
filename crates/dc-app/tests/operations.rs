@@ -550,3 +550,85 @@ fn a_new_carve_takes_the_first_tool_its_picker_offers() {
         );
     }
 }
+
+/// Review feedback, 2026-11-23: an operation whose tool leaves it with
+/// nothing to cut says so where it is listed, not only as a warning among
+/// the others. Its row reads *Cuts nothing*, carries a warning mark, and
+/// leads its messages with the fact; an operation that still cuts some of
+/// its shapes, one that is switched off, and one that is still being
+/// generated are not marked.
+#[test]
+fn an_operation_that_cuts_nothing_says_so() {
+    use dc_app::operations::{self, Status};
+    let mut harness = Harness::open(&common::plaque_bytes()).expect("the plaque opens");
+    harness.generate();
+    let row = |harness: &Harness, name: &str| {
+        operations::rows(&harness.app)
+            .into_iter()
+            .find(|row| row.name == name)
+            .unwrap_or_else(|| panic!("no operation {name}"))
+    };
+    let recess = row(&harness, "Square recess");
+    assert!(!recess.cuts_nothing, "it cuts as the plaque is");
+    assert_eq!(recess.detail, "Pocket · 1/4 end mill");
+
+    // A bit far wider than the recess, for the recess alone: the pocket
+    // has no room at all.
+    let (wide, widened) = {
+        let project = harness.app.project();
+        let op = project
+            .operations
+            .iter()
+            .find(|op| op.name() == "Square recess")
+            .unwrap();
+        let tool = project.tools.iter().find(|t| t.id == *op.tool()).unwrap();
+        let wide = Tool {
+            id: ToolId::new("t9"),
+            name: "wide".to_owned(),
+            number: Some(9),
+            diameter_mm: 40.0,
+            ..tool.clone()
+        };
+        let Operation::Pocket(pocket) = op else {
+            panic!("a pocket");
+        };
+        let mut pocket = pocket.clone();
+        pocket.tool = wide.id.clone();
+        (wide, Operation::Pocket(pocket))
+    };
+    harness
+        .run(Command::AddTools(vec![wide]))
+        .expect("the tool");
+    harness
+        .run(Command::UpdateOperation(widened))
+        .expect("the recess takes it");
+    // Until it is generated again nothing is known of it.
+    assert!(!row(&harness, "Square recess").cuts_nothing);
+    harness.generate();
+    let recess = row(&harness, "Square recess");
+    assert!(recess.cuts_nothing, "{:?}", harness.warnings());
+    assert_eq!(recess.detail, "Cuts nothing · wide");
+    assert!(matches!(recess.status, Status::Warnings(n) if n >= 1));
+    assert_eq!(
+        recess.messages.first().map(String::as_str),
+        Some("This operation cuts nothing with this tool.")
+    );
+    assert!(
+        recess.messages.len() >= 2,
+        "then why: {:?}",
+        recess.messages
+    );
+    assert!(operations::cuts_nothing(&harness.app, &recess.id));
+    // The outline is cut all the same, wide bit or not.
+    assert!(!row(&harness, "Cut out").cuts_nothing);
+
+    // Switched off, it is not cut at all, which is not the same thing.
+    harness
+        .run(Command::SetOperationEnabled {
+            id: recess.id.clone(),
+            enabled: false,
+        })
+        .expect("switched off");
+    harness.generate();
+    assert!(!row(&harness, "Square recess").cuts_nothing);
+}

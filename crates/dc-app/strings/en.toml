@@ -29,6 +29,8 @@ set_display_units = "Set display units"
 switch_post = "Switch post-processor to {name}"
 set_post_settings = "Set post-processor settings"
 add_tool = "Add tool {subject}"
+# Add from library… in an operation's Tool picker: added and chosen.
+add_tool_for = "Add tool {subject} for “{operation}”"
 add_tools = "Add {count} {count|tool|tools}"
 new_tool = "New tool {subject}"
 update_tool = "Edit tool {subject}"
@@ -803,6 +805,11 @@ place_tabs = "Place tabs"
 add_select_shapes = "Select shapes to add an operation"
 name = "{kind} {n}"
 detail = "{kind} · {tool}"
+# An operation that is generated and has nothing to cut (review feedback,
+# 2026-11-23): its row's second line, and the first line of what its
+# status cell and its editor say.
+cuts_nothing = "Cuts nothing"
+cuts_nothing_note = "This operation cuts nothing with this tool."
 no_tool = "no tool"
 enable = "Enable {name}"
 show_toolpath = "Show the toolpath of {name}"

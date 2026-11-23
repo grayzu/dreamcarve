@@ -841,7 +841,7 @@ fn press_target(state: &FrameState<'_>, camera: &Camera, pane: Rect, pos: Pos2) 
     let at = pane_pos(pane, pos);
     let selected = app.selection().instances();
     if let Some(h) = handles::handles(app.project(), selected, camera)
-        && let Some(grab @ (Grab::Corner(_) | Grab::Rotate { .. })) =
+        && let Some(grab @ (Grab::Corner(_) | Grab::Side(_) | Grab::Rotate { .. })) =
             handles::grab_at(&h, camera, at)
     {
         return Some(Target::Handle(grab));
@@ -972,7 +972,7 @@ fn readout(state: &FrameState<'_>, grab: Grab, delta: Transform) -> String {
                 ("dy", &readout_length(f, units)),
             ],
         ),
-        Grab::Corner(_) => strings.fmt(
+        Grab::Corner(_) | Grab::Side(_) => strings.fmt(
             StrKey::PlacementScale,
             &[
                 ("x", &format!("{:.0}", a.hypot(b) * 100.0)),
@@ -1821,7 +1821,14 @@ fn transform_handles(
     let top = Point::new((h.bounds.min.x + h.bounds.max.x) / 2.0, h.bounds.max.y);
     let (stem, knob) = (at(top), at(h.rotation));
     painter.line_segment([stem, knob], stroke);
-    for corner in corners {
+    // A handle at the middle of each side stretches one way, where the
+    // side is long enough to carry one.
+    let middles: Vec<Pos2> = h
+        .sides(camera)
+        .into_iter()
+        .map(|side| at(h.side(side)))
+        .collect();
+    for corner in corners.into_iter().chain(middles) {
         painter.rect(
             Rect::from_center_size(corner, egui::vec2(HANDLE_PX, HANDLE_PX)),
             0.0,

@@ -541,6 +541,51 @@ pub fn reset(op: &Operation, row: &Row) -> Result<Option<Command>, CommandError>
     Slot::of(row).reset(op)
 }
 
+/// *Add from library…* in the tool picker at `key` of operation `op`
+/// (review feedback, 2026-11-23): the ticked library tools copied into
+/// the project, and, when it is one tool the picker would offer, chosen
+/// there too, as one command and one undo step. Several tools, or one
+/// the operation cannot use (an end mill for a V-Carve), are added as
+/// *Add to project* adds them and the operation is left as it is.
+/// `None` when nothing is ticked.
+#[must_use]
+pub fn add_from_library_for(
+    project: &Project,
+    lib: &dc_library::Library,
+    selected: &std::collections::BTreeSet<dc_library::LibraryToolId>,
+    op: &dc_project::OperationId,
+    key: &str,
+) -> Option<Command> {
+    let mut tools = crate::library::build_add(lib, &project.tools, selected);
+    if tools.is_empty() {
+        return None;
+    }
+    let chosen = || -> Option<Command> {
+        let [tool] = tools.as_slice() else {
+            return None;
+        };
+        let operation = project.operations.iter().find(|o| o.id() == op)?;
+        // The operation's own tool is held to its kind; a clearing
+        // pass's is not.
+        if key == "tool" {
+            let mut with = project.clone();
+            with.tools.push(tool.clone());
+            if !offered_tools(&with, operation)
+                .iter()
+                .any(|offered| offered.id == tool.id)
+            {
+                return None;
+            }
+        }
+        let next = fields::set(operation, key, Value::from(tool.id.as_str())).ok()?;
+        Some(Command::AddToolForOperation {
+            tool: tool.clone(),
+            operation: Box::new(next),
+        })
+    };
+    Some(chosen().unwrap_or_else(|| Command::AddTools(std::mem::take(&mut tools))))
+}
+
 /// The tool picker's choice.
 ///
 /// # Errors

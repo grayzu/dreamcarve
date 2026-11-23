@@ -122,6 +122,10 @@ pub(crate) struct Sheet {
     session: LibraryEdit,
     filter: Filter,
     ticked: BTreeSet<LibraryToolId>,
+    /// The operation's tool picker the sheet was opened from, by the
+    /// operation and the picker's key: one tool added to the project is
+    /// chosen there too (`dc_app::editor::add_from_library_for`).
+    choosing_for: Option<(dc_project::OperationId, String)>,
     /// The row the editing pane edits.
     selected: Option<LibraryToolId>,
     /// The vendor groups closed, by vendor (`None` is *No vendor*).
@@ -215,6 +219,7 @@ impl Sheet {
             session,
             filter: Filter::default(),
             ticked: BTreeSet::new(),
+            choosing_for: None,
             selected: None,
             collapsed: BTreeSet::new(),
             review: None,
@@ -226,6 +231,13 @@ impl Sheet {
             marked: None,
             message: None,
         }
+    }
+
+    /// The sheet as *Add from library…* in the tool picker `key` of
+    /// operation `op` opens it.
+    pub(crate) fn choosing_for(mut self, op: dc_project::OperationId, key: String) -> Self {
+        self.choosing_for = Some((op, key));
+        self
     }
 
     /// The ids *Delete* acts on: the ticked tools, else the selected one.
@@ -2155,9 +2167,15 @@ fn add(sheet: &mut Sheet, app: &mut App) -> Option<(String, bool)> {
     let Ok(library) = &sheet.library else {
         return None;
     };
-    let command = tools::add_from_library(app.project(), library, &sheet.ticked)?;
+    let command = match &sheet.choosing_for {
+        Some((op, key)) => {
+            dc_app::editor::add_from_library_for(app.project(), library, &sheet.ticked, op, key)
+        }
+        None => tools::add_from_library(app.project(), library, &sheet.ticked),
+    }?;
     let count = match &command {
         Command::AddTools(tools) => tools.len(),
+        Command::AddToolForOperation { .. } => 1,
         _ => 0,
     };
     Some(match app.run(command) {

@@ -572,8 +572,40 @@ pub struct ListRow {
     /// The status cell.
     pub status: Status,
     /// What hovering the status cell lists: the operation's errors, then
-    /// its warnings, as the Warnings panel words them.
+    /// its warnings, as the Warnings panel words them; first of all that
+    /// it cuts nothing, when it does not.
     pub messages: Vec<String>,
+    /// Whether it is generated and cuts nothing ([`cuts_nothing`]).
+    pub cuts_nothing: bool,
+}
+
+/// Whether operation `id` is enabled, generated for the project as it
+/// is, and left with nothing to cut: no feed move and no hole in any of
+/// its runs. A bit too wide for every shape of a Pocket does that, and
+/// the warnings say why for each shape; this says it of the operation.
+/// Not so while it is being generated, when an error keeps it from being
+/// generated, or when it is switched off.
+#[must_use]
+pub fn cuts_nothing(app: &App, id: &OperationId) -> bool {
+    let enabled = app
+        .project()
+        .operations
+        .iter()
+        .any(|op| op.id() == id && op.enabled());
+    let generation = app.generation();
+    if !enabled || generation.is_regenerating(id) || !generation.is_current(id) {
+        return false;
+    }
+    generation.result(id).is_some_and(|result| {
+        result.runs.iter().all(|run| {
+            run.holes.as_ref().is_none_or(Vec::is_empty)
+                && !run
+                    .toolpath
+                    .moves
+                    .iter()
+                    .any(|step| step.feed_mm_min.is_some())
+        })
+    })
 }
 
 /// The list's rows, in cut order (capability 65).
@@ -598,15 +630,24 @@ pub fn rows(app: &App) -> Vec<ListRow> {
                     |t| t.name.as_str(),
                 );
             let mine = || findings.iter().filter(|f| f.op.as_ref() == Some(op.id()));
+            let nothing = cuts_nothing(app, op.id());
             let status = if generation.is_regenerating(op.id()) {
                 Status::Generating
             } else if mine().any(|f| f.tier == dc_job::Tier::Error) {
                 Status::Error
             } else {
                 match mine().filter(|f| f.tier == dc_job::Tier::Warning).count() {
+                    // Cutting nothing is worth a mark with no warning
+                    // beside it.
+                    0 if nothing => Status::Warnings(1),
                     0 => Status::Clean,
                     n => Status::Warnings(n),
                 }
+            };
+            let kind_label = if nothing {
+                strings.get(StrKey::OperationsCutsNothing)
+            } else {
+                strings.get(kind.label())
             };
             ListRow {
                 id: op.id().clone(),
@@ -616,16 +657,22 @@ pub fn rows(app: &App) -> Vec<ListRow> {
                 enabled: op.enabled(),
                 detail: strings.fmt(
                     StrKey::OperationsDetail,
-                    &[("kind", strings.get(kind.label())), ("tool", tool)],
+                    &[("kind", kind_label), ("tool", tool)],
                 ),
                 hidden: app.view().hidden_ops.contains(op.id()),
                 editing: app.editing() == Some(op.id()),
                 status,
-                messages: [dc_job::Tier::Error, dc_job::Tier::Warning]
+                messages: nothing
+                    .then(|| strings.get(StrKey::OperationsCutsNothingNote).to_owned())
                     .into_iter()
-                    .flat_map(|tier| mine().filter(move |f| f.tier == tier))
-                    .map(|f| f.message.clone())
+                    .chain(
+                        [dc_job::Tier::Error, dc_job::Tier::Warning]
+                            .into_iter()
+                            .flat_map(|tier| mine().filter(move |f| f.tier == tier))
+                            .map(|f| f.message.clone()),
+                    )
                     .collect(),
+                cuts_nothing: nothing,
             }
         })
         .collect()

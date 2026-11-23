@@ -511,20 +511,20 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
         palette.text_secondary
     };
     let name = truncated(ui, &row.name, &TextStyle::Body, name_colour, width);
-    let detail = truncated(
-        ui,
-        &row.detail,
-        &TextStyle::Small,
-        palette.text_secondary,
-        width,
-    );
+    // An operation that cuts nothing says so in the warning's colour.
+    let detail_colour = if row.cuts_nothing {
+        palette.status_warning.text
+    } else {
+        palette.text_secondary
+    };
+    let detail = truncated(ui, &row.detail, &TextStyle::Small, detail_colour, width);
     // Two lines, 2 px apart, centred in the row.
     let top = rect.center().y - (name.size().y + 2.0 + detail.size().y) / 2.0;
     let detail_top = top + name.size().y + 2.0;
     ui.painter()
         .galley(egui::pos2(left, top), name, name_colour);
     ui.painter()
-        .galley(egui::pos2(left, detail_top), detail, palette.text_secondary);
+        .galley(egui::pos2(left, detail_top), detail, detail_colour);
     slot
 }
 

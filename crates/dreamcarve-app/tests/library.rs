@@ -1270,3 +1270,63 @@ fn a_library_field_left_by_a_click_is_written() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Review feedback, 2026-11-23: *Add from library…* in an operation's
+/// Tool picker adds the ticked tool to the project and chooses it for
+/// that operation, as one undo step. It was two: add, then pick.
+#[test]
+fn a_tool_added_from_an_operations_picker_is_chosen() {
+    let dir = scratch("library-add-for-operation");
+    let (config, _) = config_with(&dir, &sample_library());
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&config, Some(fixture("plaque.dcv")), &dialogs),
+        1280.0,
+        800.0,
+    );
+    common::go_to(&mut h, "Operations");
+    common::open_operation(&mut h, "Cut out");
+    let before = h.state().app().project().clone();
+    let op = before
+        .operations
+        .iter()
+        .find(|op| op.name() == "Cut out")
+        .unwrap()
+        .clone();
+    h.get_by_role_and_label(Role::ComboBox, "Tool").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Add from library…")
+        .click();
+    h.run();
+    let row = "1/4 in Flat End Mill";
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::CheckBox, row)
+        .scroll_to_me();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::CheckBox, row)
+        .click();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::Button, "Add 1 tool to project")
+        .click();
+    h.run();
+
+    let app = h.state().app();
+    let project = app.project();
+    assert_eq!(project.tools.len(), before.tools.len() + 1);
+    let added = project.tools.last().unwrap();
+    assert_eq!(added.name, row);
+    let now = project
+        .operations
+        .iter()
+        .find(|o| o.id() == op.id())
+        .unwrap();
+    assert_eq!(now.tool(), &added.id, "the new tool is the operation's");
+    assert_eq!(
+        app.undo_label(),
+        Some("Add tool “1/4 in Flat End Mill” for “Cut out”")
+    );
+    assert!(h.query_by_role(Role::Dialog).is_none(), "the sheet closed");
+    std::fs::remove_dir_all(&dir).ok();
+}

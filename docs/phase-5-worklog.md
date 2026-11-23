@@ -359,6 +359,39 @@ Decisions made while building are added here.
   before, so which damaged files are refused may differ; both refuse
   what is not a font.
 
+## Review feedback, 2026-11-23
+
+The maintainer's first manual test of the drawing tools gave twelve
+items. Each is tracked here.
+
+| Item | Kind | Where it stands |
+| --- | --- | --- |
+| How to make an array | Question | Answered (Arrange ▸ Array…). Also to be offered from a shape's menu and Properties: FEEDBACK_ARRAY |
+| Group the drawing tools as Affinity does | Change | FEEDBACK_TOOLS |
+| Join open shapes into a closed one | Question | Answered (Shape ▸ Join…; Edit nodes, an end dragged onto an end) |
+| What the Tab tool on Design is for | Question | Answered; the tool moves beside Trim and Measure in the regrouping |
+| A more prominent division of the tool bar | Change | FEEDBACK_TOOLS |
+| Control of snapping | Feature | Exists in View ▸ Snapping and Snap To; a button on the Viewport: FEEDBACK_SNAP |
+| An origin for an object | Feature | Waits for the maintainer: which origin is meant (below) |
+| Folder and group | Question | Answered; one concept with a *Select together* switch is offered, not done |
+| A tool added in an operation should be chosen | Bug | Done: `Command::AddToolForOperation`, `editor::add_from_library_for` |
+| Start and stop points for an operation | Feature | Waits for the maintainer (below) |
+| An operation that cuts nothing is too quiet | Bug | Done: `operations::cuts_nothing`, the row's second line, the editor's banner |
+| Stretch one way in the UI | Bug | Done: `Grab::Side`, a handle at the middle of each side |
+
+Decisions taken with these, for the maintainer:
+
+- A side handle keeps the opposite side where it is; a corner handle
+  still scales about the centre, as phase 4 made it. The two differ.
+  Making corners keep the opposite corner would be the consistent
+  choice and is a change to phase 4's behaviour, so it is not made.
+- A side handle stretches whatever the proportion link says: the link
+  is for corners and for typed W and H.
+- *Cuts nothing* is the app's reading of a finished result, not a new
+  warning code, so `dreamcarve check` prints what it printed.
+- With several tools ticked, *Add from library…* adds them all and
+  chooses none.
+
 ## Slices
 
 Status is one of: todo, doing, done, owner (waits for the maintainer).

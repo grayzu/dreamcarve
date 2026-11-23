@@ -177,6 +177,22 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
     let colour = dc_app::operations::colour(project, op.id()).unwrap_or(0);
     let selected = matches!(app.selection(), Selection::Operation(id) if id == op.id());
     header(ui, &cx, colour, selected, out);
+    // An operation left with nothing to cut says so before anything
+    // else, with what its warnings give for the reason.
+    if dc_app::operations::cuts_nothing(app, op.id()) {
+        let reasons: Vec<String> = app
+            .warnings()
+            .iter()
+            .filter(|f| f.op.as_ref() == Some(op.id()) && f.tier == Tier::Warning)
+            .map(|f| f.message.clone())
+            .take(3)
+            .collect();
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(16, 4))
+            .show(ui, |ui| {
+                row::warning_banner(ui, strings.get(StrKey::OperationsCutsNothingNote), &reasons);
+            });
+    }
     let kind = Kind::of(op);
     let opening = opens_now(ui, op, &cx.located);
     crate::widgets::scroll::show(
@@ -1553,7 +1569,11 @@ fn tool_picker(
             .button(cx.strings.get(StrKey::EditorToolAddFromLibrary))
             .clicked()
         {
-            out.push(Action::OpenLibrary);
+            // The tool added there is chosen here, in the one step.
+            out.push(Action::OpenLibraryFor {
+                op: cx.op.id().clone(),
+                key: slot.key().to_owned(),
+            });
             ui.close();
         }
     });

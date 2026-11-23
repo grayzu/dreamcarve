@@ -3274,3 +3274,82 @@ fn phase5_measure_screenshots() {
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Where the pictures of the 2026-11-23 review feedback go.
+fn p5_feedback_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-5/review/feedback"),
+        PathBuf::from,
+    )
+}
+
+/// The review feedback of 2026-11-23, as built: an operation that cuts
+/// nothing, in its row and its editor; and a selected shape's handles,
+/// with one at the middle of each side.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review phase5_feedback -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed phase 5 feedback review pictures; run by hand"]
+fn phase5_feedback_screenshots() {
+    let out = p5_feedback_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    let dir = scratch("review-p5-feedback");
+    let plaque = common::copy_fixture("plaque.dcv", &dir);
+    let Some(mut h) = window(&dir, Some(plaque), 1280.0, 800.0) else {
+        return;
+    };
+    // 01: a shape's handles, corners and sides.
+    go_to(&mut h, "Design");
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![
+            dc_project::InstanceId::new("i4"),
+        ]));
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F);
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "01-side-handles", &looks);
+
+    // 02: an operation its tool leaves with nothing to cut.
+    {
+        let app = h.state_mut().app_mut();
+        let project = app.project();
+        let op = project
+            .operations
+            .iter()
+            .find(|op| op.name() == "Square recess")
+            .unwrap();
+        let tool = project.tools.iter().find(|t| t.id == *op.tool()).unwrap();
+        let wide = dc_project::Tool {
+            id: dc_project::ToolId::new("t9"),
+            name: "40 mm surfacing bit".to_owned(),
+            number: Some(9),
+            diameter_mm: 40.0,
+            ..tool.clone()
+        };
+        let dc_project::Operation::Pocket(pocket) = op else {
+            panic!("a pocket");
+        };
+        let mut pocket = pocket.clone();
+        pocket.tool = wide.id.clone();
+        app.run(dc_app::Command::AddTools(vec![wide])).unwrap();
+        app.run(dc_app::Command::UpdateOperation(
+            dc_project::Operation::Pocket(pocket),
+        ))
+        .unwrap();
+        app.select(dc_app::Selection::Nothing);
+    }
+    common::settle(&mut h);
+    go_to(&mut h, "Operations");
+    common::open_operation(&mut h, "Square recess");
+    h.key_press(egui::Key::F);
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "02-operation-cuts-nothing", &looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

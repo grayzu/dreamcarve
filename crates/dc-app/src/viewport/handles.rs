@@ -30,6 +30,9 @@ pub const STEM_PX: f64 = 20.0;
 /// How far from a handle's centre a press still grabs it, logical pixels:
 /// the 8-px square's half plus a little slack.
 pub const HANDLE_HIT_PX: f64 = 6.0;
+/// The shortest side, logical pixels, that carries a handle at its
+/// middle: under it the handle would crowd the two at the corners.
+pub const MIN_SIDE_PX: f64 = 28.0;
 /// The rotation step with Shift held, degrees.
 pub const SNAP_DEG: f64 = 15.0;
 /// The smallest scale a corner drag gives: dragged through the centre,
@@ -71,6 +74,24 @@ impl Corner {
     }
 }
 
+/// A side of the selection's box, whose middle carries a handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// Least X.
+    Left,
+    /// Greatest X.
+    Right,
+    /// Least Y.
+    Bottom,
+    /// Greatest Y.
+    Top,
+}
+
+impl Side {
+    /// The four, in the order they are tried under the pointer.
+    pub const ALL: [Self; 4] = [Self::Left, Self::Right, Self::Bottom, Self::Top];
+}
+
 /// What a press on the Viewport took hold of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grab {
@@ -78,6 +99,10 @@ pub enum Grab {
     Move,
     /// A corner handle: a drag scales about the centre.
     Corner(Corner),
+    /// The handle at the middle of a side: a drag stretches the
+    /// selection along one axis, that side following the pointer and
+    /// the opposite side staying where it is.
+    Side(Side),
     /// The rotation handle: a drag turns about the centre, in
     /// [`SNAP_DEG`] steps when `snap`.
     Rotate {
@@ -109,6 +134,38 @@ impl Handles {
             .get(corner.index())
             .copied()
             .unwrap_or(self.bounds.min)
+    }
+
+    /// The handle at the middle of `side`.
+    #[must_use]
+    pub fn side(&self, side: Side) -> Point {
+        let (min, max) = (self.bounds.min, self.bounds.max);
+        let middle = centre(self.bounds);
+        match side {
+            Side::Left => Point::new(min.x, middle.y),
+            Side::Right => Point::new(max.x, middle.y),
+            Side::Bottom => Point::new(middle.x, min.y),
+            Side::Top => Point::new(middle.x, max.y),
+        }
+    }
+
+    /// The sides that carry a handle at `camera`'s scale: those of a box
+    /// that has a width and a height, and long enough on screen
+    /// ([`MIN_SIDE_PX`]) for a handle to sit clear of the corners'.
+    #[must_use]
+    pub fn sides(&self, camera: &Camera) -> Vec<Side> {
+        let (width_mm, height_mm) = (self.bounds.width_mm(), self.bounds.height_mm());
+        if width_mm < DEGENERATE_MM || height_mm < DEGENERATE_MM {
+            return Vec::new();
+        }
+        let long_enough = |length_mm: f64| length_mm >= camera.px_to_mm(MIN_SIDE_PX);
+        Side::ALL
+            .into_iter()
+            .filter(|side| match side {
+                Side::Left | Side::Right => long_enough(height_mm),
+                Side::Bottom | Side::Top => long_enough(width_mm),
+            })
+            .collect()
     }
 
     /// The box's centre: the pivot of every scale and turn.
@@ -204,6 +261,13 @@ pub fn grab_at(handles: &Handles, camera: &Camera, at: Pos) -> Option<Grab> {
     if let Some(corner) = Corner::ALL.into_iter().find(|c| near(handles.corner(*c))) {
         return Some(Grab::Corner(corner));
     }
+    if let Some(side) = handles
+        .sides(camera)
+        .into_iter()
+        .find(|side| near(handles.side(*side)))
+    {
+        return Some(Grab::Side(side));
+    }
     let p = camera.to_world(at);
     let slack = camera.px_to_mm(HANDLE_HIT_PX);
     let b = handles.bounds;
@@ -229,7 +293,9 @@ fn fold(angle_rad: f64) -> f64 {
 /// as `TransformInstances` takes it: about the selection's centre. A
 /// corner scales by the pointer's distance from the centre over the
 /// grabbed corner's, the same on both axes when `uniform` (the ratio
-/// along the corner's diagonal), never below [`MIN_SCALE`]; the rotation
+/// along the corner's diagonal), never below [`MIN_SCALE`]; a side
+/// stretches one axis, whatever `uniform` says, and keeps the opposite
+/// side in place; the rotation
 /// handle turns by the angle swept about the centre; a move is the
 /// pointer's travel.
 #[must_use]
@@ -262,6 +328,29 @@ pub fn drag_delta(
                 }
             };
             Transform::scale(ratio(tx, fx), ratio(ty, fy))
+        }
+        Grab::Side(side) => {
+            // The side goes where the pointer goes along its own axis;
+            // scaled about the centre, the box is then moved by half of
+            // what it gained, which puts the far side back.
+            let b = handles.bounds;
+            let (size, travel) = match side {
+                Side::Left => (b.width_mm(), from.x - to.x),
+                Side::Right => (b.width_mm(), to.x - from.x),
+                Side::Bottom => (b.height_mm(), from.y - to.y),
+                Side::Top => (b.height_mm(), to.y - from.y),
+            };
+            if size < DEGENERATE_MM {
+                return Transform::IDENTITY;
+            }
+            let s = ((size + travel) / size).max(MIN_SCALE);
+            let half = (s - 1.0) * size / 2.0;
+            match side {
+                Side::Left => Transform::scale(s, 1.0).then(Transform::translate(-half, 0.0)),
+                Side::Right => Transform::scale(s, 1.0).then(Transform::translate(half, 0.0)),
+                Side::Bottom => Transform::scale(1.0, s).then(Transform::translate(0.0, -half)),
+                Side::Top => Transform::scale(1.0, s).then(Transform::translate(0.0, half)),
+            }
         }
         Grab::Rotate { snap } => {
             if fx.hypot(fy) < DEGENERATE_MM || tx.hypot(ty) < DEGENERATE_MM {

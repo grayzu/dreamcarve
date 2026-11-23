@@ -90,6 +90,10 @@ it is.
   into H leaves W at 30.
 - **Drag a corner handle.** The shape keeps its proportions while the
   link is closed. Hold Alt (⌥) while you drag to stretch it freely.
+- **Drag a side handle**, the one at the middle of a side, to stretch
+  the shape one way. That side follows the pointer and the opposite
+  side stays where it is, whatever the link says. A side too short on
+  screen to carry a handle has none: zoom in.
 
 Resizing changes what is cut: a 20 mm square pocket is a different
 pocket. A circle stretched with the link open is no longer a circle, so a

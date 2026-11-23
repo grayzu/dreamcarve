@@ -234,6 +234,48 @@ pub(crate) fn line(ui: &mut Ui, alert: bool, text: &str) {
     note(ui, 0.0, icon, glyph, colour, text);
 }
 
+/// A warning that is about the whole of what the panel shows, not one
+/// field of it (an operation that cuts nothing): `title` in the warning
+/// colour with its glyph, on the warning's tint, and each of `reasons`
+/// under it. It is one thing to a screen reader, an alert.
+pub(crate) fn warning_banner(ui: &mut Ui, title: &str, reasons: &[String]) {
+    let palette = Palette::current(ui);
+    let colours = palette.status_warning;
+    let shown = egui::Frame::NONE
+        .fill(colours.tint)
+        .stroke(egui::Stroke::new(1.0, colours.stroke))
+        .corner_radius(theme::INNER_CARD_RADIUS_PX)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            note(
+                ui,
+                0.0,
+                Icon::TriangleAlert,
+                colours.stroke,
+                colours.text,
+                title,
+            );
+            for reason in reasons {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(reason)
+                            .text_style(TextStyle::Small)
+                            .color(palette.text_primary),
+                    )
+                    .wrap(),
+                );
+            }
+        });
+    let whole = std::iter::once(title)
+        .chain(reasons.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    shown
+        .response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Alert, true, &whole));
+}
+
 /// Where the field column starts, px from the row's left: after the label
 /// and its gap.
 const FIELD_COLUMN_PX: f32 = LABEL_PX + GAP_PX;

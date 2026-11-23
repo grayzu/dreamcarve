@@ -450,6 +450,16 @@ before that; its changes are those under Unreleased.
 
 ### Changed
 
+- **A side handle stretches a shape one way.** A selected shape has a
+  handle at the middle of each side as well as at each corner. Dragging
+  one moves that side and leaves the opposite side where it is.
+- **A tool added from an operation's Tool picker is chosen for it.**
+  *Add from library…* in the picker adds the ticked tool and sets it as
+  the operation's tool, in one undo step. It was two steps.
+- **An operation that cuts nothing says so.** When a tool leaves an
+  operation with nothing to cut, its row reads *Cuts nothing* and its
+  editor opens with a banner giving the reason. It was a warning among
+  the others.
 - **A locked picture is not picked on the Viewport.** A click or a
   marquee over a locked picture selects nothing, so drawing over a
   backdrop never grabs it. Its row in the Pictures list still selects

@@ -84,6 +84,15 @@ pub enum Command {
     SetPostSettings(PostProcessorRef),
     /// Add tools under ids the project does not have.
     AddTools(Vec<Tool>),
+    /// Add a tool and choose it for an operation, as one step: *Add from
+    /// library…* in an operation's Tool picker. `operation` is the
+    /// operation as it is to be, its tool already the new one's id.
+    AddToolForOperation {
+        /// The tool, under an id the project does not have.
+        tool: Tool,
+        /// The operation with the tool chosen.
+        operation: Box<Operation>,
+    },
     /// *New tool* (capability 63): add a tool made from scratch, under an
     /// id the project does not have; labelled *New tool “tool4”*.
     NewTool(Tool),
@@ -464,6 +473,13 @@ impl Command {
                     add_tool(&mut next, tool)?;
                 }
             }
+            Self::AddToolForOperation { tool, operation } => {
+                add_tool(&mut next, tool)?;
+                let at = operations::index_of(project, operation.id())?;
+                if let Some(slot) = next.operations.get_mut(at) {
+                    *slot = (**operation).clone();
+                }
+            }
             Self::NewTool(tool) => add_tool(&mut next, tool)?,
             Self::UpdateTool(tool) => {
                 check_tool(tool)?;
@@ -707,6 +723,13 @@ impl Command {
                     &[("count", &tools.len().to_string())],
                 ),
             },
+            Self::AddToolForOperation { tool, operation } => strings.fmt(
+                StrKey::CommandLabelAddToolFor,
+                &[
+                    ("subject", &one(strings, &tool.name)),
+                    ("operation", operation.name()),
+                ],
+            ),
             Self::NewTool(tool) => {
                 with_subject(StrKey::CommandLabelNewTool, &one(strings, &tool.name))
             }

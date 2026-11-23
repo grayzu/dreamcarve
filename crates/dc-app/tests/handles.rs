@@ -232,3 +232,151 @@ fn uniform_unless_unlocked() {
     .expect("locks");
     assert!(square_handles(&locked).locked);
 }
+
+/// Review feedback, 2026-11-23: a shape is stretched in one direction by
+/// the handle at the middle of a side. The drag moves that side with the
+/// pointer and leaves the opposite side where it is, whatever the
+/// proportion link says; the other axis is untouched.
+#[test]
+fn a_side_handle_stretches_one_way_and_keeps_the_far_side() {
+    use dc_app::viewport::handles::Side;
+    let project = plaque();
+    let h = square_handles(&project);
+    let box_ = bounds_of(&project, &[id("i4")]);
+    let c = centre(box_);
+    // The four handles are at the middles of the sides, and each is
+    // grabbed there; a corner still wins at a corner.
+    for (side, at) in [
+        (Side::Left, Point::new(box_.min.x, c.y)),
+        (Side::Right, Point::new(box_.max.x, c.y)),
+        (Side::Bottom, Point::new(c.x, box_.min.y)),
+        (Side::Top, Point::new(c.x, box_.max.y)),
+    ] {
+        assert_near(h.side(side), at, 1e-9, "a side's handle");
+        assert_eq!(
+            handles::grab_at(&h, &camera(), camera().to_screen(at)),
+            Some(Grab::Side(side)),
+            "{side:?}"
+        );
+    }
+    assert_eq!(
+        handles::grab_at(&h, &camera(), camera().to_screen(box_.max)),
+        Some(Grab::Corner(Corner::TopRight))
+    );
+
+    let stretched = |side: Side, from: Point, to: Point, uniform: bool| {
+        let delta = handles::drag_delta(&h, Grab::Side(side), from, to, uniform);
+        let after = Command::TransformInstances {
+            ids: vec![id("i4")],
+            delta,
+        }
+        .apply(&project)
+        .expect("stretches");
+        // The preview draws what the command will do.
+        assert_same_transform(
+            instance_of_transform(&after, "i4"),
+            instance_of_transform(&project, "i4").then(handles::about_centre(&h, delta)),
+            1e-9,
+            "the preview equals the result",
+        );
+        bounds_of(&after, &[id("i4")])
+    };
+    // The right side dragged 7 mm out, the pointer wandering in Y: the
+    // box is 7 mm wider to the right and no taller, link closed or open.
+    for uniform in [true, false] {
+        let from = h.side(Side::Right);
+        let to = Point::new(from.x + 7.0, from.y + 3.0);
+        let after = stretched(Side::Right, from, to, uniform);
+        assert_near(
+            after.min,
+            box_.min,
+            1e-9,
+            "the left side and the bottom stay",
+        );
+        assert_near(
+            after.max,
+            Point::new(box_.max.x + 7.0, box_.max.y),
+            1e-9,
+            "the right side follows the pointer",
+        );
+    }
+    // The left side dragged 4 mm in: the right side stays.
+    let from = h.side(Side::Left);
+    let after = stretched(Side::Left, from, Point::new(from.x + 4.0, from.y), true);
+    assert_near(
+        after.min,
+        Point::new(box_.min.x + 4.0, box_.min.y),
+        1e-9,
+        "the left side follows",
+    );
+    assert_near(after.max, box_.max, 1e-9, "the right side stays");
+    // The top dragged 5 mm up, the bottom 2 mm down.
+    let from = h.side(Side::Top);
+    let after = stretched(Side::Top, from, Point::new(from.x, from.y + 5.0), true);
+    assert_near(after.min, box_.min, 1e-9, "the bottom stays");
+    assert!((after.height_mm() - box_.height_mm() - 5.0).abs() < 1e-9);
+    assert!((after.width_mm() - box_.width_mm()).abs() < 1e-9);
+    let from = h.side(Side::Bottom);
+    let after = stretched(Side::Bottom, from, Point::new(from.x, from.y - 2.0), true);
+    assert_near(after.max, box_.max, 1e-9, "the top stays");
+    assert!((after.height_mm() - box_.height_mm() - 2.0).abs() < 1e-9);
+
+    // Dragged through the far side: never a collapse or a flip.
+    let from = h.side(Side::Right);
+    let past = Point::new(box_.min.x - 10.0, from.y);
+    let delta = handles::drag_delta(&h, Grab::Side(Side::Right), from, past, true);
+    let [a, _, _, d, _, _] = delta.coeffs();
+    assert!(a > 0.0 && (d - 1.0).abs() < 1e-12, "{delta:?}");
+
+    // The size written under the box while it is dragged is the new one.
+    let strings = dc_app::Strings::english();
+    let from = h.side(Side::Right);
+    let delta = handles::drag_delta(
+        &h,
+        Grab::Side(Side::Right),
+        from,
+        Point::new(from.x + 7.0, from.y),
+        true,
+    );
+    let label = handles::size_label(
+        &strings,
+        dc_project::Units::Mm,
+        &h,
+        Grab::Side(Side::Right),
+        delta,
+    )
+    .expect("a stretch reads its size");
+    let wanted = format!(
+        "{} × {}",
+        dc_app::units::summary_text(box_.width_mm() + 7.0, dc_project::Units::Mm),
+        dc_app::units::summary_text(box_.height_mm(), dc_project::Units::Mm)
+    );
+    assert_eq!(label.text, wanted);
+}
+
+/// A side carries a handle only where there is room for one: a box seen
+/// small has its corners alone, and a line has no side to stretch.
+#[test]
+fn a_short_side_has_no_handle() {
+    use dc_app::viewport::handles::Side;
+    let project = plaque();
+    let h = square_handles(&project);
+    assert_eq!(h.sides(&camera()).len(), 4);
+    // Zoomed out until the square is 20 px across: its corners' handles
+    // are 20 px apart, with no room for one between.
+    let far = Camera {
+        px_per_mm: 20.0 / h.bounds.width_mm(),
+        ..camera()
+    };
+    assert!(h.sides(&far).is_empty());
+    assert_eq!(
+        handles::grab_at(&h, &far, far.to_screen(h.side(Side::Right))),
+        Some(Grab::Move),
+        "the middle of a short side is the box"
+    );
+    // A box with no height: nothing to stretch upwards, and its ends are
+    // its corners.
+    let mut flat = h;
+    flat.bounds.max.y = flat.bounds.min.y;
+    assert!(flat.sides(&camera()).is_empty());
+}

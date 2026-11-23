@@ -1451,3 +1451,55 @@ fn an_angle_field_says_the_angle_the_other_way() {
         None
     );
 }
+
+/// Review feedback, 2026-11-23: *Add from library…* in an operation's
+/// Tool picker adds the tool and chooses it for that operation, in one
+/// undo step. It was two: add the tool, then pick it.
+#[test]
+fn a_tool_added_from_an_operations_picker_is_chosen_for_it() {
+    let lib = sample_library();
+    let end_mill = entry_named(&lib, "1/4 in Flat End Mill");
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    let before = harness.app.project().clone();
+    let op = before.operations[0].clone();
+    let one = BTreeSet::from([end_mill.id.clone()]);
+    let command = dc_app::editor::add_from_library_for(&before, &lib, &one, op.id(), "tool")
+        .expect("one ticked row is something to add");
+    let label = harness.run(command).expect("the tool is added and chosen");
+    assert_eq!(
+        label,
+        format!("Add tool “1/4 in Flat End Mill” for “{}”", op.name())
+    );
+    let project = harness.app.project();
+    assert_eq!(project.tools.len(), before.tools.len() + 1);
+    let added = project.tools.last().expect("a tool was added");
+    assert_eq!(project.operations[0].tool(), &added.id, "and chosen");
+    // One step: Undo takes both back.
+    assert!(harness.app.undo().is_some());
+    assert_eq!(harness.app.project(), &before);
+
+    // Several ticked rows have no one tool to choose: they are added, as
+    // *Add to project* adds them, and the operation keeps its tool.
+    let both: BTreeSet<_> = lib.tools.iter().take(2).map(|e| e.id.clone()).collect();
+    assert_eq!(both.len(), 2);
+    let command = dc_app::editor::add_from_library_for(&before, &lib, &both, op.id(), "tool")
+        .expect("something to add");
+    assert!(matches!(command, Command::AddTools(ref tools) if tools.len() == 2));
+    // A tool the operation cannot carve with is added and not chosen: a
+    // V-Carve takes no end mill.
+    let v_carve = before
+        .operations
+        .iter()
+        .find(|op| matches!(op, dc_project::Operation::VCarve(_)));
+    if let Some(v_carve) = v_carve {
+        let command =
+            dc_app::editor::add_from_library_for(&before, &lib, &one, v_carve.id(), "tool")
+                .expect("something to add");
+        assert!(matches!(command, Command::AddTools(_)), "{command:?}");
+    }
+    // Nothing ticked is nothing to add.
+    assert!(
+        dc_app::editor::add_from_library_for(&before, &lib, &BTreeSet::new(), op.id(), "tool")
+            .is_none()
+    );
+}
