@@ -68,7 +68,7 @@ are `docs/research/purecutcnc-drawing-digest.md` and
 | `dc-app::arrange` (align, distribute) | `src/store/slices/featureSlice.ts` (1128–1284) | Ported; Top is the greatest Y. Align to stock is new. |
 | `dc-app::tool::measure` | `dimensionToolSlice.ts`, `dimensionRendering.ts` | The two-click tape and its label. |
 | `dc-text::stroke` | `src/text/index.ts` (`GLYPHS`, `layoutGlyphs`) | The Simple Stroke table, flipped to Y-up. |
-| `dc-text::layout` | `src/text/index.ts` (`outlineProfilesFromFont`) | The steps (glyph outlines, advance, counters nested). Not ported: three.js typeface fonts, the fixed 0.18 spacing, the Clipper clean-up. Fonts are parsed by `ttf-parser`; curves are flattened by `dc_geometry::flatten`. |
+| `dc-text::layout` | `src/text/index.ts` (`outlineProfilesFromFont`) | The steps (glyph outlines, advance, counters nested). Not ported: three.js typeface fonts, the fixed 0.18 spacing, the Clipper clean-up. Fonts are parsed by `skrifa`; curves are flattened by `dc_geometry::flatten`. |
 | `dc-app::command` (Make Unique, definitions) | `src/store/helpers/featureDefinitions.ts` (`makeUnique`, `gcOrphanedDefinitions`), `definitionEditing.test.ts` | Ported. |
 | `dc-app::tree` (folders) | `src/store/slices/` folder actions, `folderGroup.test.ts` | Flat folders and the grouped flag. |
 
@@ -225,10 +225,14 @@ pub enum TextError { NotAFont { reason }, NoOutlines, BadHeight { height_mm }, B
 
 `Font::simple_stroke()` is the single-line font, a table in the crate
 and no file. It depends on `dc-geometry`, `kurbo` (the workspace's, for
-a glyph's curves) and `ttf-parser` (0.25, Apache-2.0 OR MIT,
-no dependencies, no unsafe in its public use, the crate
-`docs/rust-guidelines.md` names for fonts; default features off, with
-`opentype-layout` for the GPOS table kerning pairs are kept in). It does not depend on
+a glyph's curves) and `skrifa` (0.44, MIT OR Apache-2.0, Google's
+font reader, the crate `docs/rust-guidelines.md` names for fonts and
+one egui already brings into the app; default features off but `std`;
+its `raw` module, `read-fonts`, reads the `kern` and GPOS tables the
+kerning pairs are kept in). The crate was first written on
+`ttf-parser`, which was marked unmaintained (RUSTSEC-2026-0192) before
+the phase ended; the port to `skrifa` left the laid-out text of the
+test part byte for byte as it was. It does not depend on
 `dc-project`; `dc-app` maps `Shape::Text` to a `TextSpec`. The crate
 graph gains `dc-geometry → dc-text → dc-app`.
 
@@ -735,7 +739,7 @@ through the transform, arcs are refused with the geometry's reason.
    2, of its `kern` features that covers the pair: none of the bundled
    fonts has a `kern` table), plus `letter_spacing_fraction ·
    height_mm` between letters.
-3. Each glyph's outline through `ttf_parser::OutlineBuilder` into a
+3. Each glyph's outline through `skrifa::outline::OutlinePen` into a
    `kurbo::BezPath` (quadratics and cubics), flattened by
    `dc_geometry::flatten`.
 4. Lines are offset down by `line_spacing_fraction ·

@@ -39,7 +39,36 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 27: 3,727.
+`0.5.0-alpha.1`. After slice 27: 3,727. Every slice is done; the phase
+waits for the maintainer (below).
+
+### Exit criteria (functional spec)
+
+| Criterion | Where it stands |
+| --- | --- |
+| Acceptance tests 107–130 green on macOS | Green: each is named in the design spec's test plan, and the gate passes. Windows and Linux run in CI when the branch reaches `main`. |
+| S21's equality test (128) on all six post-processors | `gui_equality::the_hook_plate_drawn_equals_the_cli` |
+| The hook plate drawn in the app with no import, its programs equal to the CLI's | `first_design::the_hook_plate_is_designed_in_the_window` draws it through the window; the same steps with no window are exported against `dreamcarve export` |
+| Quick start "Your first design" and every chapter, with screenshots from the build | Written; 28 pictures taken by `book.rs` |
+| `CONTEXT.md` updated; every user-visible string keyed | Done; `strings::every_key_is_used` and the scans pass |
+| The maintainer's review, and the open questions settled | **Open.** "Decisions waiting for the maintainer", below |
+| `v0.5.0-alpha.1`, then `v0.5.0` | **The maintainer's.** No tag is cut and nothing is merged to `main` |
+
+### Checks CI runs that the local gate does not
+
+Run on macOS on 2026-11-23, at the head of the branch:
+
+| Check | Result |
+| --- | --- |
+| `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace`, and with `--document-private-items` | Clean, after three intra-doc links were fixed |
+| `cargo deny check licenses advisories` | OK, after `dc-text` left `ttf-parser` (below) |
+| `mdbook build docs/book` | Builds |
+| `cargo test --locked -p third-party-licenses --test ci -- --ignored` | Both pass |
+| `dist plan`, `dist generate --check` | Both exit 0 |
+| `cargo clippy --all-targets --all-features -- -D warnings` for `x86_64-pc-windows-msvc` and `x86_64-unknown-linux-gnu` | Clean for both |
+
+Not run here: `gcode-conformance` (LinuxCNC's `rs274`, CI only), and the
+tests themselves on Windows and Linux.
 
 ## Decisions waiting for the maintainer
 
@@ -315,6 +344,20 @@ Decisions made while building are added here.
   plate. The chapters reuse the quick start's pictures where one shows
   the thing. The README's status line still names `v0.4.0-alpha.2`: the
   version there is the maintainer's to change when a tag is cut.
+
+- After slice 27, from the CI-only checks: `cargo deny` reported
+  `ttf-parser`, which `dc-text` was written on in slice 23, as
+  unmaintained (RUSTSEC-2026-0192), and named `skrifa` as the
+  alternative. `skrifa` 0.44 was in the app already, through egui's
+  text renderer, so `dc-text` was ported to it and `ttf-parser` is out
+  of the tree; no advisory is ignored in `deny.toml`. The port is
+  like for like (names, glyphs, outlines, advances, `kern` and GPOS
+  pair kerning, line metrics): the hook plate's saved project and every
+  program it exports are byte for byte what they were before it.
+  `docs/rust-guidelines.md` now names `skrifa` as the crate for fonts.
+  A font file that is damaged is read by a different parser than
+  before, so which damaged files are refused may differ; both refuse
+  what is not a font.
 
 ## Slices
 

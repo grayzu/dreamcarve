@@ -17,7 +17,7 @@
 //! A stretch (a scale that is not the same along X and Y) cannot be kept
 //! in a placement: it would make a rounded corner an ellipse and leave
 //! the sizes meaning nothing. A rectangle, an ellipse, a slot and a
-//! circle take it as new sizes instead ([`stretch`]); every other shape
+//! circle take it as new sizes instead (`stretch`); every other shape
 //! that keeps sizes refuses it and scales evenly only.
 
 use dc_geometry::shapes::gear::{Gear, GearCrest, GearFlanks, GearProblem, GearRoot, GearSize};

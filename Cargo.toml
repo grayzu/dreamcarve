@@ -66,7 +66,7 @@ kurbo = "0.13"
 # `opentype-layout` reads the GPOS table a font keeps its kerning pairs
 # in; `variable-fonts`, `apple-layout` and `glyph-names` serve nothing
 # here (the bundled fonts are static instances).
-ttf-parser = { version = "0.25", default-features = false, features = ["std", "opentype-layout"] }
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
 cavalier_contours = "0.9"
 # Polygon booleans for pockets (phase 2 design, "Algorithms → Pocket").
 # Default features are off: they pull in a glam/serde bridge and f32

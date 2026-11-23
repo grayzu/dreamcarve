@@ -164,7 +164,7 @@ contributors` and Graphite's path and commit, and `NOTICE` gains
 Graphite in the same change.
 
 Two things are DreamCarve's own: the Text tool's layout, on the
-`ttf-parser` crate and the bundled fonts ([Licensing](licensing.md#bundled-fonts)),
+`skrifa` crate and the bundled fonts ([Licensing](licensing.md#bundled-fonts)),
 and trimming a piece from the middle of an outline, which upstream
 leaves undone.
 

@@ -7,6 +7,9 @@
 
 use std::sync::Arc;
 
+use skrifa::string::StringId;
+use skrifa::{FontRef, MetadataProvider as _};
+
 use crate::TextError;
 
 /// The single-line font's family.
@@ -56,22 +59,19 @@ pub struct Font {
     style: String,
 }
 
-/// The name-table ids of the typographic family and subfamily, which a
-/// font with more than four styles names itself by, and of the legacy
-/// pair every font has.
-const TYPOGRAPHIC_FAMILY: u16 = 16;
-const TYPOGRAPHIC_SUBFAMILY: u16 = 17;
-const FAMILY: u16 = 1;
-const SUBFAMILY: u16 = 2;
-
-/// The first name of `id` that reads as text.
-fn name(face: &ttf_parser::Face<'_>, id: u16) -> Option<String> {
-    face.names()
-        .into_iter()
-        .filter(|name| name.name_id == id)
-        .find_map(|name| name.to_string())
-        .map(|text| text.trim().to_owned())
+/// The font's name of kind `id`: the English one, else the first.
+fn name(font: &FontRef<'_>, id: StringId) -> Option<String> {
+    font.localized_strings(id)
+        .english_or_first()
+        .map(|name| name.chars().collect::<String>().trim().to_owned())
         .filter(|text| !text.is_empty())
+}
+
+/// The font in `bytes`: the first face of a collection.
+pub(crate) fn face(bytes: &[u8]) -> Result<FontRef<'_>, TextError> {
+    FontRef::from_index(bytes, 0).map_err(|error| TextError::NotAFont {
+        reason: error.to_string(),
+    })
 }
 
 impl Font {
@@ -93,19 +93,18 @@ impl Font {
     }
 
     fn read(bytes: Bytes) -> Result<Self, TextError> {
-        let face =
-            ttf_parser::Face::parse(bytes.get(), 0).map_err(|error| TextError::NotAFont {
-                reason: error.to_string(),
-            })?;
-        let tables = face.tables();
-        if tables.glyf.is_none() && tables.cff.is_none() {
+        let font = face(bytes.get())?;
+        if font.outline_glyphs().format().is_none() {
             return Err(TextError::NoOutlines);
         }
-        let family = name(&face, TYPOGRAPHIC_FAMILY)
-            .or_else(|| name(&face, FAMILY))
+        // The typographic family and subfamily are what a font with more
+        // than four styles names itself by; every font has the legacy
+        // pair.
+        let family = name(&font, StringId::TYPOGRAPHIC_FAMILY_NAME)
+            .or_else(|| name(&font, StringId::FAMILY_NAME))
             .unwrap_or_default();
-        let style = name(&face, TYPOGRAPHIC_SUBFAMILY)
-            .or_else(|| name(&face, SUBFAMILY))
+        let style = name(&font, StringId::TYPOGRAPHIC_SUBFAMILY_NAME)
+            .or_else(|| name(&font, StringId::SUBFAMILY_NAME))
             .unwrap_or_else(|| SIMPLE_STROKE_STYLE.to_owned());
         Ok(Self {
             source: Source::File(bytes),

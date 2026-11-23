@@ -13,7 +13,7 @@
 //!
 //! The crate reads no file and lists no system font: a caller hands it
 //! the bytes ([`Font::parse`]), and the bundled fonts are compiled in
-//! ([`bundled`]). It never panics; what cannot be read or laid out is a
+//! ([`bundled()`]). It never panics; what cannot be read or laid out is a
 //! [`TextError`], and what was passed over a [`TextWarning`].
 
 mod bundled;

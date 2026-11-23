@@ -27,8 +27,14 @@
 //! The single-line font skips steps 3 and 5 ([`crate::stroke`]).
 
 use dc_geometry::{FillRule, Polyline};
-use ttf_parser::gpos::{PairAdjustment, PositioningSubtable};
-use ttf_parser::{Face, GlyphId, Tag};
+use skrifa::charmap::Charmap;
+use skrifa::instance::{LocationRef, Size};
+use skrifa::metrics::{GlyphMetrics, Metrics};
+use skrifa::outline::{DrawSettings, OutlineGlyphCollection, OutlinePen};
+use skrifa::raw::TableProvider as _;
+use skrifa::raw::tables::gpos::{ExtensionSubtable, PairPos, PositionLookup};
+use skrifa::raw::tables::kern::SubtableKind;
+use skrifa::{FontRef, GlyphId, MetadataProvider as _, Tag};
 
 use crate::font::Font;
 use crate::{TextError, TextWarning};
@@ -101,86 +107,154 @@ pub fn layout(
     let Some(bytes) = font.bytes() else {
         return Ok(crate::stroke::layout(spec));
     };
-    let face = Face::parse(bytes, 0).map_err(|error| TextError::NotAFont {
-        reason: error.to_string(),
-    })?;
+    let face = Face::of(crate::font::face(bytes)?);
     Ok(outline_layout(&face, spec, flatten_tolerance_mm))
 }
 
-/// The font units that are one capital height: the top of `H`, else the
-/// font's `capHeight`, else its ascender, else its em.
-fn capital_units(face: &Face<'_>) -> f64 {
-    let top_of_h = face
-        .glyph_index('H')
-        .and_then(|glyph| face.glyph_bounding_box(glyph))
-        .map(|bounds| bounds.y_max);
-    [top_of_h, face.capital_height(), Some(face.ascender())]
-        .into_iter()
-        .flatten()
-        .find(|units| *units > 0)
-        .map_or_else(|| f64::from(face.units_per_em()), f64::from)
+/// A font as a layout reads it: its glyphs, their outlines and advances
+/// at the font's own units, and the lookups that kern.
+struct Face<'a> {
+    font: FontRef<'a>,
+    charmap: Charmap<'a>,
+    outlines: OutlineGlyphCollection<'a>,
+    glyphs: GlyphMetrics<'a>,
+    metrics: Metrics,
+    kern_lookups: Vec<u16>,
 }
 
-/// The kerning between `left` and `right`, font units: the `kern`
-/// table's when the font has one, else its GPOS pair adjustment.
-fn kerning(face: &Face<'_>, kern_lookups: &[u16], left: GlyphId, right: GlyphId) -> f64 {
-    if let Some(table) = face.tables().kern {
-        let pair = table
-            .subtables
-            .into_iter()
-            .filter(|subtable| {
-                subtable.horizontal && !subtable.variable && !subtable.has_state_machine
-            })
-            .find_map(|subtable| subtable.glyphs_kerning(left, right));
-        if let Some(pair) = pair {
-            return f64::from(pair);
+impl<'a> Face<'a> {
+    /// `font` at its default instance, unscaled.
+    fn of(font: FontRef<'a>) -> Self {
+        let (size, at) = (Size::unscaled(), LocationRef::default());
+        Self {
+            charmap: font.charmap(),
+            outlines: font.outline_glyphs(),
+            glyphs: font.glyph_metrics(size, at),
+            metrics: font.metrics(size, at),
+            kern_lookups: kern_lookups(&font),
+            font,
         }
     }
-    let Some(gpos) = face.tables().gpos else {
-        return 0.0;
-    };
-    for index in kern_lookups {
-        let Some(lookup) = gpos.lookups.get(*index) else {
-            continue;
-        };
-        for subtable in lookup.subtables.into_iter::<PositioningSubtable<'_>>() {
-            let PositioningSubtable::Pair(pair) = subtable else {
-                continue;
-            };
-            let adjusted = match pair {
-                PairAdjustment::Format1 { coverage, sets } => coverage
-                    .get(left)
-                    .and_then(|covered| sets.get(covered))
-                    .and_then(|set| set.get(right)),
-                PairAdjustment::Format2 {
-                    coverage,
-                    classes,
-                    matrix,
-                } => coverage
-                    .get(left)
-                    .and_then(|_| matrix.get((classes.0.get(left), classes.1.get(right)))),
-            };
-            // The first subtable that covers the pair decides it.
-            if let Some((first, _)) = adjusted {
-                return f64::from(first.x_advance);
+
+    /// The font units that are one capital height: the top of `H`, else
+    /// the font's `capHeight`, else its ascender, else its em.
+    fn capital_units(&self) -> f64 {
+        let top_of_h = self
+            .charmap
+            .map('H')
+            .and_then(|glyph| self.glyphs.bounds(glyph))
+            .map(|bounds| f64::from(bounds.y_max));
+        [
+            top_of_h,
+            self.metrics.cap_height.map(f64::from),
+            Some(f64::from(self.metrics.ascent)),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|units| *units > 0.0)
+        .unwrap_or_else(|| f64::from(self.metrics.units_per_em))
+    }
+
+    /// The kerning between `left` and `right`, font units: the `kern`
+    /// table's when the font has one, else its GPOS pair adjustment.
+    fn kerning(&self, left: GlyphId, right: GlyphId) -> f64 {
+        if let Ok(table) = self.font.kern() {
+            let pair = table
+                .subtables()
+                .flatten()
+                .filter(|subtable| {
+                    subtable.is_horizontal()
+                        && !subtable.is_variable()
+                        && !subtable.is_state_machine()
+                })
+                .find_map(|subtable| match subtable.kind().ok()? {
+                    SubtableKind::Format0(pairs) => pairs.kerning(left, right),
+                    SubtableKind::Format2(classes) => classes.kerning(left, right),
+                    SubtableKind::Format3(classes) => classes.kerning(left, right),
+                    SubtableKind::Format1(_) => None,
+                });
+            if let Some(pair) = pair {
+                return f64::from(pair);
             }
         }
+        let Ok(lookups) = self.font.gpos().and_then(|gpos| gpos.lookup_list()) else {
+            return 0.0;
+        };
+        for index in &self.kern_lookups {
+            let Ok(lookup) = lookups.lookups().get(usize::from(*index)) else {
+                continue;
+            };
+            // A pair lookup, or one reached through an extension.
+            let pairs: Vec<PairPos<'_>> = match lookup {
+                PositionLookup::Pair(lookup) => lookup.subtables().iter().flatten().collect(),
+                PositionLookup::Extension(lookup) => lookup
+                    .subtables()
+                    .iter()
+                    .flatten()
+                    .filter_map(|extension| match extension {
+                        ExtensionSubtable::Pair(extension) => extension.extension().ok(),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => continue,
+            };
+            // The first subtable that covers the pair decides it.
+            if let Some(advance) = pairs
+                .iter()
+                .find_map(|pair| pair_advance(pair, left, right))
+            {
+                return advance;
+            }
+        }
+        0.0
     }
-    0.0
+}
+
+/// What the pair-adjustment subtable `pair` adds to `left`'s advance
+/// before `right`, font units; `None` when it does not cover the pair.
+fn pair_advance(pair: &PairPos<'_>, left: GlyphId, right: GlyphId) -> Option<f64> {
+    let advance = match pair {
+        PairPos::Format1(table) => {
+            let covered = table.coverage().ok()?.get(left)?;
+            let set = table.pair_sets().get(usize::from(covered)).ok()?;
+            let record = set
+                .pair_value_records()
+                .iter()
+                .flatten()
+                .find(|record| GlyphId::from(record.second_glyph()) == right)?;
+            record.value_record1().x_advance()
+        }
+        PairPos::Format2(table) => {
+            table.coverage().ok()?.get(left)?;
+            let first = table.class_def1().ok()?.get(left);
+            let second = table.class_def2().ok()?.get(right);
+            let row = table.class1_records().get(usize::from(first)).ok()?;
+            let cell = row.class2_records().get(usize::from(second)).ok()?;
+            cell.value_record1().x_advance()
+        }
+    };
+    Some(f64::from(advance.unwrap_or(0)))
 }
 
 /// The GPOS lookups of the font's `kern` features, each once, in the
 /// table's order.
-fn kern_lookups(face: &Face<'_>) -> Vec<u16> {
-    let Some(gpos) = face.tables().gpos else {
+fn kern_lookups(font: &FontRef<'_>) -> Vec<u16> {
+    let Ok(features) = font.gpos().and_then(|gpos| gpos.feature_list()) else {
         return Vec::new();
     };
-    let kern = Tag::from_bytes(b"kern");
-    let mut lookups: Vec<u16> = gpos
-        .features
-        .into_iter()
-        .filter(|feature| feature.tag == kern)
-        .flat_map(|feature| feature.lookup_indices.into_iter())
+    let kern = Tag::new(b"kern");
+    let mut lookups: Vec<u16> = features
+        .feature_records()
+        .iter()
+        .filter(|record| record.feature_tag() == kern)
+        .filter_map(|record| record.feature(features.offset_data()).ok())
+        .flat_map(|feature| {
+            feature
+                .lookup_list_indices()
+                .iter()
+                .map(|index| index.get())
+                .collect::<Vec<u16>>()
+        })
         .collect();
     lookups.sort_unstable();
     lookups.dedup();
@@ -203,7 +277,7 @@ impl Sink {
     }
 }
 
-impl ttf_parser::OutlineBuilder for Sink {
+impl OutlinePen for Sink {
     fn move_to(&mut self, x: f32, y: f32) {
         let to = self.at(x, y);
         self.path.move_to(to);
@@ -235,7 +309,7 @@ fn line(
     face: &Face<'_>,
     text: &str,
     spec: &TextSpec<'_>,
-    (scale, kern_lookups): (f64, &[u16]),
+    scale: f64,
     warnings: &mut Vec<TextWarning>,
 ) -> (kurbo::BezPath, f64) {
     let gap = spec.letter_spacing_fraction * spec.height_mm;
@@ -253,20 +327,23 @@ fn line(
         if character.is_control() {
             continue;
         }
-        let glyph = face.glyph_index(character).unwrap_or_else(|| {
+        let glyph = face.charmap.map(character).unwrap_or_else(|| {
             let warning = TextWarning::MissingGlyph { character };
             if !warnings.contains(&warning) {
                 warnings.push(warning);
             }
-            GlyphId(0)
+            GlyphId::NOTDEF
         });
         if let Some(before) = before {
-            pen += kerning(face, kern_lookups, before, glyph) * scale;
+            pen += face.kerning(before, glyph) * scale;
         }
         sink.dx = pen;
         // A glyph with no outline (a space) draws nothing.
-        let _ = face.outline_glyph(glyph, &mut sink);
-        let advance = f64::from(face.glyph_hor_advance(glyph).unwrap_or(0)) * scale;
+        if let Some(outline) = face.outlines.get(glyph) {
+            let unscaled = DrawSettings::unhinted(Size::unscaled(), LocationRef::default());
+            let _ = outline.draw(unscaled, &mut sink);
+        }
+        let advance = f64::from(face.glyphs.advance_width(glyph).unwrap_or(0.0)) * scale;
         // The gap follows a letter, and is no part of the line's width
         // after the last.
         width = pen + advance;
@@ -278,17 +355,17 @@ fn line(
 
 /// `spec` set in the outline font `face`.
 fn outline_layout(face: &Face<'_>, spec: &TextSpec<'_>, flatten_tolerance_mm: f64) -> Laid {
-    let scale = spec.height_mm / capital_units(face);
-    let lookups = kern_lookups(face);
+    let scale = spec.height_mm / face.capital_units();
     let mut warnings = Vec::new();
     let lines: Vec<(kurbo::BezPath, f64)> = spec
         .text
         .lines()
-        .map(|text| line(face, text, spec, (scale, &lookups), &mut warnings))
+        .map(|text| line(face, text, spec, scale, &mut warnings))
         .collect();
     let widest = lines.iter().map(|(_, width)| *width).fold(0.0, f64::max);
-    let line_units =
-        f64::from(face.ascender()) - f64::from(face.descender()) + f64::from(face.line_gap());
+    // The descent is below the baseline, and so negative.
+    let line_units = f64::from(face.metrics.ascent) - f64::from(face.metrics.descent)
+        + f64::from(face.metrics.leading);
     let advance = spec.line_spacing_fraction * line_units * scale;
     let mut contours: Vec<Polyline> = Vec::new();
     let mut baseline = 0.0;

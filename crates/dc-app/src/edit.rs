@@ -13,7 +13,7 @@
 //! pure function of the project that gives the one command to run, as
 //! `dc_app::properties` and `dc_app::shape` do.
 //!
-//! A shape's outline is read as paths ([`paths_of`]): its own, where it
+//! A shape's outline is read as paths (`paths_of`): its own, where it
 //! keeps curves, else each profile exactly. A shape that keeps its sizes
 //! is no path until it is converted (capability 84).
 

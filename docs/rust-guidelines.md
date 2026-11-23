@@ -282,7 +282,7 @@ file); it is not a `dc-*` crate.
 **Prefer**
 
 - One crate per job: `cavalier_contours` for offsets, `i_overlay` for boolean
-  ops, `kurbo` for curves, `usvg` for SVG, `ttf-parser` for fonts,
+  ops, `kurbo` for curves, `usvg` for SVG, `skrifa` for fonts,
   `thiserror`/`anyhow` for errors, `serde`/`serde_json` for files, `clap` for
   the CLI. Introducing a second crate for the same job needs an ADR. DXF is
   read by `dc-import`'s own group-code reader (#124): the `dxf` crate added
