@@ -25,7 +25,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.0-alpha.2"
+version = "0.5.0-alpha.1"
 edition = "2024"
 # The minimum supported Rust version, not the toolchain the gates run on.
 # rust-toolchain.toml pins that newer lint toolchain (issue #151); the MSRV
@@ -37,15 +37,15 @@ authors = ["The DreamCarve Contributors"]
 
 [workspace.dependencies]
 # Internal crates
-dc-geometry = { path = "crates/dc-geometry", version = "0.4.0-alpha.2" }
-dc-project = { path = "crates/dc-project", version = "0.4.0-alpha.2" }
-dc-cam = { path = "crates/dc-cam", version = "0.4.0-alpha.2" }
-dc-gcode = { path = "crates/dc-gcode", version = "0.4.0-alpha.2" }
-dc-import = { path = "crates/dc-import", version = "0.4.0-alpha.2" }
-dc-library = { path = "crates/dc-library", version = "0.4.0-alpha.2" }
-dc-job = { path = "crates/dc-job", version = "0.4.0-alpha.2" }
-dc-app = { path = "crates/dc-app", version = "0.4.0-alpha.2" }
-dreamcarve-shell = { path = "crates/dreamcarve-shell", version = "0.4.0-alpha.2" }
+dc-geometry = { path = "crates/dc-geometry", version = "0.5.0-alpha.1" }
+dc-project = { path = "crates/dc-project", version = "0.5.0-alpha.1" }
+dc-cam = { path = "crates/dc-cam", version = "0.5.0-alpha.1" }
+dc-gcode = { path = "crates/dc-gcode", version = "0.5.0-alpha.1" }
+dc-import = { path = "crates/dc-import", version = "0.5.0-alpha.1" }
+dc-library = { path = "crates/dc-library", version = "0.5.0-alpha.1" }
+dc-job = { path = "crates/dc-job", version = "0.5.0-alpha.1" }
+dc-app = { path = "crates/dc-app", version = "0.5.0-alpha.1" }
+dreamcarve-shell = { path = "crates/dreamcarve-shell", version = "0.5.0-alpha.1" }
 
 # External crates. Versions are set here once; crates use `workspace = true`.
 serde = { version = "1.0", features = ["derive"] }
