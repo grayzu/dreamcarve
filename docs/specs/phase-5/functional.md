@@ -261,7 +261,9 @@ capability 52); what a tool holds before it commits is not project data.
     A click on the first point (within 12 px, three points or more)
     closes the outline; `Enter`, **Done** or a double-click finishes it
     open; `Backspace` takes back the last point; `Escape` discards the
-    draft. A two-point line is a line. An open path is drawn dashed and
+    draft. While a **Length** or an **Angle** is typed, `Enter` takes
+    the point the fields give instead, and the next `Enter` finishes.
+    A two-point line is a line. An open path is drawn dashed and
     cut by Engrave or a Profile on the line, as an imported one is
     (phase 4, capability 57).
 88. **Arc segments** (`A`). While a path is being drawn, `A` (or the
@@ -272,7 +274,10 @@ capability 52); what a tool holds before it commits is not project data.
     or to a curve. Armed from the tools, **Arc** is the same tool
     starting in arc mode, so a lone arc is three clicks and `Enter`.
     Three points on a line make no arc and the click is ignored, with
-    the reason in the status bar.
+    the reason in the status bar. A typed radius under half the
+    distance between the ends is refused at its field. An arc that ends
+    on the first point closes the outline. Finishing while an arc waits
+    for its second click drops that arc and keeps the rest.
 89. **Spline** (`S`; PureCutCNC's spline tool). Each click adds a point
     the curve passes through; the curve between them is smooth
     (Catmull-Rom tangents, as PureCutCNC builds it), closes on a click
@@ -283,7 +288,9 @@ capability 52); what a tool holds before it commits is not project data.
 90. **What a new shape is.** A drawn shape is a feature instance with
     its own definition, placed where it was drawn, named for its kind
     and the next free number (*Rectangle 1*, *Slot 2*, *Line 3*; a
-    six-sided polygon is *Hexagon 1*, as PureCutCNC names them),
+    six-sided polygon is *Hexagon 1*, as PureCutCNC names them; a path
+    is a *Line*, an *Arc* or a *Spline* when its segments are all of
+    that kind, else a *Path*),
     selected when the tool is left, visible and unlocked. It goes at the
     end of the Design Tree, in the folder that holds the selection if
     there is one. The tool bar's **Construction** switch (100) makes the

@@ -16,6 +16,7 @@
 //! history, and gone when another tool is armed.
 
 mod draw;
+mod path;
 
 use std::collections::BTreeMap;
 
@@ -205,6 +206,9 @@ pub struct ToolBar {
     pub prompt: String,
     /// The sizes of the step in hand.
     pub fields: Vec<SizeRow>,
+    /// Whether **Done** would make a shape now: a box tool's shape with
+    /// the sizes as they read, a path with the points it has.
+    pub can_finish: bool,
 }
 
 /// How a rectangle's corners are finished, as the Rectangle tool's
@@ -322,6 +326,8 @@ pub(crate) struct Session {
     pub(crate) draft: Draft,
     /// How far a drawing tool has got.
     state: draw::State,
+    /// The path the Line, Arc or Spline tool is drawing.
+    path: path::PathDraft,
     /// Where the pointer last was, with what was held.
     pointer: Option<Pointer>,
     /// Where the primary button went down, mm: a release far from it is
@@ -347,16 +353,34 @@ impl App {
     /// drawing tool becomes the one the Draw button holds
     /// ([`crate::Prefs::drawing_tool`]). While an operation's targets are
     /// being edited the drawing is theirs, and only Select can be armed.
+    ///
+    /// Line, Arc and Spline are one path's three kinds of span
+    /// (capability 88): arming one while another has a path begun keeps
+    /// the path, and the spans that follow are the new tool's.
     pub fn arm(&mut self, tool: Tool) {
         if self.target_editing().is_some() && tool != Tool::Select {
             return;
         }
-        self.tool = Session {
-            tool,
-            // The switch outlives a change of tool.
-            construction: self.tool.construction,
-            ..Session::default()
-        };
+        let same_path = matches!(
+            (self.tool.tool, tool),
+            (Tool::Draw(from), Tool::Draw(to)) if path::draws(from) && path::draws(to)
+        ) && self.tool.path.begun();
+        if same_path {
+            self.tool.tool = tool;
+            self.tool.path.changed_tool();
+            self.tool.pins.clear();
+            self.tool.problems.clear();
+            if let Tool::Draw(drawing) = tool {
+                self.refresh_path_draft(drawing);
+            }
+        } else {
+            self.tool = Session {
+                tool,
+                // The switch outlives a change of tool.
+                construction: self.tool.construction,
+                ..Session::default()
+            };
+        }
         if let Tool::Draw(drawing) = tool {
             self.prefs_mut().drawing_tool = drawing;
         }
@@ -375,6 +399,9 @@ impl App {
             (Tool::Draw(drawing), event) if draw::draws(drawing) => {
                 return self.draw_event(drawing, event);
             }
+            (Tool::Draw(drawing), event) if path::draws(drawing) => {
+                return self.path_event(drawing, event);
+            }
             (_, Event::Move(pointer)) => {
                 self.tool.draft.snap = Some(self.snap_at(&pointer, None, &[]));
             }
@@ -391,6 +418,7 @@ impl App {
     pub fn tool_bar(&self) -> Option<ToolBar> {
         match self.tool.tool {
             Tool::Draw(drawing) if draw::draws(drawing) => Some(self.draw_bar(drawing)),
+            Tool::Draw(drawing) if path::draws(drawing) => Some(self.path_bar(drawing)),
             _ => None,
         }
     }

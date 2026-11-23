@@ -1445,6 +1445,10 @@ footer = "{name} · {date} · DreamCarve {version}"
 # "Rectangle 1". A regular polygon is named for its sides, as PureCutCNC
 # names them.
 [draw.name]
+line = "Line"
+arc = "Arc"
+spline = "Spline"
+path = "Path"
 rectangle = "Rectangle"
 circle = "Circle"
 ellipse = "Ellipse"
@@ -1475,6 +1479,11 @@ polygon_second_flats = "Click the middle of a side, or type its radius"
 slot_first = "Click the centre of one end"
 slot_second = "Click the centre of the other end, or type its length"
 slot_width = "Click to set the width, or type it"
+path_first = "Click the first point"
+line_next = "Click the next point; Enter finishes, a click on the first point closes"
+arc_end = "Click where the arc ends"
+arc_through = "Click a point the arc passes through, or type its radius"
+spline_next = "Click the next point of the curve; Enter finishes, a click on the first point closes"
 
 # The fields of the step in hand (capability 83).
 [draw.field]
@@ -1491,7 +1500,12 @@ slot_width = "Width"
 # Why a typed size was refused, shown at its field.
 [draw.problem]
 not_positive = "a size must be greater than 0"
+radius_too_small = "an arc between these ends has a radius of {least} or more"
 not_an_angle = "`{text}` is not an angle; type degrees, anticlockwise from +X, as 30 or -45.5"
+
+# Why a click was refused, shown in the status bar.
+[draw.refused]
+no_arc = "No arc passes through three points in a line. Click a point to one side of the two ends."
 
 # The sizes written beside a shape being drawn (capability 83a).
 [draw.label]

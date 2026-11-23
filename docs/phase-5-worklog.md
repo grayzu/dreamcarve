@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 5: 3,569.
+`0.5.0-alpha.1`. After slice 6: 3,577.
 
 ## Decisions waiting for the maintainer
 
@@ -72,6 +72,17 @@ Decisions made while building are added here.
   to its flats takes the click as the middle of a side, not a corner; a
   slot whose width is typed with its length and angle is made at once,
   as PureCutCNC makes it.
+- Slice 6: Line, Arc and Spline are one path's three kinds of segment,
+  so changing among them keeps the path being drawn (upstream's
+  composite tool; its separate polygon and spline tools are folded in).
+  A path is named *Line*, *Arc* or *Spline* when its segments are all
+  of that kind, else *Path*. A double-click finishes any of the three
+  (upstream: a polygon only). A typed radius bows the arc to the
+  pointer's side and is the short way round; an arc past half a turn
+  is drawn through a point. `Enter` takes the typed point while a
+  length or an angle is typed, and finishes the path when none is. A
+  closed path is saved in the direction it was drawn, not turned
+  counter-clockwise as the sized shapes are.
 
 ## Slices
 
@@ -88,7 +99,7 @@ The numbers are the design spec's.
 | 3 | Paths: `dc_geometry::path` edits a path node by node, `profileEdit.ts` ported with its tests on nodes that each hold the span leaving them: the arc through three points (`bulge_through`), a spline through points (Catmull-Rom, closed or open), split a span, delete a node, break, delete a span, fillet and chamfer a corner with the reason when one is refused, change a span's kind, move a node (an arc beside it rebuilt through its old middle), move a handle (smooth or alone), reshape an arc by its middle or its radius, reverse, close. This is the path geometry of slices 10 to 12 as well; those add the tool. Three properties. Gate: 3,517 tests | done |
 | 4 | The tool model and snapping, in the app core: `dc_app::tool` (the tool in use, a drawing tool the Draw button holds, events, the draft the window paints), `dc_app::snap` ported from PureCutCNC's `resolveSketchSnap` with its tests (endpoint, midpoint, centre, intersection, on outline, perpendicular, grid; rank then distance), `dc_geometry::intersect` ported from `segmentIntersection.ts` (brought forward from slice 15: the Intersection snap reads it), a scene shape's centre and construction flag, and the snapping and drawing preferences in `gui.toml` (`[snap]`, `[drawing]`). No window yet: that is slice 9. Gate: 3,550 tests | done |
 | 5 | Rectangle, Circle, Ellipse, Polygon and Slot, in the app core: `Command::AddShapes`; the tools' state machine (`dc_app::tool::draw`) with PureCutCNC's click sequences, a drag as two points, `Shift` for a square and `Alt` from the centre, every step typed (the first point as X and Y from the origin, then the sizes; a typed size is pinned and the rest follows the pointer), a refused size marked at its field, the tool bar's prompt and fields as data, the size label, sticky tools, names by the next free number, the Construction switch, the selection's folder; the tools' options in `gui.toml`. Gate: 3,569 tests | done |
-| 6 | Line, Arc, Spline | todo |
+| 6 | Line, Arc and Spline, in the app core (`dc_app::tool::path`): one path drawn a point at a time, each span a line, an arc (its end, then a point it passes through, or a typed radius) or a curve (Catmull-Rom through its points); changing among the three keeps the path; a click on the first point closes, `Enter`, Done or a double-click finishes open, `Backspace` takes back a point; the next point by typed length and angle; lines and arcs saved as their outline, a path with a curve as `Shape::Path` and its flattened outline; three points in a line refused with the reason; the tool bar's `can_finish`. Gate: 3,577 tests | done |
 | 7 | Gear | todo |
 | 8 | Sizes: the Shape section, stretching, Convert to Path | todo |
 | 9 | The window, drawing | todo |

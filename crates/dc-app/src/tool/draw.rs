@@ -202,6 +202,7 @@ impl App {
             tool: Tool::Draw(drawing),
             prompt: strings.get(prompt).to_owned(),
             fields,
+            can_finish: self.made(drawing).is_some(),
         }
     }
 
@@ -521,7 +522,7 @@ impl App {
 
     /// The folder a new shape goes in: the one that holds the selection,
     /// when the whole selection is in one (capability 90).
-    fn selection_folder(&self) -> Option<dc_project::FolderId> {
+    pub(super) fn selection_folder(&self) -> Option<dc_project::FolderId> {
         let selected = self.selection().instances();
         let mut folders = selected.iter().map(|id| {
             self.project()
@@ -538,7 +539,7 @@ impl App {
 
     /// Reads a typed size: pins it, or says at its field why not. Empty
     /// text unpins it.
-    fn type_size(&mut self, field: SizeField, text: &str) {
+    pub(super) fn type_size(&mut self, field: SizeField, text: &str) {
         self.tool.problems.remove(&field);
         if text.trim().is_empty() {
             self.tool.pins.remove(&field);
@@ -573,7 +574,7 @@ impl App {
     }
 
     /// Sets a tool's option, kept for the shapes that follow.
-    fn set_option(&mut self, option: ToolOption) {
+    pub(super) fn set_option(&mut self, option: ToolOption) {
         let units = self.project().display_units;
         match option {
             ToolOption::Corners(corners) => self.prefs_mut().drawing.corners = corners,
@@ -656,7 +657,7 @@ fn step_fields(drawing: Drawing, state: State) -> &'static [SizeField] {
     }
 }
 
-const fn field_label(field: SizeField) -> StrKey {
+pub(super) const fn field_label(field: SizeField) -> StrKey {
     match field {
         SizeField::X => StrKey::DrawFieldX,
         SizeField::Y => StrKey::DrawFieldY,

@@ -291,7 +291,7 @@ pub struct Draft { pub outlines: Vec<Polyline>,        // the shape as it would 
                    pub snap: Option<Snapped>,          // the marker and its guide
                    pub labels: Vec<Label> }            // 83a: a size and where to write it
                                                        // (nodes and highlights join it with their tools)
-pub struct ToolBar { pub tool: Tool, pub prompt: String, pub fields: Vec<SizeRow> }
+pub struct ToolBar { pub tool: Tool, pub prompt: String, pub fields: Vec<SizeRow>, pub can_finish: bool }
 pub struct SizeRow { pub field: SizeField, pub label: String, pub text: String, pub quantity: Quantity,
                      pub pinned: bool, pub problem: Option<String> }
 ```
@@ -498,7 +498,20 @@ Two-point tools (Rectangle, Circle, Ellipse, Polygon) share one
 machine: `Idle → First(p1)` on a press's point, then a `Release` more
 than 4 px from the press is the second point (a drag), else the next
 `Press` is. Slot is `Idle → First → Second → width`. Line, Arc and
-Spline share `PathDraft { nodes, mode, pending_arc_end }`. Gear is
+Spline share `PathDraft { points, spans, arc_end }` (`tool/path.rs`):
+the points clicked, what runs between each two (a line, an arc with its
+bulge, or a curve), and the end of an arc that waits for its through
+point. The three are one path's three kinds of span: `App::arm` keeps
+the draft when it changes among them, so `A`, `S` and `P` change what
+the next span is. A point is taken on the press. `Enter` takes the
+point the fields give while a size is typed, and finishes the path
+open when none is; **Done** and a double-click finish it (a
+double-click's second press lands on the first and adds nothing).
+Finishing drops an arc's end that still waits. A typed radius gives
+the minor arc, `bulge = sagitta / half chord`, signed by the pointer's
+side of the chord. When the path is made, each run of curves is
+`Path::spline` through its points, its two ends corners; a path that
+is all curves is one spline, open or closed. Gear is
 `Idle → Centre → Sizes`, the last waiting for **Done**. Every machine
 answers `Field` events by pinning that size and recomputing the preview
 point from the fields (`manualEntry.ts`'s `computeDimensionEditPreviewPoint`),
@@ -509,7 +522,10 @@ A committed shape is `AddShapes` with the shape's outline in definition
 space and the instance transform that places it: a translation to the
 centre for the box shapes, with a rotation for a Slot (its axis) and a
 Polygon (its first corner). A path is saved in project coordinates
-under an identity transform, as an import is.
+under an identity transform, as an import is: with only lines and
+arcs it is its outline and has no `shape`; with a curve it is
+`Shape::Path` and its flattened outline. It is named for its spans
+when they are all of a kind (*Line*, *Arc*, *Spline*), else *Path*.
 
 ### Sizes as placed, and stretching
 
@@ -717,9 +733,11 @@ serve Extend (`line_line_crossing`, `line_arc_two_hits`, `line_arc_tangent`,
 `points_snap_and_sizes_are_shown`, `a_new_shape_joins_the_selections_folder`;
 `tests/command.rs` `add_shapes_takes_the_next_ids_and_refuses_what_cannot_be`,
 with `AddShapes` in `every_command_round_trips_through_the_file` and
-`labels_name_the_thing`; for slice 6 `line_open_and_closed`,
+`labels_name_the_thing`; for slice 6, in `tests/draw_path.rs`,
+`line_open_and_closed`, `done_double_click_and_escape`,
 `backspace_takes_back_a_point`, `arc_segment_through_a_point`,
-`spline_is_a_path_with_cubics`; for slice 7 `gear_previews_and_commits`
+`arc_by_a_typed_radius`, `line_by_typed_sizes`,
+`spline_is_a_path_with_cubics`, `a_line_can_go_on_as_a_curve`; for slice 7 `gear_previews_and_commits`
 (acc 108–112, 114, 129).
 
 **Parametric edits (slice 8)** `dc_app::shape::` `rows_per_kind`,
