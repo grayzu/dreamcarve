@@ -88,6 +88,8 @@ pub enum Command {
     EditNodes,
     /// Edit nodes: break the path at the selected node.
     BreakPath,
+    /// The Viewport's Measure tool (capability 103).
+    Measure,
     /// Shape ▸ Offset… (capability 94).
     Offset,
     /// Shape ▸ Join… (capability 97).
@@ -565,6 +567,12 @@ pub const SHORTCUTS: &[Shortcut] = &[
         NONE,
         &[Key::B],
         "While editing nodes, break the path at the selected node",
+    ),
+    key_only(
+        Command::Measure,
+        NONE,
+        &[Key::K],
+        "Take up the Measure tool: two clicks read the distance between them",
     ),
     menu_row(
         Command::Offset,

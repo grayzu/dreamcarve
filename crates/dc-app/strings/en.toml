@@ -479,6 +479,8 @@ nodes = "Edit nodes"
 nodes_help = "Edit the nodes of the selected path; a double-click on a path does the same"
 trim = "Trim"
 trim_help = "Click the part of an outline to trim away, between two crossings; Escape ends"
+measure = "Measure"
+measure_help = "Measure between two points, and read the length and area of the selected shape; Escape ends"
 draw = "Draw: {tool}"
 draw_help = "Draw with the {tool} tool: the drawing tool last used"
 draw_tools = "Drawing tools"
@@ -1872,6 +1874,29 @@ select = "Select one picture first, then choose this again"
 first = "Click a point on the picture"
 second = "Click a second point, a known distance from the first"
 distance = "Type the real distance between the points, then Done"
+
+# The Measure tool (capability 103): a tape between two points, and the
+# length and area of the one shape selected.
+[measure]
+distance = "Distance"
+distance_help = "How far apart the two points are."
+dx = "ΔX"
+dx_help = "How far the second point is from the first along X: negative to the left."
+dy = "ΔY"
+dy_help = "How far the second point is from the first along Y: negative downwards."
+angle = "Angle"
+angle_help = "The direction from the first point to the second, anticlockwise from +X: 0 to the right, 90 straight up."
+angle_value = "{angle}°"
+length = "Length"
+length_help = "The length of the selected shape's outline, every outline of it, as it is placed."
+area = "Area"
+area_help = "The area the selected shape encloses, its holes left out, as it is placed. An open path has none."
+label = "{distance} · ΔX {dx} · ΔY {dy} · {angle}°"
+
+[measure.prompt]
+from = "Click the point to measure from"
+to = "Click the point to measure to"
+again = "Click to measure again; Escape ends"
 
 [trim]
 prompt = "Click the part of an outline to trim away, between two crossings"

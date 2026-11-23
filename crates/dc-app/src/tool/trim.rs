@@ -206,6 +206,7 @@ impl App {
     /// The tool bar for the Trim tool.
     pub(super) fn trim_bar(&self) -> ToolBar {
         ToolBar {
+            readings: Vec::new(),
             tool: Tool::Trim,
             prompt: self.strings().get(StrKey::TrimPrompt).to_owned(),
             fields: Vec::new(),

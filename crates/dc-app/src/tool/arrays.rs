@@ -414,6 +414,7 @@ impl App {
             }
         };
         ToolBar {
+            readings: Vec::new(),
             tool: Tool::Adjust(Adjust::Array),
             prompt: strings.get(prompt).to_owned(),
             can_finish: ready.is_ok() && self.tool.problems.is_empty(),

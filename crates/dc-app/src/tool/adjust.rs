@@ -343,6 +343,7 @@ impl App {
             Err(error) => Some(error.to_string()),
         };
         ToolBar {
+            readings: Vec::new(),
             tool: Tool::Adjust(adjust),
             prompt: strings.get(prompt).to_owned(),
             fields: vec![SizeRow {

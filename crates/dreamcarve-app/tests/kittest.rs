@@ -6058,6 +6058,14 @@ fn keyboard_shortcuts_reach_their_commands() {
     reached.insert(Key::BreakPath);
     h.key_press(egui::Key::Escape);
     h.run();
+    // K takes up the Measure tool; Escape puts it down.
+    h.key_press(egui::Key::K);
+    h.run();
+    assert_eq!(h.state().app().tool(), dc_app::Tool::Measure, "K");
+    reached.insert(Key::Measure);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.state().app().tool(), dc_app::Tool::Select);
     h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::O);
     h.run();
     assert_eq!(

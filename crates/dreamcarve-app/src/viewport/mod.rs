@@ -564,13 +564,13 @@ impl ViewportState {
 }
 
 /// Whether the armed tool takes the pointer's clicks and moves as its own
-/// events: a drawing tool, Edit nodes, Trim, or a Shape command that is
-/// taking its value, outside target editing. Select's are phase 4's
+/// events: a drawing tool, Edit nodes, Trim, Measure, or a Shape command
+/// that is taking its value, outside target editing. Select's are phase 4's
 /// gestures and the Tab tool's its one click.
 fn takes_pointer(app: &App) -> bool {
     matches!(
         app.tool(),
-        Tool::Draw(_) | Tool::Nodes | Tool::Trim | Tool::Adjust(_)
+        Tool::Draw(_) | Tool::Nodes | Tool::Trim | Tool::Measure | Tool::Adjust(_)
     ) && app.target_editing().is_none()
 }
 
@@ -671,6 +671,7 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             Shortcut::DrawText,
             Shortcut::EditNodes,
             Shortcut::BreakPath,
+            Shortcut::Measure,
             Shortcut::Offset,
             Shortcut::Join,
         ] {
@@ -1921,6 +1922,20 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
         transform_handles(ui, &painter, pane, state, view, camera);
     }
     draft::paint(ui, &painter, pane, state.app, camera);
+    // A selection dragged or resized reads its size beside it, as a
+    // shape being drawn does (phase 5, capability 83a).
+    let units = state.app.project().display_units;
+    let strings = state.app.strings();
+    let size = match (&view.drag, &view.preview, &view.picture_preview) {
+        (Some(Drag::Transform { handles, grab, .. }), Some(preview), _) => {
+            handles::size_label(strings, units, handles, *grab, preview.delta)
+        }
+        (_, _, Some(preview)) => pictures::size_label(state, preview),
+        _ => None,
+    };
+    if let Some(size) = size {
+        draft::size_label(ui, &painter, pane, camera, &size);
+    }
 
     if let Some(Drag::Marquee { start }) = view.drag
         && let Some(now) = ui.input(|i| i.pointer.interact_pos())

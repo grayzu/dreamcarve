@@ -2351,6 +2351,7 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         Shortcut::GoToExport => Some(Action::GoTo(Step::Export)),
         Shortcut::SelectTool => Some(Action::Arm(dc_app::Tool::Select)),
         Shortcut::EditNodes => Some(Action::Arm(dc_app::Tool::Nodes)),
+        Shortcut::Measure => Some(Action::Arm(dc_app::Tool::Measure)),
         // Only the Edit nodes tool has a path to break.
         Shortcut::BreakPath => (app.tool() == dc_app::Tool::Nodes).then_some(Action::Tool(
             dc_app::tool::Event::Node(dc_app::tool::NodeAction::Break),

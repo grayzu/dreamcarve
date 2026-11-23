@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 25: 3,716.
+`0.5.0-alpha.1`. After slice 26: 3,722.
 
 ## Decisions waiting for the maintainer
 
@@ -274,6 +274,18 @@ Decisions made while building are added here.
   regenerates no Photo V-Carve: the digest reads the bitmap with its
   opacity left out. **Done** is offered once the distance typed
   differs from the one the points have.
+- Slice 26: Measure is in the Draw button's popover, under Trim, with
+  its key `K`; the spec had it as a button of the pill, and a sixth
+  button there costs the zoom buttons at the Viewport's least width
+  (the same reason Trim is in the popover). ΔX and ΔY are signed and
+  the angle runs anticlockwise from +X through 360, where PureCutCNC
+  shows both without their signs. A tape that is laid is dashed like
+  the one in progress (upstream draws it solid). A shape's Length is
+  the sum of all its outlines, holes too; its Area leaves holes out. A
+  selection being rotated shows no size label, and a dragged picture
+  shows one as a shape does. The Draw menu of the menu bar lists the
+  drawing tools only: Trim and Measure are reached from the popover
+  and, for Measure, `K`.
 
 ## Slices
 
@@ -330,7 +342,7 @@ The numbers are the design spec's.
 | Slice | What | Status |
 | --- | --- | --- |
 | 25 | Backdrops: `SetBitmapOpacity` and `PlaceBitmap`, `pictures::{opacity, scale_by_two_points}`, the digest without opacity, a locked picture not picked on the Viewport, *Set scale…* (`tool::scale`), the Opacity field and *Set scale…* in Properties, the backdrop review pictures. Gate: 3,716 tests | done |
-| 26 | Measure and live sizes | todo |
+| 26 | Measure (`tool::measure`: the tape, a shape's length and area, `ToolBar::readings`, `Draft::dashed`), `K`, the popover's row, and the size a selection reads while it is dragged or resized (`handles::size_label`); the Measure review pictures. Gate: 3,722 tests | done |
 
 ### 5.6 Release
 

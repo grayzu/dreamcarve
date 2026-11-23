@@ -1151,6 +1151,7 @@ impl App {
             enabled,
         };
         let mut bar = ToolBar {
+            readings: Vec::new(),
             tool: Tool::Nodes,
             prompt: String::new(),
             fields: Vec::new(),

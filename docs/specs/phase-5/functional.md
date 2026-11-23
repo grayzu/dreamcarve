@@ -74,14 +74,15 @@ capability 52); what a tool holds before it commits is not project data.
 
 81. **Tools.** The Viewport has one tool in use at a time, shown pressed
     in its top-left pill: **Select** (`V`), **Edit nodes** (`N`, 92),
-    one **Draw** button, the **Tab tool** (`T`, phase 4) and
-    **Measure** (`K`, 103). The Draw button holds the drawing tool
+    one **Draw** button and the **Tab tool** (`T`, phase 4). The Draw
+    button holds the drawing tool
     last used and arms it; its chevron opens a popover of the drawing
     tools, each with its icon, name and key: **Line** (`P`), **Arc**
     (`A`), **Spline** (`S`), **Rectangle** (`M`), **Circle** (`C`),
     **Ellipse** (`E`), **Polygon** (`G`), **Slot** (`O`), **Gear** and
-    **Text** (`⇧T`), and under a rule **Trim** (96), which the Draw
-    button shows pressed while it is armed. So the pill grows by three
+    **Text** (`⇧T`), and under a rule **Trim** (96) and **Measure**
+    (`K`, 103), each of which the Draw button shows pressed while it is
+    armed. So the pill grows by three
     buttons, not fifteen (`redesign.md`, principle 1), and keeps its
     zoom buttons in the narrowest Viewport the window allows.
 
@@ -198,9 +199,11 @@ capability 52); what a tool holds before it commits is not project data.
 83a. **Measurements while drawing.** The shape being drawn shows its
     sizes beside it in project units: a segment's length, an arc's
     radius, a rectangle's width and height, a circle's diameter, a
-    slot's length and width. A selection shows its bounding box's width
-    and height the same way while it is dragged or resized (phase 4's
-    status-bar read-out stays).
+    slot's length and width. A selection, of shapes or of pictures,
+    shows its bounding box's width and height the same way, under the
+    box, while it is dragged or resized (phase 4's status-bar read-out
+    stays). While it is rotated it shows none: the status bar reads the
+    angle.
 
 ### Drawing
 
@@ -664,12 +667,15 @@ capability 52); what a tool holds before it commits is not project data.
     popover, and its empty tree says *Draw a shape, or add a drawing*.
 103. **Measure** (`K`; PureCutCNC's tape measure). Two clicks, each
     snapping as any point does, show the distance between them, its ΔX
-    and ΔY, and its angle from +X, beside a dashed line; the
-    measurement stays until the next click starts another, or `Escape`
-    leaves the tool. With one shape selected and the tool armed, the
-    tool bar also shows that shape's **Length** (its outline's) and,
-    when closed, its **Area**. A measurement is not project data and is
-    not saved.
+    and ΔY, and its angle from +X, in the tool bar and beside a dashed
+    line; after the first click the line follows the pointer. ΔX and ΔY
+    are signed, from the first point to the second, and the angle is
+    anticlockwise from +X, from 0 up to 360. The measurement stays until
+    the next click starts another, or `Escape` leaves the tool. With
+    one shape selected and the tool armed, the tool bar also shows that
+    shape's **Length** (its outlines', every one) and, when they are
+    closed, its **Area** (holes left out), both as the shape is placed.
+    A measurement is not project data and is not saved.
 
 ### The file and the rest of the app
 

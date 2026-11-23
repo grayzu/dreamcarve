@@ -19,6 +19,7 @@ mod adjust;
 mod arrays;
 mod draw;
 mod gear;
+mod measure;
 mod node;
 mod path;
 mod scale;
@@ -38,6 +39,7 @@ pub use adjust::AdjustPrefs;
 pub use arrays::{ArrayKind, ArrayPrefs};
 pub use draw::MIN_SIZE_MM;
 pub(crate) use draw::{field_label, parse_angle_deg, polygon_name, size_text};
+pub use measure::{Measurement, ShapeSize, measurement, shape_size};
 pub use node::{
     BarAction, Control, HANDLE_HIT_PX, HandleMark, JOIN_PX, NODE_HIT_PX, NodeAction, NodeMark,
     NodeRef,
@@ -378,6 +380,21 @@ pub struct ToolBar {
     /// The words a Text is made of, while they are typed: a field of
     /// several lines.
     pub text: Option<TextRow>,
+    /// What the tool reads and nobody types: the Measure tool's
+    /// distance, deltas and angle, and a shape's length and area.
+    pub readings: Vec<Reading>,
+}
+
+/// Something a tool reads out in its bar (capability 103): a label and
+/// a value with its unit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reading {
+    /// What is read: *Distance*.
+    pub label: String,
+    /// What it is, for the tooltip and the help line.
+    pub help: String,
+    /// Its value, with its unit: `50 mm`.
+    pub text: String,
 }
 
 /// One of a tool's choices in the tool bar: a label and the few things
@@ -555,6 +572,8 @@ pub struct Draft {
     pub handles: Vec<HandleMark>,
     /// The selected span of it, to draw over the outline.
     pub highlights: Vec<Polyline>,
+    /// Lines drawn dashed: the Measure tool's tape (capability 103).
+    pub dashed: Vec<Polyline>,
     /// The box being dragged round nodes: its two corners, mm.
     pub marquee: Option<(Point, Point)>,
 }
@@ -591,6 +610,8 @@ pub(crate) struct Session {
     text: text::TextDraft,
     /// The two points a picture is being scaled by (capability 101).
     scale: scale::ScaleDraft,
+    /// The Measure tool's tape (capability 103).
+    measure: measure::MeasureDraft,
 }
 
 impl App {
@@ -665,6 +686,7 @@ impl App {
             (Tool::Draw(Drawing::Text), event) => return self.text_event(event),
             (Tool::Nodes, event) => return self.node_event(event),
             (Tool::Trim, event) => return self.trim_event(event),
+            (Tool::Measure, event) => return self.measure_event(event),
             (Tool::Adjust(adjust), event) => return self.adjust_event(adjust, event),
             (_, Event::Move(pointer)) => {
                 self.tool.draft.snap = Some(self.snap_at(&pointer, None, &[]));
@@ -687,6 +709,7 @@ impl App {
             Tool::Draw(Drawing::Text) => self.text_bar(),
             Tool::Nodes => self.node_bar(),
             Tool::Trim => self.trim_bar(),
+            Tool::Measure => self.measure_bar(),
             Tool::Adjust(adjust) => self.adjust_bar(adjust),
             _ => return None,
         };

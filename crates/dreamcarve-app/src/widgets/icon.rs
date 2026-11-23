@@ -157,6 +157,8 @@ pub enum Icon {
     Waypoints,
     /// `scissors`: the Trim tool.
     Scissors,
+    /// `ruler`: the Measure tool.
+    Ruler,
     /// `align-start-vertical`: Align left.
     AlignStartVertical,
     /// `align-center-vertical`: Align centre.
@@ -263,6 +265,7 @@ impl Icon {
             Self::Type => "type",
             Self::Waypoints => "waypoints",
             Self::Scissors => "scissors",
+            Self::Ruler => "ruler",
             Self::AlignStartVertical => "align-start-vertical",
             Self::AlignCenterVertical => "align-center-vertical",
             Self::AlignEndVertical => "align-end-vertical",
@@ -354,6 +357,7 @@ impl Icon {
             Self::Type => '\u{e198}',
             Self::Waypoints => '\u{e542}',
             Self::Scissors => '\u{e14e}',
+            Self::Ruler => '\u{e14b}',
             Self::AlignStartVertical => '\u{e271}',
             Self::AlignCenterVertical => '\u{e26d}',
             Self::AlignEndVertical => '\u{e26f}',
@@ -373,7 +377,7 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 84] = [
+    pub const ALL: [Self; 85] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -444,6 +448,7 @@ impl Icon {
         Self::Type,
         Self::Waypoints,
         Self::Scissors,
+        Self::Ruler,
         Self::AlignStartVertical,
         Self::AlignCenterVertical,
         Self::AlignEndVertical,

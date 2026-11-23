@@ -1348,3 +1348,66 @@ fn a_backdrop_is_faded_and_scaled_by_two_points() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Slice 26 (capability 103, acceptance 126): the Measure tool in the
+/// window. `K` takes it up, two clicks lay a tape whose readings are in
+/// the tool bar, the popover's row arms it too, and with a shape
+/// selected the bar reads its length and area.
+#[test]
+fn measure_reads_a_tape_and_the_selected_shape() {
+    let (mut h, dir) = plaque("measure");
+    common::go_to(&mut h, "Design");
+    h.state_mut().app_mut().select(Selection::Nothing);
+    h.key_press(egui::Key::K);
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Measure);
+    assert!(
+        h.query_all_by_label("Click the point to measure from")
+            .next()
+            .is_some()
+    );
+    let steps = h.state().app().undo_label().map(str::to_owned);
+    let at = on_screen(&h, Point::new(20.0, 100.0));
+    click_at(&mut h, at, egui::Modifiers::NONE);
+    h.run_steps(30);
+    let at = on_screen(&h, Point::new(40.0, 100.0));
+    click_at(&mut h, at, egui::Modifiers::NONE);
+    h.run_steps(8);
+    let read = h.state().app().measurement().expect("a tape is laid");
+    assert!((read.distance_mm - 20.0).abs() < 0.01, "{read:?}");
+    assert!(read.dy_mm.abs() < 0.01 && read.angle_deg.abs() < 0.1);
+    for label in ["Distance", "ΔX", "ΔY", "Angle"] {
+        assert!(
+            h.query_all_by_label_contains(label).next().is_some(),
+            "the bar reads {label}"
+        );
+    }
+    assert_eq!(
+        h.state().app().undo_label().map(str::to_owned),
+        steps,
+        "nothing is done to the project"
+    );
+    assert!(h.state().app().selection().instances().is_empty());
+
+    // Escape puts the tool down; the popover's row takes it up again,
+    // and a selected shape is read in the bar.
+    key(&mut h, egui::Key::Escape);
+    assert_eq!(tool(&h), Tool::Select);
+    let first = h.state().app().project().instances[0].id.clone();
+    h.state_mut()
+        .app_mut()
+        .select(Selection::Instances(vec![first.clone()]));
+    h.get_by_label("Drawing tools").click();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Measure").click();
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Measure);
+    assert_eq!(h.state().app().selection().instances(), [first]);
+    for label in ["Length", "Area"] {
+        assert!(
+            h.query_all_by_label_contains(label).next().is_some(),
+            "the bar reads the shape's {label}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

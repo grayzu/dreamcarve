@@ -223,6 +223,24 @@ pub(super) fn readout(state: &FrameState<'_>, preview: &Preview) -> String {
     }
 }
 
+/// The size the dragged pictures have as `preview` places them, written
+/// under their joint box (phase 5, capability 83a); `None` when the
+/// Scene draws none of them.
+pub(super) fn size_label(state: &FrameState<'_>, preview: &Preview) -> Option<dc_app::tool::Label> {
+    let app = state.app;
+    let placed = preview
+        .ids
+        .iter()
+        .filter_map(|id| app.scene().bitmap(id))
+        .map(|bitmap| preview.placed(&bitmap.id, bitmap.footprint))
+        .reduce(|joint, next| joint.including(next.min).including(next.max))?;
+    Some(dc_app::viewport::handles::box_label(
+        app.strings(),
+        app.project().display_units,
+        placed,
+    ))
+}
+
 /// A picture's mip chain, built or on its way.
 #[derive(Debug)]
 enum Chain {

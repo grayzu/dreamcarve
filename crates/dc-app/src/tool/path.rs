@@ -247,6 +247,7 @@ impl App {
             })
             .collect();
         ToolBar {
+            readings: Vec::new(),
             tool: Tool::Draw(drawing),
             prompt: strings.get(prompt).to_owned(),
             fields,

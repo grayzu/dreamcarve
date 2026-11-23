@@ -3160,3 +3160,117 @@ fn phase5_backdrop_screenshots() {
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Where the phase 5 Measure review pictures go.
+fn p5_measure_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-5/review/measure"),
+        PathBuf::from,
+    )
+}
+
+/// The phase 5 Measure set (`docs/phase-5-worklog.md`, slice 26): the
+/// Draw popover with *Measure*; a tape between two corners with its
+/// readings; a shape's length and area; and a selection reading its size
+/// while it is moved and while it is resized.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review phase5_measure -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed phase 5 Measure review pictures; run by hand"]
+fn phase5_measure_screenshots() {
+    let out = p5_measure_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    let dir = scratch("review-p5-measure");
+    let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
+        return;
+    };
+    click(&mut h, "Draw from scratch");
+    // A plate of 80 × 50 and a hole in it.
+    h.key_press(egui::Key::M);
+    h.run();
+    click_mm(&mut h, 20.0, 20.0);
+    h.run_steps(30);
+    click_mm(&mut h, 100.0, 70.0);
+    h.run_steps(30);
+    h.key_press(egui::Key::C);
+    h.run();
+    click_mm(&mut h, 40.0, 45.0);
+    h.run_steps(30);
+    click_mm(&mut h, 50.0, 45.0);
+    h.run_steps(30);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(8);
+    assert_eq!(h.state().app().project().instances.len(), 2);
+    let plate = h.state().app().project().instances[0].id.clone();
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.run_steps(8);
+
+    // 01: the Draw popover, with Trim and Measure under the rule.
+    h.get_by_label("Drawing tools").click();
+    h.run_steps(8);
+    shoot_in(&mut h, &out, "01-draw-popover-with-measure", &looks);
+    h.get_by_role_and_label(Role::Button, "Measure").click();
+    h.run_steps(8);
+
+    // The pointer moved to a project point; the bar takes some frames
+    // to settle when its readings appear.
+    let move_to = |h: &mut H, x: f64, y: f64| {
+        let at = common::on_screen(h, dc_geometry::Point::new(x, y));
+        h.event(egui::Event::PointerMoved(at));
+        h.run_steps(12);
+        at
+    };
+    let press = |h: &mut H, at: egui::Pos2, pressed: bool| {
+        h.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(12);
+    };
+
+    // 02: the first point taken, the tape following the pointer.
+    click_mm(&mut h, 20.0, 20.0);
+    h.run_steps(30);
+    move_to(&mut h, 70.0, 45.0);
+    shoot_in(&mut h, &out, "02-tape-following-the-pointer", &looks);
+
+    // 03: a tape laid corner to corner.
+    let at = move_to(&mut h, 100.0, 70.0);
+    press(&mut h, at, true);
+    press(&mut h, at, false);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "03-tape-corner-to-corner", &looks);
+
+    // 04: with a shape selected, its length and area.
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![plate.clone()]));
+    h.run_steps(8);
+    shoot_in(&mut h, &out, "04-shape-length-and-area", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(8);
+
+    // 05: the plate dragged, its size under it.
+    let from = move_to(&mut h, 60.0, 20.0);
+    press(&mut h, from, true);
+    let to = move_to(&mut h, 75.0, 32.0);
+    shoot_in(&mut h, &out, "05-moved-reading-its-size", &looks);
+    press(&mut h, to, false);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run_steps(8);
+
+    // 06: resized from a corner.
+    let from = move_to(&mut h, 100.0, 70.0);
+    press(&mut h, from, true);
+    let to = move_to(&mut h, 112.0, 77.5);
+    shoot_in(&mut h, &out, "06-resized-reading-its-size", &looks);
+    press(&mut h, to, false);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

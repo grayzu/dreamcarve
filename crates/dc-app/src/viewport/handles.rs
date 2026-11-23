@@ -17,10 +17,12 @@
 //! millimetres, Y up; the one flip is the camera's.
 
 use dc_geometry::{Point, Rect, Transform, approx_eq};
-use dc_project::{InstanceId, Project};
+use dc_project::{InstanceId, Project, Units};
 
 use crate::command::{about, centre, selection_bounds};
 use crate::error::CommandError;
+use crate::strings::{StrKey, Strings};
+use crate::tool::Label;
 use crate::viewport::camera::{Camera, Pos};
 
 /// The rotation handle's stem above the box's top edge, logical pixels.
@@ -132,6 +134,49 @@ pub fn handles(project: &Project, ids: &[InstanceId], camera: &Camera) -> Option
             .iter()
             .any(|i| i.locked && ids.contains(&i.id)),
     })
+}
+
+/// The size of `rect`, mm, written under the middle of its bottom edge
+/// (functional spec, capability 83a): `40 × 30` in `units`, as a
+/// rectangle being drawn shows its own.
+#[must_use]
+pub fn box_label(strings: &Strings, units: Units, rect: Rect) -> Label {
+    Label {
+        at_mm: Point::new(f64::midpoint(rect.min.x, rect.max.x), rect.min.y),
+        text: strings.fmt(
+            StrKey::DrawLabelBox,
+            &[
+                ("width", &crate::units::summary_text(rect.width_mm(), units)),
+                (
+                    "height",
+                    &crate::units::summary_text(rect.height_mm(), units),
+                ),
+            ],
+        ),
+    }
+}
+
+/// The size the selection has while a drag of `grab` asks for `delta`
+/// (capability 83a): its box as the release would leave it, moved or
+/// resized. `None` for a rotation: a box turned is no longer the
+/// selection's box, and the status bar reads the angle.
+#[must_use]
+pub fn size_label(
+    strings: &Strings,
+    units: Units,
+    handles: &Handles,
+    grab: Grab,
+    delta: Transform,
+) -> Option<Label> {
+    if matches!(grab, Grab::Rotate { .. }) {
+        return None;
+    }
+    let placed = about_centre(handles, delta);
+    let [first, rest @ ..] = handles.corners.map(|corner| placed.apply(corner));
+    let rect = rest
+        .into_iter()
+        .fold(Rect::from_point(first), Rect::including);
+    Some(box_label(strings, units, rect))
 }
 
 /// Why `ids` cannot be transformed: [`CommandError::Locked`] naming the

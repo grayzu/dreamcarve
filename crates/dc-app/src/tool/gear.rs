@@ -172,6 +172,7 @@ impl App {
                 })
                 .collect();
             return ToolBar {
+                readings: Vec::new(),
                 tool,
                 prompt: strings.get(prompt).to_owned(),
                 fields,
@@ -209,6 +210,7 @@ impl App {
         // The module, derived: shown while the sizes give one.
         let note = shape::module_note(strings, units, &gear, 1.0);
         ToolBar {
+            readings: Vec::new(),
             tool,
             prompt: strings.get(StrKey::DrawPromptGearSizes).to_owned(),
             fields,

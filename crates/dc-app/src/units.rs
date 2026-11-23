@@ -118,6 +118,20 @@ pub fn summary_text(value_mm: f64, units: Units) -> String {
     ))
 }
 
+/// An area the app shows, with its unit: `area_mm2` in the square of
+/// `units`, to a hundredth of a square millimetre or a thousandth of a
+/// square inch, trailing zeros dropped (`1200 mm²`, `1.86 in²`).
+#[must_use]
+pub fn area_text(area_mm2: f64, units: Units) -> String {
+    match units {
+        Units::Mm => format!("{} mm²", trimmed(&number(area_mm2, 2))),
+        Units::Inch => format!(
+            "{} in²",
+            trimmed(&number(area_mm2 / (MM_PER_INCH * MM_PER_INCH), 3))
+        ),
+    }
+}
+
 /// A shown length that is a limit the user must stay within (a V-bit's
 /// cone height, a tapered ball nose's cutting height): as
 /// [`summary_text`], rounded down, so a depth typed from what is shown

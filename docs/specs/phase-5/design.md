@@ -1129,6 +1129,41 @@ the tool bar of slice 9 is its form.
   locked. `viewport::pictures::quads` multiplies each quad's opacity by
   the picture's own.
 
+### Measure and live sizes (slice 26)
+
+- `tool::measure` (ported from `dimensionToolSlice.ts` and
+  `dimensionRendering.ts`, the tape alone): `measurement(from, to)` is
+  a `Measurement { from_mm, to_mm, distance_mm, dx_mm, dy_mm,
+  angle_deg }`, the deltas signed and the angle anticlockwise from +X in
+  [0, 360), 0 for no distance. `shape_size(project, id)` is a
+  `ShapeSize { length_mm, area_mm2 }` of the shape as placed: the sum
+  of its outlines' lengths, and, when all are closed, the area of the
+  regions `dc_geometry::nest` makes of them (`None` when one is open or
+  they cross).
+- The tool: `MeasureDraft { first, frozen }`. A press takes the snapped
+  point (the first point is the reference, so `Shift` holds 15°): the
+  first begins a tape and drops the one laid; the second lays it.
+  `App::measurement()` is the tape laid, else the one from the first
+  point to the pointer. `Escape` arms Select. The draft is the tape as
+  `Draft::dashed` (new: lines drawn dashed), a mark on each point
+  clicked, and one label at its middle: `50 · ΔX 30 · ΔY 40 · 53.13°`.
+- `ToolBar::readings` (new): `Reading { label, help, text }`, what a
+  tool reads and nobody types. Measure's are *Distance*, *ΔX*, *ΔY* and
+  *Angle*, then *Length* and *Area* of the one shape selected, each
+  with its unit (`units::area_text`: `1200 mm²`, `1.86 in²`).
+- Live sizes: `viewport::handles::box_label(strings, units, rect)` is a
+  box's `width × height` under the middle of its bottom edge, and
+  `size_label(strings, units, handles, grab, delta)` the selection's
+  box as the drag would leave it (`about_centre` applied to its
+  corners); `None` for a rotation.
+- The window: `Tool::Measure` takes the pointer; `draft::paint` draws
+  `dashed` 6 px on, 4 off; `tool_bar` draws each reading as a small
+  label and its value, one thing to a screen reader; the Draw popover
+  has *Measure* under *Trim* with its key, and the Draw button shows
+  the ruler pressed while it is armed; `keyboard.rs`: `Measure` (`K`).
+  The Viewport writes the size label while a `Drag::Transform` or a
+  picture drag has a preview (`pictures::size_label`).
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the
@@ -1363,7 +1398,11 @@ and `add_font_copies_the_file_and_chooses_it`, and `review::phase5_text_screensh
 `set_scale_is_two_clicks_and_a_distance`, `a_locked_picture_is_not_picked`;
 in the window `editing::a_backdrop_is_faded_and_scaled_by_two_points`
 and `review::phase5_backdrop_screenshots`;
-`tool::measure::distance_deltas_angle`, `length_and_area_of_a_shape` (acc 126).
+`tests/measure.rs`: `distance_deltas_angle`, `length_and_area_of_a_shape`
+(acc 126), `the_tape_is_two_clicks_and_stays_until_the_next`,
+`the_tape_snaps_to_what_is_drawn`, `a_dragged_selection_reads_its_size`
+(83a); in the window `editing::measure_reads_a_tape_and_the_selected_shape`
+and `review::phase5_measure_screenshots`.
 
 **The window (slices 9, 17, 24, 27)** `dreamcarve-app` `tests/drawing.rs`
 (slice 9): `the_draw_popover_lists_the_tools`,

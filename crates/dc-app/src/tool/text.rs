@@ -226,6 +226,7 @@ impl App {
             StrKey::TextPromptPlace
         };
         ToolBar {
+            readings: Vec::new(),
             tool: Tool::Draw(Drawing::Text),
             prompt: strings.get(prompt).to_owned(),
             fields: text::size_rows(

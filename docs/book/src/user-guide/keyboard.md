@@ -50,6 +50,7 @@ except in an open sheet.
 | V | V | Take up the Select tool, putting down the tool in use | — |
 | N | N | Edit the nodes of the selected path; a double-click on a path does the same | — |
 | B | B | While editing nodes, break the path at the selected node | — |
+| K | K | Take up the Measure tool: two clicks read the distance between them | — |
 | Shift+O | ⇧O | Offset the selected shapes by a distance | Shape ▸ Offset… |
 | Ctrl+J | ⌘J | Join the selected open paths whose ends meet | Shape ▸ Join… |
 | P | P | Draw lines: a path of straight segments, a click a point. While a path is being drawn, the next segment is a line | Draw ▸ Line |

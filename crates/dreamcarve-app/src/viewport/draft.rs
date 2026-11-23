@@ -22,6 +22,9 @@ use crate::shell::theme::{self, Palette};
 
 /// The stroke of the shape being drawn, px.
 const OUTLINE_PX: f32 = 1.5;
+/// A dash and a gap of the Measure tool's tape, px.
+const TAPE_DASH_PX: f32 = 6.0;
+const TAPE_GAP_PX: f32 = 4.0;
 /// Half a snap marker's size, px.
 const MARKER_PX: f32 = 5.0;
 /// A snap marker's stroke, px.
@@ -123,6 +126,24 @@ fn marker(painter: &egui::Painter, at: Pos2, kind: SnapKind, stroke: Stroke) {
     }
 }
 
+/// Writes `size`, a selection's box as a drag leaves it, under the point
+/// it is for (capability 83a): as a shape being drawn shows its sizes.
+pub(super) fn size_label(
+    ui: &Ui,
+    painter: &egui::Painter,
+    pane: Rect,
+    camera: &Camera,
+    size: &dc_app::tool::Label,
+) {
+    label(
+        ui,
+        painter,
+        window_pos(pane, camera, size.at_mm) + egui::vec2(0.0, LABEL_OFFSET_PX),
+        egui::Align2::CENTER_TOP,
+        &size.text,
+    );
+}
+
 /// Paints `app`'s draft over `pane`.
 pub(super) fn paint(ui: &Ui, painter: &egui::Painter, pane: Rect, app: &App, camera: &Camera) {
     let palette = Palette::current(ui);
@@ -134,6 +155,7 @@ pub(super) fn paint(ui: &Ui, painter: &egui::Painter, pane: Rect, app: &App, cam
         handles,
         highlights,
         marquee,
+        dashed,
     } = app.draft();
     let at = |p: Point| window_pos(pane, camera, p);
     let tolerance_mm = layers::tolerance_mm(layers::band(camera.px_per_mm));
@@ -146,6 +168,16 @@ pub(super) fn paint(ui: &Ui, painter: &egui::Painter, pane: Rect, app: &App, cam
         } else {
             painter.add(egui::Shape::line(points, stroke));
         }
+    }
+    // The Measure tool's tape: dashed, so it is not taken for a shape.
+    for line in dashed {
+        let points: Vec<Pos2> = line.vertices().iter().map(|v| at(v.point())).collect();
+        painter.extend(egui::Shape::dashed_line(
+            &points,
+            stroke,
+            TAPE_DASH_PX,
+            TAPE_GAP_PX,
+        ));
     }
     // The selected span, or the piece a trim would take: over the outline.
     let highlight = Stroke::new(HIGHLIGHT_PX, palette.viewport_shape_hover);

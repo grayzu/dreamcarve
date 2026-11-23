@@ -232,6 +232,7 @@ impl App {
             .to_string()
         });
         ToolBar {
+            readings: Vec::new(),
             tool: Tool::Adjust(Adjust::PictureScale),
             prompt: strings.get(prompt).to_owned(),
             fields,

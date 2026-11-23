@@ -90,8 +90,22 @@ fn name(strings: &dc_app::Strings, bar: &ToolBar) -> String {
         Tool::Adjust(dc_app::tool::Adjust::PictureScale) => {
             strings.get(StrKey::ScaleName).to_owned()
         }
-        Tool::Select | Tool::Tab | Tool::Measure => String::new(),
+        Tool::Measure => strings.get(StrKey::AppViewportMeasure).to_owned(),
+        Tool::Select | Tool::Tab => String::new(),
     }
+}
+
+/// A reading: its label, then what it reads, which nobody types. The
+/// two are one thing to a screen reader, *Distance 50 mm*.
+fn reading_part(ui: &mut Ui, reading: &dc_app::tool::Reading) {
+    let palette = Palette::current(ui);
+    ui.spacing_mut().item_spacing.x = 6.0;
+    let label = text(ui, &reading.label, TextStyle::Small, palette.text_secondary);
+    let value = text(ui, &reading.text, TextStyle::Body, palette.text_primary);
+    let whole = format!("{} {}", reading.label, reading.text);
+    value.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &whole));
+    let _ = label.union(value).on_hover_text(&reading.help);
+    ui.add_space(4.0);
 }
 
 /// One part of the bar, which stays whole when the bar wraps.
@@ -107,6 +121,8 @@ enum Part {
     Field(usize),
     /// The button at this index: one of the tool's actions.
     Action(usize),
+    /// The reading at this index: a label and what it reads.
+    Reading(usize),
     /// The note and **Done**.
     Tail,
 }
@@ -431,6 +447,7 @@ pub(super) fn show(
     parts.extend((0..bar.choices.len()).map(Part::Choice));
     parts.extend((0..bar.fields.len()).map(Part::Field));
     parts.extend((0..bar.actions.len()).map(Part::Action));
+    parts.extend((0..bar.readings.len()).map(Part::Reading));
     if bar.note.is_some() || bar.can_finish {
         parts.push(Part::Tail);
     }
@@ -490,6 +507,11 @@ pub(super) fn show(
                                 if button(ui, spec).clicked() {
                                     out.push(Action::Tool(Event::Node(action.action)));
                                 }
+                            }
+                        }
+                        Part::Reading(index) => {
+                            if let Some(reading) = bar.readings.get(index) {
+                                reading_part(ui, reading);
                             }
                         }
                         Part::Tail => {

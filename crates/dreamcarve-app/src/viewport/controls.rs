@@ -277,8 +277,9 @@ impl Fit {
     fn tools_px(&self) -> f32 {
         let padding = PILL_PX - CONTROL_PX;
         // Select, Edit nodes, Draw and its chevron, the Tab tool, the
-        // rule, Fit. Trim is in the chevron's popover: a sixth button
-        // would cost the zoom buttons at the Viewport's least width.
+        // rule, Fit. Trim and Measure are in the chevron's popover: a
+        // sixth button would cost the zoom buttons at the Viewport's
+        // least width.
         let tools = 5.0 * CONTROL_PX + CHEVRON_PX + RULE_PX + 6.0 * GAP_PX;
         match (self.zoom, self.level) {
             (true, true) => padding + tools + 2.0 * CONTROL_PX + self.zoom_px + 3.0 * GAP_PX,
@@ -428,6 +429,18 @@ fn draw_menu(ui: &Ui, chevron: &egui::Response, state: &FrameState<'_>, out: &mu
             if row.clicked() {
                 out.push(Action::Arm(dc_app::Tool::Trim));
             }
+            // Measure: a tool that draws nothing.
+            let measuring = state.app.tool() == dc_app::Tool::Measure;
+            let measure = strings.get(StrKey::AppViewportMeasure);
+            let keys = keyboard::binding(Shortcut::Measure)
+                .map_or_else(String::new, |(modifiers, key)| {
+                    crate::shell::window::shortcut_text(ui.ctx(), modifiers, key)
+                });
+            let row = draw_row(ui, Icon::Ruler, measure, &keys, measuring)
+                .on_hover_text(strings.get(StrKey::AppViewportMeasureHelp));
+            if row.clicked() {
+                out.push(Action::Arm(dc_app::Tool::Measure));
+            }
         });
 }
 
@@ -493,10 +506,14 @@ fn tools(
             let help = strings.fmt(StrKey::AppViewportDrawHelp, &[("tool", held_name)]);
             format!("{help} ({keys})")
         };
-        // While Trim is armed, from the popover, the button shows it.
+        // While Trim or Measure is armed, from the popover, the button
+        // shows it.
         let trimming = in_use == dc_app::Tool::Trim;
+        let measuring = in_use == dc_app::Tool::Measure;
         let draw_icon = if trimming {
             Icon::Scissors
+        } else if measuring {
+            Icon::Ruler
         } else {
             drawing_icon(held)
         };
@@ -506,7 +523,7 @@ fn tools(
             .height(CONTROL_PX)
             .named(&draw_name)
             .tooltip(&draw_tip)
-            .pressed(drawing || trimming)
+            .pressed(drawing || trimming || measuring)
             .enabled(!editing_targets);
         if button(ui, draw).clicked() {
             out.push(Action::Arm(dc_app::Tool::Draw(held)));
