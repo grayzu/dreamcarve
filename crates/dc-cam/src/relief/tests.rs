@@ -263,6 +263,7 @@ fn project(profiles: Vec<Polyline>, tools: Vec<Tool>) -> Project {
     let def = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Shape".into(),
+        shape: None,
         profiles,
     };
     p.definitions = BTreeMap::from([(def.id.clone(), def)]);
@@ -273,6 +274,8 @@ fn project(profiles: Vec<Polyline>, tools: Vec<Tool>) -> Project {
         name: "Shape".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     }];

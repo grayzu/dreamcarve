@@ -537,12 +537,15 @@ fn import_within(
             name: name.clone(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });
         definitions.push(FeatureDefinition {
             id: definition,
             name,
+            shape: None,
             profiles: shape.loops().cloned().collect(),
         });
     }

@@ -6,7 +6,9 @@
 //! for the Pocket, Drill and Engrave operations, entries, leads, corner
 //! relief and tool numbers; `docs/specs/phase-3/design.md`, "Data model →
 //! dc-project" for the V-Carve, the Inlay, the bitmap and the Photo
-//! V-Carve). Every type here is persisted in a `.dcv` file, so each one
+//! V-Carve; `docs/specs/phase-5/design.md`, "Data model → dc-project" for
+//! a definition's shape, folders, construction geometry and a bitmap's
+//! opacity). Every type here is persisted in a `.dcv` file, so each one
 //! denies unknown fields and serializes `Option` as `null`
 //! (`docs/rust-guidelines.md`, "Serialization"). `Option` fields are also
 //! required on load (`deserialize_with = "Option::deserialize"` turns off
@@ -21,8 +23,9 @@
 //! Geometry is Y-up, Z-up, millimetres (ADR-0001). Stock occupies
 //! `[0, width] × [0, height] × [0, thickness]` in project space.
 
-use crate::ids::{BitmapId, DefinitionId, InstanceId, OperationId, TabId, ToolId};
+use crate::ids::{BitmapId, DefinitionId, FolderId, InstanceId, OperationId, TabId, ToolId};
 use crate::post_processor::PostProcessorRef;
+use crate::shape::Shape;
 use crate::units_input;
 use dc_geometry::{Point, Polyline, Transform};
 use serde::{Deserialize, Serialize};
@@ -69,7 +72,12 @@ pub struct Project {
     /// Holding tabs placed on the outlines of instances (ADR-0005).
     /// Every enabled Profile that cuts a tab's outline rises over it.
     pub tabs: Vec<PlacedTab>,
-    /// Placed copies of definitions.
+    /// The Design Tree's folders (format 29; phase 5 functional spec,
+    /// capability 99). An instance names its folder; a folder holds no
+    /// list of its own. Empty for a migrated project.
+    pub folders: Vec<Folder>,
+    /// Placed copies of definitions, in the Design Tree's order, which
+    /// is also the drawing order.
     pub instances: Vec<FeatureInstance>,
     /// Pictures placed on the stock (format 27; functional spec,
     /// capability 46), each carved by the Photo V-Carves that name it.
@@ -236,7 +244,14 @@ pub struct FeatureDefinition {
     pub id: DefinitionId,
     /// Display name.
     pub name: String,
-    /// Outline polylines in definition space, millimetres, Y-up.
+    /// How the outline was made, for a shape drawn in the app with sizes
+    /// or curves to keep (format 29, ADR-0006); `None` for a plain
+    /// outline, which is every imported one. The app edits a shape by
+    /// this and writes `profiles` from it; nothing that cuts reads it.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub shape: Option<Shape>,
+    /// Outline polylines in definition space, millimetres, Y-up: what is
+    /// cut.
     pub profiles: Vec<Polyline>,
 }
 
@@ -259,6 +274,14 @@ pub struct FeatureInstance {
     /// Protected from edits. Reserved for the GUI (phase 4), like
     /// `visible`.
     pub locked: bool,
+    /// Construction geometry (format 29; phase 5 functional spec,
+    /// capability 100): drawn and snapped to, never cut. Validation
+    /// refuses a project whose operation names one.
+    pub construction: bool,
+    /// The folder this instance is filed in (format 29), or `None` at
+    /// the Design Tree's top level.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub folder: Option<FolderId>,
     /// Top of the feature, millimetres above the material bottom. `None`
     /// until the user sets it; nothing reads it yet, so it is never
     /// guessed. Reserved: validation checks only its range and that
@@ -269,6 +292,21 @@ pub struct FeatureInstance {
     /// until the user sets it, like `z_top_mm`.
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub z_bottom_mm: Option<f64>,
+}
+
+/// A folder of the Design Tree (format 29; phase 5 functional spec,
+/// capability 99). Folders do not nest. Its rows are the instances that
+/// name it, in the project's order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Folder {
+    /// This folder's id, `f<n>`; unique in the project.
+    pub id: FolderId,
+    /// Display name.
+    pub name: String,
+    /// Whether the folder is a group (CONTEXT: Group): its shapes are
+    /// selected together.
+    pub group: bool,
 }
 
 /// A grayscale picture placed on the stock (format 27; functional spec,
@@ -320,6 +358,11 @@ pub struct Bitmap {
     pub visible: bool,
     /// Protected from edits. Reserved for the GUI, as an instance's.
     pub locked: bool,
+    /// How strongly the picture shows on the Viewport (format 29; phase
+    /// 5 functional spec, capability 101), from
+    /// [`crate::MIN_BITMAP_OPACITY`] to 1. A display value: a Photo
+    /// V-Carve carves the same grooves whatever it is.
+    pub opacity_fraction: f64,
     /// The picture: an 8-bit grayscale PNG in base64, standard alphabet,
     /// padded, on one line of the file. Written by DreamCarve's own
     /// encoder, so the same pixels give the same text within one build.

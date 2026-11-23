@@ -326,6 +326,7 @@ fn with_profiles(profiles: Vec<Polyline>) -> Project {
         FeatureDefinition {
             id: DefinitionId::new("d1"),
             name: "Frame".into(),
+            shape: None,
             profiles,
         },
     );

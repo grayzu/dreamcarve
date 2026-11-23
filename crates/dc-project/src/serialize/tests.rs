@@ -16,7 +16,7 @@ use crate::validate::validate;
 use serde_json::json;
 
 /// The sample project as this build saves it.
-const CURRENT_FIXTURE: &str = include_str!("../../tests/fixtures/dcv/v28/sample.dcv");
+const CURRENT_FIXTURE: &str = include_str!("../../tests/fixtures/dcv/v29/sample.dcv");
 const V1_FIXTURE: &str = include_str!("../../tests/fixtures/dcv/v1/sample.dcv");
 /// The sample in the layout before #76: geometry first, and each vertex
 /// over five lines.
@@ -464,9 +464,10 @@ fn tapered_ball_nose_unset_fields_are_null() {
 
 #[test]
 fn tapered_ball_nose_is_format_28() {
+    const { assert!(crate::CURRENT_VERSION >= 28) };
     let text = save(&tapered_sample()).unwrap();
-    assert!(text.contains("\n  \"version\": 28,\n"), "{text}");
-    assert_eq!(crate::CURRENT_VERSION, 28);
+    let version = format!("\n  \"version\": {},\n", crate::CURRENT_VERSION);
+    assert!(text.contains(&version), "{text}");
 }
 
 #[test]
@@ -1473,7 +1474,8 @@ fn photo_v_carve_is_format_27() {
     assert_eq!(loaded.problems, vec![]);
 
     // The same text under version 26: `bitmaps` is not a 26 field.
-    let v26 = text.replacen("\"version\": 28,", "\"version\": 26,", 1);
+    let current = format!("\"version\": {},", crate::CURRENT_VERSION);
+    let v26 = text.replacen(&current, "\"version\": 26,", 1);
     let err = load(v26.as_bytes()).unwrap_err();
     assert!(
         matches!(
@@ -1491,7 +1493,7 @@ fn photo_v_carve_is_format_27() {
     // A version 26 file with no `bitmaps` but a Photo V-Carve.
     let sample = save(&sample_project()).unwrap();
     let v26 = sample
-        .replacen("\"version\": 28,", "\"version\": 26,", 1)
+        .replacen(&current, "\"version\": 26,", 1)
         .replacen("  \"bitmaps\": [],\n", "", 1)
         .replacen("\"kind\": \"profile\"", "\"kind\": \"photo_v_carve\"", 1);
     assert!(!v26.contains("bitmaps"), "fixture layout changed:\n{v26}");
@@ -1595,6 +1597,7 @@ fn bitmap_and_photo_fields_are_saved_in_order() {
             "height_mm",
             "visible",
             "locked",
+            "opacity_fraction",
             "png_base64",
         ]
     );

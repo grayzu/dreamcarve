@@ -69,6 +69,7 @@ fn project(shapes: &[(&str, Polyline)]) -> Project {
         let definition = FeatureDefinition {
             id: DefinitionId::new(format!("d_{id}")),
             name: format!("Shape {id}"),
+            shape: None,
             profiles: vec![outline.clone()],
         };
         p.instances.push(FeatureInstance {
@@ -78,6 +79,8 @@ fn project(shapes: &[(&str, Polyline)]) -> Project {
             name: format!("Shape {id}"),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });
@@ -1088,6 +1091,7 @@ fn with_pocket(mut project: Project, depth_mm: f64) -> Project {
     let definition = FeatureDefinition {
         id: DefinitionId::new("d_sq"),
         name: "Pocket".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 40.0, 40.0)],
     };
     project.instances.push(FeatureInstance {
@@ -1097,6 +1101,8 @@ fn with_pocket(mut project: Project, depth_mm: f64) -> Project {
         name: "Pocket".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     });

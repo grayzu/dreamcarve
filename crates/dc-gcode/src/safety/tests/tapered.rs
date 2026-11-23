@@ -685,6 +685,7 @@ fn generated_tapered_carves_pass_s17() {
         let around = FeatureDefinition {
             id: DefinitionId::new("dp"),
             name: "Around".into(),
+            shape: None,
             profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 190.0, 30.0)],
         };
         pocketed.definitions.insert(around.id.clone(), around);
@@ -695,6 +696,8 @@ fn generated_tapered_carves_pass_s17() {
             name: "Around".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

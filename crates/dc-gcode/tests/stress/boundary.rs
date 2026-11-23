@@ -165,6 +165,7 @@ pub fn boundary_case(base: &Case) -> Case {
         let definition = FeatureDefinition {
             id: DefinitionId::new(format!("bd{}", k + 1)),
             name: format!("Boundary {}", k + 1),
+            shape: None,
             profiles: drawn.profiles,
         };
         let id = InstanceId::new(format!("b{}", k + 1));
@@ -175,6 +176,8 @@ pub fn boundary_case(base: &Case) -> Case {
             name: format!("Boundary {}", k + 1),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

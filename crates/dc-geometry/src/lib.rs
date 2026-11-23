@@ -19,6 +19,7 @@ mod flatten;
 pub mod medial;
 mod merge;
 mod offset;
+mod path;
 mod point;
 mod polyline;
 pub mod profile;
@@ -46,6 +47,7 @@ pub use fill::{
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, KURBO_FLATTEN_SAFETY, flatten};
 pub use merge::{FilledHole, MergedParts, NearParts, merge_near_parts};
 pub use offset::{inset_is_empty, offset, offset_open, strip_ends};
+pub use path::{Path, PathNode, Span};
 pub use point::{EPS_MM, MAX_COORDINATE_MM, Point, Point3, Rect, Vec2, approx_eq};
 pub use polyline::{Arc, Polyline, Segment, Vertex};
 pub use region::{Region, area_mm2, nest};

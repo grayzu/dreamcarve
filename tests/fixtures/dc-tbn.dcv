@@ -1,5 +1,5 @@
 {
-  "version": 28,
+  "version": 29,
   "name": "dc-inlay",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -135,6 +135,7 @@
     }
   ],
   "tabs": [],
+  "folders": [],
   "instances": [
     {
       "id": "i1",
@@ -150,6 +151,8 @@
       "name": "letter-D",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -167,6 +170,8 @@
       "name": "letter-C",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -184,6 +189,8 @@
       "name": "frame",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     }
@@ -206,6 +213,7 @@
     "d1": {
       "id": "d1",
       "name": "letter-D",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -404,6 +412,7 @@
     "d2": {
       "id": "d2",
       "name": "letter-C",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -679,6 +688,7 @@
     "d3": {
       "id": "d3",
       "name": "frame",
+      "shape": null,
       "profiles": [
         {
           "vertices": [

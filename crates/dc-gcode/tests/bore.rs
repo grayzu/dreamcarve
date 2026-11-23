@@ -74,6 +74,7 @@ fn five_mm_hole() -> (Project, BoreOp) {
     let definition = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Hole".into(),
+        shape: None,
         profiles: vec![Polyline::circle(Point::new(0.0, 0.0), HOLE_MM / 2.0)],
     };
     project.definitions = BTreeMap::from([(definition.id.clone(), definition)]);
@@ -84,6 +85,8 @@ fn five_mm_hole() -> (Project, BoreOp) {
         name: "Hole".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     }];

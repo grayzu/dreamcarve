@@ -3,8 +3,9 @@
 
 //! The layout of a saved `.dcv` file (#76): serde_json's pretty printing,
 //! except that each vertex object is written on one line,
-//! `{ "x": 137.684, "y": 88.535, "bulge": 0.0 }`, instead of five. A drawing
-//! is mostly vertices, so this keeps the file short enough to edit by hand.
+//! `{ "x": 137.684, "y": 88.535, "bulge": 0.0 }`, instead of five, and so
+//! is each node of a path with curves. A drawing is mostly vertices, so
+//! this keeps the file short enough to edit by hand.
 //!
 //! Only whitespace differs from [`serde_json::to_string_pretty`]: the keys,
 //! their order and every number's digits are the same, so any JSON reader
@@ -16,8 +17,10 @@ use std::io::{self, Write};
 /// The indent of one nesting level, as serde_json's pretty printer.
 const INDENT: &[u8] = b"  ";
 
-/// The key whose array holds vertex objects (`Polyline::vertices`).
-const VERTICES_KEY: &str = "vertices";
+/// The keys whose arrays hold vertex objects (`Polyline::vertices`) and
+/// a path's nodes (`dc_geometry::Path`, format 29), each written on one
+/// line.
+const VERTEX_KEYS: [&str; 2] = ["vertices", "nodes"];
 
 /// How one open object or array is laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +63,8 @@ impl DcvFormatter {
                 compact_elements: true,
             }) => Frame::Compact { has_value: false },
             _ => Frame::Pretty {
-                compact_elements: bracket == b"[" && key.as_deref() == Some(VERTICES_KEY),
+                compact_elements: bracket == b"["
+                    && key.as_deref().is_some_and(|key| VERTEX_KEYS.contains(&key)),
             },
         };
         if let Frame::Pretty { .. } = frame {
@@ -190,8 +194,8 @@ impl Formatter for DcvFormatter {
         writer: &mut W,
         char_escape: serde_json::ser::CharEscape,
     ) -> io::Result<()> {
-        // A key with an escape is never `vertices`; spoil it so it cannot
-        // match by accident.
+        // A key with an escape is never one of `VERTEX_KEYS`; spoil it so
+        // it cannot match by accident.
         if let Some(key) = &mut self.key {
             key.push('\\');
         }

@@ -39,13 +39,18 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`.
+`0.5.0-alpha.1`. After slice 1: 3,449.
 
 ## Decisions waiting for the maintainer
 
 The functional spec's "Open questions" (ten) and the design spec's
 (four). Each has a choice taken so the work can proceed; none blocks.
 Decisions made while building are added here.
+
+- Slice 1: a size that cannot be is `out_of_range` at the shape's own
+  field, not a new `invalid_shape` code, so the app marks the field as it
+  marks any other; a bitmap's opacity the same. The design spec says so
+  now.
 
 ## Slices
 
@@ -57,7 +62,7 @@ The numbers are the design spec's.
 | Slice | What | Status |
 | --- | --- | --- |
 | 0 | The specs: `functional.md` (capabilities 81–106, acceptance 107–130, S21, the hook plate), `design.md` (27 slices), ADR-0006; `NOTES.md` folded in; the roadmap's phase 5 brought up to date | done |
-| 1 | Format 29: `shape`, `construction`, `folder`, `folders`, `opacity_fraction`; the migration, fixtures and problems | todo |
+| 1 | Format 29: a definition's `shape` (`dc_project::Shape`, eight kinds, data only), `dc_geometry::Path` (nodes with line, arc and cubic spans; exact from a polyline, flattened to one), an instance's `construction` and `folder`, `folders`, a bitmap's `opacity_fraction`; `v28_to_v29`; fixtures `v29/sample.dcv` and `drawing.dcv`; the problems `construction_targeted`, `duplicate_folder_id`, `dangling_folder`, and `out_of_range` at a shape's size or a bitmap's opacity; a path's nodes one per line in a saved file; the quick-start projects and the book's Project file, Images and first-cut chapters at 29. No program changed: a version 28 project exports byte for byte. Gate: 3,449 tests | done |
 | 2 | Shape outlines in `dc-geometry`, `Shape::outline`, `shape_outline_differs` | todo |
 | 3 | Paths with curves | todo |
 | 4 | The tool model and snapping | todo |

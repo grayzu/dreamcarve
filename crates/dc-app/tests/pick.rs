@@ -79,6 +79,7 @@ fn project(shapes: Vec<Shape>) -> Project {
             FeatureDefinition {
                 id: definition.clone(),
                 name: shape.id.to_owned(),
+                shape: None,
                 profiles: vec![shape.profile],
             },
         );
@@ -89,6 +90,8 @@ fn project(shapes: Vec<Shape>) -> Project {
             name: shape.id.to_owned(),
             visible: shape.visible,
             locked: shape.locked,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

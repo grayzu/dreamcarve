@@ -129,7 +129,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `28`. |
+| `version` | Format version. This build writes `29`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve: more than 0 and at most 0.1. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -140,6 +140,7 @@ The fields, in the order DreamCarve writes them:
 | `tools` | The tools. |
 | `operations` | The operations, in cutting order. |
 | `tabs` | The project's placed tabs. See [`tabs`](#tabs). |
+| `folders` | The Design Tree's folders (from format version 29). `[]` until you make one in the app. See [`folders`](#folders). |
 | `instances` | Placed copies of the shapes. |
 | `bitmaps` | Pictures placed on the stock, each stored in the file, for a Photo V-Carve to carve (from format version 27). `[]` in a project made from a drawing. See [`bitmaps`](#bitmaps). |
 | `post_processor` | Which bundled post-processor and version, and your settings for it. See [`post_processor`](#post_processor). |
@@ -268,6 +269,7 @@ corner.
 "d1": {
   "id": "d1",
   "name": "coaster",
+  "shape": null,
   "profiles": [
     {
       "vertices": [
@@ -296,6 +298,28 @@ Pocket and an Inside or Outside Profile cut only closed outlines, an On
 line Profile and an Engrave cut open ones too, and a Left or Right
 Profile cuts only open ones.
 
+A definition's `shape` is `null` for an outline that came from a drawing,
+as every shape `init` makes is. A shape drawn in the app with sizes to keep
+has a `shape` that says how its outline was made, so the app can change it
+by those sizes (from format version 29):
+
+| `kind` | Its sizes |
+| --- | --- |
+| `"rectangle"` | `width_mm`, `height_mm`, and `corner`: `"square"`, `{ "rounded": { "radius_mm": 5.0 } }` or `{ "chamfered": { "distance_mm": 5.0 } }`, at most half the shorter side. |
+| `"circle"` | `diameter_mm`. |
+| `"ellipse"` | `width_mm`, `height_mm`: its full extent along X and Y. |
+| `"polygon"` | `sides`, 3 to 50; `radius_mm`; and `measured`, `"corners"` or `"flats"`, saying what the radius reaches. |
+| `"slot"` | `length_mm`, from one end's centre to the other's, and `width_mm`. |
+| `"gear"` | `teeth`, 6 to 200; `outside_diameter_mm`; `pressure_angle_deg`, 10 to 35; `flanks`, `"involute"` or `"straight"`; `whole_depth_mm`; `root`, `"rounded"`, `"flat"` or `"sharp"`, and `root_fillet_mm`; `crest`, `"flat"` or `"rounded"`, and `crest_radius_mm`; `bore_diameter_mm`, or `null` for no bore. |
+| `"text"` | `text`; `font`, its `family` and `style`; `height_mm`, a capital letter's height; `letter_spacing_fraction` and `line_spacing_fraction`; `align`, `"left"`, `"centre"` or `"right"`. |
+| `"path"` | `paths`: one list of `nodes` per outline, for an outline with curves. Each node has `x`, `y`, a `span` to the next node (`"line"`, `{ "arc": { "bulge": … } }` or `{ "cubic": { "handle_out": …, "handle_in": … } }`) and `smooth`. |
+
+**What is cut is always `profiles`.** No operation, check or program reads
+`shape`: it is how the app edits the outline, and the app writes `profiles`
+from it whenever a size changes. If you edit one by hand and not the
+other, the cut follows `profiles`. A size that cannot be (a width of 0, a
+polygon of two sides) is an error at that field.
+
 | Instance field | Meaning |
 | --- | --- |
 | `id` | The id operations use to target it. |
@@ -303,6 +327,8 @@ Profile cuts only open ones.
 | `transform` | Six numbers `[a, b, c, d, e, f]` that move a point (x, y) to (a·x + c·y + e, b·x + d·y + f). `[1, 0, 0, 1, e, f]` moves the shape by `e` in X and `f` in Y. |
 | `name` | Shown in messages. |
 | `visible`, `locked` | For the app: whether the shape is drawn, and whether it can be moved ([Placing shapes](placing-shapes.md#hiding-and-locking)). Neither changes a cut. |
+| `construction` | `true` for construction geometry: a shape drawn to snap to and measure from, never cut (from format version 29). An enabled operation that targets one is the error `construction_targeted`, and nothing is exported. `false` for every shape `init` makes. |
+| `folder` | The id of the folder the shape is filed in, or `null` (from format version 29). See [`folders`](#folders). |
 | `z_top_mm`, `z_bottom_mm` | The feature's top and bottom, mm above the material bottom, for future operations. `null` means not set, which is how `init` writes them. This build does not use them, but when both are set, `z_bottom_mm` above `z_top_mm` is an error. |
 
 To move a shape on the stock, change `e` and `f`. In the app, drag it or
@@ -509,6 +535,7 @@ picture's pixels are in the file, so the project stays one file:
     "height_mm": 50.0,
     "visible": true,
     "locked": false,
+    "opacity_fraction": 1.0,
     "png_base64": "iVBORw0KGgo…"
   }
 ]
@@ -522,12 +549,34 @@ picture's pixels are in the file, so the project stays one file:
 | `x_mm`, `y_mm` | Its bottom-left corner on the stock, in project millimetres. Its top row of pixels is at `y_mm + height_mm`, the highest Y. |
 | `width_mm`, `height_mm` | Its size on the stock: greater than 0 (`bitmap_footprint_positive`), and in the picture's proportions, `width_mm / height_mm` equal to `width_px / height_px` (`bitmap_footprint_aspect`, which gives the size that fits). Like every coordinate, within 6000 mm. |
 | `visible`, `locked` | For the GUI: whether it is drawn, and whether it can be moved. Neither changes a cut. |
+| `opacity_fraction` | How strongly the app shows the picture, from 0.1 to 1 (from format version 29): fade a picture to draw over it. It changes nothing that is carved. |
 | `png_base64` | The picture: an 8-bit grayscale PNG (`bitmap_not_grayscale_8` otherwise), base64-encoded with padding, written on one line however long. Only its header is read when the project is opened; its pixels when a Photo V-Carve needs them. Text that is not base64, or not a PNG, is `bitmap_unreadable`. Do not edit it: add the picture again with `image add`. |
 
 `init` and `image add` store any picture as 8-bit grayscale ([Images: how
 a picture is read](images.md#how-a-picture-is-read)), so a bitmap they
 wrote passes every check; the codes above come from a hand edit, or a
 file damaged in transit.
+
+## `folders`
+
+The Design Tree's folders, made in the app (from format version 29); `[]`
+in a project made by `init`:
+
+```json
+"folders": [
+  { "id": "f1", "name": "Holes", "group": true }
+]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | `"f1"`, `"f2"`, …, unique among the folders (`duplicate_folder_id`). An instance's `folder` names it (`dangling_folder` when none has it). |
+| `name` | Your name for it. |
+| `group` | `true` when the folder is a group: in the app, a click on one of its shapes selects them all. |
+
+A folder holds no list of its own: its shapes are the instances that name
+it, in the order of `instances`. Folders do not nest, and nothing that is
+cut reads them.
 
 ## `post_processor`
 
@@ -593,6 +642,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 26 | Adds each Inlay's `boundary`, after its `outline_rounding_mm`, `[]` on upgrade (#449): the shapes that draw the male band's outer edge. Empty, the band is `margin_mm` and `outline_rounding_mm` as before, so a version 25 file exports the same programs, byte for byte. A male that lists one is cut inside it, mirrored with the design ([Inlay: the boundary](inlay.md#the-boundary)). |
 | 27 | Adds `bitmaps`, after `instances`, `[]` on upgrade (#644): the pictures a project holds, and with them the `"photo_v_carve"` operation kind that carves one ([Images](images.md), [Photo V-Carve](photo-v-carve.md)). A version 26 file holds neither, so it exports the same programs, byte for byte; an older DreamCarve refuses a version 27 file rather than misread a kind it does not know. A version 26 file that already holds `bitmaps` or a `"photo_v_carve"` is refused. |
 | 28 | Adds the `"tapered_ball_nose"` cutter (#677), with its `tip_diameter_mm`, `taper_angle_deg` (per side) and `flute_length_mm`. A version 27 file holds none, so the upgrade changes only the version and the file exports the same programs, byte for byte; an older DreamCarve refuses a version 28 file rather than misread a cutter it does not know. A version 27 file that already holds one is refused. |
+| 29 | Adds what drawing in the app saves: each definition's `shape`, after its `name`, `null` on upgrade (a plain outline, which every older shape is); each instance's `construction` (`false`) and `folder` (`null`), after its `locked`; `folders`, after `tabs`, `[]`; and each bitmap's `opacity_fraction`, after its `locked`, `1.0`. Nothing that is cut reads any of them, so a version 28 file exports the same programs, byte for byte; an older DreamCarve refuses a version 29 file rather than drop a shape's sizes. |
 
 ## What `check` reports
 
@@ -629,7 +679,10 @@ Errors stop export. Warnings do not.
 | A V-Carve with clearing passes and no flat depth, or a pass whose tool is not an `"end_mill"` or does not exist | |
 | A `start_depth_mm` below 0, or above 0 with no enabled earlier Pocket or V-Carve flat floor containing the targets (for a countersink, its whole bit at each hole; for a Photo V-Carve, its picture's footprint) and `start_plane_cleared_externally` `false` (`start_depth_uncleared`) | |
 | A Photo V-Carve whose tool is not a V-bit, whose `max_depth_mm` is unset or, plus a start depth no floor clears, deeper than the bit's cone height, whose `image` names no bitmap (`photo_unknown_bitmap`), or whose `line_angle_deg`, `line_spacing_fraction`, `sample_mm` or `stepover_retract_mm` is out of its range (`photo_line_angle_range`, `photo_line_spacing_positive`, `photo_sample_positive`, `photo_retract_positive`) | A Photo V-Carve whose `line_spacing_fraction` is below 1 (`photo_lines_overlap`) |
-| A bitmap with an id used twice, a size in pixels of 0 or above 8192, a footprint not above 0 or not in the picture's proportions, or a `png_base64` that is not an 8-bit grayscale PNG of its `width_px` by `height_px` (see [`bitmaps`](#bitmaps)) | |
+| A bitmap with an id used twice, a size in pixels of 0 or above 8192, a footprint not above 0 or not in the picture's proportions, an `opacity_fraction` outside 0.1 to 1, or a `png_base64` that is not an 8-bit grayscale PNG of its `width_px` by `height_px` (see [`bitmaps`](#bitmaps)) | |
+| An enabled operation that targets construction geometry, or an Inlay whose `boundary` lists it (`construction_targeted`) | |
+| A `shape` with a size that cannot be: not above 0, a corner past half the shorter side, a polygon's `sides` outside 3 to 50, a gear's `teeth` outside 6 to 200 or `pressure_angle_deg` outside 10 to 35 | |
+| A folder id used twice (`duplicate_folder_id`), or an instance whose `folder` names no folder (`dangling_folder`) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at
 enabled operations and the tools they use. See [Values that look

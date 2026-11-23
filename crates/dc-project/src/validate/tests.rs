@@ -2695,6 +2695,7 @@ fn carve_project(edit: impl FnOnce(&mut crate::model::VCarveOp)) -> Project {
         crate::model::FeatureDefinition {
             id: square.clone(),
             name: "Square".into(),
+            shape: None,
             profiles: vec![Polyline::rect(
                 dc_geometry::Point { x: 0.0, y: 0.0 },
                 10.0,
@@ -2709,6 +2710,8 @@ fn carve_project(edit: impl FnOnce(&mut crate::model::VCarveOp)) -> Project {
         name: "Square 1".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });
@@ -3326,6 +3329,7 @@ fn countersink_project(edit: impl FnOnce(&mut crate::model::DrillOp)) -> Project
         crate::model::FeatureDefinition {
             id: circle.clone(),
             name: "Hole".into(),
+            shape: None,
             profiles: vec![Polyline::circle(
                 dc_geometry::Point { x: 0.0, y: 0.0 },
                 3.175 / 2.0,
@@ -3339,6 +3343,8 @@ fn countersink_project(edit: impl FnOnce(&mut crate::model::DrillOp)) -> Project
         name: "Hole 1".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });
@@ -4547,6 +4553,7 @@ fn add_shape(p: &mut Project, id: &str, x: f64, y: f64, w: f64, h: f64, holes: &
         crate::model::FeatureDefinition {
             id: definition.clone(),
             name: format!("Shape {id}"),
+            shape: None,
             profiles,
         },
     );
@@ -4557,6 +4564,8 @@ fn add_shape(p: &mut Project, id: &str, x: f64, y: f64, w: f64, h: f64, holes: &
         name: format!("Boundary {id}"),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });
@@ -6186,4 +6195,272 @@ fn tapered_inlay_glue_gap_and_plug_depth_below_the_ball_warn() {
     let mut v_bit = p.clone();
     v_bit_angle(&mut v_bit, 60.0);
     assert_eq!(validate(&v_bit), vec![]);
+}
+
+// Format 29 (phase 5): what drawing in the app saves.
+
+/// The drawing fixture's project, with a shape of several kinds, a
+/// folder, a group, construction geometry and a faded picture, is valid:
+/// validation has nothing to say (phase 5 acceptance 107).
+#[test]
+fn a_drawing_project_is_valid() {
+    assert_eq!(validate(&crate::test_support::drawing_project()), vec![]);
+}
+
+/// S21: construction geometry is never cut, so an enabled operation that
+/// targets it is an error, at the operation's targets (phase 5
+/// acceptance 125). A disabled one cuts nothing and says only that.
+#[test]
+fn an_operation_targeting_construction_geometry_is_an_error() {
+    let mut p = crate::test_support::drawing_project();
+    profile_mut(&mut p).targets.push(InstanceId::new("i4"));
+    let problems = validate(&p);
+    assert_eq!(
+        problems,
+        vec![Problem::ConstructionTargeted {
+            operation: OperationId::new("o1"),
+            name: "Cut out".into(),
+            instance: InstanceId::new("i4"),
+            instance_name: "Line 1".into(),
+            boundary: false,
+        }]
+    );
+    assert!(problems[0].is_error());
+    assert_eq!(
+        problems[0].field().as_deref(),
+        Some("operations[o1].targets")
+    );
+    assert_eq!(problems[0].code(), "construction_targeted");
+
+    profile_mut(&mut p).enabled = false;
+    let codes: Vec<&str> = validate(&p).iter().map(Problem::code).collect();
+    assert!(!codes.contains(&"construction_targeted"), "{codes:?}");
+}
+
+/// An Inlay's drawn boundary shapes its male board's band, so a
+/// construction shape there is refused as a target is.
+#[test]
+fn an_inlay_boundary_of_construction_geometry_is_an_error() {
+    use crate::test_support::{sample_inlay, tool_v_bit_90};
+    let mut p = crate::test_support::drawing_project();
+    p.tools.push(tool_v_bit_90());
+    // `i2`, the 60 × 30 rectangle, is a closed shape that is no target.
+    p.instances[1].construction = true;
+    p.operations.push(Operation::Inlay(InlayOp {
+        boundary: vec![InstanceId::new("i2")],
+        margin_mm: None,
+        ..sample_inlay()
+    }));
+    let found: Vec<Problem> = validate(&p)
+        .into_iter()
+        .filter(|problem| problem.code() == "construction_targeted")
+        .collect();
+    assert_eq!(
+        found,
+        vec![Problem::ConstructionTargeted {
+            operation: OperationId::new("o7"),
+            name: "Inlay".into(),
+            instance: InstanceId::new("i2"),
+            instance_name: "Rectangle 1".into(),
+            boundary: true,
+        }]
+    );
+    assert_eq!(found[0].field().as_deref(), Some("operations[o7].boundary"));
+}
+
+#[test]
+fn a_folder_that_is_not_there_and_a_folder_id_used_twice_are_errors() {
+    let mut p = crate::test_support::drawing_project();
+    p.instances[1].folder = Some(FolderId::new("gone"));
+    p.folders[1].id = FolderId::new("f1");
+    let problems = validate(&p);
+    assert_eq!(
+        problems,
+        vec![
+            Problem::DuplicateFolderId {
+                id: FolderId::new("f1")
+            },
+            Problem::DanglingFolder {
+                instance: InstanceId::new("i2"),
+                folder: FolderId::new("gone"),
+            },
+        ]
+    );
+    assert!(problems.iter().all(Problem::is_error));
+    assert_eq!(problems[1].field().as_deref(), Some("instances[i2].folder"));
+}
+
+/// A shape's sizes are held to what each can be, each reported at its
+/// field under `definitions[..].shape`, so the app can mark the field.
+#[test]
+fn a_shapes_sizes_are_checked_at_their_fields() {
+    use crate::shape::{Corner, Crest, Flanks, Measured, Root, Shape};
+    let gear = |teeth: u32, pressure_angle_deg: f64, bore_diameter_mm: Option<f64>| Shape::Gear {
+        teeth,
+        outside_diameter_mm: 40.0,
+        pressure_angle_deg,
+        flanks: Flanks::Involute,
+        whole_depth_mm: 3.46,
+        root: Root::Rounded,
+        root_fillet_mm: 0.23,
+        crest: Crest::Flat,
+        crest_radius_mm: 0.0,
+        bore_diameter_mm,
+    };
+    let rounded = |width_mm: f64, radius_mm: f64| Shape::Rectangle {
+        width_mm,
+        height_mm: 30.0,
+        corner: Corner::Rounded { radius_mm },
+    };
+    let cases: Vec<(Shape, Vec<&str>)> = vec![
+        (rounded(60.0, 15.0), vec![]),
+        (rounded(60.0, 15.1), vec!["corner.rounded.radius_mm"]),
+        (rounded(60.0, 0.0), vec!["corner.rounded.radius_mm"]),
+        // The side at fault is said once, not again at the corner.
+        (rounded(0.0, 5.0), vec!["width_mm"]),
+        (rounded(f64::NAN, 5.0), vec!["width_mm"]),
+        (
+            Shape::Rectangle {
+                width_mm: 60.0,
+                height_mm: 30.0,
+                corner: Corner::Chamfered { distance_mm: 16.0 },
+            },
+            vec!["corner.chamfered.distance_mm"],
+        ),
+        (Shape::Circle { diameter_mm: 0.0 }, vec!["diameter_mm"]),
+        (
+            Shape::Ellipse {
+                width_mm: -1.0,
+                height_mm: f64::INFINITY,
+            },
+            vec!["width_mm", "height_mm"],
+        ),
+        (
+            Shape::Polygon {
+                sides: 2,
+                radius_mm: 0.0,
+                measured: Measured::Corners,
+            },
+            vec!["sides", "radius_mm"],
+        ),
+        (
+            Shape::Polygon {
+                sides: 51,
+                radius_mm: 10.0,
+                measured: Measured::Flats,
+            },
+            vec!["sides"],
+        ),
+        (
+            Shape::Slot {
+                length_mm: 0.0,
+                width_mm: 0.0,
+            },
+            vec!["length_mm", "width_mm"],
+        ),
+        (gear(24, 20.0, Some(6.0)), vec![]),
+        (gear(24, 20.0, None), vec![]),
+        (gear(5, 20.0, None), vec!["teeth"]),
+        (
+            gear(201, 9.0, Some(0.0)),
+            vec!["teeth", "pressure_angle_deg", "bore_diameter_mm"],
+        ),
+        (gear(24, 35.5, None), vec!["pressure_angle_deg"]),
+    ];
+    for (shape, fields) in cases {
+        let mut p = crate::test_support::drawing_project();
+        // `d3` keeps its circle outline: only the sizes are under test.
+        p.definitions
+            .get_mut(&DefinitionId::new("d3"))
+            .unwrap()
+            .shape = Some(shape.clone());
+        let found: Vec<String> = validate(&p)
+            .iter()
+            .filter(|problem| problem.is_error())
+            .filter_map(Problem::field)
+            .collect();
+        let expected: Vec<String> = fields
+            .iter()
+            .map(|field| format!("definitions[d3].shape.{field}"))
+            .collect();
+        assert_eq!(found, expected, "{shape:?}");
+    }
+}
+
+/// A text's sizes, and every coordinate of a path's nodes and handles.
+#[test]
+fn a_texts_sizes_and_a_paths_nodes_are_checked() {
+    use crate::shape::{Align, FontRef, Shape};
+    let mut p = crate::test_support::drawing_project();
+    p.definitions
+        .get_mut(&DefinitionId::new("d3"))
+        .unwrap()
+        .shape = Some(Shape::Text {
+        text: "Hi".into(),
+        font: FontRef {
+            family: "Inter".into(),
+            style: "Bold".into(),
+        },
+        height_mm: 0.0,
+        letter_spacing_fraction: f64::NAN,
+        line_spacing_fraction: 0.0,
+        align: Align::Left,
+    });
+    let Some(Shape::Path { paths }) = &mut p
+        .definitions
+        .get_mut(&DefinitionId::new("d4"))
+        .unwrap()
+        .shape
+    else {
+        panic!("a path");
+    };
+    let mut nodes = paths[0].nodes().to_vec();
+    nodes[1].x = 7000.0;
+    nodes[2].span = dc_geometry::Span::Arc { bulge: f64::NAN };
+    nodes[0].span = dc_geometry::Span::Cubic {
+        handle_out: dc_geometry::Point::new(f64::INFINITY, 0.0),
+        handle_in: dc_geometry::Point::new(0.0, -6000.5),
+    };
+    paths[0] = dc_geometry::Path::new(nodes, true);
+    let found: Vec<String> = validate(&p)
+        .iter()
+        .filter(|problem| problem.is_error())
+        .filter_map(Problem::field)
+        .collect();
+    assert_eq!(
+        found,
+        [
+            "definitions[d3].shape.height_mm",
+            "definitions[d3].shape.letter_spacing_fraction",
+            "definitions[d3].shape.line_spacing_fraction",
+            "definitions[d4].shape.paths[0].nodes[0].span.cubic.handle_out.x",
+            "definitions[d4].shape.paths[0].nodes[0].span.cubic.handle_in.y",
+            "definitions[d4].shape.paths[0].nodes[1].x",
+            "definitions[d4].shape.paths[0].nodes[2].span.arc.bulge",
+        ]
+    );
+}
+
+/// A picture's opacity is from a tenth to one (phase 5, capability 101).
+#[test]
+fn a_bitmaps_opacity_is_held_to_its_range() {
+    for (opacity_fraction, ok) in [
+        (1.0, true),
+        (0.1, true),
+        (0.4, true),
+        (0.09, false),
+        (1.01, false),
+        (0.0, false),
+        (f64::NAN, false),
+    ] {
+        let mut p = crate::test_support::drawing_project();
+        p.bitmaps[0].opacity_fraction = opacity_fraction;
+        let fields: Vec<String> = validate(&p).iter().filter_map(Problem::field).collect();
+        let expected: &[&str] = if ok {
+            &[]
+        } else {
+            &["bitmaps[b1].opacity_fraction"]
+        };
+        assert_eq!(fields, expected, "{opacity_fraction}");
+    }
 }

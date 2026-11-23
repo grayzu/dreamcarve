@@ -54,6 +54,7 @@ fn with_boundary(project: &Project, op: &InlayOp, shapes: Vec<Polyline>) -> (Pro
         let definition = FeatureDefinition {
             id: DefinitionId::new(format!("bd{}", k + 1)),
             name: format!("Boundary {}", k + 1),
+            shape: None,
             profiles: vec![shape],
         };
         p.instances.push(FeatureInstance {
@@ -63,6 +64,8 @@ fn with_boundary(project: &Project, op: &InlayOp, shapes: Vec<Polyline>) -> (Pro
             name: format!("Boundary {}", k + 1),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

@@ -94,6 +94,7 @@ fn project_of(drawings: Vec<(Vec<Polyline>, (f64, f64))>) -> Project {
         let def = FeatureDefinition {
             id: DefinitionId::new(format!("d{}", k + 1)),
             name: format!("Drawing {}", k + 1),
+            shape: None,
             profiles,
         };
         p.instances.push(FeatureInstance {
@@ -103,6 +104,8 @@ fn project_of(drawings: Vec<(Vec<Polyline>, (f64, f64))>) -> Project {
             name: format!("Shape {}", k + 1),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });

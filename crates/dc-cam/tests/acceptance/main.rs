@@ -37,6 +37,7 @@ fn drawing_project(profiles: Vec<Polyline>, thickness_mm: f64) -> Project {
     let def = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Drawing".into(),
+        shape: None,
         profiles,
     };
     p.instances = vec![FeatureInstance {
@@ -46,6 +47,8 @@ fn drawing_project(profiles: Vec<Polyline>, thickness_mm: f64) -> Project {
         name: "Drawing".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(thickness_mm),
         z_bottom_mm: Some(0.0),
     }];

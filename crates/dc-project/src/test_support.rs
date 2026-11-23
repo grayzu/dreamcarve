@@ -4,18 +4,19 @@
 //! Fixture builders for tests in this crate and, with the `test-support`
 //! feature, in crates that depend on it (`docs/rust-guidelines.md`, "Tests").
 
-use crate::ids::{BitmapId, DefinitionId, InstanceId, OperationId, TabId, ToolId};
+use crate::ids::{BitmapId, DefinitionId, FolderId, InstanceId, OperationId, TabId, ToolId};
 use crate::migrate::CURRENT_VERSION;
 use crate::model::{
     Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
-    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayOp, MachineOrigin,
-    MachiningOrder, MaleBoard, Operation, OriginXy, OriginZ, PhotoStrategy, PhotoVCarveOp,
-    PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec,
-    Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
+    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Folder, Heights, InlayOp,
+    MachineOrigin, MachiningOrder, MaleBoard, Operation, OriginXy, OriginZ, PhotoStrategy,
+    PhotoVCarveOp, PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement,
+    TabShape, TabSpec, Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
 };
 use crate::post_processor::{PostProcessorRef, bundled_definition};
+use crate::shape::{Corner, Shape};
 use base64::Engine as _;
-use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Transform};
+use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Path, PathNode, Point, Polyline, Span, Transform};
 use std::collections::BTreeMap;
 
 /// A reference to the bundled GRBL definition, version 1, with its
@@ -116,11 +117,12 @@ pub fn tapered_project() -> Project {
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
 /// yet, and no bitmap. Matches the committed fixture
-/// `tests/fixtures/dcv/v28/sample.dcv`.
+/// `tests/fixtures/dcv/v29/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Rectangle".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point { x: 0.0, y: 0.0 }, 50.0, 30.0)],
     };
     Project {
@@ -147,6 +149,8 @@ pub fn sample_project() -> Project {
             name: "Rectangle 1".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(6.0),
             z_bottom_mm: Some(0.0),
         }],
@@ -185,6 +189,7 @@ pub fn sample_project() -> Project {
         // No placed tabs: the Profile's tab request is placed by `dc-cam`
         // (#105), so the sample is a project as a format 10 file migrates.
         tabs: Vec::new(),
+        folders: Vec::new(),
         post_processor: grbl_post_processor(),
     }
 }
@@ -382,6 +387,7 @@ pub fn sample_bitmap() -> Bitmap {
         height_mm: 20.0,
         visible: true,
         locked: false,
+        opacity_fraction: 1.0,
         png_base64: gray_png_base64(4, 2, &SAMPLE_BITMAP_BYTES),
     }
 }
@@ -428,6 +434,7 @@ pub fn gradient_bitmap(x_mm: f64, y_mm: f64, width_mm: f64) -> Bitmap {
         height_mm: width_mm / 2.0,
         visible: true,
         locked: false,
+        opacity_fraction: 1.0,
         png_base64: gray_png_base64(64, 32, &gradient_bytes()),
     }
 }
@@ -470,6 +477,109 @@ pub fn photo_project() -> Project {
     project
         .operations
         .push(Operation::PhotoVCarve(sample_photo_v_carve()));
+    project
+}
+
+/// The sample project with what drawing in the app saves (format 29),
+/// valid and with nothing for validation to say:
+///
+/// - `d2`, a 60 × 30 mm Rectangle with square corners, placed as `i2` at
+///   (50, 60) in the folder `f1`;
+/// - `d3`, a Circle of diameter 20, placed as `i3` at (15, 88) in `f1`,
+///   clear of the other shapes;
+/// - `d4`, a closed path with one curve, kept in `shape` and flattened in
+///   `profiles`, placed as `i4`, construction geometry, in no folder;
+/// - the folders `f1`, a group, and `f2`, empty;
+/// - [`sample_bitmap`] at 40 % opacity.
+pub fn drawing_project() -> Project {
+    let mut project = sample_project();
+    project.name = "Drawing".into();
+    let path = Path::new(
+        vec![
+            PathNode {
+                x: 0.0,
+                y: 0.0,
+                span: Span::Cubic {
+                    handle_out: Point::new(10.0, 12.0),
+                    handle_in: Point::new(30.0, 12.0),
+                },
+                smooth: true,
+            },
+            PathNode::line(40.0, 0.0),
+            PathNode {
+                x: 40.0,
+                y: -10.0,
+                span: Span::Arc { bulge: -0.25 },
+                smooth: false,
+            },
+            PathNode::line(0.0, -10.0),
+        ],
+        true,
+    );
+    let definitions = [
+        FeatureDefinition {
+            id: DefinitionId::new("d2"),
+            name: "Rectangle 1".into(),
+            shape: Some(Shape::Rectangle {
+                width_mm: 60.0,
+                height_mm: 30.0,
+                corner: Corner::Square,
+            }),
+            profiles: vec![Polyline::rect(Point::new(-30.0, -15.0), 60.0, 30.0)],
+        },
+        FeatureDefinition {
+            id: DefinitionId::new("d3"),
+            name: "Circle 1".into(),
+            shape: Some(Shape::Circle { diameter_mm: 20.0 }),
+            profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 10.0)],
+        },
+        FeatureDefinition {
+            id: DefinitionId::new("d4"),
+            name: "Line 1".into(),
+            profiles: vec![path.to_polyline(project.flatten_tolerance_mm)],
+            shape: Some(Shape::Path { paths: vec![path] }),
+        },
+    ];
+    let placed = [
+        ("i2", "d2", "Rectangle 1", (50.0, 60.0), Some("f1"), false),
+        ("i3", "d3", "Circle 1", (15.0, 88.0), Some("f1"), false),
+        ("i4", "d4", "Line 1", (30.0, 90.0), None, true),
+    ];
+    for (id, definition, name, (x_mm, y_mm), folder, construction) in placed {
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new(id),
+            definition: DefinitionId::new(definition),
+            transform: Transform::translate(x_mm, y_mm),
+            name: name.into(),
+            visible: true,
+            locked: false,
+            construction,
+            folder: folder.map(FolderId::new),
+            z_top_mm: None,
+            z_bottom_mm: None,
+        });
+    }
+    for definition in definitions {
+        project
+            .definitions
+            .insert(definition.id.clone(), definition);
+    }
+    project.folders = vec![
+        Folder {
+            id: FolderId::new("f1"),
+            name: "Holes".into(),
+            group: true,
+        },
+        Folder {
+            id: FolderId::new("f2"),
+            name: "Later".into(),
+            group: false,
+        },
+    ];
+    project.bitmaps.push(Bitmap {
+        opacity_fraction: 0.4,
+        ..sample_bitmap()
+    });
     project
 }
 
@@ -593,6 +703,7 @@ pub fn line_art_project() -> Project {
     let design = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Line art".into(),
+        shape: None,
         profiles: vec![
             a,
             rect(b0, 0.0, 24.0, 12.0),
@@ -622,6 +733,8 @@ pub fn line_art_project() -> Project {
         name: "Line art".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];
@@ -720,6 +833,7 @@ pub fn blobs_project() -> Project {
     let design = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Blobs".into(),
+        shape: None,
         profiles: vec![
             blob((32.0, 25.0), 11.0, 0.05, 6.0, 120),
             blob((12.0, 37.0), 4.5, 0.2, 2.0, 120),

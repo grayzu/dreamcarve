@@ -10,6 +10,19 @@ before that; its changes are those under Unreleased.
 
 ### Added
 
+- **Project format 29: what drawing in the app saves.** A definition
+  gains `shape`: `null` for an outline from a drawing, or the sizes a
+  shape drawn in the app keeps (a rectangle's width, height and corners,
+  a circle's diameter, a slot's length and width, a polygon, a gear, a
+  text, a path with curves). What is cut is still `profiles`, and nothing
+  that cuts reads `shape` (ADR-0006). An instance gains `construction`
+  (construction geometry: drawn and snapped to, never cut, and an error,
+  `construction_targeted`, when an enabled operation targets it) and
+  `folder`; the project gains `folders`; a bitmap gains
+  `opacity_fraction`. A version 28 project upgrades with each of these
+  empty and exports the same programs, byte for byte; an older DreamCarve
+  refuses a version 29 file. The drawing tools that write these fields
+  arrive with the rest of phase 5.
 - **The app is in the releases.** From `v0.4.0-alpha.2` every release has
   an archive of `dreamcarve-app` for Linux, macOS (Intel and Apple
   silicon) and Windows beside the command line program's, with its own

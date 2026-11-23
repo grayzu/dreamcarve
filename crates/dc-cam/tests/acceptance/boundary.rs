@@ -82,6 +82,8 @@ fn instance(id: &str, name: &str) -> FeatureInstance {
         name: name.into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }
@@ -95,6 +97,7 @@ fn add(project: &mut Project, id: &str, name: &str, profiles: Vec<Polyline>) {
         FeatureDefinition {
             id: placed.definition.clone(),
             name: name.into(),
+            shape: None,
             profiles,
         },
     );

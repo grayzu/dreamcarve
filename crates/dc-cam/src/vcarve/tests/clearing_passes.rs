@@ -524,6 +524,7 @@ fn clearing_pass_is_cut_by_the_pocket_code() {
         let drawn = FeatureDefinition {
             id: DefinitionId::new("dfloor"),
             name: "Floor".into(),
+            shape: None,
             profiles: vec![floor.outer().polyline().clone()],
         };
         user.definitions.insert(drawn.id.clone(), drawn);
@@ -534,6 +535,8 @@ fn clearing_pass_is_cut_by_the_pocket_code() {
             name: "Floor".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });

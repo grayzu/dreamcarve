@@ -119,6 +119,7 @@ fn project_of(profiles: Vec<Polyline>, at: (f64, f64), width_mm: f64, height_mm:
     let def = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Design".into(),
+        shape: None,
         profiles,
     };
     p.instances = vec![FeatureInstance {
@@ -128,6 +129,8 @@ fn project_of(profiles: Vec<Polyline>, at: (f64, f64), width_mm: f64, height_mm:
         name: "Design".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

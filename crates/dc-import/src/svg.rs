@@ -609,12 +609,15 @@ impl Walker {
             name: name.clone(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });
         self.definitions.push(FeatureDefinition {
             id: definition,
             name,
+            shape: None,
             profiles,
         });
         Ok(())

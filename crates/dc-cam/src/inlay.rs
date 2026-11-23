@@ -1270,6 +1270,7 @@ pub fn cut_out_profile(
         FeatureDefinition {
             id: definition.clone(),
             name: format!("{} cut-out", op.name),
+            shape: None,
             profiles: outlines.iter().flatten().cloned().collect(),
         },
     );
@@ -1280,6 +1281,8 @@ pub fn cut_out_profile(
         name: format!("{} cut-out", op.name),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

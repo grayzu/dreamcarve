@@ -1,5 +1,5 @@
 {
-  "version": 28,
+  "version": 29,
   "name": "tbn-coupon",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -97,6 +97,7 @@
     }
   ],
   "tabs": [],
+  "folders": [],
   "instances": [
     {
       "id": "i1",
@@ -112,6 +113,8 @@
       "name": "coupon",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -129,6 +132,8 @@
       "name": "frame",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     }
@@ -151,6 +156,7 @@
     "d1": {
       "id": "d1",
       "name": "coupon",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -170,6 +176,7 @@
     "d2": {
       "id": "d2",
       "name": "frame",
+      "shape": null,
       "profiles": [
         {
           "vertices": [

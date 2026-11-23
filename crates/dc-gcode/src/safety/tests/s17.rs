@@ -339,6 +339,7 @@ fn constant_z_rings_take_the_segment_path() {
     let circle = FeatureDefinition {
         id: DefinitionId::new("d2"),
         name: "Circle".into(),
+        shape: None,
         profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 10.0)],
     };
     project.definitions.insert(circle.id.clone(), circle);
@@ -349,6 +350,8 @@ fn constant_z_rings_take_the_segment_path() {
         name: "Circle".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -502,6 +505,7 @@ pub(super) fn drawn(drawings: &[Drawing]) -> Project {
         let def = FeatureDefinition {
             id: DefinitionId::new(format!("d{}", k + 1)),
             name: format!("Drawing {}", k + 1),
+            shape: None,
             profiles: profiles.clone(),
         };
         p.instances.push(FeatureInstance {
@@ -511,6 +515,8 @@ pub(super) fn drawn(drawings: &[Drawing]) -> Project {
             name: format!("Shape {}", k + 1),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });
@@ -739,6 +745,7 @@ fn generated_v_carves_pass_s17() {
     let around = FeatureDefinition {
         id: DefinitionId::new("dp"),
         name: "Around".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 190.0, 30.0)],
     };
     pocketed.definitions.insert(around.id.clone(), around);
@@ -749,6 +756,8 @@ fn generated_v_carves_pass_s17() {
         name: "Around".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

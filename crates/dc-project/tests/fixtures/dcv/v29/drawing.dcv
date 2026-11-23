@@ -1,0 +1,324 @@
+{
+  "version": 29,
+  "name": "Drawing",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 100.0,
+    "height_mm": 100.0,
+    "thickness_mm": 6.0
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "6.35 mm upcut",
+      "vendor": null,
+      "product_id": null,
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1000.0,
+      "plunge_mm_min": 300.0,
+      "rpm": 18000,
+      "step_down_mm": 2.0,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "kind": "profile",
+      "id": "o1",
+      "name": "Cut out",
+      "enabled": true,
+      "targets": [
+        "i1"
+      ],
+      "tool": "t1",
+      "side": "outside",
+      "depth_mm": 6.0,
+      "step_down_mm": null,
+      "direction": "climb",
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 5.0,
+      "tabs": {
+        "placement": {
+          "kind": "count",
+          "count": 4
+        },
+        "width_mm": 6.0,
+        "height_mm": 2.0,
+        "shape": "rect",
+        "on_holes": true,
+        "avoid_corners": false
+      },
+      "machining_order": "full_depth_first",
+      "entry": "plunge",
+      "lead": null,
+      "corner_relief": "none",
+      "last_pass": null,
+      "start": "auto"
+    }
+  ],
+  "tabs": [],
+  "folders": [
+    {
+      "id": "f1",
+      "name": "Holes",
+      "group": true
+    },
+    {
+      "id": "f2",
+      "name": "Later",
+      "group": false
+    }
+  ],
+  "instances": [
+    {
+      "id": "i1",
+      "definition": "d1",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "Rectangle 1",
+      "visible": true,
+      "locked": false,
+      "construction": false,
+      "folder": null,
+      "z_top_mm": 6.0,
+      "z_bottom_mm": 0.0
+    },
+    {
+      "id": "i2",
+      "definition": "d2",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        50.0,
+        60.0
+      ],
+      "name": "Rectangle 1",
+      "visible": true,
+      "locked": false,
+      "construction": false,
+      "folder": "f1",
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i3",
+      "definition": "d3",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        15.0,
+        88.0
+      ],
+      "name": "Circle 1",
+      "visible": true,
+      "locked": false,
+      "construction": false,
+      "folder": "f1",
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i4",
+      "definition": "d4",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        30.0,
+        90.0
+      ],
+      "name": "Line 1",
+      "visible": true,
+      "locked": false,
+      "construction": true,
+      "folder": null,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    }
+  ],
+  "bitmaps": [
+    {
+      "id": "b1",
+      "name": "ramp",
+      "width_px": 4,
+      "height_px": 2,
+      "x_mm": 15.0,
+      "y_mm": 15.0,
+      "width_mm": 40.0,
+      "height_mm": 20.0,
+      "visible": true,
+      "locked": false,
+      "opacity_fraction": 0.4,
+      "png_base64": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAAAAABawyK/AAAAEklEQVR4nGNiCF31n5lBjJsRAA3OAiZmvJP3AAAAAElFTkSuQmCC"
+    }
+  ],
+  "post_processor": {
+    "id": "grbl",
+    "definition_version": 1,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3.0,
+    "tool_change_mode": "separate_programs",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d1": {
+      "id": "d1",
+      "name": "Rectangle",
+      "shape": null,
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 0.0, "y": 0.0, "bulge": 0.0 },
+            { "x": 50.0, "y": 0.0, "bulge": 0.0 },
+            { "x": 50.0, "y": 30.0, "bulge": 0.0 },
+            { "x": 0.0, "y": 30.0, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d2": {
+      "id": "d2",
+      "name": "Rectangle 1",
+      "shape": {
+        "kind": "rectangle",
+        "width_mm": 60.0,
+        "height_mm": 30.0,
+        "corner": "square"
+      },
+      "profiles": [
+        {
+          "vertices": [
+            { "x": -30.0, "y": -15.0, "bulge": 0.0 },
+            { "x": 30.0, "y": -15.0, "bulge": 0.0 },
+            { "x": 30.0, "y": 15.0, "bulge": 0.0 },
+            { "x": -30.0, "y": 15.0, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d3": {
+      "id": "d3",
+      "name": "Circle 1",
+      "shape": {
+        "kind": "circle",
+        "diameter_mm": 20.0
+      },
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 10.0, "y": 0.0, "bulge": 1.0 },
+            { "x": -10.0, "y": 0.0, "bulge": 1.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d4": {
+      "id": "d4",
+      "name": "Line 1",
+      "shape": {
+        "kind": "path",
+        "paths": [
+          {
+            "nodes": [
+              { "x": 0.0, "y": 0.0, "span": { "cubic": { "handle_out": { "x": 10.0, "y": 12.0 }, "handle_in": { "x": 30.0, "y": 12.0 } } }, "smooth": true },
+              { "x": 40.0, "y": 0.0, "span": "line", "smooth": false },
+              { "x": 40.0, "y": -10.0, "span": { "arc": { "bulge": -0.25 } }, "smooth": false },
+              { "x": 0.0, "y": -10.0, "span": "line", "smooth": false }
+            ],
+            "closed": true
+          }
+        ]
+      },
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 0.0, "y": 0.0, "bulge": 0.0 },
+            { "x": 0.6133957590530944, "y": 0.7068589269221566, "bulge": 0.0 },
+            { "x": 1.2468295300660328, "y": 1.382559031964448, "bulge": 0.0 },
+            { "x": 1.9005575398679042, "y": 2.027851451783977, "bulge": 0.0 },
+            { "x": 2.57848702694215, "y": 2.6465863046427223, "bulge": 0.0 },
+            { "x": 3.296641293906401, "y": 3.253221815527377, "bulge": 0.0 },
+            { "x": 4.032751860860851, "y": 3.8282601746814784, "bulge": 0.0 },
+            { "x": 4.787240875163484, "y": 4.372266632085596, "bulge": 0.0 },
+            { "x": 5.569884343321324, "y": 4.891839736396822, "bulge": 0.0 },
+            { "x": 6.383120318766052, "y": 5.388698671738698, "bulge": 0.0 },
+            { "x": 7.211925494079782, "y": 5.853090152229277, "bulge": 0.0 },
+            { "x": 8.056835517621442, "y": 6.28539698937053, "bulge": 0.0 },
+            { "x": 8.933331477180472, "y": 6.693023203228691, "bulge": 0.0 },
+            { "x": 9.827698079402534, "y": 7.069498935840574, "bulge": 0.0 },
+            { "x": 10.734747344276874, "y": 7.41238666085066, "bulge": 0.0 },
+            { "x": 11.658142174991292, "y": 7.7228916398436285, "bulge": 0.0 },
+            { "x": 12.605909142806961, "y": 8.003592467513588, "bulge": 0.0 },
+            { "x": 13.56228145711437, "y": 8.249428397734384, "bulge": 0.0 },
+            { "x": 14.527866176638511, "y": 8.460556640906907, "bulge": 0.0 },
+            { "x": 15.50954178097189, "y": 8.638231095800574, "bulge": 0.0 },
+            { "x": 16.499178726620297, "y": 8.780932667986345, "bulge": 0.0 },
+            { "x": 17.493419163807424, "y": 8.888032723956645, "bulge": 0.0 },
+            { "x": 18.49359442637673, "y": 8.959604540446234, "bulge": 0.0 },
+            { "x": 19.497967597379727, "y": 8.995513452988693, "bulge": 0.0 },
+            { "x": 20.50203240262042, "y": 8.995513452988689, "bulge": 0.0 },
+            { "x": 21.506405573623415, "y": 8.959604540446225, "bulge": 0.0 },
+            { "x": 22.506580836192704, "y": 8.88803272395663, "bulge": 0.0 },
+            { "x": 23.50082127337982, "y": 8.78093266798633, "bulge": 0.0 },
+            { "x": 24.49045821902822, "y": 8.638231095800553, "bulge": 0.0 },
+            { "x": 25.472133823361588, "y": 8.460556640906884, "bulge": 0.0 },
+            { "x": 26.437718542885726, "y": 8.249428397734357, "bulge": 0.0 },
+            { "x": 27.39409085719314, "y": 8.00359246751356, "bulge": 0.0 },
+            { "x": 28.34185782500881, "y": 7.722891639843596, "bulge": 0.0 },
+            { "x": 29.26525265572323, "y": 7.412386660850625, "bulge": 0.0 },
+            { "x": 30.17230192059756, "y": 7.069498935840534, "bulge": 0.0 },
+            { "x": 31.066668522819622, "y": 6.693023203228649, "bulge": 0.0 },
+            { "x": 31.94316448237865, "y": 6.2853969893704855, "bulge": 0.0 },
+            { "x": 32.78807450592029, "y": 5.8530901522292345, "bulge": 0.0 },
+            { "x": 33.61687968123402, "y": 5.388698671738659, "bulge": 0.0 },
+            { "x": 34.43011565667872, "y": 4.891839736396791, "bulge": 0.0 },
+            { "x": 35.21275912483655, "y": 4.3722666320855685, "bulge": 0.0 },
+            { "x": 35.96724813913918, "y": 3.8282601746814553, "bulge": 0.0 },
+            { "x": 36.703358706093624, "y": 3.2532218155273576, "bulge": 0.0 },
+            { "x": 37.42151297305787, "y": 2.64658630464271, "bulge": 0.0 },
+            { "x": 38.09944246013211, "y": 2.027851451783966, "bulge": 0.0 },
+            { "x": 38.753170469933984, "y": 1.3825590319644394, "bulge": 0.0 },
+            { "x": 39.38660424094691, "y": 0.7068589269221507, "bulge": 0.0 },
+            { "x": 40.0, "y": 0.0, "bulge": 0.0 },
+            { "x": 40.0, "y": -10.0, "bulge": -0.25 },
+            { "x": 0.0, "y": -10.0, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

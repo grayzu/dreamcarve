@@ -2394,6 +2394,7 @@ fn drill_ops(project: &mut Project) -> Vec<EmitOp> {
     let hole = dc_project::FeatureDefinition {
         id: dc_project::DefinitionId::new("d2"),
         name: "Hole".into(),
+        shape: None,
         profiles: vec![dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 4.0)],
     };
     project.definitions.insert(hole.id.clone(), hole);
@@ -2526,6 +2527,7 @@ fn drill_project(
     let hole = dc_project::FeatureDefinition {
         id: dc_project::DefinitionId::new("d2"),
         name: "Hole".into(),
+        shape: None,
         profiles: vec![dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 4.0)],
     };
     project.definitions.insert(hole.id.clone(), hole);
@@ -2539,6 +2541,8 @@ fn drill_project(
             name: format!("Hole {}", k + 1),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(6.0),
             z_bottom_mm: Some(0.0),
         });
@@ -3700,6 +3704,7 @@ fn drill_project_with_two_hole_part_as(
     let pair = dc_project::FeatureDefinition {
         id: dc_project::DefinitionId::new("d3"),
         name: "Pair".into(),
+        shape: None,
         profiles: vec![
             dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 4.0),
             dc_geometry::Polyline::circle(Point::new(0.0, 10.0), 4.0),
@@ -3714,6 +3719,8 @@ fn drill_project_with_two_hole_part_as(
         name: "Pair".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });

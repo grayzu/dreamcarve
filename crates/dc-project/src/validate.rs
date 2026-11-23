@@ -25,7 +25,7 @@
 
 use crate::bitmap::{BitmapColour, BitmapError, MAX_BITMAP_SIDE_PX};
 use crate::countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
-use crate::ids::{BitmapId, DefinitionId, InstanceId, OperationId, TabId, ToolId};
+use crate::ids::{BitmapId, DefinitionId, FolderId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
     Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp,
     EngraveOp, Entry, InlayOp, LastPass, Lead, Operation, OriginXy, PeckRetract, PhotoVCarveOp,
@@ -36,8 +36,12 @@ use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
 };
 use crate::project::cleared_start_plane;
+use crate::shape::{
+    Corner, MAX_GEAR_TEETH, MAX_POLYGON_SIDES, MAX_PRESSURE_ANGLE_DEG, MIN_GEAR_TEETH,
+    MIN_POLYGON_SIDES, MIN_PRESSURE_ANGLE_DEG, Shape,
+};
 use crate::tool::CuttingLimit;
-use dc_geometry::{EPS_MM, GeometryError, MAX_COORDINATE_MM};
+use dc_geometry::{EPS_MM, GeometryError, MAX_COORDINATE_MM, Span};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
@@ -125,6 +129,40 @@ pub enum Problem {
         operation: OperationId,
         /// The missing instance.
         instance: InstanceId,
+    },
+    /// An enabled operation targets construction geometry, or an enabled
+    /// Inlay's `boundary` lists it (format 29; phase 5 functional spec,
+    /// S21). Construction geometry is never cut, so this is an error and
+    /// nothing is exported.
+    #[error(
+        "operation `{name}` (`{operation}`) {lists} `{instance_name}` (`{instance}`), which is construction geometry and is never cut; take it out of the operation, or turn Construction off for the shape",
+        lists = if *.boundary { "lists as its boundary" } else { "targets" }
+    )]
+    ConstructionTargeted {
+        /// The operation.
+        operation: OperationId,
+        /// The operation's display name.
+        name: String,
+        /// The construction instance.
+        instance: InstanceId,
+        /// The instance's display name.
+        instance_name: String,
+        /// Whether it is an Inlay's `boundary` that lists it, not `targets`.
+        boundary: bool,
+    },
+    /// Two folders share an id (format 29).
+    #[error("folder id `{id}` is used twice")]
+    DuplicateFolderId {
+        /// The repeated id.
+        id: FolderId,
+    },
+    /// An instance is filed in a folder that does not exist (format 29).
+    #[error("instance `{instance}` is in folder `{folder}`, which does not exist")]
+    DanglingFolder {
+        /// The instance holding the reference.
+        instance: InstanceId,
+        /// The missing folder.
+        folder: FolderId,
     },
     /// Two placed tabs share an id.
     #[error("two tabs have the id `{id}`")]
@@ -1669,7 +1707,7 @@ problem_codes! {
     PhotoRetractPositive, PhotoUnknownBitmap, BitmapFootprintAspect,
     BitmapPixelsMismatch, BitmapNotGrayscale8, DuplicateBitmapId,
     BitmapEmpty, BitmapTooLarge, BitmapFootprintPositive, BitmapUnreadable,
-    StepOverTooFine,
+    StepOverTooFine, ConstructionTargeted, DuplicateFolderId, DanglingFolder,
 }
 
 impl Problem {
@@ -1741,7 +1779,17 @@ impl Problem {
             Self::DanglingInstance { operation, .. } => {
                 Some(format!("operations[{operation}].targets"))
             }
-            Self::DuplicateTabId { .. } => None,
+            Self::DuplicateTabId { .. } | Self::DuplicateFolderId { .. } => None,
+            Self::ConstructionTargeted {
+                operation,
+                boundary,
+                ..
+            } => Some(if *boundary {
+                format!("operations[{operation}].boundary")
+            } else {
+                format!("operations[{operation}].targets")
+            }),
+            Self::DanglingFolder { instance, .. } => Some(format!("instances[{instance}].folder")),
             Self::TabDanglingInstance { tab, .. } => Some(format!("tabs[{tab}].instance")),
             Self::TabProfileMissing { tab, .. } => Some(format!("tabs[{tab}].profile")),
 
@@ -2098,7 +2146,16 @@ pub fn validate(project: &Project) -> Vec<Problem> {
     v.problems
 }
 
+/// The least a bitmap's `opacity_fraction` may be (format 29): under a
+/// tenth a picture cannot be seen to be there.
+pub const MIN_BITMAP_OPACITY: f64 = 0.1;
+
 const POSITIVE: &str = "a value greater than 0";
+const OPACITY: &str = "a value from 0.1 to 1";
+const POLYGON_SIDES: &str = "a whole number from 3 to 50";
+const GEAR_TEETH: &str = "a whole number from 6 to 200";
+const PRESSURE_ANGLE: &str = "an angle from 10 to 35 degrees";
+const CORNER_SIZE: &str = "a value greater than 0 and at most half the shorter side";
 const NON_NEGATIVE: &str = "a value of 0 or more";
 const FRACTION: &str = "a value greater than 0 and at most 1";
 const ANGLE: &str = "an angle greater than 0 and less than 180 degrees";
@@ -2402,6 +2459,9 @@ impl Validator {
                     });
                 }
             }
+            if op.enabled() {
+                self.construction_targeted(p, op);
+            }
             let at = format!("operations[{}]", op.id());
             let tool = p.tools.iter().find(|t| &t.id == op.tool());
             if op.enabled() {
@@ -2486,6 +2546,9 @@ impl Validator {
                     id: def.id.clone(),
                 });
             }
+            if let Some(shape) = &def.shape {
+                self.shape(&format!("definitions[{key}].shape"), shape);
+            }
             for (i, profile) in def.profiles.iter().enumerate() {
                 if !profile.is_closed() && !engraved.contains(&def.id) {
                     self.problems.push(Problem::OpenProfile {
@@ -2520,6 +2583,15 @@ impl Validator {
         }
 
         let mut seen = BTreeSet::new();
+        for folder in &p.folders {
+            if !seen.insert(&folder.id) {
+                self.problems.push(Problem::DuplicateFolderId {
+                    id: folder.id.clone(),
+                });
+            }
+        }
+
+        let mut seen = BTreeSet::new();
         for inst in &p.instances {
             if !seen.insert(&inst.id) {
                 self.problems.push(Problem::DuplicateInstanceId {
@@ -2530,6 +2602,14 @@ impl Validator {
                 self.problems.push(Problem::DanglingDefinition {
                     instance: inst.id.clone(),
                     definition: inst.definition.clone(),
+                });
+            }
+            if let Some(folder) = &inst.folder
+                && !p.folders.iter().any(|f| &f.id == folder)
+            {
+                self.problems.push(Problem::DanglingFolder {
+                    instance: inst.id.clone(),
+                    folder: folder.clone(),
                 });
             }
             let at = format!("instances[{}]", inst.id);
@@ -3603,6 +3683,12 @@ impl Validator {
         }
         let size_ok = !empty && !too_large;
 
+        let opacity = format!("{at}.opacity_fraction");
+        if self.finite(&opacity, bitmap.opacity_fraction)
+            && !(MIN_BITMAP_OPACITY..=1.0).contains(&bitmap.opacity_fraction)
+        {
+            self.out_of_range(opacity, bitmap.opacity_fraction, OPACITY);
+        }
         let x_ok = self.coordinate(&format!("{at}.x_mm"), bitmap.x_mm);
         let y_ok = self.coordinate(&format!("{at}.y_mm"), bitmap.y_mm);
         let mut sides_ok = true;
@@ -4494,6 +4580,167 @@ impl Validator {
             value,
             expected,
         });
+    }
+
+    /// An enabled operation's targets, and an Inlay's boundary, that are
+    /// construction geometry (format 29, S21).
+    fn construction_targeted(&mut self, p: &Project, op: &Operation) {
+        let boundary: &[InstanceId] = match op {
+            Operation::Inlay(inlay) => &inlay.boundary,
+            _ => &[],
+        };
+        let listed = op
+            .targets()
+            .iter()
+            .map(|id| (id, false))
+            .chain(boundary.iter().map(|id| (id, true)));
+        for (id, boundary) in listed {
+            let Some(instance) = p.instances.iter().find(|i| &i.id == id) else {
+                continue;
+            };
+            if instance.construction {
+                self.problems.push(Problem::ConstructionTargeted {
+                    operation: op.id().clone(),
+                    name: op.name().to_owned(),
+                    instance: id.clone(),
+                    instance_name: instance.name.clone(),
+                    boundary,
+                });
+            }
+        }
+    }
+
+    /// The sizes of a definition's `shape` at `at` (format 29): finite,
+    /// and within what each can be. Whether they give the definition's
+    /// `profiles` is `shape_outline_differs`'s to say.
+    fn shape(&mut self, at: &str, shape: &Shape) {
+        match shape {
+            Shape::Rectangle {
+                width_mm,
+                height_mm,
+                corner,
+            } => {
+                let width = format!("{at}.width_mm");
+                let height = format!("{at}.height_mm");
+                self.positive(&width, *width_mm);
+                self.positive(&height, *height_mm);
+                let (field, size) = match corner {
+                    Corner::Square => return,
+                    Corner::Rounded { radius_mm } => ("corner.rounded.radius_mm", *radius_mm),
+                    Corner::Chamfered { distance_mm } => {
+                        ("corner.chamfered.distance_mm", *distance_mm)
+                    }
+                };
+                let field = format!("{at}.{field}");
+                let half = width_mm.min(*height_mm) / 2.0;
+                // A side at fault is reported above, and not again here.
+                let sides_ok = half.is_finite() && half > 0.0;
+                if self.finite(&field, size) && (size <= 0.0 || (sides_ok && size > half + EPS_MM))
+                {
+                    self.out_of_range(field, size, CORNER_SIZE);
+                }
+            }
+            Shape::Circle { diameter_mm } => {
+                self.positive(&format!("{at}.diameter_mm"), *diameter_mm)
+            }
+            Shape::Ellipse {
+                width_mm,
+                height_mm,
+            } => {
+                self.positive(&format!("{at}.width_mm"), *width_mm);
+                self.positive(&format!("{at}.height_mm"), *height_mm);
+            }
+            Shape::Polygon {
+                sides, radius_mm, ..
+            } => {
+                if !(MIN_POLYGON_SIDES..=MAX_POLYGON_SIDES).contains(sides) {
+                    self.out_of_range(format!("{at}.sides"), f64::from(*sides), POLYGON_SIDES);
+                }
+                self.positive(&format!("{at}.radius_mm"), *radius_mm);
+            }
+            Shape::Slot {
+                length_mm,
+                width_mm,
+            } => {
+                self.positive(&format!("{at}.length_mm"), *length_mm);
+                self.positive(&format!("{at}.width_mm"), *width_mm);
+            }
+            Shape::Gear {
+                teeth,
+                outside_diameter_mm,
+                pressure_angle_deg,
+                whole_depth_mm,
+                root_fillet_mm,
+                crest_radius_mm,
+                bore_diameter_mm,
+                flanks: _,
+                root: _,
+                crest: _,
+            } => {
+                if !(MIN_GEAR_TEETH..=MAX_GEAR_TEETH).contains(teeth) {
+                    self.out_of_range(format!("{at}.teeth"), f64::from(*teeth), GEAR_TEETH);
+                }
+                self.positive(&format!("{at}.outside_diameter_mm"), *outside_diameter_mm);
+                let angle = format!("{at}.pressure_angle_deg");
+                if self.finite(&angle, *pressure_angle_deg)
+                    && !(MIN_PRESSURE_ANGLE_DEG..=MAX_PRESSURE_ANGLE_DEG)
+                        .contains(pressure_angle_deg)
+                {
+                    self.out_of_range(angle, *pressure_angle_deg, PRESSURE_ANGLE);
+                }
+                self.positive(&format!("{at}.whole_depth_mm"), *whole_depth_mm);
+                self.non_negative(&format!("{at}.root_fillet_mm"), *root_fillet_mm);
+                self.non_negative(&format!("{at}.crest_radius_mm"), *crest_radius_mm);
+                if let Some(bore_diameter_mm) = bore_diameter_mm {
+                    self.positive(&format!("{at}.bore_diameter_mm"), *bore_diameter_mm);
+                }
+            }
+            Shape::Text {
+                height_mm,
+                letter_spacing_fraction,
+                line_spacing_fraction,
+                text: _,
+                font: _,
+                align: _,
+            } => {
+                self.positive(&format!("{at}.height_mm"), *height_mm);
+                self.finite(
+                    &format!("{at}.letter_spacing_fraction"),
+                    *letter_spacing_fraction,
+                );
+                self.positive(
+                    &format!("{at}.line_spacing_fraction"),
+                    *line_spacing_fraction,
+                );
+            }
+            Shape::Path { paths } => {
+                for (i, path) in paths.iter().enumerate() {
+                    for (j, node) in path.nodes().iter().enumerate() {
+                        let at = format!("{at}.paths[{i}].nodes[{j}]");
+                        self.coordinate(&format!("{at}.x"), node.x);
+                        self.coordinate(&format!("{at}.y"), node.y);
+                        match node.span {
+                            Span::Line => {}
+                            Span::Arc { bulge } => {
+                                self.finite(&format!("{at}.span.arc.bulge"), bulge);
+                            }
+                            Span::Cubic {
+                                handle_out,
+                                handle_in,
+                            } => {
+                                for (name, handle) in
+                                    [("handle_out", handle_out), ("handle_in", handle_in)]
+                                {
+                                    let at = format!("{at}.span.cubic.{name}");
+                                    self.coordinate(&format!("{at}.x"), handle.x);
+                                    self.coordinate(&format!("{at}.y"), handle.y);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn out_of_range(&mut self, field: String, value: f64, expected: &'static str) {

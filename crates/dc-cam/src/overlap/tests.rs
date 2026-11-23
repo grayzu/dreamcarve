@@ -42,6 +42,7 @@ fn project(
             let def = FeatureDefinition {
                 id: DefinitionId::new(*id),
                 name: (*id).into(),
+                shape: None,
                 profiles: profiles.clone(),
             };
             (def.id.clone(), def)
@@ -56,6 +57,8 @@ fn project(
             name: format!("Shape {id}"),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         })

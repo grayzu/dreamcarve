@@ -547,6 +547,7 @@ fn helix_handoff_in_a_ring_pocket_exports() {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d0"),
         name: "Cell 0".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point::new(-hw, -hh), 2.0 * hw, 2.0 * hh)],
     };
     let transform = Transform::from([
@@ -811,6 +812,7 @@ fn steep_ramp_on_circles() -> Project {
         let definition = FeatureDefinition {
             id: DefinitionId::new(format!("d{n}")),
             name: format!("Cell {n}"),
+            shape: None,
             profiles: vec![Polyline::new(
                 vec![Vertex::new(r, 0.0, 1.0), Vertex::new(-r, 0.0, 1.0)],
                 true,

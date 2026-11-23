@@ -312,6 +312,7 @@ pixels.
 | `x_mm`, `y_mm` | Its bottom-left corner on the stock. Edit these to move it. |
 | `width_mm`, `height_mm` | Its size on the stock, above 0. They must keep the picture's proportions: to resize it, change both, or add it again with `image add`. |
 | `visible`, `locked` | For the GUI: whether it is shown, and whether it can be moved. They change nothing that is cut. |
+| `opacity_fraction` | How strongly the app shows it, from 0.1 to 1. It changes nothing that is carved. |
 | `png_base64` | The picture: an 8-bit grayscale PNG, base64-encoded, on one line. Do not edit it; add the picture again instead. |
 
 [The project file](project-file.md#bitmaps) lists the checks `check`

@@ -208,6 +208,7 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
     let def = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Design".into(),
+        shape: None,
         profiles: design.profiles.clone(),
     };
     project.definitions = std::collections::BTreeMap::from([(def.id.clone(), def)]);
@@ -218,6 +219,8 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
         name: "Design".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

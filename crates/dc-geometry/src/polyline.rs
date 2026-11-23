@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bulges smaller than this are straight segments. Dimensionless: a bulge
 /// of 1e-9 on a 1 m chord bows the arc by 0.5 nm.
-const BULGE_EPS: f64 = 1e-9;
+pub(crate) const BULGE_EPS: f64 = 1e-9;
 
 /// How far past 1 a bulge may be and still be a half circle with
 /// rounding in it: computed half turns come out a few ulps over (#694).

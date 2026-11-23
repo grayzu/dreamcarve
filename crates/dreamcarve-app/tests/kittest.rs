@@ -3803,6 +3803,7 @@ fn five_hundred_shapes() -> dc_project::Project {
         FeatureDefinition {
             id: definition.clone(),
             name: "circle".into(),
+            shape: None,
             profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 6.0)],
         },
     );
@@ -3815,6 +3816,8 @@ fn five_hundred_shapes() -> dc_project::Project {
             name: format!("circle {k}"),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(12.0),
             z_bottom_mm: Some(0.0),
         });

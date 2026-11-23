@@ -354,6 +354,7 @@ fn project(setup: Setup, op: impl FnOnce(&Setup, Vec<InstanceId>) -> Operation) 
             FeatureDefinition {
                 id: definition.clone(),
                 name: format!("Cell {slot}"),
+                shape: None,
                 profiles: cell.profiles.clone(),
             },
         );
@@ -365,6 +366,8 @@ fn project(setup: Setup, op: impl FnOnce(&Setup, Vec<InstanceId>) -> Operation) 
             name: format!("Cell {slot}"),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(setup.thickness_mm),
             z_bottom_mm: Some(0.0),
         });

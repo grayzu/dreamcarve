@@ -87,6 +87,7 @@ fn star_pair(bit: Tool, extras: bool) -> (Project, InlayOp) {
     let def = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Star".into(),
+        shape: None,
         profiles: vec![rounded_star(), Polyline::circle(Point::new(0.0, 0.0), 6.0)],
     };
     p.instances = vec![FeatureInstance {
@@ -96,6 +97,8 @@ fn star_pair(bit: Tool, extras: bool) -> (Project, InlayOp) {
         name: "Star".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

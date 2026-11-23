@@ -76,7 +76,8 @@ fn as_v24(op: &mut Value) {
 
 /// `root`, a file from before format 27 whose other fields are the
 /// current ones already, as the current version holds it: its
-/// `version`, and `"bitmaps": []` after `instances`.
+/// `version`, `"bitmaps": []` after `instances`, and what format 29
+/// adds.
 fn at_current(root: &Value) -> Value {
     let mut out = Map::new();
     for (key, value) in root.as_object().unwrap() {
@@ -86,11 +87,106 @@ fn at_current(root: &Value) -> Value {
         }
     }
     out.insert("version".into(), json!(CURRENT_VERSION));
+    with_format_29(&Value::Object(out))
+}
+
+/// Takes out of `root` what format 29 added, leaving it as a format 28
+/// file held it: `folders`, each definition's `shape`, each instance's
+/// `construction` and `folder`, each bitmap's `opacity_fraction`.
+fn without_format_29(root: &mut Value) {
+    let root = root.as_object_mut().unwrap();
+    root.shift_remove("folders");
+    if let Some(definitions) = root.get_mut("definitions").and_then(Value::as_object_mut) {
+        for definition in definitions.values_mut() {
+            definition.as_object_mut().unwrap().shift_remove("shape");
+        }
+    }
+    if let Some(instances) = root.get_mut("instances").and_then(Value::as_array_mut) {
+        for instance in instances {
+            let instance = instance.as_object_mut().unwrap();
+            instance.shift_remove("construction");
+            instance.shift_remove("folder");
+        }
+    }
+    if let Some(bitmaps) = root.get_mut("bitmaps").and_then(Value::as_array_mut) {
+        for bitmap in bitmaps {
+            bitmap
+                .as_object_mut()
+                .unwrap()
+                .shift_remove("opacity_fraction");
+        }
+    }
+}
+
+/// `map` with `added` put in right after its key `after`.
+fn insert_after(
+    map: &Map<String, Value>,
+    after: &str,
+    added: &[(&str, Value)],
+) -> Map<String, Value> {
+    let mut out = Map::new();
+    for (key, value) in map {
+        out.insert(key.clone(), value.clone());
+        if key == after {
+            for (key, value) in added {
+                out.insert((*key).to_owned(), value.clone());
+            }
+        }
+    }
+    out
+}
+
+/// `root`, a file from before format 29, with what format 29 adds, each
+/// key where a saved file has it. Written apart from the migration, so
+/// the two are checked against each other.
+fn with_format_29(root: &Value) -> Value {
+    let mut out = insert_after(root.as_object().unwrap(), "tabs", &[("folders", json!([]))]);
+    if let Some(Value::Object(definitions)) = out.get_mut("definitions") {
+        for definition in definitions.values_mut() {
+            let fields = insert_after(
+                definition.as_object().unwrap(),
+                "name",
+                &[("shape", Value::Null)],
+            );
+            *definition = Value::Object(fields);
+        }
+    }
+    if let Some(Value::Array(instances)) = out.get_mut("instances") {
+        for instance in instances {
+            let added = [("construction", json!(false)), ("folder", Value::Null)];
+            let fields = insert_after(instance.as_object().unwrap(), "locked", &added);
+            *instance = Value::Object(fields);
+        }
+    }
+    if let Some(Value::Array(bitmaps)) = out.get_mut("bitmaps") {
+        for bitmap in bitmaps {
+            let added = [("opacity_fraction", json!(1.0))];
+            let fields = insert_after(bitmap.as_object().unwrap(), "locked", &added);
+            *bitmap = Value::Object(fields);
+        }
+    }
     Value::Object(out)
+}
+
+/// Asserts that `saved`, a file this build wrote, is `before`, the text
+/// a format 28 build would have written for it, and what format 29 adds:
+/// the same keys in the same order with the same values, and those.
+#[track_caller]
+fn assert_saved_adds_format_29_only(saved: &str, before: &str, what: &str) {
+    let saved: Value = serde_json::from_str(saved).unwrap();
+    let before: Value = serde_json::from_str(before).unwrap();
+    assert_eq!(
+        serde_json::to_string_pretty(&saved).unwrap(),
+        serde_json::to_string_pretty(&with_format_29(&before)).unwrap(),
+        "{what}"
+    );
 }
 
 fn sample_root_at(version: u32) -> Value {
     let mut root = serde_json::to_value(sample_project()).unwrap();
+    if version < 29 {
+        without_format_29(&mut root);
+    }
     if version < 27 {
         root.as_object_mut().unwrap().shift_remove("bitmaps");
     }
@@ -337,6 +433,7 @@ fn feature_fixtures_load_holding_what_their_format_added() {
                 let hole = FeatureDefinition {
                     id: DefinitionId::new("d2"),
                     name: "Hole".into(),
+                    shape: None,
                     profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 3.175 / 2.0)],
                 };
                 project.instances.push(FeatureInstance {
@@ -346,6 +443,8 @@ fn feature_fixtures_load_holding_what_their_format_added() {
                     name: "Hole".into(),
                     visible: true,
                     locked: false,
+                    construction: false,
+                    folder: None,
                     z_top_mm: Some(6.0),
                     z_bottom_mm: Some(0.0),
                 });
@@ -1689,6 +1788,7 @@ fn v15_tools_gain_no_vendor() {
     others["tools"] = before["tools"].clone();
     others["version"] = json!(15);
     others.as_object_mut().unwrap().shift_remove("bitmaps");
+    without_format_29(&mut others);
     assert_eq!(others, before);
     assert_eq!(
         migrate(sample_root_at(15), 15).unwrap(),
@@ -2481,6 +2581,7 @@ fn a_v25_project_exports_the_same_programs() {
         .unwrap()
         .shift_remove("boundary");
     v25.as_object_mut().unwrap().shift_remove("bitmaps");
+    without_format_29(&mut v25);
     v25["version"] = json!(25);
     let text25 = serde_json::to_string_pretty(&v25).unwrap();
 
@@ -2513,6 +2614,7 @@ const V27_PHOTO_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v27/ph
 /// `root`, a project as the current version writes it, as version 26
 /// wrote it: no `bitmaps`.
 fn as_v26(mut root: Value) -> Value {
+    without_format_29(&mut root);
     root.as_object_mut().unwrap().shift_remove("bitmaps");
     root["version"] = json!(26);
     root
@@ -2583,13 +2685,14 @@ fn version_27_fixtures_load() {
     let mut expected = photo_project();
     expected.bitmaps[0].png_base64 = loaded.project.bitmaps[0].png_base64.clone();
     assert_eq!(loaded.project, expected);
-    assert_eq!(
-        crate::save(&loaded.project).unwrap(),
-        text.replacen(
+    assert_saved_adds_format_29_only(
+        &crate::save(&loaded.project).unwrap(),
+        &text.replacen(
             "\"version\": 27,",
             &format!("\"version\": {CURRENT_VERSION},"),
-            1
-        )
+            1,
+        ),
+        "the version line, and what format 29 adds",
     );
     let Some(Operation::PhotoVCarve(photo)) = loaded.project.operations.last() else {
         panic!("a Photo V-Carve");
@@ -2630,7 +2733,7 @@ fn a_v26_project_loads_as_the_same_project() {
                 "\n  \"bitmaps\": [],\n  \"post_processor\": {",
                 1,
             );
-        assert_eq!(saved, expected, "one line added, after the instances");
+        assert_saved_adds_format_29_only(&saved, &expected, "one line added, after the instances");
     }
 }
 
@@ -2650,6 +2753,7 @@ fn v27_to_v28_bumps_the_version_only() {
     project.operations.push(Operation::Inlay(sample_inlay()));
     let expected = serde_json::to_value(&project).unwrap();
     let mut root = expected.clone();
+    without_format_29(&mut root);
     root["version"] = json!(27);
     let (migrated, notes) = migrate_with_notes(root, 27).unwrap();
     assert_eq!(migrated, expected);
@@ -2714,9 +2818,10 @@ fn version_27_fixture_loads() {
     assert_eq!(loaded.problems, vec![]);
 }
 
-/// The version 28 fixtures load as they are: the plain sample, and the
-/// sample with the Ultra-High Detail bit and a V-Carve using it, which
-/// validation accepts since carving with a tapered ball nose was built.
+/// The version 28 fixtures load, now as version 29 projects: the plain
+/// sample, and the sample with the Ultra-High Detail bit and a V-Carve
+/// using it, which validation accepts since carving with a tapered ball
+/// nose was built.
 #[test]
 fn version_28_fixtures_load() {
     use crate::test_support::tapered_project;
@@ -2725,14 +2830,13 @@ fn version_28_fixtures_load() {
     let loaded = load(V28_FIXTURE).unwrap();
     assert_eq!(loaded.project, sample_project());
     assert_eq!(loaded.problems, vec![]);
-    assert_eq!(crate::save(&loaded.project).unwrap(), text);
+    assert_eq!(loaded.notes, vec![]);
 
     let text = std::str::from_utf8(V28_TAPERED_FIXTURE).unwrap();
     assert!(text.contains("\"version\": 28,"), "a version 28 file");
     assert!(text.contains("\"tapered_ball_nose\": {"), "{text}");
     let loaded = load(V28_TAPERED_FIXTURE).unwrap();
     assert_eq!(loaded.project, tapered_project());
-    assert_eq!(crate::save(&loaded.project).unwrap(), text);
     assert_eq!(loaded.problems, vec![]);
 }
 
@@ -2747,15 +2851,161 @@ fn a_v27_project_exports_the_same_programs() {
         let loaded = load(fixture).unwrap();
         assert_eq!(loaded.notes, vec![]);
         let saved = crate::save(&loaded.project).unwrap();
-        let expected = old.replacen("\"version\": 27,", "\"version\": 28,", 1);
-        assert_eq!(saved, expected, "the version line only");
+        let expected = old.replacen(
+            "\"version\": 27,",
+            &format!("\"version\": {CURRENT_VERSION},"),
+            1,
+        );
+        assert_saved_adds_format_29_only(&saved, &expected, "the version line only");
     }
 }
 
-/// A version 27 reader refuses a version 28 file as newer (ADR-0002).
+// Version 28 → 29 (phase 5): what drawing in the app saves.
+
+const V29_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v29/sample.dcv");
+const V29_DRAWING_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v29/drawing.dcv");
+
+/// Format 29 adds a definition's `shape`, an instance's `construction`
+/// and `folder`, the root's `folders` and a bitmap's `opacity_fraction`,
+/// each where a saved file has it, and changes nothing else: a project
+/// holding every kind a version 28 file can migrates to what this build
+/// writes for it, keys in order (phase 5 acceptance 107).
 #[test]
-fn version_28_is_newer_than_27() {
-    assert_eq!(CURRENT_VERSION, 28);
+fn v28_to_v29_adds_the_drawing_fields() {
+    use crate::test_support::{photo_project, sample_inlay, sample_v_carve};
+    let mut project = photo_project();
+    project.operations.push(Operation::VCarve(sample_v_carve()));
+    project.operations.push(Operation::Inlay(sample_inlay()));
+    let expected = serde_json::to_value(&project).unwrap();
+    assert_eq!(expected["folders"], json!([]));
+    assert_eq!(expected["definitions"]["d1"]["shape"], Value::Null);
+    assert_eq!(expected["instances"][0]["construction"], json!(false));
+    assert_eq!(expected["instances"][0]["folder"], Value::Null);
+    assert_eq!(expected["bitmaps"][0]["opacity_fraction"], json!(1.0));
+
+    let mut root = expected.clone();
+    without_format_29(&mut root);
+    root["version"] = json!(28);
+    assert!(root.get("folders").is_none());
+    let (migrated, notes) = migrate_with_notes(root.clone(), 28).unwrap();
+    assert_eq!(migrated, expected);
+    assert_eq!(
+        serde_json::to_string_pretty(&migrated).unwrap(),
+        serde_json::to_string_pretty(&expected).unwrap(),
+        "the keys keep their order"
+    );
+    assert_eq!(notes, vec![]);
+    // The test's own reading of the format agrees with the step.
+    let mut by_hand = with_format_29(&root);
+    by_hand["version"] = json!(CURRENT_VERSION);
+    assert_eq!(by_hand, expected);
+}
+
+/// A file that says 28 and already holds a format 29 field is not a
+/// version 28 file: the migration refuses it, naming the field
+/// (acceptance 107).
+#[test]
+fn a_file_claiming_28_with_a_format_29_field_is_refused() {
+    let current = serde_json::to_value(crate::test_support::photo_project()).unwrap();
+    type PutBack = fn(&mut Value);
+    let cases: [(&str, PutBack); 5] = [
+        ("`folders`", |root| root["folders"] = json!([])),
+        ("`definitions[d1].shape`", |root| {
+            root["definitions"]["d1"]["shape"] = Value::Null;
+        }),
+        ("`instances[0].construction`", |root| {
+            root["instances"][0]["construction"] = json!(false);
+        }),
+        ("`instances[0].folder`", |root| {
+            root["instances"][0]["folder"] = Value::Null;
+        }),
+        ("`bitmaps[0].opacity_fraction`", |root| {
+            root["bitmaps"][0]["opacity_fraction"] = json!(1.0);
+        }),
+    ];
+    for (field, put_back) in cases {
+        let mut root = current.clone();
+        without_format_29(&mut root);
+        root["version"] = json!(28);
+        put_back(&mut root);
+        let err = migrate(root, 28).unwrap_err();
+        match &err {
+            LoadError::Migration {
+                from: 28,
+                to: 29,
+                message,
+                ..
+            } => assert!(message.contains(field), "{field}: {message}"),
+            _ => panic!("{field}: {err:?}"),
+        }
+    }
+}
+
+/// A version 28 project, whatever it holds, exports the programs it
+/// did: it loads as the same project, and saving it adds what format 29
+/// adds and changes nothing else. (The CLI test
+/// `v28_project_exports_the_same_programs` compares the programs.)
+#[test]
+fn a_v28_project_exports_the_same_programs() {
+    for fixture in [V28_FIXTURE, V28_TAPERED_FIXTURE] {
+        let old = std::str::from_utf8(fixture).unwrap();
+        let loaded = load(fixture).unwrap();
+        assert_eq!(loaded.notes, vec![]);
+        let saved = crate::save(&loaded.project).unwrap();
+        let expected = old.replacen("\"version\": 28,", "\"version\": 29,", 1);
+        assert_saved_adds_format_29_only(&saved, &expected, "the format 29 fields only");
+    }
+}
+
+/// Set this environment variable to rewrite the version 29 fixtures from
+/// their builders instead of only comparing them; the test then fails so
+/// the run is not mistaken for a check. Run it again without.
+const UPDATE_V29: &str = "DC_PROJECT_UPDATE_V29_FIXTURES";
+
+/// The version 29 fixtures load as they are and save byte for byte: the
+/// plain sample, and a drawing with a shape of each kind the first
+/// slice can check, a folder, a group, construction geometry and a
+/// faded picture.
+#[test]
+fn version_29_fixtures_load() {
+    use crate::test_support::drawing_project;
+    if std::env::var_os(UPDATE_V29).is_some() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/dcv/v29");
+        for (name, project) in [("sample", sample_project()), ("drawing", drawing_project())] {
+            let text = crate::save(&project).unwrap();
+            std::fs::write(format!("{dir}/{name}.dcv"), text).unwrap();
+        }
+        panic!("{UPDATE_V29} is set: the fixtures were rewritten, not checked");
+    }
+    let text = std::str::from_utf8(V29_FIXTURE).unwrap();
+    assert!(text.contains("\"version\": 29,"), "a version 29 file");
+    let loaded = load(V29_FIXTURE).unwrap();
+    assert_eq!(loaded.project, sample_project());
+    assert_eq!(loaded.problems, vec![]);
+    assert_eq!(crate::save(&loaded.project).unwrap(), text);
+
+    let text = std::str::from_utf8(V29_DRAWING_FIXTURE).unwrap();
+    assert!(text.contains("\"version\": 29,"), "a version 29 file");
+    for key in [
+        "\"kind\": \"rectangle\"",
+        "\"kind\": \"path\"",
+        "\"construction\": true",
+        "\"folder\": \"f1\"",
+        "\"group\": true",
+        "\"opacity_fraction\": 0.4",
+    ] {
+        assert!(text.contains(key), "{key}");
+    }
+    let loaded = load(V29_DRAWING_FIXTURE).unwrap();
+    assert_eq!(loaded.project, drawing_project());
+    assert_eq!(crate::save(&loaded.project).unwrap(), text);
+    assert_eq!(loaded.problems, vec![]);
+}
+
+/// A version 28 reader refuses a version 29 file as newer (ADR-0002).
+#[test]
+fn version_29_is_newer_than_28() {
+    assert_eq!(CURRENT_VERSION, 29);
     let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
     assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
 }

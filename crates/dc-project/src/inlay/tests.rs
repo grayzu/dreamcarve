@@ -166,6 +166,7 @@ fn bounded(boundary: &[&str], shapes: &[[f64; 4]]) -> (Project, InlayOp) {
             FeatureDefinition {
                 id: definition.clone(),
                 name: id.clone(),
+                shape: None,
                 profiles: vec![dc_geometry::Polyline::rect(Point::new(0.0, 0.0), *w, *h)],
             },
         );
@@ -176,6 +177,8 @@ fn bounded(boundary: &[&str], shapes: &[[f64; 4]]) -> (Project, InlayOp) {
             name: format!("Shape {id}"),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

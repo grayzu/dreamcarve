@@ -82,6 +82,7 @@ fn segment_quad_width_is_screen_constant() {
         FeatureDefinition {
             id: definition.clone(),
             name: "panel".to_owned(),
+            shape: None,
             profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 100.0, 40.0)],
         },
     )]);
@@ -92,6 +93,8 @@ fn segment_quad_width_is_screen_constant() {
         name: "panel".to_owned(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

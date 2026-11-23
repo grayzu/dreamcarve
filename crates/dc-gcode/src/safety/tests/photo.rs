@@ -200,6 +200,7 @@ fn with_pocket(mut project: Project, depth_mm: f64) -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d9"),
         name: "Clearing".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 44.0, 24.0)],
     };
     project.definitions.insert(rect.id.clone(), rect);
@@ -210,6 +211,8 @@ fn with_pocket(mut project: Project, depth_mm: f64) -> Project {
         name: "Clearing".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

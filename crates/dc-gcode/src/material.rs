@@ -1616,6 +1616,7 @@ fn cut_out_profile(
         FeatureDefinition {
             id: definition.clone(),
             name: format!("{} cut-out", inlay.name),
+            shape: None,
             profiles: paths.to_vec(),
         },
     );
@@ -1626,6 +1627,8 @@ fn cut_out_profile(
         name: format!("{} cut-out", inlay.name),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

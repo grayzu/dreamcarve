@@ -47,6 +47,7 @@ fn project(profiles: Vec<Polyline>, placements: &[(&str, Transform)]) -> Project
     let def = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Shape".into(),
+        shape: None,
         profiles,
     };
     p.definitions = BTreeMap::from([(def.id.clone(), def)]);
@@ -59,6 +60,8 @@ fn project(profiles: Vec<Polyline>, placements: &[(&str, Transform)]) -> Project
             name: format!("Shape {id}"),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         })
@@ -1276,6 +1279,7 @@ fn star_with_hole_project() -> Project {
             let def = FeatureDefinition {
                 id: DefinitionId::new(*id),
                 name: (*name).into(),
+                shape: None,
                 profiles: vec![profile.clone()],
             };
             (def.id.clone(), def)
@@ -1290,6 +1294,8 @@ fn star_with_hole_project() -> Project {
             name: (*name).into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(12.0),
             z_bottom_mm: Some(0.0),
         })

@@ -1,5 +1,5 @@
 {
-  "version": 28,
+  "version": 29,
   "name": "messy",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -80,6 +80,7 @@
     }
   ],
   "tabs": [],
+  "folders": [],
   "instances": [
     {
       "id": "i1",
@@ -95,6 +96,8 @@
       "name": "sq-a",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -112,6 +115,8 @@
       "name": "sq-b",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -129,6 +134,8 @@
       "name": "outer",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -146,6 +153,8 @@
       "name": "inner",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -163,6 +172,8 @@
       "name": "centreline",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -180,6 +191,8 @@
       "name": "clipped-rect",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -197,6 +210,8 @@
       "name": "dot",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     }
@@ -219,6 +234,7 @@
     "d1": {
       "id": "d1",
       "name": "sq-a",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -234,6 +250,7 @@
     "d2": {
       "id": "d2",
       "name": "sq-b",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -249,6 +266,7 @@
     "d3": {
       "id": "d3",
       "name": "outer",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -264,6 +282,7 @@
     "d4": {
       "id": "d4",
       "name": "inner",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -279,6 +298,7 @@
     "d5": {
       "id": "d5",
       "name": "centreline",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -292,6 +312,7 @@
     "d6": {
       "id": "d6",
       "name": "clipped-rect",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -307,6 +328,7 @@
     "d7": {
       "id": "d7",
       "name": "dot",
+      "shape": null,
       "profiles": [
         {
           "vertices": [

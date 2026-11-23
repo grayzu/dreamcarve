@@ -36,6 +36,7 @@ fn countersinks_in_a_pocket(dir: &Path, start_depth_mm: f64) -> PathBuf {
             FeatureDefinition {
                 id: definition.clone(),
                 name: id.into(),
+                shape: None,
                 profiles: vec![profile],
             },
         );
@@ -46,6 +47,8 @@ fn countersinks_in_a_pocket(dir: &Path, start_depth_mm: f64) -> PathBuf {
             name: id.into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

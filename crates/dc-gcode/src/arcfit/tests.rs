@@ -375,6 +375,7 @@ fn rotated_raster_pocket_with_island_exports_with_arc_fitting() {
     let def = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: "Pocket".into(),
+        shape: None,
         profiles: vec![
             Polyline::rect(
                 Point::new(-16.293_109_341_906_767, -17.302_636_203_267_785),
@@ -1113,6 +1114,7 @@ fn coaster_project() -> Project {
         FeatureDefinition {
             id: DefinitionId::new("d1"),
             name: "Circle".into(),
+            shape: None,
             profiles: vec![Polyline::new(facets, true)],
         },
     );
@@ -1123,6 +1125,8 @@ fn coaster_project() -> Project {
         name: "Circle".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(11.8),
         z_bottom_mm: Some(0.0),
     }];

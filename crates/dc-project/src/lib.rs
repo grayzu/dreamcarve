@@ -19,6 +19,7 @@ mod model;
 mod post_processor;
 mod project;
 mod serialize;
+mod shape;
 mod tool;
 pub mod units_input;
 mod validate;
@@ -29,7 +30,7 @@ pub mod test_support;
 pub use bitmap::{BitmapColour, BitmapError, BitmapHeader, Grayscale, MAX_BITMAP_SIDE_PX};
 pub use countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 pub use history::{History, MAX_UNDO_STEPS};
-pub use ids::{BitmapId, DefinitionId, InstanceId, OperationId, TabId, ToolId};
+pub use ids::{BitmapId, DefinitionId, FolderId, InstanceId, OperationId, TabId, ToolId};
 pub use inlay::{
     BandEdge, BandSource, BitRounding, BoundaryInstance, BoundaryProblem, CornerKind,
     DrawnBoundary, EdgePass, GlueGapBelowBall, INLAY_MERGE_MM, MaleBand, NarrowestBand,
@@ -42,11 +43,11 @@ pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, MigrationNote, migrate, migrate_with_notes};
 pub use model::{
     Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
-    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayCutOut, InlayOp,
-    LastPass, Lead, MachineOrigin, MachiningOrder, MaleBoard, Operation, OriginXy, OriginZ, ParkXy,
-    PeckRetract, PhotoStrategy, PhotoVCarveOp, PlacedTab, PocketOp, ProfileOp, Project, Side,
-    StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units, VCarveOp,
-    VCarveStrategy, WallPass,
+    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Folder, Heights, InlayCutOut,
+    InlayOp, LastPass, Lead, MachineOrigin, MachiningOrder, MaleBoard, Operation, OriginXy,
+    OriginZ, ParkXy, PeckRetract, PhotoStrategy, PhotoVCarveOp, PlacedTab, PocketOp, ProfileOp,
+    Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
+    VCarveOp, VCarveStrategy, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,
@@ -58,6 +59,11 @@ pub use post_processor::{
 };
 pub use project::{ClearedPlane, cleared_start_plane};
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
+pub use shape::{
+    Align, Corner, Crest, Flanks, FontRef, MAX_GEAR_TEETH, MAX_POLYGON_SIDES,
+    MAX_PRESSURE_ANGLE_DEG, MIN_GEAR_TEETH, MIN_POLYGON_SIDES, MIN_PRESSURE_ANGLE_DEG, Measured,
+    Root, Shape,
+};
 pub use tool::{
     CuttingLimit, MAX_TAPER_ANGLE_DEG, TBN_FLUTES, TBN_TAPER, TBN_TIP, UnsetValue,
     tapered_tangent_height_mm,
@@ -65,5 +71,6 @@ pub use tool::{
 pub use units_input::{LENGTH_DECIMALS, RATE_DECIMALS, round_length_mm, round_rate_mm_min};
 pub use validate::{
     FinePasses, INLAY_MIN_PLUG_BASE_MM, MAX_FLATTEN_TOLERANCE_MM, MAX_RATE_MM_MIN, MAX_RPM,
-    MAX_TOOL_DIAMETER_MM, MIN_PASS_SPACING_MM, Problem, Severity, StartFootprint, validate,
+    MAX_TOOL_DIAMETER_MM, MIN_BITMAP_OPACITY, MIN_PASS_SPACING_MM, Problem, Severity,
+    StartFootprint, validate,
 };

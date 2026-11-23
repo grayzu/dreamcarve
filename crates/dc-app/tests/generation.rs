@@ -46,6 +46,7 @@ fn place(project: &mut Project, id: &str, instance: &str, profile: Polyline, x_m
         FeatureDefinition {
             id: definition.clone(),
             name: id.to_owned(),
+            shape: None,
             profiles: vec![profile],
         },
     );
@@ -56,6 +57,8 @@ fn place(project: &mut Project, id: &str, instance: &str, profile: Polyline, x_m
         name: instance.to_owned(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });

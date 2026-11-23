@@ -895,6 +895,7 @@ mod tests {
             height_mm: 40.0,
             visible: true,
             locked: false,
+            opacity_fraction: 1.0,
             png_base64: stored(&pixels).unwrap(),
         };
         assert_eq!(bitmap.pixels().unwrap(), pixels);

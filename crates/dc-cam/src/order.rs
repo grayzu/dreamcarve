@@ -555,6 +555,7 @@ mod tests {
         let circle = FeatureDefinition {
             id: DefinitionId::new("d2"),
             name: "Circle".into(),
+            shape: None,
             profiles: vec![Polyline::circle(Point { x: 0.0, y: 0.0 }, 5.0)],
         };
         project.definitions.insert(circle.id.clone(), circle);
@@ -565,6 +566,8 @@ mod tests {
             name: "Hole".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(6.0),
             z_bottom_mm: Some(0.0),
         });
@@ -749,6 +752,7 @@ mod tests {
             let def = FeatureDefinition {
                 id: DefinitionId::new(format!("d{n}")),
                 name: name.into(),
+                shape: None,
                 profiles: vec![Polyline::rect(Point { x: 0.0, y: 0.0 }, w, h)],
             };
             project.instances.push(FeatureInstance {
@@ -758,6 +762,8 @@ mod tests {
                 name: name.into(),
                 visible: true,
                 locked: false,
+                construction: false,
+                folder: None,
                 z_top_mm: Some(6.0),
                 z_bottom_mm: Some(0.0),
             });
@@ -830,6 +836,7 @@ mod tests {
             let def = FeatureDefinition {
                 id: DefinitionId::new(format!("d{n}")),
                 name: format!("Square {n}"),
+                shape: None,
                 profiles: vec![Polyline::rect(Point { x: 0.0, y: 0.0 }, 6.0, 6.0)],
             };
             project
@@ -842,6 +849,8 @@ mod tests {
                 name: format!("Square {n}"),
                 visible: true,
                 locked: false,
+                construction: false,
+                folder: None,
                 z_top_mm: Some(6.0),
                 z_bottom_mm: Some(0.0),
             });
@@ -1199,6 +1208,7 @@ mod tests {
         let dot = FeatureDefinition {
             id: DefinitionId::new("d3"),
             name: "Dot".into(),
+            shape: None,
             profiles: vec![Polyline::circle(Point { x: 0.0, y: 0.0 }, 1.5)],
         };
         project.definitions.insert(dot.id.clone(), dot);
@@ -1209,6 +1219,8 @@ mod tests {
             name: "Dot".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(6.0),
             z_bottom_mm: Some(0.0),
         });
@@ -1288,6 +1300,7 @@ mod tests {
         let line = FeatureDefinition {
             id: DefinitionId::new("d3"),
             name: "Line".into(),
+            shape: None,
             profiles: vec![Polyline::new(
                 vec![Vertex::line(from.0, from.1), Vertex::line(to.0, to.1)],
                 false,
@@ -1301,6 +1314,8 @@ mod tests {
             name: "Slot".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(6.0),
             z_bottom_mm: Some(0.0),
         });
@@ -1541,6 +1556,7 @@ mod tests {
         let square = FeatureDefinition {
             id: DefinitionId::new("d2"),
             name: "Square".into(),
+            shape: None,
             profiles: vec![Polyline::rect(Point { x: 0.0, y: 0.0 }, 10.0, 10.0)],
         };
         project.definitions.insert(square.id.clone(), square);
@@ -1551,6 +1567,8 @@ mod tests {
             name: "Square".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(6.0),
             z_bottom_mm: Some(0.0),
         });
@@ -1954,6 +1972,7 @@ mod tests {
         let hole = FeatureDefinition {
             id: DefinitionId::new("d3"),
             name: "Hole".into(),
+            shape: None,
             profiles: vec![Polyline::circle(Point { x: 0.0, y: 0.0 }, 3.175 / 2.0)],
         };
         project.definitions.insert(hole.id.clone(), hole);
@@ -1964,6 +1983,8 @@ mod tests {
             name: "Hole".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(6.0),
             z_bottom_mm: Some(0.0),
         });

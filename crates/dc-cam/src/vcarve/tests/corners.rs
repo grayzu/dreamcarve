@@ -70,6 +70,7 @@ fn raised_letter(name: &str) -> (Project, VCarveOp) {
     let frame = FeatureDefinition {
         id: DefinitionId::new("frame"),
         name: "Frame".into(),
+        shape: None,
         profiles: vec![Polyline::rect(
             Point::new(b.min.x - 4.0, b.min.y - 4.0),
             b.width_mm() + 8.0,
@@ -83,6 +84,8 @@ fn raised_letter(name: &str) -> (Project, VCarveOp) {
         name: "Frame".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     };
@@ -158,6 +161,7 @@ fn females() -> Vec<(&'static str, Project, InlayOp)> {
     let design = FeatureDefinition {
         id: DefinitionId::new("ring"),
         name: "Ring".into(),
+        shape: None,
         profiles: vec![
             polygon(&octagon),
             polygon(&[
@@ -179,6 +183,8 @@ fn females() -> Vec<(&'static str, Project, InlayOp)> {
         name: "Ring".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

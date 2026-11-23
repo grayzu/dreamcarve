@@ -758,3 +758,23 @@ severity: Warning
 field: operations[o1].line_spacing_fraction
 message: operation `Portrait` (`o1`) has a line spacing of 0.5 % of the 3 mm a groove is wide at its max_depth_mm, 1.5 mm: 0.015 mm between grooves, too fine to cut; 50 % is 1.500 mm
 
+code: construction_targeted
+severity: Error
+field: operations[o1].targets
+message: operation `Cut out` (`o1`) targets `Centre line` (`i1`), which is construction geometry and is never cut; take it out of the operation, or turn Construction off for the shape
+
+code: construction_targeted
+severity: Error
+field: operations[o1].boundary
+message: operation `Cut out` (`o1`) lists as its boundary `Centre line` (`i1`), which is construction geometry and is never cut; take it out of the operation, or turn Construction off for the shape
+
+code: duplicate_folder_id
+severity: Error
+field: (none)
+message: folder id `f1` is used twice
+
+code: dangling_folder
+severity: Error
+field: instances[i1].folder
+message: instance `i1` is in folder `nope`, which does not exist
+

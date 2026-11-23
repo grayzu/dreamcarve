@@ -22,7 +22,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 28;
+pub const CURRENT_VERSION: u32 = 29;
 
 /// Something a migration changed that the user should hear about, though
 /// the file loads.
@@ -61,7 +61,7 @@ const STEPS: [Step; CURRENT_VERSION as usize] = [
     v0_to_v1, v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9,
     v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13, v13_to_v14, v14_to_v15, v15_to_v16, v16_to_v17,
     v17_to_v18, v18_to_v19, v19_to_v20, v20_to_v21, v21_to_v22, v22_to_v23, v23_to_v24, v24_to_v25,
-    v25_to_v26, v26_to_v27, v27_to_v28,
+    v25_to_v26, v26_to_v27, v27_to_v28, v28_to_v29,
 ];
 
 const FLATTEN_TOLERANCE_KEY: &str = "flatten_tolerance_mm";
@@ -776,6 +776,68 @@ fn v27_to_v28(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
         )),
         None => Ok(root),
     }
+}
+
+/// Version 28 → 29 (`docs/specs/phase-5/design.md`, "Data model →
+/// dc-project"; ADR-0006): what drawing in the app saves. Every
+/// definition gains `"shape": null` after `name` (a plain outline, which
+/// every older one is); every instance `"construction": false` and
+/// `"folder": null` after `locked`; the root `"folders": []` after `tabs`;
+/// every bitmap `"opacity_fraction": 1.0` after `locked`. Nothing that is
+/// cut changes. Fails if any of them is already there: that is not a
+/// version 28 file.
+fn v28_to_v29(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    add_field(
+        28,
+        &mut root,
+        Some("tabs"),
+        "folders",
+        Value::Array(Vec::new()),
+        "",
+    )?;
+    if let Some(Value::Object(definitions)) = root.get_mut("definitions") {
+        for (key, definition) in definitions.iter_mut() {
+            let Value::Object(fields) = definition else {
+                continue;
+            };
+            let at = format!("definitions[{key}].");
+            add_field(28, fields, Some("name"), "shape", Value::Null, &at)?;
+        }
+    }
+    if let Some(Value::Array(instances)) = root.get_mut("instances") {
+        for (i, instance) in instances.iter_mut().enumerate() {
+            let Value::Object(fields) = instance else {
+                continue;
+            };
+            let at = format!("instances[{i}].");
+            add_field(
+                28,
+                fields,
+                Some("locked"),
+                "construction",
+                Value::Bool(false),
+                &at,
+            )?;
+            add_field(28, fields, Some("construction"), "folder", Value::Null, &at)?;
+        }
+    }
+    if let Some(Value::Array(bitmaps)) = root.get_mut("bitmaps") {
+        for (i, bitmap) in bitmaps.iter_mut().enumerate() {
+            let Value::Object(fields) = bitmap else {
+                continue;
+            };
+            let at = format!("bitmaps[{i}].");
+            add_field(
+                28,
+                fields,
+                Some("locked"),
+                "opacity_fraction",
+                Value::from(1.0),
+                &at,
+            )?;
+        }
+    }
+    Ok(root)
 }
 
 /// Why a step from `version` refuses a file that already holds `key`

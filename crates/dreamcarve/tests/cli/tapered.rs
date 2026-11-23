@@ -233,9 +233,13 @@ fn v27_project_exports_the_same_programs() {
             .into_owned();
         let dir = work_dir(&format!("v27_project_exports_the_same_programs_{stem}"));
         let project = load_file(&path).project;
-        assert_eq!(project.version, 28);
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
         let current = save(&project).expect("project saves");
-        let v27 = current.replacen("\"version\": 28,", "\"version\": 27,", 1);
+        let v27 = super::before_format_29(&current).replacen(
+            &format!("\"version\": {},", dc_project::CURRENT_VERSION),
+            "\"version\": 27,",
+            1,
+        );
         assert_ne!(v27, current, "{stem}");
         std::fs::write(dir.join("old.dcv"), &v27).expect("dcv written");
         std::fs::write(dir.join("new.dcv"), &current).expect("dcv written");
@@ -330,6 +334,7 @@ fn check_prints_the_tapered_floor_ridge() {
     let rectangle = FeatureDefinition {
         id: DefinitionId::new("dv"),
         name: "Rectangle".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 30.0, 10.0)],
     };
     project.definitions.insert(rectangle.id.clone(), rectangle);
@@ -340,6 +345,8 @@ fn check_prints_the_tapered_floor_ridge() {
         name: "Rectangle".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

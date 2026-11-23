@@ -2252,6 +2252,7 @@ fn generated_peck(retract: dc_project::PeckRetract) -> Toolpath {
     let hole = dc_project::FeatureDefinition {
         id: dc_project::DefinitionId::new("hole"),
         name: "Hole".into(),
+        shape: None,
         profiles: vec![dc_geometry::Polyline::circle(Point::new(50.0, 50.0), 4.0)],
     };
     project.instances.push(dc_project::FeatureInstance {
@@ -2261,6 +2262,8 @@ fn generated_peck(retract: dc_project::PeckRetract) -> Toolpath {
         name: "Hole".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });
@@ -3468,6 +3471,7 @@ fn two_part_profile(x: f64) -> (Project, Operation) {
     let narrow = dc_project::FeatureDefinition {
         id: dc_project::DefinitionId::new("d2"),
         name: "Narrow".into(),
+        shape: None,
         profiles: vec![dc_geometry::Polyline::rect(
             Point::new(0.0, 0.0),
             20.0,
@@ -4682,6 +4686,7 @@ fn twenty_part_profile() -> (Project, Operation) {
     let square = dc_project::FeatureDefinition {
         id: dc_project::DefinitionId::new("d1"),
         name: "Square".into(),
+        shape: None,
         profiles: vec![dc_geometry::Polyline::rect(
             Point::new(0.0, 0.0),
             15.0,
@@ -4807,6 +4812,7 @@ fn drill_hole_project() -> (Project, dc_project::DrillOp) {
     let hole = dc_project::FeatureDefinition {
         id: dc_project::DefinitionId::new("d2"),
         name: "Hole".into(),
+        shape: None,
         profiles: vec![dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 4.0)],
     };
     project.definitions.insert(hole.id.clone(), hole);
@@ -4866,6 +4872,7 @@ fn bore_hole_project() -> (Project, dc_project::BoreOp) {
     let hole = dc_project::FeatureDefinition {
         id: dc_project::DefinitionId::new("d2"),
         name: "Hole".into(),
+        shape: None,
         profiles: vec![dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 5.0)],
     };
     project.definitions.insert(hole.id.clone(), hole);

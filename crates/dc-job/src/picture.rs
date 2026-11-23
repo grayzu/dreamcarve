@@ -100,6 +100,7 @@ pub fn bitmap(
         height_mm,
         visible: true,
         locked: false,
+        opacity_fraction: 1.0,
         png_base64: dc_import::bitmap::stored(pixels)?,
     })
 }

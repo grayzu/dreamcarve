@@ -629,6 +629,7 @@ impl CarvingProbe {
                 tools: Vec::new(),
                 operations: vec![carve],
                 tabs: Vec::new(),
+                folders: Vec::new(),
                 instances: Vec::new(),
                 bitmaps: Vec::new(),
                 post_processor: project.post_processor.clone(),

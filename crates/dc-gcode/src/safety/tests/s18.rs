@@ -54,6 +54,7 @@ fn holes_with(thickness_mm: f64, ops: Vec<Operation>) -> Project {
     let circle = |id: &str, diameter_mm: f64| FeatureDefinition {
         id: DefinitionId::new(id),
         name: format!("{diameter_mm} mm hole"),
+        shape: None,
         profiles: vec![Polyline::circle(Point::new(0.0, 0.0), diameter_mm / 2.0)],
     };
     for definition in [circle("dh", HOLE_MM), circle("dw", 7.0)] {
@@ -69,6 +70,8 @@ fn holes_with(thickness_mm: f64, ops: Vec<Operation>) -> Project {
             name: id.to_uppercase(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

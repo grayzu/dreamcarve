@@ -89,6 +89,11 @@ id_type!(
     BitmapId
 );
 
+id_type!(
+    /// Identifies a [`crate::Folder`] (format 29): `f1`, `f2`, …
+    FolderId
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;

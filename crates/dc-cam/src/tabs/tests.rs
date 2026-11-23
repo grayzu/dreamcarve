@@ -83,6 +83,7 @@ fn job(
     let def = FeatureDefinition {
         id: DefinitionId::new("d1"),
         name: name.into(),
+        shape: None,
         profiles,
     };
     p.definitions = BTreeMap::from([(def.id.clone(), def)]);
@@ -93,6 +94,8 @@ fn job(
         name: format!("{name} 1"),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     }];

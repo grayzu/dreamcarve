@@ -920,6 +920,7 @@ fn coaster_with_holes(name: &str, post: &str, canned: bool) -> String {
     let hole = FeatureDefinition {
         id: DefinitionId::new("hole"),
         name: "Hole".into(),
+        shape: None,
         profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 4.0)],
     };
     let mut targets = Vec::new();
@@ -935,6 +936,8 @@ fn coaster_with_holes(name: &str, post: &str, canned: bool) -> String {
             name: format!("Hole {}", k + 1),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(MEASURED_THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });
@@ -1546,6 +1549,7 @@ fn inlay_exports_and_passes_safety() {
         let design = FeatureDefinition {
             id: DefinitionId::new("ds"),
             name: "Star".into(),
+            shape: None,
             profiles: vec![star, Polyline::circle(Point::new(0.0, 0.0), 6.0)],
         };
         project.definitions.clear();
@@ -1557,6 +1561,8 @@ fn inlay_exports_and_passes_safety() {
             name: "Star".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         }];
@@ -1684,6 +1690,7 @@ fn v_carve_exports(name: &str, strategy: dc_project::VCarveStrategy, deepest: &s
     let rectangle = FeatureDefinition {
         id: DefinitionId::new("dv"),
         name: "Rectangle".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 5.0)],
     };
     project.definitions.insert(rectangle.id.clone(), rectangle);
@@ -1694,6 +1701,8 @@ fn v_carve_exports(name: &str, strategy: dc_project::VCarveStrategy, deepest: &s
         name: "Rectangle".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -1780,6 +1789,7 @@ fn start_depth_coaster(dir: &Path, pocket_depth_mm: f64, pocket_enabled: bool) -
         let definition = FeatureDefinition {
             id: DefinitionId::new(id),
             name: "Rectangle".into(),
+            shape: None,
             profiles: vec![Polyline::rect(Point::new(0.0, 0.0), width_mm, height_mm)],
         };
         project
@@ -1792,6 +1802,8 @@ fn start_depth_coaster(dir: &Path, pocket_depth_mm: f64, pocket_enabled: bool) -
             name: "Rectangle".into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });
@@ -1961,6 +1973,7 @@ fn v_carve_check_reports_the_floor_ridges() {
     let rectangle = FeatureDefinition {
         id: DefinitionId::new("dv"),
         name: "Rectangle".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 30.0, 10.0)],
     };
     project.definitions.insert(rectangle.id.clone(), rectangle);
@@ -1971,6 +1984,8 @@ fn v_carve_check_reports_the_floor_ridges() {
         name: "Rectangle".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -2046,6 +2061,7 @@ fn preview_legend_names_clearing_runs() {
     let rectangle = FeatureDefinition {
         id: DefinitionId::new("dv"),
         name: "Rectangle".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 30.0, 10.0)],
     };
     project.definitions.insert(rectangle.id.clone(), rectangle);
@@ -2056,6 +2072,8 @@ fn preview_legend_names_clearing_runs() {
         name: "Rectangle".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -2195,6 +2213,7 @@ fn pocket_rough_then_rest_exports_and_passes_safety() {
     let notched = FeatureDefinition {
         id: DefinitionId::new("notched"),
         name: "Notched".into(),
+        shape: None,
         profiles: vec![Polyline::new(
             vec![
                 v(30.0, 35.0),
@@ -2216,6 +2235,8 @@ fn pocket_rough_then_rest_exports_and_passes_safety() {
         name: "Notched".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(MEASURED_THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     });
@@ -2305,6 +2326,7 @@ fn pocket_dogbone_exports_and_passes_safety() {
     let panel = FeatureDefinition {
         id: DefinitionId::new("panel"),
         name: "Panel".into(),
+        shape: None,
         profiles: vec![Polyline::rect(Point::new(30.0, 35.0), 40.0, 30.0)],
     };
     project.instances.push(FeatureInstance {
@@ -2314,6 +2336,8 @@ fn pocket_dogbone_exports_and_passes_safety() {
         name: "Panel".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(MEASURED_THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     });
@@ -2603,6 +2627,7 @@ fn drill_exports_and_passes_safety() {
     let hole = FeatureDefinition {
         id: DefinitionId::new("hole"),
         name: "Hole".into(),
+        shape: None,
         profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 4.0)],
     };
     project.instances.push(FeatureInstance {
@@ -2612,6 +2637,8 @@ fn drill_exports_and_passes_safety() {
         name: "Hole".into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: Some(MEASURED_THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     });
@@ -2700,6 +2727,7 @@ fn coaster_with_small_hole(dir: &Path) -> PathBuf {
         let hole = FeatureDefinition {
             id: DefinitionId::new(id),
             name: format!("Hole {id}"),
+            shape: None,
             profiles: vec![Polyline::circle(Point::new(0.0, 0.0), diameter_mm / 2.0)],
         };
         project.instances.push(FeatureInstance {
@@ -2709,6 +2737,8 @@ fn coaster_with_small_hole(dir: &Path) -> PathBuf {
             name: id.into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(MEASURED_THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });
@@ -2807,6 +2837,7 @@ fn coaster_with_bore_holes(dir: &Path) -> PathBuf {
         let hole = FeatureDefinition {
             id: DefinitionId::new(id),
             name: format!("Hole {id}"),
+            shape: None,
             profiles: vec![Polyline::circle(Point::new(0.0, 0.0), diameter_mm / 2.0)],
         };
         project.instances.push(FeatureInstance {
@@ -2816,6 +2847,8 @@ fn coaster_with_bore_holes(dir: &Path) -> PathBuf {
             name: id.into(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(MEASURED_THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });
@@ -7422,6 +7455,26 @@ fn programs_in(dir: &Path) -> Vec<String> {
     written
 }
 
+/// `text`, a project as this build saves it, without the lines format 29
+/// added (a definition's `shape`, an instance's `construction` and
+/// `folder`, the empty `folders`, a bitmap's `opacity_fraction`): the
+/// text a format 28 build saved for it, its version aside. For a project
+/// with nothing drawn in it, where each of those is one line.
+fn before_format_29(text: &str) -> String {
+    let added = [
+        "\"shape\": null,",
+        "\"construction\": false,",
+        "\"folder\": null,",
+        "\"folders\": [],",
+        "\"opacity_fraction\": 1.0,",
+    ];
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|line| !added.contains(&line.trim_start()))
+        .collect();
+    kept.join("\n") + "\n"
+}
+
 /// The version 24 (and, for the star, version 23) inlay pair projects of
 /// `tests/fixtures/inlay-migration/`, each one side of a pair as format 24
 /// wrote it, and the programs the build before #498 exported from them,
@@ -7639,7 +7692,7 @@ fn v25_project_exports_the_same_programs() {
                 !l.starts_with("\"boundary\":") && !l.starts_with("\"bitmaps\":")
             })
             .collect();
-        let v25 = (v25.join("\n") + "\n").replacen(
+        let v25 = before_format_29(&(v25.join("\n") + "\n")).replacen(
             &format!("\"version\": {},", dc_project::CURRENT_VERSION),
             "\"version\": 25,",
             1,
@@ -7707,7 +7760,7 @@ fn v26_project_exports_the_same_programs() {
             current.contains("\n  \"bitmaps\": [],\n"),
             "{stem}: {current}"
         );
-        let v26 = current
+        let v26 = before_format_29(&current)
             .replacen("\n  \"bitmaps\": [],\n", "\n", 1)
             .replacen(
                 &format!("\"version\": {},", dc_project::CURRENT_VERSION),
@@ -7745,6 +7798,123 @@ fn v26_project_exports_the_same_programs() {
         let out = run(&dir, &["check", "old.dcv"]);
         assert_eq!(out.status.code(), Some(0), "{stem}: {}", stderr(&out));
     }
+}
+
+/// Format 29 (phase 5; acceptance 107) adds what drawing saves and
+/// changes nothing a version 28 file cuts. The inlay pair's projects, the
+/// sign, the plaque and the tapered coupon, each written as a version 28
+/// file (the version 29 text less the lines format 29 adds), export the
+/// same programs, byte for byte, as the file written at version 29, and
+/// `check` reads the old file with nothing to say about it.
+#[test]
+fn v28_project_exports_the_same_programs() {
+    let sources = [
+        inlay_migration_fixture("dc-male.dcv"),
+        inlay_migration_fixture("star-female.dcv"),
+        tests_fixture("sign.dcv"),
+        tests_fixture("plaque.dcv"),
+        tests_fixture("tbn-coupon.dcv"),
+    ];
+    for path in sources {
+        let stem = path
+            .file_stem()
+            .expect("a file name")
+            .to_string_lossy()
+            .into_owned();
+        let dir = work_dir(&format!("v28_project_exports_the_same_programs_{stem}"));
+        let project = load_file(&path).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        let current = save(&project).expect("project saves");
+        for added in ["\"shape\": null,", "\"folders\": [],", "\"folder\": null,"] {
+            assert!(current.contains(added), "{stem}: {added}");
+        }
+        let v28 = before_format_29(&current).replacen(
+            &format!("\"version\": {},", dc_project::CURRENT_VERSION),
+            "\"version\": 28,",
+            1,
+        );
+        assert!(v28.contains("\"version\": 28,"), "{stem}: {v28}");
+        // (A tab's own `shape` stays: `"shape": "rect"`.)
+        for added in ["\"shape\": null", "\"folder", "\"construction\""] {
+            assert!(!v28.contains(added), "{stem}: {added}");
+        }
+        std::fs::write(dir.join("old.dcv"), &v28).expect("dcv written");
+        std::fs::write(dir.join("new.dcv"), &current).expect("dcv written");
+        for file in ["old.dcv", "new.dcv"] {
+            let out = run(&dir, &["export", file, "--date", FIXED_DATE]);
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{stem} {file}: {}",
+                stderr(&out)
+            );
+        }
+        let programs = programs_in(&dir);
+        let old: Vec<&String> = programs.iter().filter(|n| n.starts_with("old-")).collect();
+        assert!(!old.is_empty(), "{stem}: {programs:?}");
+        assert_eq!(
+            old.len(),
+            programs.iter().filter(|n| n.starts_with("new-")).count(),
+            "{stem}: {programs:?}"
+        );
+        for name in old {
+            let a = std::fs::read_to_string(dir.join(name)).expect("old written");
+            let b = std::fs::read_to_string(dir.join(name.replacen("old-", "new-", 1)))
+                .expect("new written");
+            assert!(a == b, "{stem} {name}:\n{a}\n{b}");
+        }
+        let old = run(&dir, &["check", "old.dcv"]);
+        let new = run(&dir, &["check", "new.dcv"]);
+        assert_eq!(old.status.code(), new.status.code(), "{stem}");
+        assert_eq!(
+            stderr(&old).replace("old.dcv", "new.dcv"),
+            stderr(&new),
+            "{stem}: the same findings"
+        );
+    }
+}
+
+/// S21 (phase 5 acceptance 125): construction geometry is never cut. A
+/// project whose Profile targets a construction shape fails `check` and
+/// `export` with `construction_targeted`, located at the operation's
+/// targets, and no program is written. The project with the shape taken
+/// out of the targets exports.
+#[test]
+fn a_construction_target_fails_check_and_export() {
+    let dir = work_dir("a_construction_target_fails_check_and_export");
+    let mut project = dc_project::test_support::drawing_project();
+    let Some(Operation::Profile(profile)) = project.operations.first_mut() else {
+        panic!("the sample's Profile");
+    };
+    profile.targets.push(InstanceId::new("i2"));
+    project.instances[1].construction = true;
+    std::fs::write(dir.join("drawing.dcv"), save(&project).expect("saves")).expect("written");
+    let commands: [&[&str]; 2] = [
+        &["check", "drawing.dcv"],
+        &["export", "drawing.dcv", "--date", FIXED_DATE],
+    ];
+    for args in commands {
+        let command = args.first().copied().unwrap_or_default();
+        let out = run(&dir, args);
+        assert_eq!(out.status.code(), Some(1), "{command}: {}", stderr(&out));
+        // `check` prints its findings to stdout, `export` to stderr.
+        let said = format!("{}{}", stdout(&out), stderr(&out));
+        assert!(
+            said.contains(
+                "drawing.dcv:44:18: error: operation `Cut out` (`o1`) targets `Rectangle 1` (`i2`), which is construction geometry and is never cut"
+            ),
+            "{command}: {said}"
+        );
+        assert!(
+            programs_in(&dir).is_empty(),
+            "{command}: nothing is written"
+        );
+    }
+    project.instances[1].construction = false;
+    std::fs::write(dir.join("drawing.dcv"), save(&project).expect("saves")).expect("written");
+    let out = run(&dir, &["export", "drawing.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!programs_in(&dir).is_empty());
 }
 
 /// Format 27 (#644, #646): a project with a bitmap and a Photo V-Carve
@@ -12717,6 +12887,7 @@ fn countersink_exports_as_plain_moves_with_canned_cycles() {
     let hole = FeatureDefinition {
         id: DefinitionId::new("hole"),
         name: "Hole".into(),
+        shape: None,
         profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 3.175 / 2.0)],
     };
     let mut targets = Vec::new();
@@ -12732,6 +12903,8 @@ fn countersink_exports_as_plain_moves_with_canned_cycles() {
             name: format!("Hole {}", k + 1),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

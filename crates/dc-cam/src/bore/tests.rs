@@ -65,6 +65,7 @@ fn project(shapes: &[(&str, Polyline)]) -> Project {
         let definition = FeatureDefinition {
             id: DefinitionId::new(format!("d_{id}")),
             name: format!("Shape {id}"),
+            shape: None,
             profiles: vec![outline.clone()],
         };
         p.instances.push(FeatureInstance {
@@ -74,6 +75,8 @@ fn project(shapes: &[(&str, Polyline)]) -> Project {
             name: format!("Shape {id}"),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });

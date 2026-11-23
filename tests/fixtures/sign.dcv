@@ -1,5 +1,5 @@
 {
-  "version": 28,
+  "version": 29,
   "name": "sign",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -183,6 +183,7 @@
     }
   ],
   "tabs": [],
+  "folders": [],
   "instances": [
     {
       "id": "i1",
@@ -198,6 +199,8 @@
       "name": "outline",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -215,6 +218,8 @@
       "name": "background",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -232,6 +237,8 @@
       "name": "oval",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -249,6 +256,8 @@
       "name": "hole-left",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -266,6 +275,8 @@
       "name": "hole-right",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -283,6 +294,8 @@
       "name": "letter-D",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -300,6 +313,8 @@
       "name": "letter-r",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -317,6 +332,8 @@
       "name": "letter-e",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -334,6 +351,8 @@
       "name": "letter-a",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -351,6 +370,8 @@
       "name": "letter-m",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -368,6 +389,8 @@
       "name": "letter-C",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -385,6 +408,8 @@
       "name": "letter-a-2",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -402,6 +427,8 @@
       "name": "letter-r-2",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -419,6 +446,8 @@
       "name": "letter-v",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -436,6 +465,8 @@
       "name": "letter-e-2",
       "visible": true,
       "locked": false,
+      "construction": false,
+      "folder": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     }
@@ -458,6 +489,7 @@
     "d1": {
       "id": "d1",
       "name": "outline",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -473,6 +505,7 @@
     "d10": {
       "id": "d10",
       "name": "letter-m",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -666,6 +699,7 @@
     "d11": {
       "id": "d11",
       "name": "letter-C",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -838,6 +872,7 @@
     "d12": {
       "id": "d12",
       "name": "letter-a-2",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1026,6 +1061,7 @@
     "d13": {
       "id": "d13",
       "name": "letter-r-2",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1146,6 +1182,7 @@
     "d14": {
       "id": "d14",
       "name": "letter-v",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1220,6 +1257,7 @@
     "d15": {
       "id": "d15",
       "name": "letter-e-2",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1376,6 +1414,7 @@
     "d2": {
       "id": "d2",
       "name": "background",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1391,6 +1430,7 @@
     "d3": {
       "id": "d3",
       "name": "oval",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1614,6 +1654,7 @@
     "d4": {
       "id": "d4",
       "name": "hole-left",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1627,6 +1668,7 @@
     "d5": {
       "id": "d5",
       "name": "hole-right",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1640,6 +1682,7 @@
     "d6": {
       "id": "d6",
       "name": "letter-D",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1771,6 +1814,7 @@
     "d7": {
       "id": "d7",
       "name": "letter-r",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -1891,6 +1935,7 @@
     "d8": {
       "id": "d8",
       "name": "letter-e",
+      "shape": null,
       "profiles": [
         {
           "vertices": [
@@ -2047,6 +2092,7 @@
     "d9": {
       "id": "d9",
       "name": "letter-a",
+      "shape": null,
       "profiles": [
         {
           "vertices": [

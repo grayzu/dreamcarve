@@ -19,6 +19,7 @@ fn place_rect(project: &mut Project, id: &str, x: f64, y: f64, w: f64, h: f64) {
         FeatureDefinition {
             id: definition.clone(),
             name: id.into(),
+            shape: None,
             profiles: vec![Polyline::rect(Point { x: 0.0, y: 0.0 }, w, h)],
         },
     );
@@ -29,6 +30,8 @@ fn place_rect(project: &mut Project, id: &str, x: f64, y: f64, w: f64, h: f64) {
         name: id.into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -142,6 +145,7 @@ fn place_circle(project: &mut Project, id: &str, x: f64, y: f64, diameter_mm: f6
         FeatureDefinition {
             id: definition.clone(),
             name: id.into(),
+            shape: None,
             profiles: vec![Polyline::circle(
                 Point { x: 0.0, y: 0.0 },
                 diameter_mm / 2.0,
@@ -155,6 +159,8 @@ fn place_circle(project: &mut Project, id: &str, x: f64, y: f64, diameter_mm: f6
         name: id.into(),
         visible: true,
         locked: false,
+        construction: false,
+        folder: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

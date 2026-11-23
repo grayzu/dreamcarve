@@ -89,10 +89,10 @@ pub enum Span {                       // serde: "line" | { "arc": {..} } | { "cu
     Line,
     /// A circular arc; `bulge` as `Vertex::bulge`.
     Arc { bulge: f64 },
-    /// A cubic Bézier; the two handles in the path's space, millimetres.
-    Cubic { out_x_mm: f64, out_y_mm: f64, in_x_mm: f64, in_y_mm: f64 },
+    /// A cubic Bézier; the two handles are points in the path's space, millimetres.
+    Cubic { handle_out: Point, handle_in: Point },
 }
-pub struct PathNode { pub x_mm: f64, pub y_mm: f64, pub span: Span, pub smooth: bool }
+pub struct PathNode { pub x: f64, pub y: f64, pub span: Span, pub smooth: bool }   // `x`, `y` as a `Vertex`'s
 pub struct Path { nodes: Vec<PathNode>, closed: bool }      // an open path's last span is unused
 impl Path {
     pub fn new(nodes: Vec<PathNode>, closed: bool) -> Self;
@@ -105,7 +105,8 @@ impl Path {
 ```
 
 `smooth` says the node's two handles are kept in line when one is
-dragged; it is `false` for a node with no cubic beside it.
+dragged; it is `false` for a node with no cubic beside it. A saved file
+writes each node on one line, as it writes a vertex.
 
 ### dc-project (format 29)
 
@@ -153,9 +154,11 @@ pub struct Bitmap { /* … locked, */ pub opacity_fraction: f64, /* png_base64 *
 `"construction": false` and `"folder": null` to every instance (after
 `locked`), `"folders": []` after `tabs`, and `"opacity_fraction": 1.0`
 to every bitmap (after `locked`), and refuses a file that already has
-`folders`. Fixtures: `dcv/v29/sample.dcv`, `shapes.dcv` (one definition
-of every kind, a folder, a group, a construction instance),
-`backdrop.dcv`.
+any of them. Fixtures: `dcv/v29/sample.dcv` and `drawing.dcv`
+(`test_support::drawing_project`: parametric shapes, a path with a
+curve, a folder, a group, a construction instance and a faded picture;
+it gains a definition of each kind as the slices that generate their
+outlines land).
 
 A folder's rows are its instances in file order, shown where its first
 instance is; an empty folder is shown after the shapes, in `folders`
@@ -166,11 +169,16 @@ New `Problem`s:
 | Code | Tier | When |
 | --- | --- | --- |
 | `shape_outline_differs` | warning | `Shape::outline` at the project's tolerance does not equal `profiles` (count, closedness, each vertex within `EPS_MM`); not asked of text |
-| `invalid_shape` | error | a size is not finite, not positive where it must be, or out of its range (sides 3–50, teeth 6–200, pressure angle 10–35°, a corner past half the shorter side, a gear the ported validation refuses) |
 | `construction_targeted` | error | an enabled operation's `targets`, or an Inlay's `boundary`, names a construction instance |
 | `dangling_folder` | error | an instance's `folder` names no folder |
 | `duplicate_folder_id` | error | two folders share an id |
-| `bitmap_opacity_out_of_range` | error | `opacity_fraction` outside 0.1–1.0 |
+
+A size that cannot be is phase 1's `out_of_range` (or `non_finite`) at
+its own field, `definitions[d2].shape.width_mm`, so the app marks the
+field as it marks any other: a size not above 0, a corner past half the
+shorter side, sides outside 3–50, teeth outside 6–200, a pressure angle
+outside 10–35°; so is a bitmap's `opacity_fraction` outside 0.1–1, and
+every coordinate of a path's nodes and handles past the 6000 mm limit.
 
 `closed_outlines` and every other reader of `profiles` are unchanged.
 
@@ -294,11 +302,10 @@ user's edge, anticlockwise positive.
 
 ### Shape outlines (`dc_geometry::shapes`)
 
-All closed outlines are anticlockwise and start at the vertex of
-greatest X, lowest Y first on a tie, so the same sizes give the same
-bytes.
+All closed outlines are anticlockwise, and each starts where its
+subsection says, so the same sizes give the same bytes.
 
-- **Rectangle.** Square: four vertices from (−w/2, −h/2). Rounded,
+- **Rectangle.** Square: `Polyline::rect` from (−w/2, −h/2). Rounded,
   radius `r` held to `min(w, h)/2`: eight vertices, each corner an arc
   of bulge `tan(π/8)`; at exactly half the shorter side the two arcs of
   that end meet and the zero-length side between them is dropped.
@@ -538,11 +545,20 @@ Names are `crate::module::test`; "(port)" marks a PureCutCNC test ported
 under its upstream name; "(acc N)" the acceptance test it carries.
 
 **Format 29 (slice 1)** `dc_project::migrate::v28_to_v29_adds_the_drawing_fields`,
-`a_file_claiming_28_with_folders_is_refused`, `version_29_fixtures_load`,
-`format_28_projects_export_the_same_programs` (acc 107);
-`serialize::every_shape_kind_round_trips`; `validate::` one test per new
-problem; the problem snapshot gains six samples; `dreamcarve::cli`
-`check_reports_construction_targeted` (acc 125).
+`a_file_claiming_28_with_a_format_29_field_is_refused`, `version_29_fixtures_load`,
+`a_v28_project_exports_the_same_programs` (acc 107);
+`shape::every_shape_kind_round_trips`, `corners_and_lengths_read_as_the_file_writes_them`;
+`validate::a_drawing_project_is_valid`,
+`an_operation_targeting_construction_geometry_is_an_error`,
+`an_inlay_boundary_of_construction_geometry_is_an_error`,
+`a_folder_that_is_not_there_and_a_folder_id_used_twice_are_errors`,
+`a_shapes_sizes_are_checked_at_their_fields`,
+`a_texts_sizes_and_a_paths_nodes_are_checked`,
+`a_bitmaps_opacity_is_held_to_its_range`; the problem snapshot gains
+three codes; `dc_geometry::path::a_polyline_round_trips_through_a_path`,
+`flattened_cubics_stay_within_tolerance`, `a_path_round_trips_through_json`;
+`dreamcarve::cli::v28_project_exports_the_same_programs` (acc 107) and
+`a_construction_target_fails_check_and_export` (acc 125).
 
 **Shape outlines (slice 2)** `dc_geometry::shapes::` the ports of
 `slot.test.ts` (7), `ngon.test.ts` (7), `cannedRectProfiles.test.ts`

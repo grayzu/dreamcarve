@@ -476,6 +476,7 @@ fn project_of(shapes: &[(&str, Vec<Polyline>)]) -> Project {
             FeatureDefinition {
                 id: def.clone(),
                 name: (*id).to_owned(),
+                shape: None,
                 profiles: profiles.clone(),
             },
         );
@@ -486,6 +487,8 @@ fn project_of(shapes: &[(&str, Vec<Polyline>)]) -> Project {
             name: (*id).to_owned(),
             visible: true,
             locked: false,
+            construction: false,
+            folder: None,
             z_top_mm: Some(THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });
