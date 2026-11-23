@@ -1865,11 +1865,11 @@ pub(crate) fn show(
                 .filter(|_| !state.show_empty);
             let legend_size = legend.as_ref().map(|legend| legend::size(ui, app, legend));
             let over = (margins.overlay_right, margins.overlay_bottom);
-            // One row of the armed tool's bar: Fit stands clear of it,
-            // and a fitted view refits as the tool is taken up or put
-            // down.
+            // The armed tool's bar, two rows of it: Fit stands clear of
+            // it, and a fitted view refits as the tool is taken up or
+            // put down.
             let tool_bar_px = if takes_pointer(app) {
-                tool_bar::ROW_PX
+                tool_bar::ROOM_PX
             } else {
                 0.0
             };

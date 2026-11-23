@@ -278,6 +278,11 @@ pub struct SizeRow {
     pub pinned: bool,
     /// Why the last text typed was refused.
     pub problem: Option<String>,
+    /// Whether this is an option of the tool, kept for the shapes that
+    /// follow (a rectangle's corner size, a polygon's sides), and no size
+    /// of the step in hand: `Enter` in its field writes it and commits
+    /// nothing.
+    pub option: bool,
 }
 
 /// What the tool bar shows while a tool is armed (capability 81).

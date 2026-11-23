@@ -97,8 +97,8 @@ capability 52); what a tool holds before it commits is not project data.
     fields of capability 83, and **Done** where a shape can be finished
     early. A bar with more than fits across the Viewport (the Gear's
     sizes) breaks into rows, a label staying with its field. The status
-    bar's pointer cell shows the same prompt. Fit leaves room for one
-    row of the bar while a drawing tool is armed, so nothing is drawn
+    bar's pointer cell shows the same prompt. Fit leaves room for two
+    rows of the bar while a drawing tool is armed, so nothing is drawn
     under it, and a fitted view refits as the tool is taken up and put
     down. While a drawing tool is armed the Inspector stays closed: what
     is drawn is selected, and its Properties show when the tool is put

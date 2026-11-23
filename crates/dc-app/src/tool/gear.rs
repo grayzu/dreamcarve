@@ -165,6 +165,7 @@ impl App {
                         quantity: field.quantity(),
                         pinned: pinned.is_some(),
                         problem: self.tool.problems.get(&field).cloned(),
+                        option: false,
                     }
                 })
                 .collect();
@@ -197,6 +198,7 @@ impl App {
                         .find(|problem| shape::gear_problem_field(problem.size()) == field)
                         .map(|problem| self.gear_problem_text(problem))
                 }),
+                option: false,
             })
             .collect();
         let choices = shape::gear_choices(strings, &gear);

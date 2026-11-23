@@ -240,6 +240,7 @@ impl App {
                     quantity: field.quantity(),
                     pinned: pinned.is_some(),
                     problem: self.tool.problems.get(&field).cloned(),
+                    option: false,
                 }
             })
             .collect();

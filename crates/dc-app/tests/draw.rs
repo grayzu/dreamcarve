@@ -796,3 +796,129 @@ fn a_new_shape_joins_the_selections_folder() {
     click(&mut app, pt(245.0, 50.0));
     assert_eq!(last(&app).0.folder, None);
 }
+
+/// Capabilities 85 and 85b: the Rectangle's corners and their size, and
+/// the Polygon's sides and what its radius reaches, are in the tool bar:
+/// choices and fields that set the tool's options, kept for the shapes
+/// that follow, and pin nothing of the step in hand.
+#[test]
+fn the_bar_carries_the_tools_options() {
+    let mut app = armed(Drawing::Rectangle);
+    let fields = |app: &App| -> Vec<SizeField> {
+        field_texts(app)
+            .into_iter()
+            .map(|(field, ..)| field)
+            .collect()
+    };
+    let chosen = |app: &App| -> Vec<(String, usize)> {
+        app.tool_bar()
+            .unwrap()
+            .choices
+            .into_iter()
+            .map(|choice| (choice.label, choice.selected))
+            .collect()
+    };
+    assert_eq!(chosen(&app), [("Corners".to_owned(), 0)]);
+    assert_eq!(
+        fields(&app),
+        [SizeField::X, SizeField::Y],
+        "square: no size"
+    );
+    // The choice's option is the one the bar sends back.
+    let rounded = app.tool_bar().unwrap().choices[0].options[1].option.clone();
+    assert_eq!(rounded, ToolOption::Corners(CornerStyle::Rounded));
+    app.tool_event(Event::Option(rounded));
+    assert_eq!(chosen(&app), [("Corners".to_owned(), 1)]);
+    assert_eq!(
+        field_texts(&app),
+        [
+            (SizeField::X, String::new(), false),
+            (SizeField::Y, String::new(), false),
+            (SizeField::CornerSize, "5".to_owned(), false),
+        ]
+    );
+    // An option is marked, so the window's Enter in its field commits
+    // nothing; a size of the step is not.
+    let marks: Vec<bool> = app
+        .tool_bar()
+        .unwrap()
+        .fields
+        .iter()
+        .map(|row| row.option)
+        .collect();
+    assert_eq!(marks, [false, false, true]);
+    type_size(&mut app, SizeField::CornerSize, "8");
+    assert_eq!(app.prefs().drawing.corner_mm, Some(8.0));
+    assert_eq!(field_texts(&app)[2].1, "8");
+    let problem = |app: &App, field: SizeField| {
+        let bar = app.tool_bar().unwrap();
+        bar.fields
+            .iter()
+            .find(|row| row.field == field)
+            .and_then(|row| row.problem.clone())
+    };
+    type_size(&mut app, SizeField::CornerSize, "0");
+    assert_eq!(
+        problem(&app, SizeField::CornerSize).as_deref(),
+        Some("a size must be greater than 0")
+    );
+    assert_eq!(app.prefs().drawing.corner_mm, Some(8.0), "kept as it was");
+    type_size(&mut app, SizeField::CornerSize, "8");
+    assert_eq!(problem(&app, SizeField::CornerSize), None);
+    // The option shows in the next step too, and the shape has it.
+    click(&mut app, pt(10.0, 10.0));
+    assert_eq!(
+        fields(&app),
+        [SizeField::Width, SizeField::Height, SizeField::CornerSize]
+    );
+    click(&mut app, pt(70.0, 40.0));
+    assert_eq!(
+        last(&app).1.shape,
+        Some(Shape::Rectangle {
+            width_mm: 60.0,
+            height_mm: 30.0,
+            corner: Corner::Rounded { radius_mm: 8.0 },
+        })
+    );
+
+    app.arm(Tool::Draw(Drawing::Polygon));
+    assert_eq!(chosen(&app), [("Measure".to_owned(), 0)]);
+    assert_eq!(
+        field_texts(&app),
+        [
+            (SizeField::X, String::new(), false),
+            (SizeField::Y, String::new(), false),
+            (SizeField::Sides, "6".to_owned(), false),
+        ]
+    );
+    type_size(&mut app, SizeField::Sides, "8");
+    assert_eq!(app.prefs().drawing.polygon_sides, 8);
+    type_size(&mut app, SizeField::Sides, "2");
+    assert_eq!(
+        problem(&app, SizeField::Sides).as_deref(),
+        Some("the number of sides must be 3 to 50")
+    );
+    type_size(&mut app, SizeField::Sides, "many");
+    assert_eq!(
+        problem(&app, SizeField::Sides).as_deref(),
+        Some("`many` is not a whole number")
+    );
+    assert_eq!(app.prefs().drawing.polygon_sides, 8);
+    let flats = app.tool_bar().unwrap().choices[0].options[1].option.clone();
+    app.tool_event(Event::Option(flats));
+    assert_eq!(chosen(&app), [("Measure".to_owned(), 1)]);
+    click(&mut app, pt(50.0, 50.0));
+    click(&mut app, pt(60.0, 50.0));
+    assert_eq!(last(&app).0.name, "Octagon 1");
+    assert_eq!(
+        last(&app).1.shape,
+        Some(Shape::Polygon {
+            sides: 8,
+            radius_mm: 10.0,
+            measured: Measured::Flats,
+        })
+    );
+    // The other tools have none.
+    app.arm(Tool::Draw(Drawing::Circle));
+    assert!(app.tool_bar().unwrap().choices.is_empty());
+}

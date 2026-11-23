@@ -175,7 +175,7 @@ impl App {
             (_, State::SlotWidth(..)) => StrKey::DrawPromptSlotWidth,
         };
         let values = self.step_values(drawing);
-        let fields = step_fields(drawing, self.tool.state)
+        let mut fields: Vec<SizeRow> = step_fields(drawing, self.tool.state)
             .iter()
             .map(|&field| {
                 let pinned = self.tool.pins.get(&field).copied();
@@ -193,14 +193,47 @@ impl App {
                     quantity: field.quantity(),
                     pinned: pinned.is_some(),
                     problem: self.tool.problems.get(&field).cloned(),
+                    option: false,
                 }
             })
             .collect();
+        // The tool's options, kept for the shapes that follow: after the
+        // step's sizes, in every step.
+        let drawing_prefs = self.prefs().drawing;
+        let option = |field: SizeField, text: String| SizeRow {
+            field,
+            label: strings.get(field_label(field)).to_owned(),
+            help: strings.get(field.help()).to_owned(),
+            text,
+            quantity: field.quantity(),
+            pinned: false,
+            problem: self.tool.problems.get(&field).cloned(),
+            option: true,
+        };
+        let choices = match drawing {
+            Drawing::Rectangle => {
+                if drawing_prefs.corners != CornerStyle::Square {
+                    fields.push(option(
+                        SizeField::CornerSize,
+                        units::field_text(drawing_prefs.corner_size_mm(units), units),
+                    ));
+                }
+                vec![crate::shape::corners_choice(strings, drawing_prefs.corners)]
+            }
+            Drawing::Polygon => {
+                fields.push(option(
+                    SizeField::Sides,
+                    drawing_prefs.polygon_sides.to_string(),
+                ));
+                vec![crate::shape::measure_choice(strings, measured)]
+            }
+            _ => Vec::new(),
+        };
         ToolBar {
             tool: Tool::Draw(drawing),
             prompt: strings.get(prompt).to_owned(),
             fields,
-            choices: Vec::new(),
+            choices,
             note: None,
             can_finish: self.made(drawing).is_some(),
         }
@@ -549,6 +582,45 @@ impl App {
         self.tool.problems.remove(&field);
         if text.trim().is_empty() {
             self.tool.pins.remove(&field);
+            return;
+        }
+        // A tool's option is no size of the step: it is kept for the
+        // shapes that follow, and pins nothing.
+        if matches!(field, SizeField::CornerSize | SizeField::Sides) {
+            let problem = match (field, self.read_size(field, text)) {
+                (_, Err(problem)) => Some(problem),
+                (SizeField::CornerSize, Ok(size)) if size > 0.0 => {
+                    self.prefs_mut().drawing.corner_mm = Some(size);
+                    None
+                }
+                (SizeField::CornerSize, Ok(_)) => Some(
+                    self.strings()
+                        .get(StrKey::DrawProblemNotPositive)
+                        .to_owned(),
+                ),
+                (_, Ok(sides))
+                    if (f64::from(MIN_SIDES)..=f64::from(MAX_SIDES)).contains(&sides) =>
+                {
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "a whole number between 3 and 50"
+                    )]
+                    let sides = sides as u32;
+                    self.prefs_mut().drawing.polygon_sides = sides;
+                    None
+                }
+                (_, Ok(_)) => Some(self.strings().fmt(
+                    StrKey::ShapeProblemSides,
+                    &[
+                        ("min", &MIN_SIDES.to_string()),
+                        ("max", &MAX_SIDES.to_string()),
+                    ],
+                )),
+            };
+            if let Some(problem) = problem {
+                self.tool.problems.insert(field, problem);
+            }
             return;
         }
         let value = self.read_size(field, text).and_then(|value| {

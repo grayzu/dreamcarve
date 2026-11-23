@@ -539,3 +539,46 @@ fn the_gear_tool_shows_its_sizes() {
     assert_eq!(project.instances[0].name, "Gear 1");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capabilities 85 and 85b in the window: the Rectangle's corners and
+/// the Polygon's sides are set in the tool bar, before the shape is
+/// drawn.
+#[test]
+fn the_tool_bar_sets_a_tools_options() {
+    let (mut h, dir) = plaque("tool-options");
+    key(&mut h, egui::Key::M);
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Corner size")
+            .is_none(),
+        "square corners have no size"
+    );
+    h.get_by_role_and_label(Role::RadioButton, "Rounded")
+        .click();
+    h.run_steps(8);
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Corner size")
+            .is_some()
+    );
+    click_mm(&mut h, 10.0, 60.0);
+    click_mm(&mut h, 40.0, 80.0);
+    let project = h.state().app().project();
+    let drawn = project.instances.last().unwrap();
+    let Some(Shape::Rectangle { corner, .. }) = project.definitions[&drawn.definition].shape else {
+        panic!("a rectangle");
+    };
+    assert_eq!(corner, Corner::Rounded { radius_mm: 5.0 });
+
+    key(&mut h, egui::Key::G);
+    h.run_steps(8);
+    // Enter in an option's field writes the option and takes no point.
+    type_in(&mut h, "Sides", "8");
+    assert_eq!(h.state().app().prefs().drawing.polygon_sides, 8);
+    assert!(says(&h, "Click the centre"), "no centre was taken");
+    click_mm(&mut h, 20.0, 70.0);
+    click_mm(&mut h, 28.0, 70.0);
+    assert_eq!(
+        h.state().app().project().instances.last().unwrap().name,
+        "Octagon 1"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

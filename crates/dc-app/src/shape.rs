@@ -448,50 +448,61 @@ pub(crate) fn gear_choices(strings: &Strings, gear: &Gear) -> Vec<Choice> {
     ]
 }
 
+/// A rectangle's corners as a choice: square, rounded or chamfered.
+pub(crate) fn corners_choice(strings: &Strings, chosen: CornerStyle) -> Choice {
+    choice(
+        strings,
+        (StrKey::DrawChoiceCorners, StrKey::DrawChoiceCornersHelp),
+        &[
+            (
+                StrKey::DrawChoiceCornersSquare,
+                ToolOption::Corners(CornerStyle::Square),
+            ),
+            (
+                StrKey::DrawChoiceCornersRounded,
+                ToolOption::Corners(CornerStyle::Rounded),
+            ),
+            (
+                StrKey::DrawChoiceCornersChamfered,
+                ToolOption::Corners(CornerStyle::Chamfered),
+            ),
+        ],
+        &ToolOption::Corners(chosen),
+    )
+}
+
+/// What a polygon's radius reaches as a choice: its corners or its
+/// flats.
+pub(crate) fn measure_choice(strings: &Strings, measured: Measured) -> Choice {
+    choice(
+        strings,
+        (StrKey::DrawChoiceMeasure, StrKey::DrawChoiceMeasureHelp),
+        &[
+            (
+                StrKey::DrawChoiceMeasureCorners,
+                ToolOption::Measured(Measured::Corners),
+            ),
+            (
+                StrKey::DrawChoiceMeasureFlats,
+                ToolOption::Measured(Measured::Flats),
+            ),
+        ],
+        &ToolOption::Measured(measured),
+    )
+}
+
 /// The choices `shape` has.
 fn choices(strings: &Strings, shape: &Shape) -> Vec<Choice> {
     match shape {
-        Shape::Rectangle { corner, .. } => {
-            let chosen = match corner {
+        Shape::Rectangle { corner, .. } => vec![corners_choice(
+            strings,
+            match corner {
                 Corner::Square => CornerStyle::Square,
                 Corner::Rounded { .. } => CornerStyle::Rounded,
                 Corner::Chamfered { .. } => CornerStyle::Chamfered,
-            };
-            vec![choice(
-                strings,
-                (StrKey::DrawChoiceCorners, StrKey::DrawChoiceCornersHelp),
-                &[
-                    (
-                        StrKey::DrawChoiceCornersSquare,
-                        ToolOption::Corners(CornerStyle::Square),
-                    ),
-                    (
-                        StrKey::DrawChoiceCornersRounded,
-                        ToolOption::Corners(CornerStyle::Rounded),
-                    ),
-                    (
-                        StrKey::DrawChoiceCornersChamfered,
-                        ToolOption::Corners(CornerStyle::Chamfered),
-                    ),
-                ],
-                &ToolOption::Corners(chosen),
-            )]
-        }
-        Shape::Polygon { measured, .. } => vec![choice(
-            strings,
-            (StrKey::DrawChoiceMeasure, StrKey::DrawChoiceMeasureHelp),
-            &[
-                (
-                    StrKey::DrawChoiceMeasureCorners,
-                    ToolOption::Measured(Measured::Corners),
-                ),
-                (
-                    StrKey::DrawChoiceMeasureFlats,
-                    ToolOption::Measured(Measured::Flats),
-                ),
-            ],
-            &ToolOption::Measured(*measured),
+            },
         )],
+        Shape::Polygon { measured, .. } => vec![measure_choice(strings, *measured)],
         Shape::Gear { .. } => shape
             .gear()
             .map(|gear| gear_choices(strings, &gear))
@@ -621,6 +632,7 @@ pub fn section(project: &Project, strings: &Strings, id: &InstanceId) -> Option<
             quantity: field.quantity(),
             pinned: false,
             problem: None,
+            option: false,
         })
         .collect();
     let note = if placed.is_none() {

@@ -27,9 +27,11 @@ use crate::widgets::unit_field::{UnitField, field as unit_field};
 
 /// The bar's height, px: a control and the padding round it.
 const BAR_PX: f32 = 48.0;
-/// The room one row of the bar takes under the pills, px: what Fit
-/// leaves clear while a drawing tool is armed.
-pub(super) const ROW_PX: f32 = ABOVE_PX + BAR_PX;
+/// The room two rows of the bar take under the pills, px: what Fit
+/// leaves clear while a drawing tool is armed. A Rectangle's or a
+/// Polygon's bar, with its options, is two rows in a Viewport of the
+/// usual width; the Gear's third lies over the stock's top.
+pub(super) const ROOM_PX: f32 = ABOVE_PX + BAR_PX + ROW_GAP_PX + theme::CONTROL_PX;
 /// The bar's padding, px.
 const PADDING_PX: f32 = 8.0;
 /// The gap between the bar's parts, px.
@@ -190,8 +192,9 @@ fn field_part(
             text: String::new(),
         }));
     }
-    // Enter writes the field, then commits the step as it reads.
-    if left && entered {
+    // Enter writes the field, then commits the step as it reads; in an
+    // option's field it writes the option and no more.
+    if left && entered && !row.option {
         out.push(Action::Tool(Event::Key(ToolKey::Enter)));
     }
 }

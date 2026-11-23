@@ -305,10 +305,11 @@ pub struct ToolBar { pub tool: Tool, pub prompt: String, pub fields: Vec<SizeRow
                      pub choices: Vec<Choice>,         // one of a few: a gear's flanks, root and crest
                      pub note: Option<String>,         // read, not typed: a gear's module
                      pub can_finish: bool }            // whether Done would make a shape now
-pub struct Choice { pub label: String, pub options: Vec<ChoiceOption>, pub selected: usize }
+pub struct Choice { pub label: String, pub help: String, pub options: Vec<ChoiceOption>, pub selected: usize }
 pub struct ChoiceOption { pub label: String, pub option: ToolOption }
-pub struct SizeRow { pub field: SizeField, pub label: String, pub text: String, pub quantity: Quantity,
-                     pub pinned: bool, pub problem: Option<String> }
+pub struct SizeRow { pub field: SizeField, pub label: String, pub help: String, pub text: String,
+                     pub quantity: Quantity, pub pinned: bool, pub problem: Option<String>,
+                     pub option: bool }               // a tool's option, not a size of the step
 ```
 
 A tool's options are preferences (`Prefs::drawing`: the rectangle's
@@ -540,8 +541,12 @@ rounded crest). The preview is the gear's outline, or its outside
 circle while the sizes give no gear. A click in the Viewport in `Sizes`
 does nothing, as upstream's does. The bar's choices are data
 (`ToolBar::choices`), each option carrying the `ToolOption` that
-chooses it; the Rectangle's corners and the Polygon's measure join them
-in slice 9, with the window. Every machine
+chooses it. The Rectangle's corners and the Polygon's measure are
+choices of their bars too, and the corner size (while the corners are
+not square) and the sides are rows after the step's sizes, in every
+step, marked `option`: typing one sets the preference
+(`Prefs::drawing`) for the shapes that follow, pins nothing, and
+`Enter` in its field commits nothing. Every machine
 answers `Field` events by pinning that size and recomputing the preview
 point from the fields (`manualEntry.ts`'s `computeDimensionEditPreviewPoint`),
 and `Key::Enter` by committing with the fields as they read. `Escape`
@@ -689,7 +694,7 @@ screen, which also offers **Draw from scratch**.
   `Prefs::drawing_tool`) and a 24 px chevron that opens the drawing
   tools (`Drawing::is_ready`: all but Text until slice 24), each row
   its icon, name and key. `Fit::of` drops, in order, *Layers*' label,
-  the zoom percentage, the two zoom buttons. `ways` takes one row of
+  the zoom percentage, the two zoom buttons. `ways` takes two rows of
   the tool bar off Fit's top while a drawing tool is armed.
 - `shell/menu.rs`: **Draw** (the tools, the armed one checked),
   **Shape** (*Convert to Path*), View ▸ **Snapping** (the switch, with
