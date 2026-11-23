@@ -16,10 +16,12 @@
 //! history, and gone when another tool is armed.
 
 mod draw;
+mod gear;
 mod path;
 
 use std::collections::BTreeMap;
 
+use dc_geometry::shapes::gear::{GearCrest, GearFlanks, GearRoot};
 use dc_geometry::{Point, Polyline};
 use dc_project::{InstanceId, Measured};
 
@@ -149,6 +151,18 @@ pub enum SizeField {
     Length,
     /// A slot's width.
     SlotWidth,
+    /// How many teeth a gear has.
+    Teeth,
+    /// A gear's pressure angle, degrees.
+    PressureAngle,
+    /// A gear's whole depth, a tooth's tip to its root.
+    WholeDepth,
+    /// The fillet of a gear's rounded root.
+    RootFillet,
+    /// The radius of a gear's rounded crest.
+    CrestRadius,
+    /// The diameter of a gear's bore; none for no bore.
+    Bore,
 }
 
 /// How a size's text is read and shown.
@@ -158,6 +172,8 @@ pub enum Quantity {
     Length,
     /// An angle, degrees.
     Angle,
+    /// A whole number of things, with no unit.
+    Count,
 }
 
 impl SizeField {
@@ -165,7 +181,8 @@ impl SizeField {
     #[must_use]
     pub const fn quantity(self) -> Quantity {
         match self {
-            Self::Angle => Quantity::Angle,
+            Self::Angle | Self::PressureAngle => Quantity::Angle,
+            Self::Teeth => Quantity::Count,
             _ => Quantity::Length,
         }
     }
@@ -206,9 +223,34 @@ pub struct ToolBar {
     pub prompt: String,
     /// The sizes of the step in hand.
     pub fields: Vec<SizeRow>,
+    /// The tool's choices, each one of a few: a gear's forms.
+    pub choices: Vec<Choice>,
+    /// A line under the fields that is read, not typed: a gear's module.
+    pub note: Option<String>,
     /// Whether **Done** would make a shape now: a box tool's shape with
     /// the sizes as they read, a path with the points it has.
     pub can_finish: bool,
+}
+
+/// One of a tool's choices in the tool bar: a label and the few things
+/// it can be.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Choice {
+    /// What is chosen: *Flanks*.
+    pub label: String,
+    /// What it can be, in order.
+    pub options: Vec<ChoiceOption>,
+    /// Which of `options` it is.
+    pub selected: usize,
+}
+
+/// One thing a [`Choice`] can be.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChoiceOption {
+    /// Its name: *Involute*.
+    pub label: String,
+    /// The option that chooses it, for [`Event::Option`].
+    pub option: ToolOption,
 }
 
 /// How a rectangle's corners are finished, as the Rectangle tool's
@@ -259,6 +301,12 @@ pub enum ToolOption {
     Measured(Measured),
     /// Whether the shapes that follow are construction geometry.
     Construction(bool),
+    /// The form of the gear's flanks, while its sizes are set.
+    Flanks(GearFlanks),
+    /// The form of the gear's root.
+    Root(GearRoot),
+    /// The form of the gear's crest.
+    Crest(GearCrest),
 }
 
 /// What the window tells the tool.
@@ -328,6 +376,8 @@ pub(crate) struct Session {
     state: draw::State,
     /// The path the Line, Arc or Spline tool is drawing.
     path: path::PathDraft,
+    /// How far the Gear tool has got.
+    gear: gear::GearDraft,
     /// Where the pointer last was, with what was held.
     pointer: Option<Pointer>,
     /// Where the primary button went down, mm: a release far from it is
@@ -402,6 +452,9 @@ impl App {
             (Tool::Draw(drawing), event) if path::draws(drawing) => {
                 return self.path_event(drawing, event);
             }
+            (Tool::Draw(drawing), event) if gear::draws(drawing) => {
+                return self.gear_event(event);
+            }
             (_, Event::Move(pointer)) => {
                 self.tool.draft.snap = Some(self.snap_at(&pointer, None, &[]));
             }
@@ -419,6 +472,7 @@ impl App {
         match self.tool.tool {
             Tool::Draw(drawing) if draw::draws(drawing) => Some(self.draw_bar(drawing)),
             Tool::Draw(drawing) if path::draws(drawing) => Some(self.path_bar(drawing)),
+            Tool::Draw(drawing) if gear::draws(drawing) => Some(self.gear_bar()),
             _ => None,
         }
     }

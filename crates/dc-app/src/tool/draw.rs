@@ -55,7 +55,7 @@ pub const MIN_SIZE_MM: f64 = 0.01;
 /// How far the pointer travels between a press and its release before
 /// the two are a drag and not a click, logical pixels (phase 4's click
 /// slop).
-const DRAG_PX: f64 = 4.0;
+pub(super) const DRAG_PX: f64 = 4.0;
 
 /// The fewest sides the Polygon tool takes.
 const MIN_SIDES: u32 = dc_project::MIN_POLYGON_SIDES;
@@ -188,10 +188,7 @@ impl App {
                 SizeRow {
                     field,
                     label: strings.get(field_label(field)).to_owned(),
-                    text: value.map_or_else(String::new, |value| match field.quantity() {
-                        Quantity::Length => units::field_text(value, units),
-                        Quantity::Angle => angle_text(value),
-                    }),
+                    text: value.map_or_else(String::new, |value| size_text(field, value, units)),
                     quantity: field.quantity(),
                     pinned: pinned.is_some(),
                     problem: self.tool.problems.get(&field).cloned(),
@@ -202,6 +199,8 @@ impl App {
             tool: Tool::Draw(drawing),
             prompt: strings.get(prompt).to_owned(),
             fields,
+            choices: Vec::new(),
+            note: None,
             can_finish: self.made(drawing).is_some(),
         }
     }
@@ -537,6 +536,24 @@ impl App {
             .then_some(first)
     }
 
+    /// What `text` typed in `field` is, millimetres, degrees or a count;
+    /// else why it is none of them.
+    pub(super) fn read_size(&self, field: SizeField, text: &str) -> Result<f64, String> {
+        let units = self.project().display_units;
+        let text = text.trim();
+        match field.quantity() {
+            Quantity::Length => units::parse_length_mm(text, units).map_err(|e| e.to_string()),
+            Quantity::Angle => parse_angle_deg(text).ok_or_else(|| {
+                self.strings()
+                    .fmt(StrKey::DrawProblemNotAnAngle, &[("text", text)])
+            }),
+            Quantity::Count => text.parse::<u32>().map(f64::from).map_err(|_| {
+                self.strings()
+                    .fmt(StrKey::DrawProblemNotACount, &[("text", text)])
+            }),
+        }
+    }
+
     /// Reads a typed size: pins it, or says at its field why not. Empty
     /// text unpins it.
     pub(super) fn type_size(&mut self, field: SizeField, text: &str) {
@@ -545,15 +562,7 @@ impl App {
             self.tool.pins.remove(&field);
             return;
         }
-        let units = self.project().display_units;
-        let value = match field.quantity() {
-            Quantity::Length => units::parse_length_mm(text, units).map_err(|e| e.to_string()),
-            Quantity::Angle => parse_angle_deg(text).ok_or_else(|| {
-                self.strings()
-                    .fmt(StrKey::DrawProblemNotAnAngle, &[("text", text.trim())])
-            }),
-        };
-        let value = value.and_then(|value| {
+        let value = self.read_size(field, text).and_then(|value| {
             if field.must_be_positive() && value <= 0.0 {
                 Err(self
                     .strings()
@@ -591,6 +600,8 @@ impl App {
             }
             ToolOption::Measured(measured) => self.prefs_mut().drawing.polygon_measured = measured,
             ToolOption::Construction(construction) => self.tool.construction = construction,
+            // The Gear tool's, which holds them with the gear being set.
+            ToolOption::Flanks(_) | ToolOption::Root(_) | ToolOption::Crest(_) => {}
         }
     }
 
@@ -668,6 +679,12 @@ pub(super) const fn field_label(field: SizeField) -> StrKey {
         SizeField::Angle => StrKey::DrawFieldAngle,
         SizeField::Length => StrKey::DrawFieldLength,
         SizeField::SlotWidth => StrKey::DrawFieldSlotWidth,
+        SizeField::Teeth => StrKey::DrawFieldTeeth,
+        SizeField::PressureAngle => StrKey::DrawFieldPressureAngle,
+        SizeField::WholeDepth => StrKey::DrawFieldWholeDepth,
+        SizeField::RootFillet => StrKey::DrawFieldRootFillet,
+        SizeField::CrestRadius => StrKey::DrawFieldCrestRadius,
+        SizeField::Bore => StrKey::DrawFieldBore,
     }
 }
 
@@ -757,6 +774,16 @@ fn box_label(strings: &Strings, units: Units, width_mm: f64, height_mm: f64) -> 
             ("height", &units::summary_text(height_mm, units)),
         ],
     )
+}
+
+/// A size as its field's text: a length in `units`, an angle in
+/// degrees, a count as it is.
+pub(super) fn size_text(field: SizeField, value: f64, units: Units) -> String {
+    match field.quantity() {
+        Quantity::Length => units::field_text(value, units),
+        Quantity::Angle => angle_text(value),
+        Quantity::Count => format!("{value:.0}"),
+    }
 }
 
 /// An angle as a field's text: degrees to two places, trailing zeros

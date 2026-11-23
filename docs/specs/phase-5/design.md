@@ -273,8 +273,11 @@ pub enum Drawing { Line, Arc, Spline, Rectangle, Circle, Ellipse, Polygon, Slot,
 pub enum Event { Move(Pointer), Press(Pointer), Release(Pointer), DoubleClick(Pointer), Key(Key), Leave,
                  Field { field: SizeField, text: String }, Option(ToolOption), Done }
 pub enum Key { Enter, Escape, Backspace, Delete }
-pub enum SizeField { X, Y, Width, Height, Diameter, Radius, Angle, Length, SlotWidth }
-pub enum ToolOption { Corners(CornerStyle), CornerSize(String), Sides(u32), Measured(Measured), Construction(bool) }
+pub enum SizeField { X, Y, Width, Height, Diameter, Radius, Angle, Length, SlotWidth,
+                     Teeth, PressureAngle, WholeDepth, RootFillet, CrestRadius, Bore }
+pub enum Quantity { Length, Angle, Count }
+pub enum ToolOption { Corners(CornerStyle), CornerSize(String), Sides(u32), Measured(Measured), Construction(bool),
+                      Flanks(GearFlanks), Root(GearRoot), Crest(GearCrest) }
 pub struct Reply { pub ran: Option<String>,            // the undo label of what this event committed
                    pub refused: Option<String> }       // a reason for the status bar
 impl App {
@@ -291,7 +294,12 @@ pub struct Draft { pub outlines: Vec<Polyline>,        // the shape as it would 
                    pub snap: Option<Snapped>,          // the marker and its guide
                    pub labels: Vec<Label> }            // 83a: a size and where to write it
                                                        // (nodes and highlights join it with their tools)
-pub struct ToolBar { pub tool: Tool, pub prompt: String, pub fields: Vec<SizeRow>, pub can_finish: bool }
+pub struct ToolBar { pub tool: Tool, pub prompt: String, pub fields: Vec<SizeRow>,
+                     pub choices: Vec<Choice>,         // one of a few: a gear's flanks, root and crest
+                     pub note: Option<String>,         // read, not typed: a gear's module
+                     pub can_finish: bool }            // whether Done would make a shape now
+pub struct Choice { pub label: String, pub options: Vec<ChoiceOption>, pub selected: usize }
+pub struct ChoiceOption { pub label: String, pub option: ToolOption }
 pub struct SizeRow { pub field: SizeField, pub label: String, pub text: String, pub quantity: Quantity,
                      pub pinned: bool, pub problem: Option<String> }
 ```
@@ -512,7 +520,21 @@ the minor arc, `bulge = sagitta / half chord`, signed by the pointer's
 side of the chord. When the path is made, each run of curves is
 `Path::spline` through its points, its two ends corners; a path that
 is all curves is one spline, open or closed. Gear is
-`Idle → Centre → Sizes`, the last waiting for **Done**. Every machine
+`Idle → Centre → Sizes` (`tool/gear.rs`), the last waiting for **Done**
+or `Enter`. The radius's click gives `Gear::with_defaults(radius)`;
+after it each size is its own, held in the state as it was typed, and
+`Gear::problems` is read every time the bar is: each problem is said at
+the field of the size at fault (`GearProblem::size`), in project units
+where it names a limit, and `can_finish` is false while there is one.
+Text that is no number leaves the size and is said at the field too. A
+field shows only while the gear's form reads it (the pressure angle for
+involute flanks, the fillet for a rounded root, the radius for a
+rounded crest). The preview is the gear's outline, or its outside
+circle while the sizes give no gear. A click in the Viewport in `Sizes`
+does nothing, as upstream's does. The bar's choices are data
+(`ToolBar::choices`), each option carrying the `ToolOption` that
+chooses it; the Rectangle's corners and the Polygon's measure join them
+in slice 9, with the window. Every machine
 answers `Field` events by pinning that size and recomputing the preview
 point from the fields (`manualEntry.ts`'s `computeDimensionEditPreviewPoint`),
 and `Key::Enter` by committing with the fields as they read. `Escape`
@@ -585,7 +607,7 @@ crates/dc-project/src/{shape.rs (Shape, its outline, its checks), model.rs (the 
 crates/dc-text/{Cargo.toml, README.md, fonts/ (the bundled files and their licences),
                 src/{lib.rs, font.rs, layout.rs, stroke.rs (port), bundled.rs}}
 crates/dc-job/src/checks.rs, project_from.rs            — skip construction instances
-crates/dc-app/src/{tool.rs, tool/{draw.rs (box shapes, slot, gear), path.rs (line, arc, spline), text.rs,
+crates/dc-app/src/{tool.rs, tool/{draw.rs (box shapes, slot), gear.rs, path.rs (line, arc, spline), text.rs,
                    node.rs, trim.rs, measure.rs, fields.rs (typed sizes), bar.rs}, snap.rs, shape.rs (the Shape
                    section, sizes as placed, stretch), edit.rs (offset, weld, subtract, intersect, join, fillet
                    corners as commands), array.rs (port), fonts.rs (the fonts on hand), clipboard.rs,
@@ -737,7 +759,11 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `line_open_and_closed`, `done_double_click_and_escape`,
 `backspace_takes_back_a_point`, `arc_segment_through_a_point`,
 `arc_by_a_typed_radius`, `line_by_typed_sizes`,
-`spline_is_a_path_with_cubics`, `a_line_can_go_on_as_a_curve`; for slice 7 `gear_previews_and_commits`
+`spline_is_a_path_with_cubics`, `a_line_can_go_on_as_a_curve`; for slice 7, in `tests/draw_gear.rs` (the tool's cases of
+`gearCreation.test.ts`), `gear_previews_and_commits`,
+`gear_sizes_are_typed`,
+`a_size_the_gear_cannot_have_is_refused_at_its_field`,
+`gear_steps_back`
 (acc 108–112, 114, 129).
 
 **Parametric edits (slice 8)** `dc_app::shape::` `rows_per_kind`,

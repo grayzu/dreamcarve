@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 6: 3,577.
+`0.5.0-alpha.1`. After slice 7: 3,581.
 
 ## Decisions waiting for the maintainer
 
@@ -83,6 +83,13 @@ Decisions made while building are added here.
   length or an angle is typed, and finishes the path when none is. A
   closed path is saved in the direction it was drawn, not turned
   counter-clockwise as the sized shapes are.
+- Slice 7: a gear's size is held as it was typed and the reason said at
+  its field, the gear not made while one stands (upstream's way); a
+  typed size is not thrown back. A radius click on the centre is not
+  taken (upstream raises it to the least size). The reasons that name a
+  limit give it in project units; the rest are `dc-geometry`'s words.
+  The module is shown in project units in an inch project too; a
+  diametral pitch is not offered.
 
 ## Slices
 
@@ -100,7 +107,7 @@ The numbers are the design spec's.
 | 4 | The tool model and snapping, in the app core: `dc_app::tool` (the tool in use, a drawing tool the Draw button holds, events, the draft the window paints), `dc_app::snap` ported from PureCutCNC's `resolveSketchSnap` with its tests (endpoint, midpoint, centre, intersection, on outline, perpendicular, grid; rank then distance), `dc_geometry::intersect` ported from `segmentIntersection.ts` (brought forward from slice 15: the Intersection snap reads it), a scene shape's centre and construction flag, and the snapping and drawing preferences in `gui.toml` (`[snap]`, `[drawing]`). No window yet: that is slice 9. Gate: 3,550 tests | done |
 | 5 | Rectangle, Circle, Ellipse, Polygon and Slot, in the app core: `Command::AddShapes`; the tools' state machine (`dc_app::tool::draw`) with PureCutCNC's click sequences, a drag as two points, `Shift` for a square and `Alt` from the centre, every step typed (the first point as X and Y from the origin, then the sizes; a typed size is pinned and the rest follows the pointer), a refused size marked at its field, the tool bar's prompt and fields as data, the size label, sticky tools, names by the next free number, the Construction switch, the selection's folder; the tools' options in `gui.toml`. Gate: 3,569 tests | done |
 | 6 | Line, Arc and Spline, in the app core (`dc_app::tool::path`): one path drawn a point at a time, each span a line, an arc (its end, then a point it passes through, or a typed radius) or a curve (Catmull-Rom through its points); changing among the three keeps the path; a click on the first point closes, `Enter`, Done or a double-click finishes open, `Backspace` takes back a point; the next point by typed length and angle; lines and arcs saved as their outline, a path with a curve as `Shape::Path` and its flattened outline; three points in a line refused with the reason; the tool bar's `can_finish`. Gate: 3,577 tests | done |
-| 7 | Gear | todo |
+| 7 | The Gear tool, in the app core (`dc_app::tool::gear`): the centre, the outside radius, then the sizes in the tool bar (teeth, outside diameter, pressure angle, whole depth, root fillet, crest radius, bore; flanks, root and crest as choices; the module as a note), previewed, until Done; what the gear cannot be said at the field at fault; the bore a second outline; `Shape::from_gear`; `ToolBar::choices` and `note`, `Quantity::Count`. Gate: 3,581 tests | done |
 | 8 | Sizes: the Shape section, stretching, Convert to Path | todo |
 | 9 | The window, drawing | todo |
 

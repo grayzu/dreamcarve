@@ -255,7 +255,15 @@ capability 52); what a tool holds before it commits is not project data.
     **Crest radius**, and **Bore diameter** (0 for none). The module is
     shown, derived: outside diameter ÷ (teeth + 2). A bore is a second
     outline of the same shape, a hole to every operation. A size the
-    gear cannot have is refused at its field with PureCutCNC's reason.
+    gear cannot have is held as typed and refused at its field with
+    PureCutCNC's reason, a limit in it in project units; **Done** is
+    off, and `Enter` refused with the reason, while one stands. A size
+    shows only while the gear's form reads it: the pressure angle for
+    involute flanks, the fillet for a rounded root, the radius for a
+    rounded crest. The first radius sets the depth, the fillet and the
+    crest radius from the module; after that a new tooth count or
+    diameter leaves them as they read. `Backspace` steps back to the
+    radius, then to the centre.
 87. **Line** (`P`; PureCutCNC's polygon and composite tools as one).
     Each click adds a point joined to the last by a straight segment.
     A click on the first point (within 12 px, three points or more)

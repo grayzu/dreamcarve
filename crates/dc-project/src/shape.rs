@@ -250,6 +250,24 @@ impl Shape {
         }))
     }
 
+    /// The shape `gear` is: its sizes, with the outside circle by its
+    /// diameter as a file has it.
+    #[must_use]
+    pub const fn from_gear(gear: &Gear) -> Self {
+        Self::Gear {
+            teeth: gear.teeth,
+            outside_diameter_mm: gear.outside_radius_mm * 2.0,
+            pressure_angle_deg: gear.pressure_angle_deg,
+            flanks: gear.flanks,
+            whole_depth_mm: gear.whole_depth_mm,
+            root: gear.root,
+            root_fillet_mm: gear.root_fillet_mm,
+            crest: gear.crest,
+            crest_radius_mm: gear.crest_radius_mm,
+            bore_diameter_mm: gear.bore_diameter_mm,
+        }
+    }
+
     /// A gear's sizes as `dc-geometry` takes them; `None` for any other
     /// kind.
     #[must_use]

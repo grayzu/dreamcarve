@@ -34,8 +34,8 @@
 use dc_geometry::{Path, PathNode, Point, Polyline, Span, Vec2, arc_middle, bulge_through};
 use dc_project::Shape;
 
-use super::draw::{MIN_SIZE_MM, angle_text};
-use super::{Draft, Drawing, Event, Key, Label, Quantity, Reply, SizeField, SizeRow, ToolBar};
+use super::draw::{MIN_SIZE_MM, size_text};
+use super::{Draft, Drawing, Event, Key, Label, Reply, SizeField, SizeRow, ToolBar};
 use crate::command::{NewShape, next_name};
 use crate::snap::Snapped;
 use crate::strings::StrKey;
@@ -235,10 +235,7 @@ impl App {
                 SizeRow {
                     field,
                     label: strings.get(super::draw::field_label(field)).to_owned(),
-                    text: value.map_or_else(String::new, |value| match field.quantity() {
-                        Quantity::Length => units::field_text(value, units),
-                        Quantity::Angle => angle_text(value),
-                    }),
+                    text: value.map_or_else(String::new, |value| size_text(field, value, units)),
                     quantity: field.quantity(),
                     pinned: pinned.is_some(),
                     problem: self.tool.problems.get(&field).cloned(),
@@ -249,6 +246,8 @@ impl App {
             tool: Tool::Draw(drawing),
             prompt: strings.get(prompt).to_owned(),
             fields,
+            choices: Vec::new(),
+            note: None,
             can_finish: draft.points.len() >= 2,
         }
     }
