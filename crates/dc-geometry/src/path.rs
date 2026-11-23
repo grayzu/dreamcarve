@@ -14,6 +14,12 @@
 //! Coordinates are millimetres, Y-up (ADR-0001). A [`Span::Arc`]'s bulge
 //! is a [`Vertex`]'s: positive is counter-clockwise.
 
+mod edit;
+mod spline;
+
+pub use edit::{CornerError, HandleSide, PathHit, SpanKind};
+pub use spline::{arc_middle, bulge_through};
+
 use crate::flatten::flatten;
 use crate::point::{EPS_MM, Point};
 use crate::polyline::{BULGE_EPS, Polyline, Vertex};

@@ -558,3 +558,136 @@ proptest! {
         }
     }
 }
+
+/// A path of three to seven spans in ±200 mm, each a line, an arc or a
+/// cubic with handles near its ends, open or closed.
+fn any_path() -> impl Strategy<Value = dc_geometry::Path> {
+    use dc_geometry::{PathNode, Span};
+    let node = (
+        -200.0..200.0_f64,
+        -200.0..200.0_f64,
+        0_u8..3,
+        -1.5..1.5_f64,
+        (
+            -40.0..40.0_f64,
+            -40.0..40.0_f64,
+            -40.0..40.0_f64,
+            -40.0..40.0_f64,
+        ),
+    );
+    (prop::collection::vec(node, 4..=8), any::<bool>()).prop_map(|(raw, closed)| {
+        let count = raw.len();
+        let nodes = raw
+            .iter()
+            .enumerate()
+            .map(|(i, &(x, y, kind, bulge, (ox, oy, ix, iy)))| {
+                let next = raw[(i + 1) % count];
+                let span = match kind {
+                    0 => Span::Line,
+                    1 => Span::Arc { bulge },
+                    _ => Span::Cubic {
+                        handle_out: Point::new(x + ox, y + oy),
+                        handle_in: Point::new(next.0 + ix, next.1 + iy),
+                    },
+                };
+                PathNode {
+                    x,
+                    y,
+                    span,
+                    smooth: false,
+                }
+            })
+            .collect();
+        dc_geometry::Path::new(nodes, closed)
+    })
+}
+
+proptest! {
+    #![proptest_config(config(512))]
+
+    /// Phase 5, paths: a node added anywhere on any span leaves the
+    /// outline where it was, and the new node is on it. Measured on the
+    /// span that was split, flattened before and after: no vertex of
+    /// either is further from the other than the flattening allows. (A
+    /// wrong split is off by millimetres, not hundredths.)
+    #[test]
+    fn splitting_a_span_keeps_the_outline(
+        path in any_path(),
+        span in 0_usize..8,
+        t in 0.01..0.99_f64,
+    ) {
+        use dc_geometry::nearest_point;
+        prop_assume!(span < path.span_count());
+        let (start, end) = path.span_ends(span).expect("the span has ends");
+        prop_assume!(start.distance_to(end) > 1.0);
+        let split = path.split_span(span, t).expect("a span of the path splits");
+        prop_assert_eq!(split.nodes().len(), path.nodes().len() + 1);
+        prop_assert_eq!(split.is_closed(), path.is_closed());
+        // The other nodes and spans are untouched.
+        for (i, node) in path.nodes().iter().enumerate() {
+            let after = split.nodes()[if i > span { i + 1 } else { i }];
+            prop_assert_eq!(after.point(), node.point());
+            if i != span {
+                prop_assert_eq!(after.span, node.span);
+            }
+        }
+        // The span alone, before and after: one span, then two.
+        let end_node = dc_geometry::PathNode::line(end.x, end.y);
+        let before = dc_geometry::Path::new(vec![path.nodes()[span], end_node], false);
+        let after = dc_geometry::Path::new(
+            vec![split.nodes()[span], split.nodes()[span + 1], end_node],
+            false,
+        );
+        let fine_mm = 0.01;
+        let flat = |path: &dc_geometry::Path| path.to_polyline(fine_mm).with_arcs_flattened(fine_mm);
+        let (before, after) = (flat(&before), flat(&after));
+        for (from, to) in [(&before, &after), (&after, &before)] {
+            for vertex in from.vertices() {
+                let gap_mm = nearest_point(to, vertex.point()).expect("an outline").gap_mm;
+                prop_assert!(gap_mm < 4.0 * fine_mm, "{gap_mm} mm apart");
+            }
+        }
+        let added = split.nodes()[span + 1].point();
+        let hit = path.nearest(added).expect("a path with spans");
+        prop_assert!(hit.gap_mm < 1e-6, "the new node is {} mm off the path", hit.gap_mm);
+    }
+
+    /// A path reversed is the same outline, and reversed twice is itself,
+    /// node for node.
+    #[test]
+    fn a_path_reversed_twice_is_itself(path in any_path()) {
+        let back = path.reversed();
+        prop_assert_eq!(back.nodes().len(), path.nodes().len());
+        let again = back.reversed();
+        for (a, b) in again.nodes().iter().zip(path.nodes()) {
+            prop_assert_eq!(a.point(), b.point());
+        }
+        let length = |path: &dc_geometry::Path| path.to_polyline(1e-4).length_mm();
+        prop_assert!((length(&back) - length(&path)).abs() < 1e-2 * (1.0 + length(&path) * 1e-4));
+        // The spans that are drawn are the same; an open path's last
+        // node's span is not drawn, and is a line after any reversal.
+        for span in 0..path.span_count() {
+            prop_assert_eq!(again.nodes()[span].span, path.nodes()[span].span, "span {}", span);
+        }
+    }
+
+    /// The arc through three points passes through all three, whichever
+    /// side of the chord the third is on.
+    #[test]
+    fn an_arc_through_three_points_passes_through_them(
+        sx in -200.0..200.0_f64, sy in -200.0..200.0_f64,
+        ex in -200.0..200.0_f64, ey in -200.0..200.0_f64,
+        tx in -200.0..200.0_f64, ty in -200.0..200.0_f64,
+    ) {
+        use dc_geometry::bulge_through;
+        let (start, end, through) = (Point::new(sx, sy), Point::new(ex, ey), Point::new(tx, ty));
+        // Well clear of a line, so the circle is not enormous.
+        let area2 = ((through.x - start.x) * (end.y - start.y) - (through.y - start.y) * (end.x - start.x)).abs();
+        prop_assume!(area2 > 50.0 && start.distance_to(end) > 5.0);
+        let bulge = bulge_through(start, end, through).expect("three points off a line");
+        let segment = Segment { start, end, bulge };
+        let gap_mm = point_segment_distance_mm(segment, through);
+        let radius_mm = segment.arc().expect("an arc").radius_mm;
+        prop_assert!(gap_mm < 1e-9 * radius_mm.max(1.0), "{gap_mm} mm off an arc of radius {radius_mm}");
+    }
+}

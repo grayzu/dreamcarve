@@ -356,9 +356,11 @@ capability 52); what a tool holds before it commits is not project data.
       end closes it; on another open path's end (within the snap
       distance) joins the two into one shape.
     - **Segment kind** (context menu on a segment; Graphite's, absent
-      from PureCutCNC): *Make Straight*, *Make Arc* (through the
-      segment's present middle point), *Make Curve* (handles at a third
-      of its length).
+      from PureCutCNC): *Make Straight*; *Make Arc* (a curve becomes
+      the arc through its middle point; a straight segment bows out by
+      an eighth of its length, to be dragged from there); *Make Curve*
+      (a line gets handles a third of the way along it; an arc becomes
+      the curve that follows it, with a node at each quarter turn).
 
     Each edit is one undo step (*Move node of “Line 3”*; a drag is one
     step on release). `Escape`, `Enter`, `V` or a double-click on empty

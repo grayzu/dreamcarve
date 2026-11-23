@@ -100,8 +100,26 @@ impl Path {
     pub fn has_curves(&self) -> bool;
     /// Lines and arcs as they are; each cubic flattened within `tolerance_mm`.
     pub fn to_polyline(&self, tolerance_mm: f64) -> Polyline;
-    pub fn transformed(&self, t: Transform) -> Result<Path, GeometryError>;   // arcs under uneven scale become cubics
+    pub fn spline(points: &[Point], closed: bool) -> Self;   // a smooth curve through the points
+    // Editing: each returns a new path, or `None` (for a corner, the reason) when it cannot be done.
+    pub fn nearest(&self, p: Point) -> Option<PathHit>;      // the span, how far along it, the gap
+    pub fn split_span(&self, span: usize, t: f64) -> Option<Self>;
+    pub fn delete_node(&self, node: usize) -> Option<Self>;
+    pub fn break_at(&self, node: usize) -> Option<(Self, Option<Self>)>;
+    pub fn delete_span(&self, span: usize) -> Option<(Self, Option<Self>)>;
+    pub fn fillet(&self, node: usize, radius_mm: f64) -> Result<Self, CornerError>;
+    pub fn chamfer(&self, node: usize, distance_mm: f64) -> Result<Self, CornerError>;
+    pub fn with_span_kind(&self, span: usize, kind: SpanKind) -> Option<Self>;
+    pub fn with_node_at(&self, node: usize, to: Point) -> Option<Self>;
+    pub fn with_handle_at(&self, node: usize, side: HandleSide, to: Point, keep_smooth: bool) -> Option<Self>;
+    pub fn with_node_smooth(&self, node: usize, smooth: bool) -> Option<Self>;
+    pub fn with_arc_through(&self, span: usize, through: Point) -> Option<Self>;
+    pub fn with_arc_radius(&self, span: usize, radius_mm: f64) -> Option<Self>;
+    pub fn reversed(&self) -> Self;
+    pub fn closed_up(&self, tolerance_mm: f64) -> Option<Self>;
 }
+pub fn bulge_through(start: Point, end: Point, through: Point) -> Option<f64>;   // the arc through three points
+pub fn arc_middle(start: Point, end: Point, bulge: f64) -> Point;                // the handle an arc is dragged by
 ```
 
 `smooth` says the node's two handles are kept in line when one is
@@ -373,10 +391,20 @@ other.
   either side's length; else two nodes at `trim` along each side joined
   by the minor arc. **Chamfer**: the same two nodes at `distance`,
   joined by a line.
-- **Segment kind**: to an arc through the span's point at `t = ½`; to a
-  cubic with handles a third of the chord (a line) or the standard
-  `4/3·tan(θ/4)·r` handles (an arc, split at 90°); to a line by
+- **Segment kind**: a cubic to the arc through its point at `t = ½`; a
+  line, which has no middle to bow through, to an arc of bulge ¼ (it
+  bows out by an eighth of its length, to be dragged from there); a line
+  to a cubic with handles a third of the way along it; an arc to the
+  cubic with the standard `4/3·tan(θ/4)·r` handles, one for each quarter
+  turn or part of one, with a node between each; anything to a line by
   dropping the bulge or handles.
+- **Handles**: dragging one at a smooth node turns the other to stay in
+  line, keeping its length; dragged alone (`keep_smooth` off) the node
+  becomes a corner; `with_node_smooth` brings the two back into line
+  along the line between them.
+- **Arc radius**: a typed radius keeps the ends, the side the arc bows
+  to and whether it is over a half turn; under half the chord is
+  refused (`arcHandleFromRadius`).
 - **Moving a node beside an arc**: the arc's middle point is taken
   first, and the arc is rebuilt through the moved end, the other end
   and that point.
@@ -604,12 +632,24 @@ three codes; `dc_geometry::path::a_polyline_round_trips_through_a_path`,
 `a_gears_sizes_are_checked_together` (acc 108–111).
 
 **Paths (slice 3)** `dc_geometry::path::` the ports of
-`profileEdit.test.ts` (10); `a_polyline_round_trips_through_a_path`,
-`arc_through_three_points_bulges_toward_the_third`,
-`collinear_points_make_no_arc`, `a_spline_passes_through_its_points`,
-`flattened_cubics_stay_within_tolerance`,
-`splitting_a_span_keeps_the_outline` (property), and for slice 12
-`make_arc_keeps_the_middle_point`, `make_curve_then_straight_is_the_chord`.
+`profileEdit.test.ts` (`insert_point_splits_a_line`,
+`split_cubic_returns_the_de_casteljau_halves`, `close_open_path`,
+`fillet_a_line_corner`, `chamfer_a_line_corner`,
+`delete_node_bridges_across_it`, `delete_span_opens_a_closed_path`,
+`break_opens_a_closed_path_at_the_node`,
+`arc_through_three_points_bulges_toward_the_third`), and
+`a_polyline_round_trips_through_a_path`, `flattened_cubics_stay_within_tolerance`,
+`collinear_points_make_no_arc`, `the_arc_passes_through_the_third_point`,
+`a_closed_spline_passes_through_its_points`, `an_open_spline_has_short_end_tangents`,
+`split_arc_keeps_the_circle`, `a_corner_that_cannot_be_cut_says_why`,
+`fillet_any_corner_of_a_closed_path`, `deleting_beside_a_curve_keeps_the_outer_handles`,
+`nearest_finds_the_span_and_how_far_along`, `span_kinds`,
+`moving_a_node_carries_its_handles_and_rebuilds_its_arcs`,
+`a_smooth_handle_carries_its_twin`, `an_arc_is_reshaped_by_its_middle_or_its_radius`,
+`reversed_runs_the_other_way`; the properties `splitting_a_span_keeps_the_outline`,
+`a_path_reversed_twice_is_itself`, `an_arc_through_three_points_passes_through_them`.
+The path geometry of slices 10 to 12 is here too; those slices add the
+tool that drives it.
 
 **Tool model and snapping (slice 4)** `dc_app::snap::` the ports of
 `snappingHelpers.test.ts` (5); `the_nearest_of_the_highest_rank_wins`,
