@@ -10,7 +10,7 @@ before that; its changes are those under Unreleased.
 
 ### Added
 
-- **The app is in the releases.** From `v0.4.0-alpha.1` every release has
+- **The app is in the releases.** From `v0.4.0-alpha.2` every release has
   an archive of `dreamcarve-app` for Linux, macOS (Intel and Apple
   silicon) and Windows beside the command line program's, with its own
   installer scripts, and `THIRD-PARTY-LICENSES` covers the app's crates.

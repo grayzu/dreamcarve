@@ -11,7 +11,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# In the release archives from v0.4.0-alpha.1: the plain binary for each
+# In the release archives from v0.4.0-alpha.2: the plain binary for each
 # dist target, unsigned, with THIRD-PARTY-LICENSES covering its crates
 # (`tools/third-party-licenses`). The release slice (22) still owes the
 # signed app bundles and the `.dcv` association, neither of which

@@ -13,18 +13,18 @@ Tagged releases publish archives of both programs for Linux x86_64, macOS
 [releases page](https://github.com/grayzu/dreamcarve/releases), with shell
 and PowerShell installer scripts that put the program on your `PATH`.
 
-The app is in the releases from `v0.4.0-alpha.1`, a pre-release for
+The app is in the releases from `v0.4.0-alpha.2`, a pre-release for
 testers. GitHub's "latest" link skips pre-releases, so name the version.
 To install the app on macOS or Linux:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grayzu/dreamcarve/releases/download/v0.4.0-alpha.1/dreamcarve-app-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grayzu/dreamcarve/releases/download/v0.4.0-alpha.2/dreamcarve-app-installer.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/grayzu/dreamcarve/releases/download/v0.4.0-alpha.1/dreamcarve-app-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/grayzu/dreamcarve/releases/download/v0.4.0-alpha.2/dreamcarve-app-installer.ps1 | iex"
 ```
 
 Then open a new terminal and run `dreamcarve-app`. The command line
@@ -89,7 +89,7 @@ at `target/release/dreamcarve` (`dreamcarve.exe` on Windows).
 
 ## The app
 
-A release from `v0.4.0-alpha.1` has the app ready built, above. To build
+A release from `v0.4.0-alpha.2` has the app ready built, above. To build
 it from source instead, with the prerequisites above, in the checkout:
 
 ```sh

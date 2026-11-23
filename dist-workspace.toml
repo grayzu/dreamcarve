@@ -26,6 +26,13 @@ install-updater = false
 include = ["NOTICE", "THIRD-PARTY-LICENSES"]
 # Steps run before `dist build` on every build runner.
 github-build-setup = "../build-setup.yml"
+# dist 0.33 builds aarch64-apple-darwin on `macos-14`, an image GitHub has
+# withdrawn (v0.4.0-alpha.1's release run: "The configuration
+# 'macos-14-arm64-us-default' is not supported"). macOS 15 is the image the
+# Intel build already runs on (`macos-15-intel`).
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
+
 # Pin the actions dist writes into release.yml to full commit SHAs (issue #45).
 # Each SHA was resolved from the official repository's tag named in the
 # comment. Dependabot does not edit this file: when it bumps an action in
