@@ -768,6 +768,11 @@ severity: Error
 field: operations[o1].boundary
 message: operation `Cut out` (`o1`) lists as its boundary `Centre line` (`i1`), which is construction geometry and is never cut; take it out of the operation, or turn Construction off for the shape
 
+code: shape_outline_differs
+severity: Warning
+field: definitions[d2].shape
+message: shape `Slot 1` (`d2`) has an outline that is not the one its slot sizes give; what is cut is the outline in `profiles`. Change a size of the shape in the app to make the outline again, or set `shape` to null to keep the outline as it is
+
 code: duplicate_folder_id
 severity: Error
 field: (none)

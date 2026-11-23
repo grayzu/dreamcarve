@@ -124,9 +124,9 @@ pub enum Shape {
     Polygon { sides: u32, radius_mm: f64, measured: Measured },
     /// Centred; its centreline along X; `length_mm` centre to centre.
     Slot { length_mm: f64, width_mm: f64 },
-    Gear { teeth: u32, outside_diameter_mm: f64, pressure_angle_deg: f64, flanks: Flanks,
-           whole_depth_mm: f64, root: Root, root_fillet_mm: f64, crest: Crest, crest_radius_mm: f64,
-           bore_diameter_mm: Option<f64> },
+    Gear { teeth: u32, outside_diameter_mm: f64, pressure_angle_deg: f64, flanks: GearFlanks,
+           whole_depth_mm: f64, root: GearRoot, root_fillet_mm: f64, crest: GearCrest,
+           crest_radius_mm: f64, bore_diameter_mm: Option<f64> },
     /// The baseline starts at the origin and runs along +X; lines follow downward.
     Text { text: String, font: FontRef, height_mm: f64, letter_spacing_fraction: f64,
            line_spacing_fraction: f64, align: Align },
@@ -135,13 +135,15 @@ pub enum Shape {
 }
 pub enum Corner { Square, Rounded { radius_mm: f64 }, Chamfered { distance_mm: f64 } }
 pub enum Measured { Corners, Flats }
-pub enum Flanks { Involute, Straight }  pub enum Root { Rounded, Flat, Sharp }  pub enum Crest { Flat, Rounded }
+// GearFlanks { Involute, Straight }, GearRoot { Rounded, Flat, Sharp } and GearCrest { Flat, Rounded }
+// are dc_geometry::shapes::gear's, re-exported, so the generator and the file share them.
 pub enum Align { Left, Centre, Right }
 pub struct FontRef { pub family: String, pub style: String }
 impl Shape {
     /// The outline this shape's sizes give, in definition space, anticlockwise outers and clockwise
-    /// holes. `None` for text, which needs a font.
-    pub fn outline(&self, flatten_tolerance_mm: f64) -> Option<Result<Vec<Polyline>, ShapeError>>;
+    /// holes. `None` for text, which needs a font; `Err` for a gear whose sizes give no gear.
+    pub fn outline(&self, flatten_tolerance_mm: f64) -> Option<Result<Vec<Polyline>, GearProblem>>;
+    pub fn outline_matches(&self, profiles: &[Polyline], flatten_tolerance_mm: f64) -> Option<bool>;
 }
 
 pub struct FeatureInstance { /* … */ pub construction: bool, pub folder: Option<FolderId>, /* z_top_mm, z_bottom_mm */ }
@@ -303,26 +305,50 @@ user's edge, anticlockwise positive.
 ### Shape outlines (`dc_geometry::shapes`)
 
 All closed outlines are anticlockwise, and each starts where its
-subsection says, so the same sizes give the same bytes.
+subsection says, so the same sizes give the same vertices. The functions
+take sizes the caller has checked; a size that cannot be gives a
+degenerate outline, never a panic.
 
 - **Rectangle.** Square: `Polyline::rect` from (−w/2, −h/2). Rounded,
-  radius `r` held to `min(w, h)/2`: eight vertices, each corner an arc
-  of bulge `tan(π/8)`; at exactly half the shorter side the two arcs of
-  that end meet and the zero-length side between them is dropped.
-  Chamfered: eight vertices, no arcs.
-- **Circle.** `Polyline::circle`.
-- **Ellipse.** `kurbo::Ellipse` to a path, flattened by
-  `dc_geometry::flatten` at the tolerance, the first vertex on +X.
+  radius `r` held to `min(w, h)/2`: from the left end of the bottom
+  side, four lines and four arcs of bulge `tan(π/8)`; at exactly half
+  the shorter side the two arcs of that end meet and the side between
+  them, having no length, is left out. Chamfered: the same eight
+  vertices with no arcs. (Upstream stops a micrometre short of half the
+  side and builds the rounded one by filleting a rectangle four times.)
+- **Circle.** `Polyline::circle`: two half-circle arcs from its point on
+  +X.
+- **Ellipse.** Straight segments between points of the true ellipse,
+  from its point on +X: `n = ⌈2π / (2·acos(1 − t/r))⌉` of them, `r` the
+  greater radius and `t` the tolerance, rounded up to a multiple of
+  four and held to 16–16 384. The ellipse is the circle of radius `r`
+  squeezed along one axis, which moves no chord further from its curve,
+  so every chord is within `t`. The first quadrant's points are
+  computed and the other three mirrored, so the four axis points are
+  vertices, the box is exactly the sizes and the outline is symmetric
+  to the last bit. (Upstream's ellipse is four Béziers.)
 - **Polygon.** `sides` vertices at `radius · (cos, sin)(2πi/sides)`;
   measured to the flats, the corner radius is `radius / cos(π/sides)`.
 - **Slot.** Vertices (−l/2, −w/2) line to (l/2, −w/2), bulge 1 to
   (l/2, w/2), line to (−l/2, w/2), bulge 1 back: two lines, two exact
-  half circles centred (±l/2, 0). A length of zero is a circle of
-  diameter `w` and is refused as a slot.
+  half circles centred (±l/2, 0).
 - **Gear.** `gearProfile.ts`'s `buildGearProfile`: the tooth outline
   sampled at five points per flank and per transition, repeated
-  `teeth` times, lines only; the bore, when set, a clockwise circle
-  after it.
+  `teeth` times from the left root shoulder of the tooth on +X, lines
+  only; the bore, when set, a clockwise circle after it. Its sizes are
+  checked, not clamped as upstream clamps them: `Gear::problems` lists
+  what is wrong, each a `GearProblem` naming its size. Validation
+  reports each as `out_of_range` at that size's field; teeth cut past
+  the centre are said once, without the fillet and bore that then
+  cannot fit either.
+
+`Shape::outline_matches` is what `shape_outline_differs` asks: the same
+number of outlines, each with the same vertices in the same order
+within `EPS_MM` (bulges within 1e-9). An outline flattened from a curve
+(an ellipse, a path with curves) may have been flattened by another
+build into other vertices of the same curve, so for those it is enough
+that neither outline has a vertex further than the tolerance from the
+other.
 
 ### Paths (`dc_geometry::path`)
 
@@ -561,12 +587,21 @@ three codes; `dc_geometry::path::a_polyline_round_trips_through_a_path`,
 `a_construction_target_fails_check_and_export` (acc 125).
 
 **Shape outlines (slice 2)** `dc_geometry::shapes::` the ports of
-`slot.test.ts` (7), `ngon.test.ts` (7), `cannedRectProfiles.test.ts`
-(15), `gearProfile.test.ts` (9); `every_outline_is_anticlockwise_and_closed`,
+`slot.test.ts` (7), `ngon.test.ts` (7) and `cannedRectProfiles.test.ts`
+(15), under names that say what each shows (`rounded_segment_count`,
+`slot_arcs_are_half_circles_about_the_end_centres`, …), and
+`every_outline_is_closed_and_counter_clockwise`,
 `rounded_corners_are_tangent_arcs`, `an_ellipse_stays_within_tolerance`,
-`polygon_to_the_flats`, a property test that each shape's box is its
-sizes; `dc_project::shape::outline_of_every_kind_matches_the_fixture`,
-`validate::a_hand_edited_outline_is_shape_outline_differs` (acc 108–111).
+`an_ellipses_segment_count_follows_the_tolerance`, `polygon_to_the_flats`;
+`shapes::gear::` the ports of `gearProfile.test.ts` (9), and
+`each_size_out_of_range_is_named`, `the_default_gear_has_24_fold_symmetry`,
+`a_bore_is_a_clockwise_circle_after_the_teeth`; the properties
+`a_shapes_outline_is_simple_and_its_box_is_its_sizes` and
+`a_gears_outline_is_simple_and_symmetric`; `dc_project::shape::`
+`outline_of_every_kind`, `an_outlines_box_is_its_sizes`,
+`a_gear_that_cannot_be_has_no_outline`, `a_changed_outline_does_not_match`;
+`validate::a_hand_edited_outline_is_shape_outline_differs`,
+`a_gears_sizes_are_checked_together` (acc 108–111).
 
 **Paths (slice 3)** `dc_geometry::path::` the ports of
 `profileEdit.test.ts` (10); `a_polyline_round_trips_through_a_path`,

@@ -745,6 +745,11 @@ fn samples() -> Vec<Problem> {
             boundary,
         });
     }
+    all.push(Problem::ShapeOutlineDiffers {
+        definition: DefinitionId::new("d2"),
+        name: "Slot 1".into(),
+        kind: "slot",
+    });
     all.push(Problem::DuplicateFolderId {
         id: FolderId::new("f1"),
     });
@@ -779,7 +784,7 @@ fn render(problems: &[Problem]) -> String {
 fn every_problem_reads_as_the_snapshot_says() {
     let samples = samples();
     let codes: BTreeSet<&str> = samples.iter().map(Problem::code).collect();
-    assert_eq!(codes.len(), 91, "a variant has no sample: {codes:?}");
+    assert_eq!(codes.len(), 92, "a variant has no sample: {codes:?}");
     let actual = render(&samples);
     if std::env::var_os(UPDATE).is_some() {
         std::fs::write(SNAPSHOT_PATH, &actual).unwrap();

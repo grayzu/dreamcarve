@@ -25,6 +25,7 @@ mod polyline;
 pub mod profile;
 mod region;
 mod self_band;
+pub mod shapes;
 pub mod simplify;
 mod transform;
 pub mod width;

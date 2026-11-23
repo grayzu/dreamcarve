@@ -29,6 +29,7 @@ pub mod test_support;
 
 pub use bitmap::{BitmapColour, BitmapError, BitmapHeader, Grayscale, MAX_BITMAP_SIDE_PX};
 pub use countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
+pub use dc_geometry::shapes::gear::{GearCrest, GearFlanks, GearProblem, GearRoot};
 pub use history::{History, MAX_UNDO_STEPS};
 pub use ids::{BitmapId, DefinitionId, FolderId, InstanceId, OperationId, TabId, ToolId};
 pub use inlay::{
@@ -60,9 +61,8 @@ pub use post_processor::{
 pub use project::{ClearedPlane, cleared_start_plane};
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use shape::{
-    Align, Corner, Crest, Flanks, FontRef, MAX_GEAR_TEETH, MAX_POLYGON_SIDES,
-    MAX_PRESSURE_ANGLE_DEG, MIN_GEAR_TEETH, MIN_POLYGON_SIDES, MIN_PRESSURE_ANGLE_DEG, Measured,
-    Root, Shape,
+    Align, Corner, FontRef, MAX_GEAR_TEETH, MAX_POLYGON_SIDES, MAX_PRESSURE_ANGLE_DEG,
+    MIN_GEAR_TEETH, MIN_POLYGON_SIDES, MIN_PRESSURE_ANGLE_DEG, Measured, Shape,
 };
 pub use tool::{
     CuttingLimit, MAX_TAPER_ANGLE_DEG, TBN_FLUTES, TBN_TAPER, TBN_TIP, UnsetValue,

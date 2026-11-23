@@ -2963,9 +2963,9 @@ fn a_v28_project_exports_the_same_programs() {
 const UPDATE_V29: &str = "DC_PROJECT_UPDATE_V29_FIXTURES";
 
 /// The version 29 fixtures load as they are and save byte for byte: the
-/// plain sample, and a drawing with a shape of each kind the first
-/// slice can check, a folder, a group, construction geometry and a
-/// faded picture.
+/// plain sample, and a drawing with a shape of every kind but text, each
+/// with the outline its sizes give, a folder, a group, construction
+/// geometry and a faded picture.
 #[test]
 fn version_29_fixtures_load() {
     use crate::test_support::drawing_project;
@@ -2988,6 +2988,16 @@ fn version_29_fixtures_load() {
     assert!(text.contains("\"version\": 29,"), "a version 29 file");
     for key in [
         "\"kind\": \"rectangle\"",
+        "\"corner\": \"square\"",
+        "\"rounded\": {",
+        "\"chamfered\": {",
+        "\"kind\": \"circle\"",
+        "\"kind\": \"ellipse\"",
+        "\"kind\": \"polygon\"",
+        "\"measured\": \"flats\"",
+        "\"kind\": \"slot\"",
+        "\"kind\": \"gear\"",
+        "\"flanks\": \"involute\"",
         "\"kind\": \"path\"",
         "\"construction\": true",
         "\"folder\": \"f1\"",

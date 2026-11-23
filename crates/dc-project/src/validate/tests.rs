@@ -6294,16 +6294,17 @@ fn a_folder_that_is_not_there_and_a_folder_id_used_twice_are_errors() {
 /// field under `definitions[..].shape`, so the app can mark the field.
 #[test]
 fn a_shapes_sizes_are_checked_at_their_fields() {
-    use crate::shape::{Corner, Crest, Flanks, Measured, Root, Shape};
+    use crate::shape::{Corner, Measured, Shape};
+    use dc_geometry::shapes::gear::{GearCrest, GearFlanks, GearRoot};
     let gear = |teeth: u32, pressure_angle_deg: f64, bore_diameter_mm: Option<f64>| Shape::Gear {
         teeth,
         outside_diameter_mm: 40.0,
         pressure_angle_deg,
-        flanks: Flanks::Involute,
+        flanks: GearFlanks::Involute,
         whole_depth_mm: 3.46,
-        root: Root::Rounded,
+        root: GearRoot::Rounded,
         root_fillet_mm: 0.23,
-        crest: Crest::Flat,
+        crest: GearCrest::Flat,
         crest_radius_mm: 0.0,
         bore_diameter_mm,
     };
@@ -6462,5 +6463,144 @@ fn a_bitmaps_opacity_is_held_to_its_range() {
             &["bitmaps[b1].opacity_fraction"]
         };
         assert_eq!(fields, expected, "{opacity_fraction}");
+    }
+}
+
+/// ADR-0006: `profiles` is what is cut and `shape` how the app edits it,
+/// so a file where one was changed by hand and not the other still cuts
+/// its `profiles`, with a warning at the shape. Every kind the crate can
+/// generate is checked; a text is not, since its outline needs a font.
+#[test]
+fn a_hand_edited_outline_is_shape_outline_differs() {
+    use crate::shape::{Align, FontRef, Shape};
+    let project = crate::test_support::drawing_project();
+    let drawn = ["d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10"];
+    for id in drawn {
+        let mut p = project.clone();
+        let definition = p.definitions.get_mut(&DefinitionId::new(id)).unwrap();
+        // Another definition's outline: a closed shape, not this one's.
+        let other = if id == "d3" { "d2" } else { "d3" };
+        definition.profiles = project.definitions[&DefinitionId::new(other)]
+            .profiles
+            .clone();
+        let (name, kind) = (
+            definition.name.clone(),
+            definition.shape.as_ref().unwrap().kind(),
+        );
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::ShapeOutlineDiffers {
+                definition: DefinitionId::new(id),
+                name,
+                kind,
+            }],
+            "{id}"
+        );
+        assert!(!problems[0].is_error(), "a warning: the outline is cut");
+        assert_eq!(
+            problems[0].field(),
+            Some(format!("definitions[{id}].shape"))
+        );
+    }
+    // A text's outline is not checked.
+    let mut p = project.clone();
+    p.definitions
+        .get_mut(&DefinitionId::new("d3"))
+        .unwrap()
+        .shape = Some(Shape::Text {
+        text: "Hi".into(),
+        font: FontRef {
+            family: "Inter".into(),
+            style: "Bold".into(),
+        },
+        height_mm: 10.0,
+        letter_spacing_fraction: 0.0,
+        line_spacing_fraction: 1.0,
+        align: Align::Left,
+    });
+    assert_eq!(validate(&p), vec![]);
+    // Sizes that cannot be are said once, as the size's error, and the
+    // outline is not compared with one they cannot give.
+    let mut p = project;
+    p.definitions
+        .get_mut(&DefinitionId::new("d3"))
+        .unwrap()
+        .shape = Some(Shape::Circle { diameter_mm: -20.0 });
+    let codes: Vec<&str> = validate(&p).iter().map(Problem::code).collect();
+    assert_eq!(codes, ["out_of_range"]);
+}
+
+/// A gear's sizes that cannot be together, each in its own range, are
+/// errors at the size at fault (`validateGearProfileParams`).
+#[test]
+fn a_gears_sizes_are_checked_together() {
+    use crate::shape::Shape;
+    let project = crate::test_support::drawing_project();
+    let gear = project.definitions[&DefinitionId::new("d10")]
+        .shape
+        .clone()
+        .unwrap();
+    let changed = |change: &dyn Fn(&mut Shape)| {
+        let mut p = project.clone();
+        let definition = p.definitions.get_mut(&DefinitionId::new("d10")).unwrap();
+        let mut shape = gear.clone();
+        change(&mut shape);
+        definition.shape = Some(shape);
+        validate(&p)
+            .iter()
+            .filter(|problem| problem.is_error())
+            .filter_map(Problem::field)
+            .collect::<Vec<String>>()
+    };
+    type Change<'a> = &'a dyn Fn(&mut Shape);
+    let cases: [(&str, Change<'_>); 5] = [
+        ("whole_depth_mm", &|shape| {
+            if let Shape::Gear { whole_depth_mm, .. } = shape {
+                *whole_depth_mm = 20.0;
+            }
+        }),
+        ("pressure_angle_deg", &|shape| {
+            if let Shape::Gear {
+                teeth,
+                pressure_angle_deg,
+                ..
+            } = shape
+            {
+                *teeth = 8;
+                *pressure_angle_deg = 35.0;
+            }
+        }),
+        ("root_fillet_mm", &|shape| {
+            if let Shape::Gear { root_fillet_mm, .. } = shape {
+                *root_fillet_mm = 5.0;
+            }
+        }),
+        ("crest_radius_mm", &|shape| {
+            if let Shape::Gear {
+                crest,
+                crest_radius_mm,
+                ..
+            } = shape
+            {
+                *crest = dc_geometry::shapes::gear::GearCrest::Rounded;
+                *crest_radius_mm = 5.0;
+            }
+        }),
+        ("bore_diameter_mm", &|shape| {
+            if let Shape::Gear {
+                bore_diameter_mm, ..
+            } = shape
+            {
+                *bore_diameter_mm = Some(39.0);
+            }
+        }),
+    ];
+    for (field, change) in cases {
+        assert_eq!(
+            changed(change),
+            [format!("definitions[d10].shape.{field}")],
+            "{field}"
+        );
     }
 }

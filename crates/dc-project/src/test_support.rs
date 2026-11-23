@@ -14,7 +14,7 @@ use crate::model::{
     TabShape, TabSpec, Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
 };
 use crate::post_processor::{PostProcessorRef, bundled_definition};
-use crate::shape::{Corner, Shape};
+use crate::shape::{Corner, Measured, Shape};
 use base64::Engine as _;
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Path, PathNode, Point, Polyline, Span, Transform};
 use std::collections::BTreeMap;
@@ -481,16 +481,24 @@ pub fn photo_project() -> Project {
 }
 
 /// The sample project with what drawing in the app saves (format 29),
-/// valid and with nothing for validation to say:
+/// valid and with nothing for validation to say. A definition of every
+/// kind of shape but text, each with the outline its sizes give
+/// ([`Shape::outline`]), none overlapping another:
 ///
-/// - `d2`, a 60 × 30 mm Rectangle with square corners, placed as `i2` at
-///   (50, 60) in the folder `f1`;
-/// - `d3`, a Circle of diameter 20, placed as `i3` at (15, 88) in `f1`,
-///   clear of the other shapes;
-/// - `d4`, a closed path with one curve, kept in `shape` and flattened in
-///   `profiles`, placed as `i4`, construction geometry, in no folder;
-/// - the folders `f1`, a group, and `f2`, empty;
-/// - [`sample_bitmap`] at 40 % opacity.
+/// | Definition | Shape | Instance |
+/// | --- | --- | --- |
+/// | `d2` | Rectangle 60 × 30, square corners | `i2` at (50, 60), in folder `f1` |
+/// | `d3` | Circle, diameter 20 | `i3` at (15, 88), in `f1` |
+/// | `d4` | a closed path with a curve and an arc | `i4` at (30, 90), construction geometry |
+/// | `d5` | Rectangle 60 × 30, corners rounded 5 | `i5` at (40, 130) |
+/// | `d6` | Rectangle 60 × 30, corners chamfered 5 | `i6` at (110, 130) |
+/// | `d7` | Ellipse 40 × 20 | `i7` at (40, 170) |
+/// | `d8` | Polygon, 6 sides, 10 to the flats | `i8` at (90, 170) |
+/// | `d9` | Slot, length 40, width 12 | `i9` at (150, 175), turned 30° |
+/// | `d10` | Gear, 24 teeth on 40, bore 6 | `i10` at (40, 220) |
+///
+/// Besides them: the folders `f1`, a group, and `f2`, empty; and
+/// [`sample_bitmap`] at 40 % opacity.
 pub fn drawing_project() -> Project {
     let mut project = sample_project();
     project.name = "Drawing".into();
@@ -516,40 +524,139 @@ pub fn drawing_project() -> Project {
         ],
         true,
     );
-    let definitions = [
-        FeatureDefinition {
-            id: DefinitionId::new("d2"),
-            name: "Rectangle 1".into(),
-            shape: Some(Shape::Rectangle {
-                width_mm: 60.0,
-                height_mm: 30.0,
-                corner: Corner::Square,
-            }),
-            profiles: vec![Polyline::rect(Point::new(-30.0, -15.0), 60.0, 30.0)],
-        },
-        FeatureDefinition {
-            id: DefinitionId::new("d3"),
-            name: "Circle 1".into(),
-            shape: Some(Shape::Circle { diameter_mm: 20.0 }),
-            profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 10.0)],
-        },
-        FeatureDefinition {
-            id: DefinitionId::new("d4"),
-            name: "Line 1".into(),
-            profiles: vec![path.to_polyline(project.flatten_tolerance_mm)],
-            shape: Some(Shape::Path { paths: vec![path] }),
-        },
+    let rectangle = |corner: Corner| Shape::Rectangle {
+        width_mm: 60.0,
+        height_mm: 30.0,
+        corner,
+    };
+    let gear = dc_geometry::shapes::gear::Gear::with_defaults(20.0);
+    let at = Transform::translate;
+    // (definition, instance, name, shape, placement, folder, construction)
+    let drawn = [
+        (
+            "d2",
+            "i2",
+            "Rectangle 1",
+            rectangle(Corner::Square),
+            at(50.0, 60.0),
+            Some("f1"),
+            false,
+        ),
+        (
+            "d3",
+            "i3",
+            "Circle 1",
+            Shape::Circle { diameter_mm: 20.0 },
+            at(15.0, 88.0),
+            Some("f1"),
+            false,
+        ),
+        (
+            "d4",
+            "i4",
+            "Line 1",
+            Shape::Path { paths: vec![path] },
+            at(30.0, 90.0),
+            None,
+            true,
+        ),
+        (
+            "d5",
+            "i5",
+            "Rectangle 2",
+            rectangle(Corner::Rounded { radius_mm: 5.0 }),
+            at(40.0, 130.0),
+            None,
+            false,
+        ),
+        (
+            "d6",
+            "i6",
+            "Rectangle 3",
+            rectangle(Corner::Chamfered { distance_mm: 5.0 }),
+            at(110.0, 130.0),
+            None,
+            false,
+        ),
+        (
+            "d7",
+            "i7",
+            "Ellipse 1",
+            Shape::Ellipse {
+                width_mm: 40.0,
+                height_mm: 20.0,
+            },
+            at(40.0, 170.0),
+            None,
+            false,
+        ),
+        (
+            "d8",
+            "i8",
+            "Hexagon 1",
+            Shape::Polygon {
+                sides: 6,
+                radius_mm: 10.0,
+                measured: Measured::Flats,
+            },
+            at(90.0, 170.0),
+            None,
+            false,
+        ),
+        (
+            "d9",
+            "i9",
+            "Slot 1",
+            Shape::Slot {
+                length_mm: 40.0,
+                width_mm: 12.0,
+            },
+            Transform::rotate(std::f64::consts::FRAC_PI_6).then(at(150.0, 175.0)),
+            None,
+            false,
+        ),
+        (
+            "d10",
+            "i10",
+            "Gear 1",
+            Shape::Gear {
+                teeth: gear.teeth,
+                outside_diameter_mm: 40.0,
+                pressure_angle_deg: gear.pressure_angle_deg,
+                flanks: gear.flanks,
+                whole_depth_mm: gear.whole_depth_mm,
+                root: gear.root,
+                root_fillet_mm: gear.root_fillet_mm,
+                crest: gear.crest,
+                crest_radius_mm: gear.crest_radius_mm,
+                bore_diameter_mm: Some(6.0),
+            },
+            at(40.0, 220.0),
+            None,
+            false,
+        ),
     ];
-    let placed = [
-        ("i2", "d2", "Rectangle 1", (50.0, 60.0), Some("f1"), false),
-        ("i3", "d3", "Circle 1", (15.0, 88.0), Some("f1"), false),
-        ("i4", "d4", "Line 1", (30.0, 90.0), None, true),
-    ];
-    for (id, definition, name, (x_mm, y_mm), folder, construction) in placed {
+    for (definition, instance, name, shape, transform, folder, construction) in drawn {
+        // Every kind here has an outline, and these sizes give one; an
+        // empty outline would fail the tests that load the fixture.
+        let profiles = shape
+            .outline(project.flatten_tolerance_mm)
+            .and_then(Result::ok)
+            .unwrap_or_default();
+        let id = DefinitionId::new(definition);
+        project.definitions.insert(
+            id.clone(),
+            FeatureDefinition {
+                id: id.clone(),
+                name: name.into(),
+                shape: Some(shape),
+                profiles,
+            },
+        );
         project.instances.push(FeatureInstance {
-            id: InstanceId::new(id),
-            definition: DefinitionId::new(definition),
-            transform: Transform::translate(x_mm, y_mm),
+            id: InstanceId::new(instance),
+            definition: id,
+            transform,
             name: name.into(),
             visible: true,
             locked: false,
@@ -558,11 +665,6 @@ pub fn drawing_project() -> Project {
             z_top_mm: None,
             z_bottom_mm: None,
         });
-    }
-    for definition in definitions {
-        project
-            .definitions
-            .insert(definition.id.clone(), definition);
     }
     project.folders = vec![
         Folder {

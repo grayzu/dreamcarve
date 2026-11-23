@@ -464,3 +464,97 @@ proptest! {
         );
     }
 }
+
+proptest! {
+    #![proptest_config(config(512))]
+
+    /// Phase 5, shape outlines: whatever its sizes, a drawn shape's
+    /// outline is a simple closed contour, counter-clockwise, whose
+    /// bounding box is its sizes. (A slot's length is centre to centre,
+    /// so its box is longer by its width.) A corner is held to half the
+    /// shorter side, so no corner size makes an outline cross itself.
+    #[test]
+    fn a_shapes_outline_is_simple_and_its_box_is_its_sizes(
+        width_mm in 0.5..600.0_f64,
+        height_mm in 0.5..600.0_f64,
+        corner_mm in 0.01..400.0_f64,
+        sides in 3_u32..=50,
+        tolerance_mm in 0.001..0.1_f64,
+    ) {
+        use dc_geometry::shapes;
+        let shorter = width_mm.min(height_mm);
+        let outlines = [
+            ("rectangle", shapes::rectangle(width_mm, height_mm), width_mm, height_mm),
+            ("rounded", shapes::rounded_rectangle(width_mm, height_mm, corner_mm), width_mm, height_mm),
+            ("chamfered", shapes::chamfered_rectangle(width_mm, height_mm, corner_mm), width_mm, height_mm),
+            ("circle", shapes::circle(shorter), shorter, shorter),
+            ("ellipse", shapes::ellipse(width_mm, height_mm, tolerance_mm), width_mm, height_mm),
+            ("slot", shapes::slot(width_mm, height_mm), width_mm + height_mm, height_mm),
+        ];
+        for (name, outline, box_width_mm, box_height_mm) in outlines {
+            let contour = Contour::new(outline.clone());
+            prop_assert!(contour.is_ok(), "{name}: {contour:?}");
+            prop_assert!(outline.signed_area_mm2() > 0.0, "{name} is clockwise");
+            let bounds = outline.bounds().expect("an outline has bounds");
+            prop_assert!((bounds.width_mm() - box_width_mm).abs() < 1e-9, "{name}: {bounds:?}");
+            prop_assert!((bounds.height_mm() - box_height_mm).abs() < 1e-9, "{name}: {bounds:?}");
+            prop_assert!((bounds.min.x + bounds.max.x).abs() < 1e-9, "{name} is centred");
+            prop_assert!((bounds.min.y + bounds.max.y).abs() < 1e-9, "{name} is centred");
+        }
+        let polygon = shapes::regular_polygon(sides, shorter);
+        prop_assert!(Contour::new(polygon.clone()).is_ok(), "{sides} sides");
+        prop_assert!(polygon.signed_area_mm2() > 0.0);
+        prop_assert_eq!(polygon.vertices().len(), sides as usize);
+        // To the flats, the middle of each side is at the radius.
+        let flats = shapes::regular_polygon(sides, shapes::corner_radius_of_flats(sides, shorter));
+        for side in flats.segments() {
+            let (middle, _) = side.point_at(side.length_mm() / 2.0).expect("a side has a middle");
+            prop_assert!((middle.distance_to(Point::new(0.0, 0.0)) - shorter).abs() < 1e-9);
+        }
+    }
+
+    /// A gear of any tooth count its sizes allow is a simple closed
+    /// contour between its root and outside circles, with one tooth's
+    /// turn mapping it onto itself.
+    #[test]
+    fn a_gears_outline_is_simple_and_symmetric(
+        teeth in 6_u32..=120,
+        outside_radius_mm in 5.0..300.0_f64,
+        straight in any::<bool>(),
+        rounded_crest in any::<bool>(),
+        root in 0_u8..3,
+    ) {
+        use dc_geometry::shapes::gear::{Gear, GearCrest, GearFlanks, GearRoot};
+        let defaults = Gear::with_defaults(outside_radius_mm);
+        let module = outside_radius_mm * 2.0 / (f64::from(teeth) + 2.0);
+        let mut gear = Gear {
+            teeth,
+            whole_depth_mm: module * 2.25,
+            flanks: if straight { GearFlanks::Straight } else { GearFlanks::Involute },
+            crest: if rounded_crest { GearCrest::Rounded } else { GearCrest::Flat },
+            root: [GearRoot::Rounded, GearRoot::Flat, GearRoot::Sharp][usize::from(root)],
+            ..defaults
+        };
+        gear.root_fillet_mm = gear.max_root_fillet_mm() * 0.5;
+        gear.crest_radius_mm = gear.max_crest_radius_mm() * 0.5;
+        prop_assume!(gear.problems().is_empty());
+        let outline = gear.outline().expect("the sizes give a gear").remove(0);
+        let contour = Contour::new(outline.clone());
+        prop_assert!(contour.is_ok(), "{gear:?}: {contour:?}");
+        prop_assert!(outline.signed_area_mm2() > 0.0);
+        let origin = Point::new(0.0, 0.0);
+        for vertex in outline.vertices() {
+            let radius_mm = vertex.point().distance_to(origin);
+            prop_assert!(radius_mm <= gear.outside_radius_mm + 1e-9, "{radius_mm}");
+            prop_assert!(radius_mm >= gear.root_radius_mm() - 1e-9, "{radius_mm}");
+        }
+        let count = outline.vertices().len();
+        prop_assert_eq!(count % teeth as usize, 0, "the same points on every tooth");
+        let per_tooth = count / teeth as usize;
+        let turn = dc_geometry::Transform::rotate(TAU / f64::from(teeth));
+        for (i, vertex) in outline.vertices().iter().enumerate() {
+            let next = outline.vertices()[(i + per_tooth) % count].point();
+            prop_assert!(turn.apply(vertex.point()).distance_to(next) < 1e-7, "vertex {i}");
+        }
+    }
+}

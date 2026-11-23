@@ -41,6 +41,7 @@ use crate::shape::{
     MIN_POLYGON_SIDES, MIN_PRESSURE_ANGLE_DEG, Shape,
 };
 use crate::tool::CuttingLimit;
+use dc_geometry::shapes::gear::GearProblem;
 use dc_geometry::{EPS_MM, GeometryError, MAX_COORDINATE_MM, Span};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -149,6 +150,21 @@ pub enum Problem {
         instance_name: String,
         /// Whether it is an Inlay's `boundary` that lists it, not `targets`.
         boundary: bool,
+    },
+    /// A definition's `profiles` are not the outline its `shape`'s sizes
+    /// give (format 29, ADR-0006): one was edited by hand and not the
+    /// other. A warning: what is cut is `profiles`, whatever `shape`
+    /// says. Not asked of a text, whose outline needs a font.
+    #[error(
+        "shape `{name}` (`{definition}`) has an outline that is not the one its {kind} sizes give; what is cut is the outline in `profiles`. Change a size of the shape in the app to make the outline again, or set `shape` to null to keep the outline as it is"
+    )]
+    ShapeOutlineDiffers {
+        /// The definition.
+        definition: DefinitionId,
+        /// The definition's display name.
+        name: String,
+        /// The shape's kind, as the file writes it.
+        kind: &'static str,
     },
     /// Two folders share an id (format 29).
     #[error("folder id `{id}` is used twice")]
@@ -1708,6 +1724,7 @@ problem_codes! {
     BitmapPixelsMismatch, BitmapNotGrayscale8, DuplicateBitmapId,
     BitmapEmpty, BitmapTooLarge, BitmapFootprintPositive, BitmapUnreadable,
     StepOverTooFine, ConstructionTargeted, DuplicateFolderId, DanglingFolder,
+    ShapeOutlineDiffers,
 }
 
 impl Problem {
@@ -1737,6 +1754,7 @@ impl Problem {
                 | Self::InlayBoundaryHoleIgnored { .. }
                 | Self::PhotoLinesOverlap { .. }
                 | Self::StepOverTooFine { .. }
+                | Self::ShapeOutlineDiffers { .. }
         );
         if warning {
             Severity::Warning
@@ -1790,6 +1808,9 @@ impl Problem {
                 format!("operations[{operation}].targets")
             }),
             Self::DanglingFolder { instance, .. } => Some(format!("instances[{instance}].folder")),
+            Self::ShapeOutlineDiffers { definition, .. } => {
+                Some(format!("definitions[{definition}].shape"))
+            }
             Self::TabDanglingInstance { tab, .. } => Some(format!("tabs[{tab}].instance")),
             Self::TabProfileMissing { tab, .. } => Some(format!("tabs[{tab}].profile")),
 
@@ -2156,6 +2177,11 @@ const POLYGON_SIDES: &str = "a whole number from 3 to 50";
 const GEAR_TEETH: &str = "a whole number from 6 to 200";
 const PRESSURE_ANGLE: &str = "an angle from 10 to 35 degrees";
 const CORNER_SIZE: &str = "a value greater than 0 and at most half the shorter side";
+const GEAR_WHOLE_DEPTH: &str = "a value less than half the outside diameter";
+const GEAR_FLANKS_CROSS: &str = "an angle low enough for this tooth count that a tooth's two flanks do not cross below its crest";
+const GEAR_ROOT_FILLET: &str = "a value the space between two teeth has room for";
+const GEAR_CREST_RADIUS: &str = "a value the tip of a tooth has room for";
+const GEAR_BORE: &str = "a value less than the root diameter";
 const NON_NEGATIVE: &str = "a value of 0 or more";
 const FRACTION: &str = "a value greater than 0 and at most 1";
 const ANGLE: &str = "an angle greater than 0 and less than 180 degrees";
@@ -2547,7 +2573,23 @@ impl Validator {
                 });
             }
             if let Some(shape) = &def.shape {
+                let found = self.problems.len();
                 self.shape(&format!("definitions[{key}].shape"), shape);
+                // Sizes that cannot be are said above; an outline is
+                // compared only with one the sizes can give.
+                let sizes_ok = self.problems.len() == found;
+                let tolerance_mm = p.flatten_tolerance_mm;
+                let tolerance_ok = tolerance_mm > 0.0 && tolerance_mm <= MAX_FLATTEN_TOLERANCE_MM;
+                if sizes_ok
+                    && tolerance_ok
+                    && shape.outline_matches(&def.profiles, tolerance_mm) == Some(false)
+                {
+                    self.problems.push(Problem::ShapeOutlineDiffers {
+                        definition: def.id.clone(),
+                        name: def.name.clone(),
+                        kind: shape.kind(),
+                    });
+                }
             }
             for (i, profile) in def.profiles.iter().enumerate() {
                 if !profile.is_closed() && !engraved.contains(&def.id) {
@@ -4614,6 +4656,7 @@ impl Validator {
     /// and within what each can be. Whether they give the definition's
     /// `profiles` is `shape_outline_differs`'s to say.
     fn shape(&mut self, at: &str, shape: &Shape) {
+        let before = self.problems.len();
         match shape {
             Shape::Rectangle {
                 width_mm,
@@ -4693,6 +4736,53 @@ impl Validator {
                 self.non_negative(&format!("{at}.crest_radius_mm"), *crest_radius_mm);
                 if let Some(bore_diameter_mm) = bore_diameter_mm {
                     self.positive(&format!("{at}.bore_diameter_mm"), *bore_diameter_mm);
+                }
+                // What the sizes cannot be together, once each is in its
+                // own range (`validateGearProfileParams`).
+                if self.problems.len() == before
+                    && let Some(gear) = shape.gear()
+                {
+                    let problems = gear.problems();
+                    // Teeth cut past the centre leave no root circle, so
+                    // no fillet or bore fits either: one cause, said once.
+                    let past_centre = problems.contains(&GearProblem::WholeDepthPastCentre);
+                    for problem in problems {
+                        let (field, value, expected) = match problem {
+                            GearProblem::RootFilletTooLarge { .. }
+                            | GearProblem::BoreTooLarge { .. }
+                                if past_centre =>
+                            {
+                                continue;
+                            }
+                            GearProblem::WholeDepthPastCentre => {
+                                ("whole_depth_mm", *whole_depth_mm, GEAR_WHOLE_DEPTH)
+                            }
+                            GearProblem::FlanksCross => {
+                                ("pressure_angle_deg", *pressure_angle_deg, GEAR_FLANKS_CROSS)
+                            }
+                            GearProblem::RootFilletTooLarge { .. } => {
+                                ("root_fillet_mm", *root_fillet_mm, GEAR_ROOT_FILLET)
+                            }
+                            GearProblem::CrestRadiusTooLarge { .. } => {
+                                ("crest_radius_mm", *crest_radius_mm, GEAR_CREST_RADIUS)
+                            }
+                            GearProblem::BoreTooLarge { .. } => (
+                                "bore_diameter_mm",
+                                bore_diameter_mm.unwrap_or_default(),
+                                GEAR_BORE,
+                            ),
+                            // Each of the rest is one size out of its own
+                            // range, reported above.
+                            GearProblem::OutsideRadius
+                            | GearProblem::Teeth
+                            | GearProblem::WholeDepth
+                            | GearProblem::PressureAngle
+                            | GearProblem::RootFillet
+                            | GearProblem::CrestRadius
+                            | GearProblem::Bore => continue,
+                        };
+                        self.out_of_range(format!("{at}.{field}"), value, expected);
+                    }
                 }
             }
             Shape::Text {
