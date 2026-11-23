@@ -263,6 +263,7 @@ pub enum Edit { Size(SizeField), Corners, Measured, Flanks, Root, Crest,   // sl
                 CloseEnds, JoinEnds,                                      // slice 10
                 Fillet { count }, Chamfer { count }, SegmentKind(SpanKind), // slices 11, 12
                 Offset, Weld, Subtract, Intersect,                          // slices 13, 14
+                Trim, Join,                                                 // slices 15, 16
                 Weld, Subtract, Intersect, Trim, Join, JoinEnds,
                 Align(Side), Distribute(Axis), Regenerate }   // the undo label's words
 ```
@@ -500,18 +501,46 @@ collinear and concentric overlaps give none.
    closed one leaves one open path from the far crossing round to the
    near one. A remainder shorter than `EPS_MM` is dropped.
 
-The pieces are built by splitting spans at the crossings, so arcs stay
-arcs. A path with curves is trimmed on its flattened outline and the
-result is a plain path.
+The pieces are cut from the outline's own segments
+(`Segment::piece`), so arcs stay arcs. A path with curves is trimmed on
+its flattened outline and the result is a plain path. An open
+outline's own two ends are no crossing: an end that only touches
+another outline has nothing past it to trim to.
+`dc_geometry::trim(path, at, others) -> Option<Trimmed { removed, kept }>`;
+`None` when nothing crosses.
+
+The Trim tool (`dc_app::tool::trim`) takes the outline nearest the
+pointer within the pick tolerance, among the Scene's outlines as they
+are placed, and trims it against all the others; `removed` is the
+draft's highlight as the pointer moves. What is kept goes back through
+the instance's inverse transform. One piece, or a shape with other
+outlines or linked copies, is a `SetOutline` with `shape` `None` (so a
+shape that keeps its sizes becomes a plain path in the same step); two
+pieces of a shape that is one outline of its own are `ReplaceShapes`,
+the first with what cut it.
 
 ### Join
 
-`join::join_open(paths, tolerance_mm) -> Joined { paths, joined: usize,
-alone: usize }`: repeatedly take the pair of free ends nearest each
-other within the tolerance (ties by input order), reverse a path where
-needed, and concatenate, with a line between ends more than `EPS_MM`
-apart; a path whose own ends are within the tolerance closes. It is the
-DXF importer's stitch rule, moved to `dc-geometry` and called from both.
+`join_open(paths, tolerance_mm) -> Joined { chains: Vec<Chain { outline,
+from }>, alone }`: a chain grows from the first free outline in order,
+at either end, taking each time the nearest free end within the
+tolerance (ties by input order), reversing an outline where needed,
+with a line between ends more than `EPS_MM` apart; a chain, or one
+outline, whose own ends are within the tolerance closes. It is the DXF
+importer's stitch rule, but not its code: the importer moves a joined
+piece by the gap where this bridges it, and is built for a file of
+thousands of entities, on a grid and under a work budget
+(`dc-import`'s `dxf/stitch.rs`, 1,400 lines with its hatch and
+duplicate handling). Moving that to `dc-geometry` to serve a selection
+of a few paths would have put the importer's golden corpus at risk for
+no gain, so the importer keeps its own and this is a second, small
+implementation of the rule.
+
+`dc_app::edit::join` places the selected shapes that are one open
+outline of their own (no linked copy, not locked), joins them in
+project space, and makes each chain one shape in its first path's
+space with that path's name, placement and operations
+(`ReplaceShapes`); the rest are counted as left alone.
 
 ### Snapping
 
@@ -973,9 +1002,13 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 **Changing shapes (slices 13–16)** `dc_app` `tests/edit.rs`: `offset_outward_rounds_corners`,
 `offset_inward_past_the_middle_makes_nothing`, `offset_of_an_open_path`,
 `weld_subtract_intersect_areas`, `a_result_inherits_the_first_shapes_operations`,
+`join_makes_one_path_of_paths_that_meet`; `tests/trim.rs`
+`a_click_removes_the_piece_between_crossings`,
+`a_circle_opens_and_becomes_a_path`;
 `dc_geometry::intersect::` the ports (42), `dc_geometry::trim::`
 `an_arm_up_to_the_crossing`, `a_middle_piece_splits_the_line`,
 `a_circle_opens_between_two_crossings`, `nothing_crosses_is_reported`,
+`a_loop_is_trimmed_at_its_own_crossing`,
 `dc_geometry::join::` `ends_within_tolerance_join`, `a_chain_closes`,
 `far_ends_are_left_alone`, and the DXF importer's stitch tests unchanged
 (acc 119–121).
@@ -1052,7 +1085,8 @@ row in `docs/phase-5-worklog.md`. Tests first, as phase 4's.
 13. **Offset.** On `ReplaceShapes`, which slice 10 brought. [8]
 14. **Weld, Subtract, Intersect.** [13]
 15. **Intersections and Trim.** [10]
-16. **Join.** The stitch moved to `dc-geometry`. [10]
+16. **Join.** `dc_geometry::join`, the stitch's rule; the importer keeps
+    its own. [10]
 17. **The window, editing.** Nodes and handles on the overlay, the
     popovers, the menus. [10–16]
 

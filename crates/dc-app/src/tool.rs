@@ -19,6 +19,7 @@ mod draw;
 mod gear;
 mod node;
 mod path;
+mod trim;
 
 use std::collections::BTreeMap;
 
@@ -553,6 +554,7 @@ impl App {
                 return self.gear_event(event);
             }
             (Tool::Nodes, event) => return self.node_event(event),
+            (Tool::Trim, event) => return self.trim_event(event),
             (_, Event::Move(pointer)) => {
                 self.tool.draft.snap = Some(self.snap_at(&pointer, None, &[]));
             }
@@ -572,6 +574,7 @@ impl App {
             Tool::Draw(drawing) if path::draws(drawing) => Some(self.path_bar(drawing)),
             Tool::Draw(drawing) if gear::draws(drawing) => Some(self.gear_bar()),
             Tool::Nodes => Some(self.node_bar()),
+            Tool::Trim => Some(self.trim_bar()),
             _ => None,
         }
     }

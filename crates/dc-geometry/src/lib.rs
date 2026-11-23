@@ -17,6 +17,7 @@ mod distance;
 mod fill;
 mod flatten;
 mod intersect;
+mod join;
 pub mod medial;
 mod merge;
 mod offset;
@@ -29,6 +30,7 @@ mod self_band;
 pub mod shapes;
 pub mod simplify;
 mod transform;
+mod trim;
 pub mod width;
 
 pub use boolean::{BooleanOp, boolean, difference, difference_within, intersection, union};
@@ -48,6 +50,7 @@ pub use fill::{
 };
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, KURBO_FLATTEN_SAFETY, flatten};
 pub use intersect::{Crossing, crossings};
+pub use join::{Chain, Joined, join_open};
 pub use merge::{FilledHole, MergedParts, NearParts, merge_near_parts};
 pub use offset::{inset_is_empty, offset, offset_open, strip_ends};
 pub use path::{
@@ -57,6 +60,7 @@ pub use point::{EPS_MM, MAX_COORDINATE_MM, Point, Point3, Rect, Vec2, approx_eq}
 pub use polyline::{Arc, Polyline, Segment, Vertex};
 pub use region::{Region, area_mm2, nest};
 pub use self_band::SelfBand;
+pub use trim::{Trimmed, trim};
 
 /// Something the caller should know about that still gives a usable
 /// result. Indices refer to positions in the caller's input.

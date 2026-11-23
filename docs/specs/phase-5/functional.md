@@ -474,13 +474,20 @@ capability 52); what a tool holds before it commits is not project data.
     with no crossing on either side is the whole outline, and the click
     deletes nothing: the status bar says *Nothing crosses this
     outline*. Trimming a parametric shape converts it to a path first,
-    in the same undo step.
+    in the same undo step. An outline's own end that only touches
+    another outline is no crossing. An open path trimmed in its middle
+    is two shapes, the second named as a copy is, when it is one outline
+    of its own with no linked copy; else its shape has an outline more.
 97. **Join** (**Shape ▸ Join**, `Ctrl`/`⌘ J`). Selected open paths whose
     ends meet, or lie within a **Tolerance** (0.1 mm by default, in the
     popover), become one path, end to end, a straight segment bridging
     any gap; a chain whose two ends meet closes. What the DXF importer
     does to a file's loose entities, at the user's word. Paths that
-    reach nothing are left alone and counted in the status bar.
+    reach nothing are left alone and counted in the status bar. A shape
+    takes part when it is one open outline of its own, unlocked and with
+    no linked copy; the joined path has the first one's name, placement
+    and operations. Paths join where they are seen to meet, however
+    each is placed.
 
 ### Arranging and organising
 

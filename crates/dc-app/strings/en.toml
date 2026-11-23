@@ -83,6 +83,7 @@ offset = "Offset {subject}"
 weld = "Weld {subject}"
 subtract = "Subtract from {subject}"
 intersect = "Intersect {subject}"
+trim = "Trim {subject}"
 close_path = "Close {subject}"
 join_paths = "Join {subject}"
 convert_to_path = "Convert {subject} to a path"
@@ -1667,7 +1668,14 @@ weld = "{name} weld"
 subtract = "{name} subtract"
 intersect = "{name} intersect"
 
+[trim]
+prompt = "Click the part of an outline to trim away, between two crossings"
+
+[trim.refused]
+no_crossing = "Nothing crosses this outline"
+
 [edit.refused]
+join_nothing = "No two ends of the selected open paths are within {tolerance} of each other."
 offset_nothing = "nothing is left of {names} that far inside its outline"
 not_closed = "“{name}” is not a closed outline, so it encloses no area to weld, subtract or intersect"
 two_shapes = "Select two or more closed shapes."

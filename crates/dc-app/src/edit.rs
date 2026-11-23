@@ -8,8 +8,8 @@
 //! The commands that change a shape's outline as a whole
 //! (`docs/specs/phase-5/design.md`, "Module layout"; functional
 //! capabilities 93 to 97): **Shape ▸ Fillet Corners…**, **Offset…**,
-//! **Weld**, **Subtract** and **Intersect** here, and trim and join as
-//! their slices arrive. Each is a
+//! **Weld**, **Subtract**, **Intersect** and **Join** here; Trim is a
+//! tool (`dc_app::tool`). Each is a
 //! pure function of the project that gives the one command to run, as
 //! `dc_app::properties` and `dc_app::shape` do.
 //!
@@ -482,5 +482,110 @@ pub fn boolean(
         add: vec![derived(first, name, profiles)],
         inherit: vec![(first_id.clone(), 0)],
         what,
+    })
+}
+
+/// How near two ends must be for **Shape ▸ Join** to join them, mm, until
+/// another is typed (capability 97).
+pub const JOIN_TOLERANCE_MM: f64 = 0.1;
+
+/// The command a join makes, and how many of the selected shapes it left
+/// as they were.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Joins {
+    /// One `ReplaceShapes`: each chain of paths one shape, named, placed
+    /// and cut as the first of them was.
+    pub command: Command,
+    /// The selected shapes that reached nothing, or are no single open
+    /// path of their own: left alone, to be counted in the status bar.
+    pub alone: usize,
+}
+
+/// **Shape ▸ Join** on shapes `ids` (capability 97): the open paths among
+/// them whose ends meet, or lie within `tolerance_mm` as they are placed,
+/// become one path, end to end, a straight segment bridging any gap; a
+/// chain whose two ends meet closes. A shape takes part when it is one
+/// open outline of its own, with no linked copy.
+///
+/// # Errors
+///
+/// [`CommandError::NothingSelected`] for no shapes;
+/// [`CommandError::NotAQuantity`] with the reason when no two ends are
+/// within the tolerance.
+pub fn join(
+    project: &Project,
+    strings: &Strings,
+    ids: &[InstanceId],
+    tolerance_mm: f64,
+) -> Result<Joins, CommandError> {
+    if ids.is_empty() {
+        return Err(CommandError::NothingSelected);
+    }
+    // The shapes that can take part, each with its outline as placed.
+    let mut members: Vec<(&FeatureInstance, Polyline)> = Vec::new();
+    for id in ids {
+        let instance = find_instance(project, id)?;
+        let Some(definition) = project.definitions.get(&instance.definition) else {
+            continue;
+        };
+        let linked = project
+            .instances
+            .iter()
+            .filter(|i| i.definition == instance.definition)
+            .count()
+            > 1;
+        if let [outline] = definition.profiles.as_slice()
+            && !outline.is_closed()
+            && !linked
+            && !instance.locked
+            && let Ok(placed) = instance.transform.apply_polyline(outline)
+        {
+            members.push((instance, placed));
+        }
+    }
+    let placed: Vec<Polyline> = members.iter().map(|(_, outline)| outline.clone()).collect();
+    let joined = dc_geometry::join_open(&placed, tolerance_mm);
+    let mut from = Vec::new();
+    let mut made = Vec::new();
+    let mut inherit = Vec::new();
+    for chain in &joined.chains {
+        let Some((first, _)) = chain.from.first().and_then(|index| members.get(*index)) else {
+            continue;
+        };
+        // The chain in its first path's own space, placed as that is.
+        let Some(to_definition) = first.transform.inverse() else {
+            continue;
+        };
+        let outline = to_definition.apply_polyline(&chain.outline)?;
+        inherit.push((first.id.clone(), made.len()));
+        made.push(derived(first, first.name.clone(), vec![outline]));
+        from.extend(
+            chain
+                .from
+                .iter()
+                .filter_map(|index| members.get(*index))
+                .map(|(instance, _)| instance.id.clone()),
+        );
+    }
+    if made.is_empty() {
+        let units = project.display_units;
+        return Err(CommandError::NotAQuantity {
+            text: units::field_text(tolerance_mm, units),
+            reason: strings.fmt(
+                StrKey::EditRefusedJoinNothing,
+                &[("tolerance", &units::field_text(tolerance_mm, units))],
+            ),
+        });
+    }
+    let alone = ids.len() - from.len();
+    Ok(Joins {
+        command: Command::ReplaceShapes {
+            from,
+            keep: false,
+            add: made,
+            inherit,
+            what: Edit::Join,
+        },
+        alone,
     })
 }

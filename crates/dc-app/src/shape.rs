@@ -360,6 +360,8 @@ pub(crate) const fn edit_word(shape: Option<&Shape>, edit: Edit) -> StrKey {
         | Edit::Weld
         | Edit::Subtract
         | Edit::Intersect
+        | Edit::Trim
+        | Edit::Join
         | Edit::Fillet { .. }
         | Edit::Chamfer { .. }
         | Edit::SegmentKind(_) => StrKey::ShapeSizeSize,

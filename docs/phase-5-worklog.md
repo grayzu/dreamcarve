@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 14: 3,630.
+`0.5.0-alpha.1`. After slice 16: 3,641.
 
 ## Decisions waiting for the maintainer
 
@@ -137,6 +137,13 @@ Decisions made while building are added here.
   still named for them, and its results stand beside them. For an open
   path *Outward* is the left of its direction and *Inward* the right;
   the window is to label them Left and Right.
+- Slices 15 and 16: the DXF importer's stitch was not moved to
+  `dc-geometry` as the design said. It is 1,400 lines built for files of
+  thousands of entities (a grid, a work budget, hatches, duplicates) and
+  it moves a joined piece by the gap, where Join bridges the gap; a
+  second, small implementation of the same rule serves a selection, and
+  the importer and its golden corpus are untouched. Trim treats an
+  outline's own end that touches another outline as no crossing.
 
 ## Slices
 
@@ -167,8 +174,8 @@ The numbers are the design spec's.
 | 12 | Segment kinds, in the app core: the selected segment made straight, an arc or a curve from the bar. Gate: 3,625 tests | done |
 | 13 | Offset, in the app core (`dc_app::edit::offset`, `offset_outlines` for the preview): each shape by itself, outward, inward or both, holes the other way, open paths to a side; the original kept or replaced with its operations handed on; `ReplaceShapes` keeps its sources or hands each one's operations and tabs to its own result | done |
 | 14 | Weld, Subtract, Intersect, in the app core (`dc_app::edit::boolean`): the selection in order, one path named for the first, placed as it is, with what cut it. Gate: 3,630 tests | done |
-| 15 | Intersections and Trim | todo |
-| 16 | Join | todo |
+| 15 | Trim: `dc_geometry::trim` (the piece between the crossings either side of a point, on the outline's own segments, with itself too) and the Trim tool in the app core (`dc_app::tool::trim`): the piece highlighted, a click taking it out, a sized shape made a path in the same step | done |
+| 16 | Join: `dc_geometry::join_open` (chains of open outlines whose ends are within a tolerance, gaps bridged, a chain that meets itself closed) and `dc_app::edit::join`. Gate: 3,641 tests | done |
 | 17 | The window, editing | todo |
 
 ### 5.3 Organising

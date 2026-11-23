@@ -500,6 +500,118 @@ fn a_result_inherits_the_first_shapes_operations() {
     assert_box(&placed, (10.0, 10.0), (70.0, 50.0));
 }
 
+fn open_line(name: &str, points: &[(f64, f64)]) -> NewShape {
+    NewShape {
+        name: name.to_owned(),
+        shape: None,
+        profiles: vec![Polyline::new(
+            points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+            false,
+        )],
+        transform: Transform::IDENTITY,
+        construction: false,
+        folder: None,
+    }
+}
+
+/// Acceptance 121: Join of two lines whose ends are 0.05 apart is one
+/// path of four vertices, a 0.05 mm segment bridging the gap; of four
+/// lines round a square, a closed outline; ends 1 mm apart are left
+/// alone at the default tolerance.
+#[test]
+fn join_makes_one_path_of_paths_that_meet() {
+    let mut app = app_with(vec![
+        open_line("A", &[(10.0, 10.0), (30.0, 10.0)]),
+        open_line("B", &[(30.05, 10.0), (50.0, 10.0)]),
+        open_line("Far", &[(51.0, 10.0), (70.0, 10.0)]),
+    ]);
+    let all = [id("i1"), id("i2"), id("i3")];
+    let joined = edit::join(app.project(), app.strings(), &all, edit::JOIN_TOLERANCE_MM).unwrap();
+    assert_eq!(joined.alone, 1, "Far reaches nothing at 0.1");
+    assert_eq!(
+        app.run(joined.command).as_deref().ok(),
+        Some("Join 2 shapes")
+    );
+    assert_eq!(
+        names(&app),
+        ["A", "Far"],
+        "named for the first, in its place"
+    );
+    let path = &definition(&app, "A").profiles[0];
+    assert!(!path.is_closed());
+    let points: Vec<(f64, f64)> = path.vertices().iter().map(|v| (v.x, v.y)).collect();
+    assert_eq!(
+        points,
+        [(10.0, 10.0), (30.0, 10.0), (30.05, 10.0), (50.0, 10.0)]
+    );
+    // Nothing more is within reach; wider, the two join.
+    let rest = [instance(&app, "A").id.clone(), id("i3")];
+    assert_eq!(
+        refusal(edit::join(
+            app.project(),
+            app.strings(),
+            &rest,
+            edit::JOIN_TOLERANCE_MM
+        )),
+        "No two ends of the selected open paths are within 0.1 of each other."
+    );
+    let joined = edit::join(app.project(), app.strings(), &rest, 1.5).unwrap();
+    assert_eq!(joined.alone, 0);
+    app.run(joined.command).unwrap();
+    assert_eq!(names(&app), ["A"]);
+    assert_eq!(definition(&app, "A").profiles[0].vertices().len(), 6);
+
+    // Four lines round a square, drawn any way round: a closed outline.
+    let mut app = app_with(vec![
+        open_line("Bottom", &[(10.0, 10.0), (50.0, 10.0)]),
+        open_line("Top", &[(10.0, 40.0), (50.0, 40.0)]),
+        open_line("Right", &[(50.0, 40.0), (50.0, 10.0)]),
+        open_line("Left", &[(10.0, 10.0), (10.0, 40.0)]),
+        rectangle("Box", (70.0, 10.0), (10.0, 10.0)),
+    ]);
+    let all: Vec<InstanceId> = (1..=5).map(|n| id(&format!("i{n}"))).collect();
+    let joined = edit::join(app.project(), app.strings(), &all, edit::JOIN_TOLERANCE_MM).unwrap();
+    assert_eq!(joined.alone, 1, "the closed box has no end");
+    assert_eq!(
+        app.run(joined.command).as_deref().ok(),
+        Some("Join 4 shapes")
+    );
+    assert_eq!(names(&app), ["Bottom", "Box"]);
+    let square = &definition(&app, "Bottom").profiles[0];
+    assert!(square.is_closed());
+    assert_eq!(square.vertices().len(), 4);
+    assert!((square.signed_area_mm2().abs() - 1200.0).abs() < 1e-9);
+
+    // Paths placed differently join where they are seen to meet.
+    let mut app = app_with(vec![
+        open_line("A", &[(10.0, 10.0), (30.0, 10.0)]),
+        open_line("B", &[(0.0, 0.0), (20.0, 0.0)]),
+    ]);
+    app.run(Command::TransformInstances {
+        ids: vec![id("i2")],
+        delta: Transform::translate(30.0, 10.0),
+    })
+    .unwrap();
+    let joined = edit::join(
+        app.project(),
+        app.strings(),
+        &[id("i1"), id("i2")],
+        edit::JOIN_TOLERANCE_MM,
+    )
+    .unwrap();
+    app.run(joined.command).unwrap();
+    let points: Vec<(f64, f64)> = definition(&app, "A").profiles[0]
+        .vertices()
+        .iter()
+        .map(|v| (v.x, v.y))
+        .collect();
+    assert_eq!(points, [(10.0, 10.0), (30.0, 10.0), (50.0, 10.0)]);
+    assert!(matches!(
+        edit::join(app.project(), app.strings(), &[], 0.1),
+        Err(CommandError::NothingSelected)
+    ));
+}
+
 /// The plaque fixture, as the other suites read it.
 fn common_plaque() -> dc_project::Project {
     let path =

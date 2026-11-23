@@ -66,6 +66,11 @@ pub enum Edit {
     Subtract,
     /// What the shapes all share.
     Intersect,
+    /// A piece of an outline removed between two crossings (capability
+    /// 96).
+    Trim,
+    /// Open paths whose ends meet made one (capability 97).
+    Join,
     /// Corners rounded by arcs (capability 93).
     Fillet {
         /// How many.
@@ -108,6 +113,8 @@ pub(super) fn edit_label(
         Edit::Weld => with(StrKey::CommandLabelWeld),
         Edit::Subtract => with(StrKey::CommandLabelSubtract),
         Edit::Intersect => with(StrKey::CommandLabelIntersect),
+        Edit::Trim => with(StrKey::CommandLabelTrim),
+        Edit::Join => with(StrKey::CommandLabelJoinPaths),
         Edit::Fillet { count: 1 } => with(StrKey::CommandLabelFillet),
         Edit::Fillet { count } => counted(StrKey::CommandLabelFillets, count),
         Edit::Chamfer { count: 1 } => with(StrKey::CommandLabelChamfer),
