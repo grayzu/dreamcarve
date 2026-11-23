@@ -539,19 +539,7 @@ impl App {
     /// What `text` typed in `field` is, millimetres, degrees or a count;
     /// else why it is none of them.
     pub(super) fn read_size(&self, field: SizeField, text: &str) -> Result<f64, String> {
-        let units = self.project().display_units;
-        let text = text.trim();
-        match field.quantity() {
-            Quantity::Length => units::parse_length_mm(text, units).map_err(|e| e.to_string()),
-            Quantity::Angle => parse_angle_deg(text).ok_or_else(|| {
-                self.strings()
-                    .fmt(StrKey::DrawProblemNotAnAngle, &[("text", text)])
-            }),
-            Quantity::Count => text.parse::<u32>().map(f64::from).map_err(|_| {
-                self.strings()
-                    .fmt(StrKey::DrawProblemNotACount, &[("text", text)])
-            }),
-        }
+        crate::shape::read_size(self.strings(), self.project().display_units, field, text)
     }
 
     /// Reads a typed size: pins it, or says at its field why not. Empty
@@ -668,7 +656,7 @@ fn step_fields(drawing: Drawing, state: State) -> &'static [SizeField] {
     }
 }
 
-pub(super) const fn field_label(field: SizeField) -> StrKey {
+pub(crate) const fn field_label(field: SizeField) -> StrKey {
     match field {
         SizeField::X => StrKey::DrawFieldX,
         SizeField::Y => StrKey::DrawFieldY,
@@ -685,11 +673,13 @@ pub(super) const fn field_label(field: SizeField) -> StrKey {
         SizeField::RootFillet => StrKey::DrawFieldRootFillet,
         SizeField::CrestRadius => StrKey::DrawFieldCrestRadius,
         SizeField::Bore => StrKey::DrawFieldBore,
+        SizeField::CornerSize => StrKey::DrawFieldCornerSize,
+        SizeField::Sides => StrKey::DrawFieldSides,
     }
 }
 
 /// What a polygon of `sides` sides is called (upstream names 3 to 12).
-const fn polygon_name(sides: u32) -> StrKey {
+pub(crate) const fn polygon_name(sides: u32) -> StrKey {
     match sides {
         3 => StrKey::DrawNamePolygon3,
         4 => StrKey::DrawNamePolygon4,
@@ -778,7 +768,7 @@ fn box_label(strings: &Strings, units: Units, width_mm: f64, height_mm: f64) -> 
 
 /// A size as its field's text: a length in `units`, an angle in
 /// degrees, a count as it is.
-pub(super) fn size_text(field: SizeField, value: f64, units: Units) -> String {
+pub(crate) fn size_text(field: SizeField, value: f64, units: Units) -> String {
     match field.quantity() {
         Quantity::Length => units::field_text(value, units),
         Quantity::Angle => angle_text(value),
@@ -799,7 +789,7 @@ pub(super) fn angle_text(angle_deg: f64) -> String {
 }
 
 /// A typed angle, degrees: a number, with `°` or `deg` after it or not.
-pub(super) fn parse_angle_deg(text: &str) -> Option<f64> {
+pub(crate) fn parse_angle_deg(text: &str) -> Option<f64> {
     let text = text.trim();
     let number = text
         .strip_suffix('°')

@@ -203,11 +203,24 @@ capability 52); what a tool holds before it commits is not project data.
     Properties' W or H, or by a corner handle with the proportion link
     open, changes its sizes where the result is still that shape: a
     rectangle's width and height (its corners keep their size), an
-    ellipse's, a slot's length and width; a circle stretched becomes an
-    ellipse. A polygon, a gear and a text scale evenly or not at all.
+    ellipse's, a slot's length and width (stretched across, a slot
+    gets wider and its centreline shorter, so its box is the one asked
+    for; it is refused when it would be no longer than it is wide); a
+    circle stretched becomes an ellipse, and keeps its name. A polygon,
+    a gear and a text scale evenly or not at all.
     This holds while the shape sits square to the axes; a rotated one
-    scales evenly only. A linked copy cannot be stretched alone: the
-    status bar says *Make Unique to stretch this copy*.
+    scales evenly only. A linked copy cannot be stretched, alone or
+    with its other copies: the status bar says *Make Unique to stretch
+    this copy*. A shape that cannot take a stretch holds back the whole
+    selection, and says why.
+
+    A size the shape cannot have is refused at its field with the
+    reason. A corner size is held to half the shorter side, also when a
+    side is made shorter. Changing what a polygon's radius is measured
+    to leaves the polygon as it is and re-reads the radius. A locked
+    shape's sizes are read-only, and so are those of a shape with a
+    locked linked copy. A tab on the outline stays at the same share of
+    the shape's box, on the new outline.
 
     A parametric shape is not edited node by node. **Shape ▸ Convert to
     Path** (also in the context menu, and offered when Edit nodes is

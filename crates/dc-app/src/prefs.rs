@@ -96,13 +96,20 @@ impl Default for DrawingPrefs {
 
 impl DrawingPrefs {
     /// The corner size the Rectangle tool uses in a project of `units`:
-    /// the one typed, else 5 mm or 0.2 in.
+    /// the one typed, else [`default_corner_mm`].
     #[must_use]
     pub fn corner_size_mm(&self, units: Units) -> f64 {
-        self.corner_mm.unwrap_or(match units {
-            Units::Mm => CORNER_MM,
-            Units::Inch => CORNER_INCH_MM,
-        })
+        self.corner_mm.unwrap_or_else(|| default_corner_mm(units))
+    }
+}
+
+/// The size a rounded or chamfered corner has until one is typed, in a
+/// project of `units`: 5 mm or 0.2 in (PureCutCNC's).
+#[must_use]
+pub const fn default_corner_mm(units: Units) -> f64 {
+    match units {
+        Units::Mm => CORNER_MM,
+        Units::Inch => CORNER_INCH_MM,
     }
 }
 

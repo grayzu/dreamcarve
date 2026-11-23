@@ -23,6 +23,7 @@ pub mod project;
 pub mod properties;
 pub mod scene;
 pub mod selection;
+pub mod shape;
 pub mod snap;
 pub mod status;
 pub mod steps;

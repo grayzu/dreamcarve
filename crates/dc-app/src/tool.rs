@@ -29,6 +29,7 @@ use crate::App;
 use crate::snap::{self, Pointer, Snapped, Targets};
 
 pub use draw::MIN_SIZE_MM;
+pub(crate) use draw::{field_label, parse_angle_deg, polygon_name, size_text};
 
 /// What the Viewport's pointer does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -163,6 +164,10 @@ pub enum SizeField {
     CrestRadius,
     /// The diameter of a gear's bore; none for no bore.
     Bore,
+    /// The size of a rectangle's rounded or chamfered corners.
+    CornerSize,
+    /// How many sides a polygon has.
+    Sides,
 }
 
 /// How a size's text is read and shown.
@@ -182,7 +187,7 @@ impl SizeField {
     pub const fn quantity(self) -> Quantity {
         match self {
             Self::Angle | Self::PressureAngle => Quantity::Angle,
-            Self::Teeth => Quantity::Count,
+            Self::Teeth | Self::Sides => Quantity::Count,
             _ => Quantity::Length,
         }
     }

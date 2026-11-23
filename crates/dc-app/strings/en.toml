@@ -64,6 +64,8 @@ update_tabs = "Edit {count} {count|tab|tabs}"
 # Phase 5: a shape drawn in the app (capability 90).
 draw = "Draw {subject}"
 add_shapes = "Add {count} {count|shape|shapes}"
+convert_to_path = "Convert {subject} to a path"
+convert_to_paths = "Convert {count} {count|shape|shapes} to paths"
 delete_tab = "Delete tab"
 delete_tabs = "Delete {count} {count|tab|tabs}"
 centre_on_stock = "Centre {subject} on stock"
@@ -1507,6 +1509,8 @@ whole_depth = "Whole depth"
 root_fillet = "Root fillet"
 crest_radius = "Crest radius"
 bore = "Bore diameter"
+corner_size = "Corner size"
+sides = "Sides"
 
 # A tool's choices in the tool bar, and what each can be (capability 86).
 [draw.choice]
@@ -1520,6 +1524,13 @@ root_sharp = "Sharp"
 crest = "Crest"
 crest_flat = "Flat"
 crest_rounded = "Rounded"
+corners = "Corners"
+corners_square = "Square"
+corners_rounded = "Rounded"
+corners_chamfered = "Chamfered"
+measure = "Measure"
+measure_corners = "To the corners"
+measure_flats = "To the flats"
 
 # A line under the fields that is read, not typed.
 [draw.note]
@@ -1534,6 +1545,41 @@ crest_radius_too_large = "the crest radius is too large for the tooth spacing; t
 bore_too_large = "the bore diameter must be smaller than the root diameter, {root}"
 radius_too_small = "an arc between these ends has a radius of {least} or more"
 not_an_angle = "`{text}` is not an angle; type degrees, anticlockwise from +X, as 30 or -45.5"
+
+# Properties' Shape section (capability 84): a width and a height in
+# full, since the placement's W and H are beside them.
+[shape.field]
+width = "Width"
+height = "Height"
+
+[shape.note]
+stretched = "Stretched: convert to a path to edit it"
+
+[shape.problem]
+sides = "the number of sides must be {min} to {max}"
+
+# A size as an undo step names it: Set width of “Slot 1”.
+[shape.size]
+width = "width"
+height = "height"
+corner_size = "corner size"
+diameter = "diameter"
+outside_diameter = "outside diameter"
+sides = "sides"
+radius = "radius"
+length = "length"
+teeth = "teeth"
+pressure_angle = "pressure angle"
+whole_depth = "whole depth"
+root_fillet = "root fillet"
+crest_radius = "crest radius"
+bore = "bore diameter"
+size = "size"
+corners = "corners"
+measure = "measure"
+flanks = "flanks"
+root = "root"
+crest = "crest"
 
 # Why a click was refused, shown in the status bar.
 [draw.refused]

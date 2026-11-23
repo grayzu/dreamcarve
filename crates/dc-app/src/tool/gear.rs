@@ -22,19 +22,16 @@
 //! where upstream's is raised to it; the limits in a reason are in
 //! project units.
 
-use dc_geometry::shapes::gear::{Gear, GearCrest, GearFlanks, GearProblem, GearRoot, GearSize};
+use dc_geometry::shapes::gear::{Gear, GearProblem};
 use dc_geometry::{Point, Polyline, Transform, shapes};
 use dc_project::Shape;
 
-use super::draw::{DRAG_PX, MIN_SIZE_MM, angle_text, field_label};
-use super::{
-    Choice, ChoiceOption, Draft, Drawing, Event, Key, Label, Reply, SizeField, SizeRow, ToolBar,
-    ToolOption,
-};
+use super::draw::{DRAG_PX, MIN_SIZE_MM, field_label, size_text};
+use super::{Draft, Drawing, Event, Key, Label, Reply, SizeField, SizeRow, ToolBar, ToolOption};
 use crate::command::{NewShape, next_name};
 use crate::snap::Snapped;
 use crate::strings::StrKey;
-use crate::{App, Command, Tool, units};
+use crate::{App, Command, Tool, shape, units};
 
 /// How far the Gear tool has got.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -57,37 +54,6 @@ pub(super) enum GearDraft {
 /// Whether `drawing` is this module's tool.
 pub(super) const fn draws(drawing: Drawing) -> bool {
     matches!(drawing, Drawing::Gear)
-}
-
-/// The fields of the sizes step, in the bar's order; a size shows only
-/// while the gear's form reads it.
-fn size_fields(gear: &Gear) -> Vec<SizeField> {
-    let mut fields = vec![SizeField::Teeth, SizeField::Diameter];
-    if gear.flanks == GearFlanks::Involute {
-        fields.push(SizeField::PressureAngle);
-    }
-    fields.push(SizeField::WholeDepth);
-    if gear.root == GearRoot::Rounded {
-        fields.push(SizeField::RootFillet);
-    }
-    if gear.crest == GearCrest::Rounded {
-        fields.push(SizeField::CrestRadius);
-    }
-    fields.push(SizeField::Bore);
-    fields
-}
-
-/// The field a gear's problem is said at.
-const fn field_of(size: GearSize) -> SizeField {
-    match size {
-        GearSize::Outside => SizeField::Diameter,
-        GearSize::Teeth => SizeField::Teeth,
-        GearSize::WholeDepth => SizeField::WholeDepth,
-        GearSize::PressureAngle => SizeField::PressureAngle,
-        GearSize::RootFillet => SizeField::RootFillet,
-        GearSize::CrestRadius => SizeField::CrestRadius,
-        GearSize::Bore => SizeField::Bore,
-    }
 }
 
 impl App {
@@ -211,22 +177,13 @@ impl App {
             };
         };
         let problems = gear.problems();
-        let fields = size_fields(&gear)
+        let fields = shape::gear_fields(&gear)
             .into_iter()
             .map(|field| SizeRow {
                 field,
                 label: strings.get(gear_label(field)).to_owned(),
-                text: match field {
-                    SizeField::Teeth => gear.teeth.to_string(),
-                    SizeField::Diameter => units::field_text(gear.outside_radius_mm * 2.0, units),
-                    SizeField::PressureAngle => angle_text(gear.pressure_angle_deg),
-                    SizeField::WholeDepth => units::field_text(gear.whole_depth_mm, units),
-                    SizeField::RootFillet => units::field_text(gear.root_fillet_mm, units),
-                    SizeField::CrestRadius => units::field_text(gear.crest_radius_mm, units),
-                    _ => gear
-                        .bore_diameter_mm
-                        .map_or_else(String::new, |bore| units::field_text(bore, units)),
-                },
+                text: shape::gear_size(&gear, field)
+                    .map_or_else(String::new, |value| size_text(field, value, units)),
                 quantity: field.quantity(),
                 // Nothing here follows the pointer.
                 pinned: false,
@@ -235,81 +192,14 @@ impl App {
                 problem: self.tool.problems.get(&field).cloned().or_else(|| {
                     problems
                         .iter()
-                        .find(|problem| field_of(problem.size()) == field)
+                        .find(|problem| shape::gear_problem_field(problem.size()) == field)
                         .map(|problem| self.gear_problem_text(problem))
                 }),
             })
             .collect();
-        let choice = |label: StrKey, options: Vec<(StrKey, ToolOption)>, selected: ToolOption| {
-            let selected = options
-                .iter()
-                .position(|(_, option)| *option == selected)
-                .unwrap_or(0);
-            Choice {
-                label: strings.get(label).to_owned(),
-                options: options
-                    .into_iter()
-                    .map(|(label, option)| ChoiceOption {
-                        label: strings.get(label).to_owned(),
-                        option,
-                    })
-                    .collect(),
-                selected,
-            }
-        };
-        let choices = vec![
-            choice(
-                StrKey::DrawChoiceFlanks,
-                vec![
-                    (
-                        StrKey::DrawChoiceFlanksInvolute,
-                        ToolOption::Flanks(GearFlanks::Involute),
-                    ),
-                    (
-                        StrKey::DrawChoiceFlanksStraight,
-                        ToolOption::Flanks(GearFlanks::Straight),
-                    ),
-                ],
-                ToolOption::Flanks(gear.flanks),
-            ),
-            choice(
-                StrKey::DrawChoiceRoot,
-                vec![
-                    (
-                        StrKey::DrawChoiceRootRounded,
-                        ToolOption::Root(GearRoot::Rounded),
-                    ),
-                    (StrKey::DrawChoiceRootFlat, ToolOption::Root(GearRoot::Flat)),
-                    (
-                        StrKey::DrawChoiceRootSharp,
-                        ToolOption::Root(GearRoot::Sharp),
-                    ),
-                ],
-                ToolOption::Root(gear.root),
-            ),
-            choice(
-                StrKey::DrawChoiceCrest,
-                vec![
-                    (
-                        StrKey::DrawChoiceCrestFlat,
-                        ToolOption::Crest(GearCrest::Flat),
-                    ),
-                    (
-                        StrKey::DrawChoiceCrestRounded,
-                        ToolOption::Crest(GearCrest::Rounded),
-                    ),
-                ],
-                ToolOption::Crest(gear.crest),
-            ),
-        ];
+        let choices = shape::gear_choices(strings, &gear);
         // The module, derived: shown while the sizes give one.
-        let module = gear.module_mm();
-        let note = (module.is_finite() && module > 0.0).then(|| {
-            strings.fmt(
-                StrKey::DrawNoteModule,
-                &[("module", &units::summary_text(module, units))],
-            )
-        });
+        let note = shape::module_note(strings, units, &gear, 1.0);
         ToolBar {
             tool,
             prompt: strings.get(StrKey::DrawPromptGearSizes).to_owned(),
@@ -321,25 +211,9 @@ impl App {
     }
 
     /// Why the gear cannot be, in project units where the reason names a
-    /// limit; upstream's words (`validateGearProfileParams`).
+    /// limit.
     fn gear_problem_text(&self, problem: &GearProblem) -> String {
-        let units = self.project().display_units;
-        let strings = self.strings();
-        match *problem {
-            GearProblem::RootFilletTooLarge { max_mm } => strings.fmt(
-                StrKey::DrawProblemRootFilletTooLarge,
-                &[("max", &units::limit_text(max_mm, units))],
-            ),
-            GearProblem::CrestRadiusTooLarge { max_mm } => strings.fmt(
-                StrKey::DrawProblemCrestRadiusTooLarge,
-                &[("max", &units::limit_text(max_mm, units))],
-            ),
-            GearProblem::BoreTooLarge { root_diameter_mm } => strings.fmt(
-                StrKey::DrawProblemBoreTooLarge,
-                &[("root", &units::limit_text(root_diameter_mm, units))],
-            ),
-            other => other.to_string(),
-        }
+        shape::gear_problem_text(self.strings(), self.project().display_units, problem, 1.0)
     }
 
     /// To `state`, with nothing typed for its step.
@@ -440,45 +314,25 @@ impl App {
     /// leaves the size and says so at its field; empty text leaves it
     /// too, but for the bore, which it takes away.
     fn type_gear_size(&mut self, field: SizeField, text: &str) {
-        let GearDraft::Sizes { centre, mut gear } = self.tool.gear else {
+        let GearDraft::Sizes { centre, gear } = self.tool.gear else {
             return;
         };
         self.tool.problems.remove(&field);
-        let text = text.trim();
-        if text.is_empty() {
-            if field == SizeField::Bore {
-                gear.bore_diameter_mm = None;
-                self.tool.gear = GearDraft::Sizes { centre, gear };
-            }
-            return;
-        }
-        let value = match self.read_size(field, text) {
-            Ok(value) => value,
-            Err(problem) => {
-                self.tool.problems.insert(field, problem);
-                return;
+        let value = if text.trim().is_empty() {
+            None
+        } else {
+            match self.read_size(field, text) {
+                Ok(value) => Some(value),
+                Err(problem) => {
+                    self.tool.problems.insert(field, problem);
+                    return;
+                }
             }
         };
-        match field {
-            SizeField::Teeth => {
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "read from a u32 just above"
-                )]
-                let teeth = value as u32;
-                gear.teeth = teeth;
-            }
-            SizeField::Diameter => gear.outside_radius_mm = value / 2.0,
-            SizeField::PressureAngle => gear.pressure_angle_deg = value,
-            SizeField::WholeDepth => gear.whole_depth_mm = value,
-            SizeField::RootFillet => gear.root_fillet_mm = value,
-            SizeField::CrestRadius => gear.crest_radius_mm = value,
-            // A bore of 0 is no bore.
-            SizeField::Bore => gear.bore_diameter_mm = (value.abs() > 0.0).then_some(value),
-            _ => {}
-        }
-        self.tool.gear = GearDraft::Sizes { centre, gear };
+        self.tool.gear = GearDraft::Sizes {
+            centre,
+            gear: shape::gear_with(gear, field, value),
+        };
     }
 
     /// Makes the gear a shape (`completePendingGear`), its bore a second

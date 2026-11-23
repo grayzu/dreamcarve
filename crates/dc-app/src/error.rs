@@ -32,6 +32,34 @@ pub enum CommandError {
         /// The locked bitmaps' names.
         names: Vec<String>,
     },
+    /// A stretch named a linked copy, whose shape is not its own
+    /// (functional spec, capability 84).
+    #[error("{}", linked_text(name, *others))]
+    StretchLinked {
+        /// The instance's name.
+        name: String,
+        /// How many other instances place the same shape.
+        others: usize,
+    },
+    /// A stretch named a shape that scales evenly or not at all
+    /// (capability 84).
+    #[error("“{name}” scales evenly only: {reason}")]
+    StretchRefused {
+        /// The instance's name.
+        name: String,
+        /// Why it cannot be stretched.
+        reason: &'static str,
+    },
+    /// A size was typed for a shape whose placement is not an even scale,
+    /// so its sizes say nothing about it as it is placed.
+    #[error("“{name}” is stretched: convert it to a path to edit its sizes")]
+    Stretched {
+        /// The instance's name.
+        name: String,
+    },
+    /// A shape was given no outline.
+    #[error("a shape needs an outline")]
+    EmptyOutline,
     /// A command that acts on a selection was given none.
     #[error("nothing is selected")]
     NothingSelected,
@@ -182,6 +210,16 @@ fn locked_text(what: &str, names: &[String]) -> String {
         [one] => format!("{what} {one} is locked"),
         _ => format!("{what}s {} are locked", join_and(&quoted)),
     }
+}
+
+/// *Make Unique to stretch this copy*, with whose it is.
+fn linked_text(name: &str, others: usize) -> String {
+    let others = if others == 1 {
+        "1 other".to_owned()
+    } else {
+        format!("{others} others")
+    };
+    format!("Make Unique to stretch this copy: “{name}” shares its shape with {others}")
 }
 
 /// `“A”` or `“A” and “B”` or `“A”, “B” and “C”`.

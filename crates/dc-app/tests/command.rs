@@ -150,6 +150,8 @@ fn kind(command: &Command) -> &'static str {
         Command::CentreOnStock(_) => "CentreOnStock",
         Command::FitStockToShapes { .. } => "FitStockToShapes",
         Command::AddShapes(_) => "AddShapes",
+        Command::SetOutline { .. } => "SetOutline",
+        Command::ConvertToPath(_) => "ConvertToPath",
     }
 }
 
@@ -171,8 +173,24 @@ fn new_slot(name: &str) -> dc_app::command::NewShape {
     }
 }
 
+/// The drawing fixture's slot, `i9`, made 8 mm wide: a `SetOutline` with
+/// the outline the new sizes give.
+fn wider_slot() -> Command {
+    let shape = dc_project::Shape::Slot {
+        length_mm: 40.0,
+        width_mm: 8.0,
+    };
+    Command::SetOutline {
+        instance: instance("i9"),
+        profiles: shape.outline(0.01).unwrap().unwrap(),
+        shape: Some(shape),
+        what: dc_app::command::Edit::Size(dc_app::tool::SizeField::SlotWidth),
+    }
+}
+
 /// One command of every variant, each with the project it applies to.
 fn every_command() -> Vec<(Project, Command)> {
+    let drawing = dc_project::test_support::drawing_project();
     let plaque = plaque();
     let with_tabs = plaque_with_tabs();
     let with_picture = plaque_with_picture();
@@ -388,6 +406,8 @@ fn every_command() -> Vec<(Project, Command)> {
         (plaque.clone(), Command::CentreOnStock(vec![instance("i4")])),
         (plaque.clone(), Command::FitStockToShapes { margin_mm: 5.0 }),
         (plaque, Command::AddShapes(vec![new_slot("Slot 1")])),
+        (drawing.clone(), wider_slot()),
+        (drawing, Command::ConvertToPath(vec![instance("i9")])),
     ]
 }
 
@@ -469,6 +489,22 @@ fn labels_name_the_thing() {
             new_slot("Slot 2")
         ])),
         "Add 2 shapes"
+    );
+    // A size names the shape and the size; a conversion the shape, or
+    // how many.
+    let drawing = dc_project::test_support::drawing_project();
+    let drawn = |command: Command| {
+        let after = command.apply(&drawing).unwrap();
+        command.label(&strings, &drawing, &after)
+    };
+    assert_eq!(drawn(wider_slot()), "Set width of “Slot 1”");
+    assert_eq!(
+        drawn(Command::ConvertToPath(vec![instance("i9")])),
+        "Convert “Slot 1” to a path"
+    );
+    assert_eq!(
+        drawn(Command::ConvertToPath(vec![instance("i2"), instance("i3")])),
+        "Convert 2 shapes to paths"
     );
     assert_eq!(
         label(Command::ImportDrawing {

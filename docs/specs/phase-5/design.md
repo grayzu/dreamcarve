@@ -232,11 +232,12 @@ graph gains `dc-geometry → dc-text → dc-app`.
 pub enum Command { /* phase 4's, and: */
     /// New instances, each with a new definition. Ids and names are `apply`'s.
     AddShapes(Vec<NewShape>),
-    /// A definition's outline replaced: a typed size, a node edit, a fillet, Convert to Path.
-    /// Tabs on its instances are re-seated on the new outline.
-    SetOutline { definition: DefinitionId, shape: Option<Shape>, profiles: Vec<Polyline>, what: Edit },
-    /// A definition's outline replaced and its one instance re-placed: a stretch that changes sizes.
-    Reshape { instance: InstanceId, shape: Shape, profiles: Vec<Polyline>, transform: Transform },
+    /// The outline of the definition `instance` places replaced, for every linked copy: a typed
+    /// size, a choice, a node edit, a fillet. Tabs on its instances are re-seated on the new
+    /// outline. Named for `instance`, the copy the change was made through.
+    SetOutline { instance: InstanceId, shape: Option<Shape>, profiles: Vec<Polyline>, what: Edit },
+    /// Shapes that keep their sizes made plain paths with the same outlines.
+    ConvertToPath(Vec<InstanceId>),
     /// Shapes replaced by others: offset without its original, weld, subtract, intersect, trim, join.
     /// Operations and boundaries naming `inherit` name the first new shape instead.
     ReplaceShapes { remove: Vec<InstanceId>, add: Vec<NewShape>, inherit: Option<InstanceId>, what: Edit },
@@ -255,16 +256,22 @@ pub enum Command { /* phase 4's, and: */
 }
 pub struct NewShape { pub name: String, pub shape: Option<Shape>, pub profiles: Vec<Polyline>,
                       pub transform: Transform, pub construction: bool, pub folder: Option<FolderId> }
-pub enum Edit { Size(SizeField), MoveNodes, AddNode, DeleteNodes, Break, DeleteSegment, SegmentKind,
-                Fillet, Chamfer, ConvertToPath, Offset, Weld, Subtract, Intersect, Trim, Join, JoinEnds,
+pub enum Edit { Size(SizeField), Corners, Measured, Flanks, Root, Crest,   // slice 8
+                MoveNodes, AddNode, DeleteNodes, Break, DeleteSegment, SegmentKind,
+                Fillet, Chamfer, Offset, Weld, Subtract, Intersect, Trim, Join, JoinEnds,
                 Align(Side), Distribute(Axis), Regenerate }   // the undo label's words
 ```
 
-`SetOutline` and `Reshape` refuse an outline with a non-finite or
-out-of-range vertex and a definition that is not there. Re-seating a tab
-is `dc_geometry::nearest_point` on the profile of its index, or on the
-nearest profile when that index is gone; a tab is deleted only when its
-definition has no profile left.
+`SetOutline` refuses an outline with a non-finite or out-of-range
+vertex, an empty one, and a definition one of whose instances is
+locked (a locked copy holds the shape for them all). A stretch that
+changes sizes is not a command of its own: `TransformInstances` does it
+("Sizes as placed, and stretching"), so a stretch of several shapes
+stays one undo step. Re-seating a tab (`command::shapes::reseat_tabs`)
+carries its point to the same share of the new outline's box as it had
+of the old one's, then takes `dc_geometry::nearest_point` on the
+profile of its index, or on the nearest profile when that index is
+gone; a tab is deleted only when its definition has no profile left.
 
 ```rust
 // tool.rs: the Viewport's tool in use. Not project data, not in the history.
@@ -551,20 +558,45 @@ when they are all of a kind (*Line*, *Arc*, *Spline*), else *Path*.
 
 ### Sizes as placed, and stretching
 
-Properties shows a size `s` as `s · k`, where `k = √|det|` of the
-instance's linear part, when that part is a similarity; typing `v`
-writes `v / k`. A linear part that is not a similarity (a stretched
-polygon of lines) shows the sizes read-only with *Stretched: convert to
-a path to edit it*.
+`dc_app::shape` is the Shape section and its edits, pure functions of
+the project as `dc_app::properties` is: `section(project, strings, id)`
+gives the rows (`SizeRow`s), the choices and the note the tool bar's
+types already carry; `set_size` and `set_option` give the `SetOutline`
+that a typed size or a choice makes.
 
-`TransformInstances` with a delta that scales X and Y differently asks
-each parametric instance to absorb it (`shape::stretch`): when the
-instance's rotation is a multiple of 90° within 1e-9 and its definition
-is used by no instance outside the command, the delta becomes new sizes
-(Rectangle, Ellipse and Slot as the functional spec says; Circle to
-Ellipse) and a transform with the scale taken out, as `Reshape`. A
-shape that cannot absorb it follows phase 4's rule: lines stretch
-through the transform; arcs are refused, now with the reason.
+Properties shows a length `s` as `s · k`, where `k` (`even_scale`) is
+the length of the instance's linear part's columns when that part is a
+similarity, and exactly 1 within 1e-9 of it, so a size typed for a
+shape that is only turned is saved as typed; typing `v` writes `v / k`.
+A linear part that is not a similarity, which only a file can hold,
+shows the drawn sizes read-only with *Stretched: convert to a path to
+edit it*. A typed corner size, and a corner under a side that shrinks,
+are held to half the shorter side. Changing what a polygon's radius
+reaches re-reads the radius (× or ÷ `cos(π/n)`) and leaves the polygon
+as it is. A gear's sizes are checked by `Gear::problems`, the first
+reason given.
+
+`TransformInstances` with a delta that is not a similarity asks each
+instance whose shape keeps sizes to take it (`shape::stretch`):
+
+- a Polygon, a Gear and a Text refuse (`StretchRefused`);
+- an instance whose definition another instance places refuses
+  (`StretchLinked`: *Make Unique to stretch this copy*), also when both
+  copies are in the selection;
+- the delta must be along X and Y, and the instance's linear part a
+  similarity whose X column lies along X or Y within 1e-9, else it
+  refuses as not square to the axes;
+- otherwise the delta's two factors, taken along and across the shape's
+  own X axis, become sizes: a Rectangle's and an Ellipse's width and
+  height, a Circle's two diameters as an Ellipse, and for a Slot the
+  width across and, along, what is left of its box
+  (`(length + width) · along − width · across`, refused under 1 µm);
+  the definition gets the shape and the outline it gives, its tabs are
+  re-seated, and the instance keeps its linear part and moves so that
+  its centre goes where the delta sends it.
+
+A shape that keeps no sizes follows phase 4's rule: lines stretch
+through the transform, arcs are refused with the geometry's reason.
 
 ### Text layout (`dc_text::layout`)
 
@@ -766,8 +798,10 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `gear_steps_back`
 (acc 108–112, 114, 129).
 
-**Parametric edits (slice 8)** `dc_app::shape::` `rows_per_kind`,
-`a_size_is_one_undo_step_named_for_it`, `linked_copies_follow`,
+**Parametric edits (slice 8)** `dc_app` `tests/shape.rs`: `rows_per_kind`,
+`a_size_is_one_undo_step_named_for_it`, `a_choice_is_one_undo_step_too`,
+`a_size_a_shape_cannot_have_is_refused`, `tabs_follow_the_outline`,
+`linked_copies_follow`,
 `sizes_read_as_placed`, `stretching_a_rectangle_changes_its_sizes`,
 `a_circle_stretched_is_an_ellipse`, `a_polygon_refuses_a_stretch`,
 `a_linked_copy_refuses_a_stretch`, `convert_to_path_keeps_the_outline`;
@@ -846,7 +880,7 @@ row in `docs/phase-5-worklog.md`. Tests first, as phase 4's.
 6. **Line, Arc, Spline.** The path draft and its modes. [3, 4]
 7. **Gear.** [2, 5]
 8. **Sizes.** The Shape section's rows, `SetOutline`, sizes as placed,
-   `Reshape` and the stretch rule, Convert to Path. [5]
+   the stretch rule inside `TransformInstances`, `ConvertToPath`. [5]
 9. **The window, drawing.** The pill and the Draw popover, the tool
    bar, the draft overlay with the snap marker and size labels, the
    Draw and Shape menus, View ▸ Snapping and Grid, the keys, *Draw from

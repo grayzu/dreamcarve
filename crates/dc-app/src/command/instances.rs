@@ -142,7 +142,29 @@ pub(super) fn transform(
         return Err(CommandError::SingularTransform);
     }
     let pivot = centre(bounds(project, ids)?);
-    let next = shift_all(project, ids, about(pivot, delta));
+    let change = about(pivot, delta);
+    let mut next = shift_all(project, ids, change);
+    // A stretch is no placement for a shape that keeps its sizes: it
+    // takes the stretch as new sizes, or refuses it (capability 84).
+    if crate::shape::even_scale(delta).is_none() {
+        for id in ids {
+            let instance = find(project, id)?;
+            let Some(stretched) = crate::shape::stretch(project, instance, delta, change)? else {
+                continue;
+            };
+            find_mut(&mut next, id)?.transform = stretched.transform;
+            if let Some(definition) = next.definitions.get_mut(&instance.definition) {
+                let old = std::mem::replace(&mut definition.profiles, stretched.profiles.clone());
+                definition.shape = Some(stretched.shape);
+                super::shapes::reseat_tabs(
+                    &mut next,
+                    std::slice::from_ref(id),
+                    &old,
+                    &stretched.profiles,
+                );
+            }
+        }
+    }
     // A change the shapes cannot take (an arc scaled unevenly, a reach
     // past the coordinate limit) is refused here rather than saved as a
     // project every generator rejects; `bounds` places each profile.

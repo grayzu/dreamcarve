@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 7: 3,581.
+`0.5.0-alpha.1`. After slice 8: 3,595.
 
 ## Decisions waiting for the maintainer
 
@@ -90,6 +90,17 @@ Decisions made while building are added here.
   limit give it in project units; the rest are `dc-geometry`'s words.
   The module is shown in project units in an inch project too; a
   diametral pitch is not offered.
+- Slice 8: the design named a `Reshape` command for a stretch that
+  changes sizes; it is done inside `TransformInstances` instead, so a
+  stretch of several shapes is still one undo step and every caller
+  (Properties, the handles) gets it. `SetOutline` names the instance,
+  not the definition, so its undo step can name the copy that was
+  edited. Stretching a polygon or a gear is refused outright, as the
+  functional spec says; the design's "lines stretch through the
+  transform" now holds only for shapes that keep no sizes. A stretched
+  circle keeps the name *Circle 1*. A locked linked copy makes the
+  sizes of all its copies read-only. Convert to Path is allowed on a
+  locked shape, since nothing moves.
 
 ## Slices
 
@@ -108,7 +119,7 @@ The numbers are the design spec's.
 | 5 | Rectangle, Circle, Ellipse, Polygon and Slot, in the app core: `Command::AddShapes`; the tools' state machine (`dc_app::tool::draw`) with PureCutCNC's click sequences, a drag as two points, `Shift` for a square and `Alt` from the centre, every step typed (the first point as X and Y from the origin, then the sizes; a typed size is pinned and the rest follows the pointer), a refused size marked at its field, the tool bar's prompt and fields as data, the size label, sticky tools, names by the next free number, the Construction switch, the selection's folder; the tools' options in `gui.toml`. Gate: 3,569 tests | done |
 | 6 | Line, Arc and Spline, in the app core (`dc_app::tool::path`): one path drawn a point at a time, each span a line, an arc (its end, then a point it passes through, or a typed radius) or a curve (Catmull-Rom through its points); changing among the three keeps the path; a click on the first point closes, `Enter`, Done or a double-click finishes open, `Backspace` takes back a point; the next point by typed length and angle; lines and arcs saved as their outline, a path with a curve as `Shape::Path` and its flattened outline; three points in a line refused with the reason; the tool bar's `can_finish`. Gate: 3,577 tests | done |
 | 7 | The Gear tool, in the app core (`dc_app::tool::gear`): the centre, the outside radius, then the sizes in the tool bar (teeth, outside diameter, pressure angle, whole depth, root fillet, crest radius, bore; flanks, root and crest as choices; the module as a note), previewed, until Done; what the gear cannot be said at the field at fault; the bore a second outline; `Shape::from_gear`; `ToolBar::choices` and `note`, `Quantity::Count`. Gate: 3,581 tests | done |
-| 8 | Sizes: the Shape section, stretching, Convert to Path | todo |
+| 8 | Sizes (`dc_app::shape`): the Properties Shape section as data (each kind's sizes as placed, its choices, a gear's module), a typed size or a choice as one `SetOutline` named for it, held and refused as each kind needs, linked copies following; a stretch taken as new sizes by a rectangle, an ellipse, a slot and a circle inside `TransformInstances`, refused by a polygon, a gear, a turned shape and a linked copy; `ConvertToPath`; tabs re-seated on a changed outline. Gate: 3,595 tests | done |
 | 9 | The window, drawing | todo |
 
 ### 5.2 Editing

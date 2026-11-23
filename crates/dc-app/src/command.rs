@@ -23,16 +23,16 @@ pub(crate) use bitmaps::{check_move as check_bitmap_move, check_resize as check_
 pub(crate) use instances::{
     about, bounds as selection_bounds, centre, copy_name, find as find_instance, next_free_id,
 };
-pub use shapes::{NewShape, next_name};
+pub use shapes::{Edit, NewShape, next_name};
 
 use std::sync::Arc;
 
-use dc_geometry::{Transform, approx_eq};
+use dc_geometry::{Polyline, Transform, approx_eq};
 use dc_job::Drawing;
 use dc_job::picture::PictureSize;
 use dc_project::{
     BitmapId, Grayscale, Heights, InstanceId, MachineOrigin, Operation, OperationId, PlacedTab,
-    PostProcessorRef, Project, Stock, TabId, Tool, ToolId, Units, switch_post,
+    PostProcessorRef, Project, Shape, Stock, TabId, Tool, ToolId, Units, switch_post,
 };
 
 use crate::arrange::Flip;
@@ -146,7 +146,11 @@ pub enum Command {
         size: PictureSize,
     },
     /// Apply `delta` to each instance about the selection's joint
-    /// bounding-box centre. Refused when any instance is locked.
+    /// bounding-box centre. Refused when any instance is locked. A delta
+    /// that scales X and Y differently changes the sizes of a rectangle,
+    /// an ellipse, a slot and a circle (which becomes an ellipse) and
+    /// leaves their placements unscaled; the other shapes that keep sizes
+    /// refuse it, and so does a linked copy (phase 5, capability 84).
     TransformInstances {
         /// The instances, in selection order.
         ids: Vec<InstanceId>,
@@ -249,6 +253,26 @@ pub enum Command {
     /// Add drawn shapes, each a new instance of a new definition at the
     /// end of the Design Tree (phase 5, capability 90). Ids are `apply`'s.
     AddShapes(Vec<NewShape>),
+    /// Replace the outline of the definition an instance places, for
+    /// every linked copy of it: a size typed in Properties, a choice made
+    /// there (capability 84). The tabs on the outline are re-seated on the
+    /// new one. Refused when an instance of the definition is locked.
+    SetOutline {
+        /// The instance the change was made through, which the undo step
+        /// names.
+        instance: InstanceId,
+        /// How the outline is made, for a shape that keeps its sizes or
+        /// its curves; `None` for a plain path.
+        shape: Option<Shape>,
+        /// The outline in definition space, mm.
+        profiles: Vec<Polyline>,
+        /// What changed, for the undo step's name.
+        what: Edit,
+    },
+    /// Make shapes that keep their sizes plain paths with the same
+    /// outlines, and so their linked copies (capability 84, **Convert to
+    /// Path**). A shape that is a path already is left as it is.
+    ConvertToPath(Vec<InstanceId>),
 }
 
 impl Command {
@@ -466,6 +490,13 @@ impl Command {
                 next.tabs.retain(|t| !ids.contains(&t.id));
             }
             Self::AddShapes(new) => next = shapes::add(project, new)?,
+            Self::SetOutline {
+                instance,
+                shape,
+                profiles,
+                ..
+            } => next = shapes::set_outline(project, instance, shape.as_ref(), profiles)?,
+            Self::ConvertToPath(ids) => next = shapes::convert_to_path(project, ids)?,
             Self::CentreOnStock(ids) => next = instances::centre_on_stock(project, ids)?,
             Self::FitStockToShapes { margin_mm } => {
                 next = instances::fit_stock(project, *margin_mm)?;
@@ -663,6 +694,29 @@ impl Command {
                 _ => strings.fmt(
                     StrKey::CommandLabelAddShapes,
                     &[("count", &new.len().to_string())],
+                ),
+            },
+            Self::SetOutline { instance, what, .. } => {
+                let shape = instances::find(before, instance)
+                    .ok()
+                    .and_then(|i| before.definitions.get(&i.definition))
+                    .and_then(|definition| definition.shape.as_ref());
+                strings.fmt(
+                    StrKey::CommandLabelSetField,
+                    &[
+                        ("field", strings.get(crate::shape::edit_word(shape, *what))),
+                        ("subject", &subject_of(std::slice::from_ref(instance))),
+                    ],
+                )
+            }
+            Self::ConvertToPath(ids) => match shapes::sized(before, ids).as_slice() {
+                [id] => with_subject(
+                    StrKey::CommandLabelConvertToPath,
+                    &subject_of(std::slice::from_ref(*id)),
+                ),
+                sized => strings.fmt(
+                    StrKey::CommandLabelConvertToPaths,
+                    &[("count", &sized.len().to_string())],
                 ),
             },
         }
