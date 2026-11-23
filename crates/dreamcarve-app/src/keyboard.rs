@@ -34,6 +34,13 @@ pub enum Command {
     Redo,
     /// Edit ▸ Select All: every visible shape.
     SelectAll,
+    /// Edit ▸ Cut: the selected shapes to the clipboard and out of the
+    /// project (phase 5, capability 98).
+    Cut,
+    /// Edit ▸ Copy: the selected shapes to the clipboard.
+    Copy,
+    /// Edit ▸ Paste: the clipboard's shapes, as shapes of their own.
+    Paste,
     /// Edit ▸ Duplicate: linked copies of the selection.
     Duplicate,
     /// Edit ▸ Delete: the selection.
@@ -328,6 +335,33 @@ pub const SHORTCUTS: &[Shortcut] = &[
         Menu::Edit,
         StrKey::AppMenuSelectAll,
         "Select every visible shape",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::Cut,
+        COMMAND,
+        &[Key::X],
+        Menu::Edit,
+        StrKey::AppMenuCut,
+        "Cut the selected shapes to the clipboard",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::Copy,
+        COMMAND,
+        &[Key::C],
+        Menu::Edit,
+        StrKey::AppMenuCopy,
+        "Copy the selected shapes to the clipboard",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::Paste,
+        COMMAND,
+        &[Key::V],
+        Menu::Edit,
+        StrKey::AppMenuPaste,
+        "Paste the copied shapes, under the pointer when it is over the Viewport",
         Scope::OutsideFields,
     ),
     menu_row(

@@ -153,6 +153,10 @@ fn kind(command: &Command) -> &'static str {
         Command::SetOutline { .. } => "SetOutline",
         Command::ConvertToPath(_) => "ConvertToPath",
         Command::ReplaceShapes { .. } => "ReplaceShapes",
+        Command::CutInstances(_) => "CutInstances",
+        Command::PasteShapes(_) => "PasteShapes",
+        Command::MakeUnique(_) => "MakeUnique",
+        Command::CopyInstances { .. } => "CopyInstances",
     }
 }
 
@@ -406,7 +410,28 @@ fn every_command() -> Vec<(Project, Command)> {
         (with_tabs.clone(), Command::DeleteTabs(vec![first_tab.id])),
         (plaque.clone(), Command::CentreOnStock(vec![instance("i4")])),
         (plaque.clone(), Command::FitStockToShapes { margin_mm: 5.0 }),
-        (plaque, Command::AddShapes(vec![new_slot("Slot 1")])),
+        (plaque.clone(), Command::AddShapes(vec![new_slot("Slot 1")])),
+        (plaque.clone(), Command::CutInstances(vec![instance("i4")])),
+        (
+            plaque.clone(),
+            Command::PasteShapes(vec![dc_app::clipboard::Clip {
+                definition: plaque.definitions[&plaque.instances[3].definition].clone(),
+                instance: plaque.instances[3].clone(),
+            }]),
+        ),
+        (
+            Command::DuplicateInstances(vec![instance("i4")])
+                .apply(&plaque)
+                .expect("the square duplicates"),
+            Command::MakeUnique(vec![instance("i4")]),
+        ),
+        (
+            plaque,
+            Command::CopyInstances {
+                ids: vec![instance("i4")],
+                placements: vec![Transform::translate(5.0, 0.0)],
+            },
+        ),
         (drawing.clone(), wider_slot()),
         (
             drawing.clone(),

@@ -244,8 +244,12 @@ pub enum Command { /* phase 4's, and: */
     ReplaceShapes { from: Vec<InstanceId>, keep: bool, add: Vec<NewShape>,
                     inherit: Vec<(InstanceId, usize)>, what: Edit },
     MakeUnique(Vec<InstanceId>),
-    /// Linked copies of `ids`, one set per transform, optionally filed in a new grouped folder.
-    CopyInstances { ids: Vec<InstanceId>, placements: Vec<Transform>, folder: Option<String> },
+    /// Linked copies of `ids`, one set per transform (slice 19 adds the grouped folder an array
+    /// files them in).
+    CopyInstances { ids: Vec<InstanceId>, placements: Vec<Transform> },
+    /// Cut: `DeleteInstances` under its own name. Paste: each clip (a definition and the
+    /// instance that placed it) a new instance of a new definition.
+    CutInstances(Vec<InstanceId>), PasteShapes(Vec<clipboard::Clip>),
     /// One transform per instance: align, distribute.
     PlaceInstances { moves: Vec<(InstanceId, Transform)>, what: Edit },
     SetConstruction { ids: Vec<InstanceId>, construction: bool },
@@ -875,9 +879,47 @@ the tool bar of slice 9 is its form.
 - `keyboard.rs`: `EditNodes` (N), `BreakPath` (B), `Offset` (⇧O),
   `Join` (⌘J).
 - The context menu the functional spec names (Break, the segment
-  kinds, Fillet, Convert to Path) comes with slice 18, where cut, copy,
-  paste and Make Unique give the Viewport one; until then every row of
-  it is on the tool bar or in the Shape menu.
+  kinds, Fillet, Convert to Path) comes with slice 18.
+
+### Copies and the clipboard (slice 18)
+
+- `dc_app::command::copies` (ported from `featureDefinitions.ts` and
+  `copyFeatures.ts`): `make_unique` takes the ids in order, so of
+  every copy of one shape the last keeps the definition they shared;
+  `copy` makes the copies of one placement in the Design Tree's order
+  (upstream's `sourcesInAuthoredOrder`), unlocked; `paste` gives each
+  clip the next free `d<n>` and `i<n>`, keeps a free name, and keeps
+  the clip's folder when this project has it.
+- `dc_app::clipboard`: `Clipboard` holds `Clip`s (definition and
+  instance), their joint bounds as placed, and how many 10 mm offsets
+  the next paste with no point lands from the originals (one after a
+  copy, none after a cut, one more each time). It is a field of `App`
+  that `replace_project` leaves alone. `App::copy_selection`,
+  `cut_selection` (`CutInstances`; a refusal puts the clipboard back)
+  and `paste(at_mm)`, which moves the bounds' middle to the point.
+- `dc_app::tree::menu` takes `can_paste` and lists Cut, Copy, Paste,
+  Make Unique (a linked copy among the rows) and Convert to Path (a
+  row that keeps its sizes); `menu_command` gives the last two their
+  commands. Cut, Copy and Paste are the window's actions.
+- The window: `Action::Cut`, `Copy`, `Paste(PasteAt)` with `PasteAt`
+  one of `Pointer` (the key: `ViewportState::cursor_mm`), `Point` (the
+  Viewport's context menu) and `Offset` (the Edit menu, a Design Tree
+  row). A window is not sent `Ctrl`/`⌘ X`, `C` and `V` as keys:
+  egui-winit turns them into `Event::Cut`, `Copy` and `Paste`, and
+  sends a Paste only when the system's clipboard holds text or a
+  picture. So `viewport::keys` takes those events as well as the keys
+  (which a test harness and the shortcut table use), unless a field
+  has the keyboard or a label's text is selected; and Cut and Copy put
+  the shapes' names on the system's clipboard, so that a Paste is
+  sent. Cut and Paste arm Select.
+- `viewport::context_menu` hangs from the pane's response for Select
+  and Edit nodes; `ViewportState::menu` keeps what was under the
+  pointer and where. A shape's menu is `panels::tree::context_menu`,
+  shared with the row. In Edit nodes a right-click on a node or
+  segment not selected is sent to the tool as a click first.
+- `Preview::copying` (a move with Alt): the release runs
+  `CopyInstances` with the drag's delta, and the layers draw the
+  originals in place under the moving selection.
 
 ## Visual design
 
@@ -1065,8 +1107,13 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `far_ends_are_left_alone`, and the DXF importer's stitch tests unchanged
 (acc 119–121).
 
-**Organising (slices 18–22)** `dc_app::command::` `make_unique_clones_the_definition`
-(port: `definitionEditing.test.ts`), `clipboard::paste_is_unlinked_and_crosses_projects`,
+**Organising (slices 18–22)** `dc_app` `tests/copies.rs` (slice 18; ports of `definitionEditing.test.ts` and
+`featureClipboard.test.ts`): `make_unique_clones_the_definition`,
+`make_unique_of_all_the_copies_keeps_one_definition`, `copy_changes_nothing_and_cut_is_one_step`,
+`paste_is_unlinked_and_crosses_projects`, `a_pasted_shape_is_visible_and_unlocked`,
+`copy_instances_places_linked_copies`, `the_context_menu_offers_what_applies`; in the window
+(`tests/editing.rs`) `copy_and_paste_events`, `the_viewport_has_a_context_menu`,
+`the_node_context_menu_fillets`, `alt_drag_copies_and_make_unique_unlinks`;
 `array::` the ports of `featureDistribution.test.ts` (grid and radial),
 `array::copies_are_linked_and_grouped`, `arrange::align_and_distribute`,
 `arrange::top_is_the_greatest_y`, `arrange::to_stock`, `tree::folders_file_rows`,

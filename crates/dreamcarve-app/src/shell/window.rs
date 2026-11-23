@@ -484,9 +484,30 @@ pub(crate) enum Action {
     Tool(dc_app::tool::Event),
     /// The snapping preferences (View ▸ Snapping, ⇧S; capability 82).
     SetSnap(dc_app::SnapSettings),
+    /// Edit ▸ Cut: the selected shapes to the clipboard and out of the
+    /// project (capability 98).
+    Cut,
+    /// Edit ▸ Copy: the selected shapes to the clipboard.
+    Copy,
+    /// Edit ▸ Paste: the clipboard's shapes, where [`PasteAt`] says.
+    Paste(PasteAt),
     /// The snap grid's spacing, mm, or `None` for the automatic one
     /// (View ▸ Grid ▸ Spacing; capability 82a).
     SetGridSpacing(Option<f64>),
+}
+
+/// Where a paste puts its shapes (capability 98).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum PasteAt {
+    /// Under the pointer when it is over the Viewport, else as
+    /// [`PasteAt::Offset`]: the key.
+    Pointer,
+    /// With their middle at this point of the project, mm: the Viewport's
+    /// context menu, where it was opened.
+    Point(dc_geometry::Point),
+    /// 10 mm off where they were copied from: the Edit menu, a Design
+    /// Tree row's menu.
+    Offset,
 }
 
 impl Action {
@@ -1458,6 +1479,57 @@ impl Shell {
         }
     }
 
+    /// The selected shapes' names, a line each: what Cut and Copy leave
+    /// on the system's clipboard. The shapes themselves are on the app's
+    /// (`dc_app::clipboard`); the text is there so that the system sends
+    /// the Paste key on, which it does only when its clipboard holds
+    /// something.
+    fn clipboard_text(&self) -> String {
+        let selected = self.app.selection().instances();
+        self.app
+            .project()
+            .instances
+            .iter()
+            .filter(|instance| selected.contains(&instance.id))
+            .map(|instance| instance.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// After a copy: the names to the system's clipboard, and the status
+    /// bar says what was copied, since nothing on the drawing does.
+    fn clipboard_filled(&mut self, ctx: &egui::Context) {
+        ctx.copy_text(self.clipboard_text());
+        let app = &self.app;
+        let strings = app.strings();
+        let subject = match app.selection().instances() {
+            [id] => {
+                let name = app
+                    .project()
+                    .instances
+                    .iter()
+                    .find(|instance| instance.id == *id)
+                    .map_or(id.as_str(), |instance| instance.name.as_str());
+                strings.fmt(StrKey::CommandSubjectOne, &[("name", name)])
+            }
+            ids => strings.fmt(
+                StrKey::CommandSubjectMany,
+                &[("count", &ids.len().to_string())],
+            ),
+        };
+        self.message = Some(strings.fmt(StrKey::AppMessageCopied, &[("subject", &subject)]));
+    }
+
+    /// Arms Select when another tool has the pointer: what it was
+    /// working on has just been cut, or is no longer what is selected.
+    fn put_down_tool(&mut self, ctx: &egui::Context) {
+        if self.app.tool() != dc_app::Tool::Select {
+            self.app.arm(dc_app::Tool::Select);
+        }
+        self.viewport.reset_clicks();
+        ctx.request_repaint();
+    }
+
     fn run(&mut self, ctx: &egui::Context, action: Action) {
         match action {
             Action::New => self.request(ctx, Pending::New),
@@ -1574,6 +1646,37 @@ impl Shell {
                 ctx.request_repaint();
             }
             Action::SetSnap(snap) => self.app.prefs_mut().snap = snap.normalized(),
+            Action::Copy => {
+                if self.app.copy_selection() > 0 {
+                    self.clipboard_filled(ctx);
+                }
+            }
+            Action::Cut => {
+                // The names are read before the shapes go.
+                let held = self.clipboard_text();
+                match self.app.cut_selection() {
+                    Ok(_) => {
+                        ctx.copy_text(held);
+                        self.put_down_tool(ctx);
+                    }
+                    Err(e) => self.message = Some(e.to_string()),
+                }
+            }
+            Action::Paste(at) => {
+                let at_mm = match at {
+                    PasteAt::Pointer => self.viewport.cursor_mm(),
+                    PasteAt::Point(at) => Some(at),
+                    PasteAt::Offset => None,
+                };
+                match self.app.paste(at_mm) {
+                    Ok(_) => {
+                        // What was pasted is on the drawing, selected.
+                        self.put_down_tool(ctx);
+                        self.go_to(Step::Design);
+                    }
+                    Err(e) => self.message = Some(e.to_string()),
+                }
+            }
             Action::SetGridSpacing(spacing) => self.app.prefs_mut().grid_spacing_mm = spacing,
             Action::OpenLibrary => {
                 self.library = Some(panels::library::Sheet::open(
@@ -2086,6 +2189,9 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
                 .collect();
             (!visible.is_empty()).then_some(Action::Select(dc_app::Selection::Instances(visible)))
         }
+        Shortcut::Cut => (!selected.is_empty()).then_some(Action::Cut),
+        Shortcut::Copy => (!selected.is_empty()).then_some(Action::Copy),
+        Shortcut::Paste => app.can_paste().then_some(Action::Paste(PasteAt::Pointer)),
         Shortcut::Duplicate => on_selection(dc_app::tree::MenuItem::Duplicate),
         Shortcut::Delete => {
             // Selected tabs (#546) delete as one step, like shapes.

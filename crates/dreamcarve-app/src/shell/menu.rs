@@ -24,7 +24,7 @@ use eframe::egui::{self, Button, Key, Modifiers, Ui};
 use crate::keyboard::{self, Command as Shortcut};
 use crate::shell::files;
 use crate::shell::theme::{self, Palette};
-use crate::shell::window::{Action, BookPage, FrameState, shortcut_action, shortcut_text};
+use crate::shell::window::{Action, BookPage, FrameState, PasteAt, shortcut_action, shortcut_text};
 use crate::widgets::icon::Icon;
 
 /// A menu row reading `key` with `shortcut`, pushing `action` when chosen.
@@ -368,6 +368,9 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     // Capability 79a: Duplicate, Delete, Rename | Select All; then the
     // visibility and lock rows, which carry shortcuts (54).
     for (command, key) in [
+        (Shortcut::Cut, StrKey::AppMenuCut),
+        (Shortcut::Copy, StrKey::AppMenuCopy),
+        (Shortcut::Paste, StrKey::AppMenuPaste),
         (Shortcut::Duplicate, StrKey::AppMenuDuplicate),
         (Shortcut::Delete, StrKey::AppMenuDelete),
         (Shortcut::Rename, StrKey::AppMenuRename),
@@ -390,7 +393,13 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         if let Some((modifiers, key)) = keyboard::binding(command) {
             button = button.shortcut_text(shortcut_text(ui.ctx(), modifiers, key));
         }
-        let action = shortcut_action(app, command);
+        // The pointer is on the menu, so the menu's Paste is not placed
+        // by it.
+        let action = if command == Shortcut::Paste {
+            app.can_paste().then_some(Action::Paste(PasteAt::Offset))
+        } else {
+            shortcut_action(app, command)
+        };
         if ui.add_enabled(action.is_some(), button).clicked()
             && let Some(action) = action
         {
@@ -450,6 +459,16 @@ fn shape(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         None,
         sized,
         Action::run(dc_app::Command::ConvertToPath(selected.to_vec())),
+        out,
+    );
+    let linked = dc_app::tree::menu(app.project(), selected, None, false)
+        .contains(&dc_app::tree::MenuItem::MakeUnique);
+    item_text(
+        ui,
+        strings.get(StrKey::AppMenuMakeUnique),
+        None,
+        linked,
+        Action::run(dc_app::Command::MakeUnique(selected.to_vec())),
         out,
     );
     item_text(

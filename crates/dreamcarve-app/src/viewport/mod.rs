@@ -88,7 +88,7 @@ use crate::keyboard::{self, Command as Shortcut};
 use crate::panels::{editor, empty, project, properties};
 use crate::shell::focus;
 use crate::shell::theme::{self, Palette};
-use crate::shell::window::{Action, FrameState, shortcut_action};
+use crate::shell::window::{Action, FrameState, PasteAt, shortcut_action};
 use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
 use crate::widgets::card::mask_corners;
 use crate::widgets::icon::Icon;
@@ -225,6 +225,19 @@ struct Preview {
     placed: Transform,
     /// The change as the command will take it.
     delta: Transform,
+    /// A move with Alt held: the release leaves linked copies there and
+    /// the originals where they are (phase 5, capability 98), so both
+    /// are drawn.
+    copying: bool,
+}
+
+/// Where the Viewport's context menu was opened.
+#[derive(Debug, Clone, PartialEq)]
+struct MenuAt {
+    /// The shape under the pointer then, if any.
+    on: Option<InstanceId>,
+    /// The pointer then, project mm: where the menu's Paste pastes.
+    at_mm: Point,
 }
 
 /// One layer's contents as last built, and what they were built from.
@@ -273,6 +286,8 @@ pub(crate) struct ViewportState {
     /// The tab being dragged and where the release will put it, in
     /// definition space.
     tab_preview: Option<(TabId, f64, f64)>,
+    /// Where the context menu was last opened.
+    menu: Option<MenuAt>,
     /// Where the armed tool was last told the pointer is: it is told
     /// again only when the pointer, or a key held with it, changes.
     tool_pointer: Option<dc_app::Pointer>,
@@ -359,6 +374,12 @@ impl ViewportState {
         if self.fitted {
             self.fit_pending = true;
         }
+    }
+
+    /// Where the pointer is in the project, mm, while it is over the
+    /// Viewport: where the Paste key puts what it pastes.
+    pub(crate) const fn cursor_mm(&self) -> Option<Point> {
+        self.cursor_mm
     }
 
     /// Forgets the click cycle (the selection changed elsewhere).
@@ -582,6 +603,10 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     // back a point, and delete nothing.
     let drawing = takes_pointer(app);
     let editing_nodes = app.tool() == Tool::Nodes && drawing;
+    // Read before the input is: the plug-in's lock is the context's.
+    let label_selected = ctx
+        .plugin_opt::<egui::text_selection::LabelSelectionState>()
+        .is_some_and(|labels| labels.lock().has_selection());
     let mut disarm = false;
     let mut pressed = Vec::new();
     let mut actions = Vec::new();
@@ -597,10 +622,29 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
                 }
             }
         }
+        // Cut, Copy and Paste reach a window as events of their own, not
+        // as keys (egui-winit, which also reads the system's clipboard
+        // for a paste). They are the shapes' unless text is selected in
+        // a label, which they then copy as they always did.
+        if !popup_open && !label_selected {
+            input.events.retain(|event| {
+                let command = match event {
+                    egui::Event::Cut => Shortcut::Cut,
+                    egui::Event::Copy => Shortcut::Copy,
+                    egui::Event::Paste(_) | egui::Event::PasteImage(_) => Shortcut::Paste,
+                    _ => return true,
+                };
+                pressed.push(command);
+                false
+            });
+        }
         for command in [
             Shortcut::ZoomToSelection,
             Shortcut::FitView,
             Shortcut::SelectAll,
+            Shortcut::Cut,
+            Shortcut::Copy,
+            Shortcut::Paste,
             Shortcut::Duplicate,
             Shortcut::Show,
             Shortcut::Hide,
@@ -1040,6 +1084,7 @@ fn gestures(
             ids: ids.clone(),
             placed: handles::about_centre(handles, delta),
             delta,
+            copying: matches!(grab, Grab::Move) && modifiers.alt,
         });
     }
 
@@ -1106,10 +1151,18 @@ fn gestures(
         // The release commits the drag: one command, one undo step.
         Some(Drag::Transform { ids, .. }) => {
             if let Some(preview) = preview.filter(|p| !is_identity(p.delta)) {
-                out.push(Action::Run(Box::new(Command::TransformInstances {
-                    ids,
-                    delta: preview.delta,
-                })));
+                let command = if preview.copying {
+                    Command::CopyInstances {
+                        ids,
+                        placements: vec![preview.delta],
+                    }
+                } else {
+                    Command::TransformInstances {
+                        ids,
+                        delta: preview.delta,
+                    }
+                };
+                out.push(Action::run(command));
             }
         }
         // In target editing a click toggles the shape under it; a click
@@ -1307,14 +1360,20 @@ fn frame(
         .unwrap_or_default();
     let placed = view.preview.as_ref().map(|p| p.placed);
     let placed_key = placed.map(|t| t.coeffs().map(f64::to_bits));
+    // An Alt-drag leaves the originals, so they stay drawn where they are.
+    let lifted: Vec<InstanceId> = if view.preview.as_ref().is_some_and(|p| p.copying) {
+        Vec::new()
+    } else {
+        moving.clone()
+    };
     // The marks are the Scene's, set when the marked operation or its
     // targets change: the two layers that show them rebuild then, and
     // not per frame (acceptance 87).
     let marks = scene.targets_revision();
     let shapes_layer = view.layer(
         Layer::Shapes,
-        key((scene.shapes_revision(), band, &moving, marks)),
-        || layers::shapes(scene, tolerance, &moving),
+        key((scene.shapes_revision(), band, &lifted, marks)),
+        || layers::shapes(scene, tolerance, &lifted),
     );
     // A target that is also selected draws a halo under its selection.
     let haloed: Vec<InstanceId> = scene.targets().map_or_else(Vec::new, |m| {
@@ -1326,8 +1385,8 @@ fn frame(
     });
     let targets_layer = view.layer(
         Layer::Targets,
-        key((scene.shapes_revision(), band, &moving, marks, &haloed)),
-        || layers::targets(scene, tolerance, &haloed, &moving),
+        key((scene.shapes_revision(), band, &lifted, marks, &haloed)),
+        || layers::targets(scene, tolerance, &haloed, &lifted),
     );
     let hover_layer = view.layer(
         Layer::Hover,
@@ -1573,6 +1632,121 @@ fn arrow_layer(
         *next_version = next;
     }
     (cached.version, Arc::clone(&cached.data))
+}
+
+/// Whether the next click on the Viewport is a pick's: the park point's
+/// or a point row's.
+fn park_or_point(ctx: &egui::Context, editing_targets: bool, point: bool) -> bool {
+    point || (project::park_pick_armed(ctx) && !editing_targets)
+}
+
+/// The Viewport's context menu (phase 5, capabilities 57, 92 and 98). On
+/// a shape it is the shape's Design Tree row's, for the selection when
+/// the shape is in it and for the shape alone, which it selects, when
+/// not; on nothing it is *Paste* and *Select All*. In the Edit nodes tool
+/// it is the tool bar's buttons for the node or the segment under the
+/// pointer, which a right-click selects as a click does unless it is
+/// selected already. *Paste* puts its shapes where the menu was opened.
+fn context_menu(
+    pane: Rect,
+    response: &egui::Response,
+    state: &FrameState<'_>,
+    view: &mut ViewportState,
+    camera: &Camera,
+    out: &mut Vec<Action>,
+) {
+    use dc_app::tool::{Control, Event, Key as ToolKey, NodeAction};
+    let app = state.app;
+    let strings = app.strings();
+    let nodes = app.tool() == Tool::Nodes;
+    if response.secondary_clicked()
+        && let Some(at) = response.interact_pointer_pos()
+    {
+        let at_px = pane_pos(pane, at);
+        let at_mm = camera.to_world(at_px);
+        let mut on = None;
+        if nodes {
+            let click = match app.node_control_at(at_mm) {
+                Some(Control::Node(node)) => !app.selected_nodes().contains(&node),
+                Some(Control::Span { .. }) => true,
+                _ => false,
+            };
+            if click {
+                let pointer = dc_app::Pointer {
+                    at_mm,
+                    shift: false,
+                    alt: false,
+                    command: false,
+                };
+                out.push(Action::Tool(Event::Press(pointer)));
+                out.push(Action::Tool(Event::Release(pointer)));
+            }
+        } else if let Hit::Instance(id) =
+            pick::pick(app.scene(), camera, at_px, PICK_TOLERANCE_PX, 0)
+        {
+            if !app.selection().instances().contains(&id) {
+                out.push(Action::Select(Selection::Instances(vec![id.clone()])));
+            }
+            on = Some(id);
+        }
+        view.menu = Some(MenuAt { on, at_mm });
+        view.clicks.reset();
+    }
+    let Some(menu) = view.menu.clone() else {
+        return;
+    };
+    response.context_menu(|ui| {
+        if nodes {
+            let actions = app.tool_bar().map(|bar| bar.actions).unwrap_or_default();
+            for action in &actions {
+                let row = egui::Button::new(action.label.as_str());
+                if ui.add_enabled(action.enabled, row).clicked() {
+                    out.push(Action::Tool(Event::Node(action.action)));
+                    ui.close();
+                }
+            }
+            if !actions.is_empty() {
+                ui.separator();
+            }
+            if ui.button(strings.get(StrKey::TreeDelete)).clicked() {
+                out.push(Action::Tool(Event::Key(ToolKey::Delete)));
+                ui.close();
+            }
+            if ui.button(strings.get(StrKey::AppMenuSelectAll)).clicked() {
+                out.push(Action::Tool(Event::Node(NodeAction::SelectAll)));
+                ui.close();
+            }
+        } else if let Some(on) = &menu.on {
+            let selected = app.selection().instances();
+            let alone = [on.clone()];
+            let ids = if selected.contains(on) {
+                selected
+            } else {
+                alone.as_slice()
+            };
+            crate::panels::tree::context_menu(
+                ui,
+                state,
+                (on, ids),
+                PasteAt::Point(menu.at_mm),
+                out,
+            );
+        } else {
+            let paste = egui::Button::new(strings.get(StrKey::AppMenuPaste));
+            if ui.add_enabled(app.can_paste(), paste).clicked() {
+                out.push(Action::Paste(PasteAt::Point(menu.at_mm)));
+                ui.close();
+            }
+            let all = shortcut_action(app, Shortcut::SelectAll);
+            let row = egui::Button::new(strings.get(StrKey::AppMenuSelectAll));
+            if ui.add_enabled(all.is_some(), row).clicked()
+                && let Some(all) = all
+            {
+                out.push(all);
+                ui.close();
+            }
+        }
+    });
 }
 
 /// The selection's transform handles (`experience.md`, section 8,
@@ -1963,6 +2137,7 @@ pub(crate) fn show(
             }
             let editing_targets = app.target_editing().is_some();
             let point = editor::point_pick(ui.ctx()).filter(|_| !editing_targets);
+            let picking = park_or_point(ui.ctx(), editing_targets, point.is_some());
             let adding_tabs = app.tool() == Tool::Tab && !editing_targets;
             let drawing = takes_pointer(app);
             let park = project::park_pick_armed(ui.ctx()) && !editing_targets;
@@ -2006,6 +2181,11 @@ pub(crate) fn show(
             }
             if !drawing {
                 view.tool_pointer = None;
+            }
+            if !(editing_targets || picking || adding_tabs || state.show_empty)
+                && matches!(app.tool(), Tool::Select | Tool::Nodes)
+            {
+                context_menu(pane, &response, state, view, &camera, out);
             }
             if moved {
                 view.fitted = false;

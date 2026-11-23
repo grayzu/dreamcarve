@@ -458,7 +458,7 @@ fn target_rows_marked_for_selected_operation() {
             .expect("the Panel")
     };
     let items = |harness: &Harness, ids: &[InstanceId]| {
-        dc_app::tree::menu(harness.app.project(), ids, Some(&panel(harness)))
+        dc_app::tree::menu(harness.app.project(), ids, Some(&panel(harness)), false)
     };
     let square = items(&harness, &[id("i4")]);
     assert!(square.contains(&MenuItem::AddTo) && !square.contains(&MenuItem::RemoveFrom));
@@ -466,7 +466,7 @@ fn target_rows_marked_for_selected_operation() {
     assert!(island.contains(&MenuItem::RemoveFrom) && !island.contains(&MenuItem::AddTo));
     let both = items(&harness, &[id("i3"), id("i4")]);
     assert!(both.contains(&MenuItem::AddTo) && both.contains(&MenuItem::RemoveFrom));
-    let none = dc_app::tree::menu(harness.app.project(), &[id("i4")], None);
+    let none = dc_app::tree::menu(harness.app.project(), &[id("i4")], None, false);
     assert!(!none.contains(&MenuItem::AddTo) && !none.contains(&MenuItem::RemoveFrom));
 
     let add = dc_app::tree::target_command(&panel(&harness), MenuItem::AddTo, &[id("i4")])

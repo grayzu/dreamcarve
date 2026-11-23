@@ -507,15 +507,31 @@ capability 52); what a tool holds before it commits is not project data.
     - **Make Unique** (**Shape** menu, context menu): the selected
       linked copies each get a definition of their own, so editing one
       no longer changes the others. A shape that is not linked is left
-      alone.
-    - **Cut, Copy, Paste** (`Ctrl`/`⌘ X`, `C`, `V`; Edit menu). Paste
-      puts the copies under the pointer when it is over the Viewport,
-      else 10 mm off the originals, as shapes of their own (not
-      linked), selected. The clipboard is the app's, not the system's,
-      and survives opening another project in the same window, so
-      shapes carry from one project to another.
+      alone; with no linked copy selected the row is off.
+    - **Cut, Copy, Paste** (`Ctrl`/`⌘ X`, `C`, `V`; Edit menu, context
+      menu). Paste puts the copies under the pointer when it is over
+      the Viewport (their middle at the pointer; the context menu's
+      Paste, where the menu was opened), else 10 mm off the originals
+      and 10 mm further with each paste, as shapes of their own (not
+      linked), selected, visible and unlocked. What was cut pastes
+      first where it was. A pasted shape keeps its name when the
+      project has none like it, else it is named as a copy is. The
+      clipboard is the app's, not the system's, and survives opening
+      another project in the same window, so shapes carry from one
+      project to another. The status bar says what was copied. While a
+      field is typed in, or text is selected in a label, the three keys
+      are the text's.
     - **Alt-drag** copies what is dragged (a linked copy), leaving the
-      original where it was (Graphite).
+      original where it was (Graphite); both are drawn while the drag
+      is under way.
+    - **The context menu** of a shape on the Viewport is its Design
+      Tree row's (57): a right-click selects the shape unless it is
+      selected already, and the menu is Rename; Hide, Lock; Cut, Copy,
+      Paste, Duplicate, Delete; Make Unique and Convert to Path where
+      they apply; Zoom to; Add operation. Beside every shape it is
+      Paste and Select All. In the Edit nodes tool it is the tool
+      bar's buttons for the node or segment under the pointer, with
+      Delete and Select All.
     - **Array…** (**Arrange ▸ Array…**; PureCutCNC's feature
       distribution, grid and radial). **Grid**: Columns, Rows, and the
       Spacing between copies along X and along Y, measured as a pitch

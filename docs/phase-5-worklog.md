@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 17: 3,649.
+`0.5.0-alpha.1`. After slice 18: 3,660.
 
 ## Decisions waiting for the maintainer
 
@@ -158,6 +158,22 @@ Decisions made while building are added here.
   copy, paste, Make Unique). A closed path drawn with the Line tool is
   still named *Line 1*, which reads oddly beside its square icon in the
   Design Tree; *Path* may be the better name for a closed one.
+- Slice 18: the Viewport's context menu on a shape is the Design Tree
+  row's menu, one menu in both places, with Cut, Copy, Paste, Make
+  Unique and Convert to Path added to it. A hidden shape that is
+  selected is copied too (upstream copies only visible ones), and
+  pastes visible and unlocked. A paste with no pointer lands 10 mm off
+  the originals and 10 mm further each time; what was cut pastes first
+  where it was. A pasted shape is never linked (upstream has a
+  project-wide copy mode). Tabs and operations are not copied with a
+  shape. The copy an Alt-drag leaves is unlocked and labelled *Copy*,
+  where Duplicate's is *Duplicate*. Cut and Copy put the shapes' names
+  on the system's clipboard as text: egui sends the Paste key on only
+  when the system's clipboard holds something, so without it ⌘V would
+  do nothing after another app cleared the clipboard; with a file or
+  nothing on the system's clipboard ⌘V still does nothing, and Edit ▸
+  Paste works. `CopyInstances` has no folder yet: it comes with arrays,
+  which file their copies in one.
 
 ## Slices
 
@@ -196,7 +212,7 @@ The numbers are the design spec's.
 
 | Slice | What | Status |
 | --- | --- | --- |
-| 18 | Make Unique, cut, copy, paste, Alt-drag | todo |
+| 18 | Make Unique, cut, copy, paste, Alt-drag: `Command::{MakeUnique, CopyInstances, CutInstances, PasteShapes}`, the app's clipboard (`dc_app::clipboard`), Edit ▸ Cut, Copy, Paste and their keys, Shape ▸ Make Unique, the Viewport's context menu (a shape's is its Design Tree row's; the Edit nodes tool's is its bar's buttons), an Alt-drag's linked copy. Gate: 3,660 tests | done |
 | 19 | Arrays | todo |
 | 20 | Align and distribute | todo |
 | 21 | Folders and groups | todo |

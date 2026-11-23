@@ -24,6 +24,9 @@ except in an open sheet.
 | Ctrl+Z | ⌘Z | Undo the last change | Edit ▸ Undo |
 | Ctrl+Shift+Z | ⇧⌘Z | Redo the change undone | Edit ▸ Redo |
 | Ctrl+A | ⌘A | Select every visible shape | Edit ▸ Select All |
+| Ctrl+X | ⌘X | Cut the selected shapes to the clipboard | Edit ▸ Cut |
+| Ctrl+C | ⌘C | Copy the selected shapes to the clipboard | Edit ▸ Copy |
+| Ctrl+V | ⌘V | Paste the copied shapes, under the pointer when it is over the Viewport | Edit ▸ Paste |
 | Ctrl+D | ⌘D | Make linked copies of the selection | Edit ▸ Duplicate |
 | Delete or Backspace | ⌦ or ⌫ | Delete the selection | Edit ▸ Delete |
 | H | H | Hide the selection | Edit ▸ Hide |

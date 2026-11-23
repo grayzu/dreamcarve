@@ -376,3 +376,254 @@ fn join_from_the_shape_menu() {
     assert_eq!(tool(&h), Tool::Select);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The square's middle, in the project.
+fn square_middle(h: &Harness<'_, Shell>) -> Point {
+    let corners = square_corners(h);
+    let (mut x, mut y) = (0.0, 0.0);
+    for corner in &corners {
+        x += corner.x;
+        y += corner.y;
+    }
+    #[allow(clippy::cast_precision_loss, reason = "a handful of corners")]
+    let n = corners.len() as f64;
+    Point::new(x / n, y / n)
+}
+
+/// A click of the secondary button at `at`.
+fn right_click(h: &mut Harness<'_, Shell>, at: egui::Pos2) {
+    h.event(egui::Event::PointerMoved(at));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(8);
+}
+
+fn definition_of(h: &Harness<'_, Shell>, instance: &str) -> String {
+    h.state()
+        .app()
+        .project()
+        .instances
+        .iter()
+        .find(|i| i.id.as_str() == instance)
+        .unwrap()
+        .definition
+        .as_str()
+        .to_owned()
+}
+
+/// Capability 98 in a window, which is sent Cut, Copy and Paste as
+/// events of their own and not as keys: Copy fills the clipboard and
+/// says so, Paste puts the shapes under the pointer, Cut takes them out.
+/// While a field is typed in they are the field's.
+#[test]
+fn copy_and_paste_events() {
+    let (mut h, dir) = plaque("clipboard-events");
+    select(&mut h, &["i4"]);
+    let count = h.state().app().project().instances.len();
+    h.event(egui::Event::Copy);
+    h.run();
+    assert!(h.state().app().can_paste());
+    assert_eq!(h.state().message(), Some("Copied “square”"));
+    assert_eq!(h.state().app().project().instances.len(), count);
+
+    // Under the pointer: the copy's middle is where the pointer is.
+    let at_mm = Point::new(150.0, 12.0);
+    let at = on_screen(&h, at_mm);
+    h.event(egui::Event::PointerMoved(at));
+    h.run();
+    h.event(egui::Event::Paste("square".to_owned()));
+    h.run();
+    let app = h.state().app();
+    assert_eq!(app.undo_label(), Some("Paste “square”"));
+    assert_eq!(app.project().instances.len(), count + 1);
+    let pasted = app.project().instances.last().unwrap();
+    assert_eq!(pasted.name, "square (2)");
+    assert_eq!(
+        app.selection().instances(),
+        std::slice::from_ref(&pasted.id)
+    );
+    assert_ne!(pasted.definition.as_str(), definition_of(&h, "i4"));
+    let outline = pasted
+        .transform
+        .apply_polyline(&app.project().definitions[&pasted.definition].profiles[0])
+        .unwrap()
+        .bounds()
+        .unwrap();
+    let px_mm = 1.0 / app.view().camera.px_per_mm;
+    assert!(
+        (f64::midpoint(outline.min.x, outline.max.x) - at_mm.x).abs() <= px_mm
+            && (f64::midpoint(outline.min.y, outline.max.y) - at_mm.y).abs() <= px_mm,
+        "{outline:?}"
+    );
+
+    // Cut takes the selection, which is what was pasted.
+    h.event(egui::Event::Cut);
+    h.run();
+    assert_eq!(h.state().app().undo_label(), Some("Cut “square (2)”"));
+    assert_eq!(h.state().app().project().instances.len(), count);
+
+    // In a field, Copy is the field's: the shapes' clipboard is not
+    // refilled from the selection.
+    select(&mut h, &["i1"]);
+    h.get_by_role_and_label(Role::TextInput, "X").focus();
+    h.run();
+    h.event(egui::Event::Copy);
+    h.run();
+    h.event(egui::Event::Paste("12".to_owned()));
+    h.run();
+    assert_eq!(h.state().app().project().instances.len(), count);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The Viewport's context menu: on a shape, the shape is selected and
+/// the menu is its Design Tree row's, with Cut, Copy and Duplicate; on
+/// nothing it is Paste and Select All, and Paste puts the shapes where
+/// the menu was opened.
+#[test]
+fn the_viewport_has_a_context_menu() {
+    let (mut h, dir) = plaque("context-menu");
+    let count = h.state().app().project().instances.len();
+    let middle = on_screen(&h, square_middle(&h));
+    right_click(&mut h, middle);
+    assert_eq!(
+        h.state().app().selection().instances(),
+        [InstanceId::new("i4")],
+        "a right-click selects the shape under it"
+    );
+    for row in ["Rename", "Cut", "Copy", "Duplicate", "Delete", "Zoom to"] {
+        assert!(
+            h.query_by_role_and_label(Role::Button, row).is_some(),
+            "{row}"
+        );
+    }
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Paste").is_none(),
+        "nothing was copied yet"
+    );
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Make Unique")
+            .is_none(),
+        "the square is no linked copy"
+    );
+    h.get_by_role_and_label(Role::Button, "Copy").click();
+    h.run_steps(8);
+    assert!(h.state().app().can_paste());
+    assert!(h.query_by_role_and_label(Role::Button, "Copy").is_none());
+
+    // On nothing: the plaque's outline holds the whole stock, so beside
+    // it.
+    let at_mm = Point::new(-6.0, 60.0);
+    let bare = on_screen(&h, at_mm);
+    assert!(h.state().layout().viewport.contains(bare));
+    right_click(&mut h, bare);
+    assert!(h.query_by_role_and_label(Role::Button, "Cut").is_none());
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Select All")
+            .is_some()
+    );
+    h.get_by_role_and_label(Role::Button, "Paste").click();
+    h.run_steps(8);
+    let app = h.state().app();
+    assert_eq!(app.project().instances.len(), count + 1);
+    let pasted = app.project().instances.last().unwrap();
+    let outline = pasted
+        .transform
+        .apply_polyline(&app.project().definitions[&pasted.definition].profiles[0])
+        .unwrap()
+        .bounds()
+        .unwrap();
+    let px_mm = 1.0 / app.view().camera.px_per_mm;
+    assert!(
+        (f64::midpoint(outline.min.x, outline.max.x) - at_mm.x).abs() <= px_mm,
+        "pasted where the menu was opened: {outline:?}"
+    );
+
+    // A Design Tree row's menu is the same one.
+    h.get_by_label("square").click_secondary();
+    h.run_steps(8);
+    for row in ["Cut", "Copy", "Paste"] {
+        assert!(
+            h.query_by_role_and_label(Role::Button, row).is_some(),
+            "{row}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// In the Edit nodes tool the context menu is the tool bar's buttons for
+/// the node under the pointer, which the right-click selects.
+#[test]
+fn the_node_context_menu_fillets() {
+    let (mut h, dir) = plaque("node-menu");
+    select(&mut h, &["i4"]);
+    key(&mut h, egui::Key::N);
+    let corners = square_corners(&h);
+    let at = on_screen(&h, corners[2]);
+    right_click(&mut h, at);
+    assert_eq!(h.state().app().selected_nodes().len(), 1);
+    // The bar has a Fillet too: the menu's is the last drawn.
+    let fillet = h
+        .query_all_by_role_and_label(Role::Button, "Fillet")
+        .last()
+        .expect("the menu has Fillet");
+    fillet.click();
+    h.run_steps(8);
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Fillet corner of “square”")
+    );
+    assert_eq!(tool(&h), Tool::Nodes, "the tool stays armed");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A drag with Alt held leaves a linked copy where it ends and the
+/// original where it was (capability 98); Shape ▸ Make Unique then gives
+/// the copy a shape of its own.
+#[test]
+fn alt_drag_copies_and_make_unique_unlinks() {
+    let (mut h, dir) = plaque("alt-drag");
+    select(&mut h, &["i4"]);
+    let count = h.state().app().project().instances.len();
+    let before = square_corners(&h);
+    let from_mm = square_middle(&h);
+    let from = on_screen(&h, from_mm);
+    let to = on_screen(&h, Point::new(from_mm.x + 20.0, from_mm.y - 8.0));
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run();
+    let app = h.state().app();
+    assert_eq!(app.undo_label(), Some("Copy “square”"));
+    assert_eq!(app.project().instances.len(), count + 1);
+    assert_eq!(square_corners(&h), before, "the original stays");
+    let copy = app.project().instances.last().unwrap().clone();
+    assert_eq!(copy.name, "square (2)");
+    assert_eq!(copy.definition.as_str(), definition_of(&h, "i4"), "linked");
+    assert_eq!(app.selection().instances(), std::slice::from_ref(&copy.id));
+
+    // Make Unique, from the Shape menu.
+    h.get_by_role_and_label(Role::Button, "Shape").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Make Unique").click();
+    h.run();
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Make “square (2)” unique")
+    );
+    assert_ne!(definition_of(&h, copy.id.as_str()), definition_of(&h, "i4"));
+    // Nothing is linked now: the row is off.
+    h.get_by_role_and_label(Role::Button, "Shape").click();
+    h.run();
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Make Unique")
+            .accesskit_node()
+            .is_disabled()
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

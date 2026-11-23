@@ -57,6 +57,10 @@ pub enum CommandError {
         /// The instance's name.
         name: String,
     },
+    /// **Make Unique** was asked of shapes none of which shares its
+    /// definition (functional spec, capability 98).
+    #[error("nothing selected is a linked copy")]
+    NotLinked,
     /// A shape was given no outline.
     #[error("a shape needs an outline")]
     EmptyOutline,

@@ -56,6 +56,9 @@ pub struct App {
     /// The Viewport's tool in use and what it has begun (phase 5,
     /// capability 81; `crate::tool`).
     pub(crate) tool: crate::tool::Session,
+    /// What was last cut or copied (phase 5, capability 98): kept when
+    /// another project is opened.
+    pub(crate) clipboard: crate::clipboard::Clipboard,
     view: View,
     generation: Generation,
     strings: Strings,
@@ -129,6 +132,7 @@ impl App {
             previewed: None,
             target_edit: None,
             tool: crate::tool::Session::default(),
+            clipboard: crate::clipboard::Clipboard::default(),
             view,
             generation,
             strings,

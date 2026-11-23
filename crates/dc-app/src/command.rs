@@ -15,6 +15,7 @@
 //! the selection's joint bounding-box centre, as capability 58 says.
 
 mod bitmaps;
+mod copies;
 mod instances;
 mod operations;
 mod shapes;
@@ -23,6 +24,7 @@ pub(crate) use bitmaps::{check_move as check_bitmap_move, check_resize as check_
 pub(crate) use instances::{
     about, bounds as selection_bounds, centre, copy_name, find as find_instance, next_free_id,
 };
+pub(crate) use shapes::keeps_sizes;
 pub use shapes::{Edit, NewShape, next_name};
 
 use std::sync::Arc;
@@ -195,6 +197,27 @@ pub enum Command {
     /// Remove instances, their placed tabs, their entries in every
     /// operation's targets, and any definition no instance uses after.
     DeleteInstances(Vec<InstanceId>),
+    /// **Cut** (phase 5, capability 98): [`Command::DeleteInstances`]
+    /// under its own name. The clipboard is the app's
+    /// ([`crate::App::cut_selection`]).
+    CutInstances(Vec<InstanceId>),
+    /// **Paste**: each clip a new instance of a new definition, visible
+    /// and unlocked, at the clip's transform; a name the project has
+    /// becomes a copy's. Ids are `apply`'s.
+    PasteShapes(Vec<crate::clipboard::Clip>),
+    /// **Make Unique**: each instance that shares its definition gets a
+    /// copy of it, so an edit of one no longer changes the others.
+    /// Refused when none is a linked copy.
+    MakeUnique(Vec<InstanceId>),
+    /// Linked copies of `ids`, a set per placement, each placement
+    /// applied after the instance's own transform: what an Alt-drag
+    /// leaves.
+    CopyInstances {
+        /// The instances copied.
+        ids: Vec<InstanceId>,
+        /// Where each set of copies goes, from where its original is.
+        placements: Vec<Transform>,
+    },
     /// Append an operation under an id the project does not have.
     AddOperation(Operation),
     /// Replace the operation with the same id.
@@ -438,7 +461,14 @@ impl Command {
                 instances::find_mut(&mut next, id)?.name.clone_from(name);
             }
             Self::DuplicateInstances(ids) => next = instances::duplicate(project, ids)?,
-            Self::DeleteInstances(ids) => next = instances::delete(project, ids)?,
+            Self::DeleteInstances(ids) | Self::CutInstances(ids) => {
+                next = instances::delete(project, ids)?;
+            }
+            Self::PasteShapes(clips) => next = copies::paste(project, clips)?,
+            Self::MakeUnique(ids) => next = copies::make_unique(project, ids)?,
+            Self::CopyInstances { ids, placements } => {
+                next = copies::copy(project, ids, placements)?;
+            }
             Self::AddOperation(operation) => {
                 if next.operations.iter().any(|o| o.id() == operation.id()) {
                     return Err(CommandError::DuplicateId {
@@ -645,6 +675,21 @@ impl Command {
             }
             Self::DeleteInstances(ids) => {
                 with_subject(StrKey::CommandLabelDelete, &subject_of(ids))
+            }
+            Self::CutInstances(ids) => with_subject(StrKey::CommandLabelCut, &subject_of(ids)),
+            Self::PasteShapes(clips) => {
+                let subject = match clips.as_slice() {
+                    [clip] => one(strings, &clip.instance.name),
+                    _ => strings.fmt(
+                        StrKey::CommandSubjectMany,
+                        &[("count", &clips.len().to_string())],
+                    ),
+                };
+                with_subject(StrKey::CommandLabelPaste, &subject)
+            }
+            Self::MakeUnique(ids) => with_subject(StrKey::CommandLabelMakeUnique, &subject_of(ids)),
+            Self::CopyInstances { ids, .. } => {
+                with_subject(StrKey::CommandLabelCopy, &subject_of(ids))
             }
             Self::AddOperation(operation) => with_subject(
                 StrKey::CommandLabelAddOperation,

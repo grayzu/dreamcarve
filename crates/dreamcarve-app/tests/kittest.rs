@@ -5828,6 +5828,35 @@ fn keyboard_shortcuts_reach_their_commands() {
     command_key(&h, egui::Key::Z);
     h.run();
 
+    // Copy, Paste and Cut (phase 5, capability 98), as keys. A window is
+    // sent them as events of their own (`editing::copy_and_paste_events`).
+    select_only(&mut h, "i4");
+    command_key(&h, egui::Key::C);
+    h.run();
+    assert!(h.state().app().can_paste(), "Ctrl C copies");
+    assert_eq!(h.state().app().project().instances.len(), count);
+    reached.insert(Key::Copy);
+    command_key(&h, egui::Key::V);
+    h.run();
+    assert_eq!(
+        h.state().app().project().instances.len(),
+        count + 1,
+        "Ctrl V pastes"
+    );
+    reached.insert(Key::Paste);
+    command_key(&h, egui::Key::X);
+    h.run();
+    assert_eq!(
+        h.state().app().project().instances.len(),
+        count,
+        "Ctrl X cuts what was pasted, which is selected"
+    );
+    reached.insert(Key::Cut);
+    for _ in 0..2 {
+        command_key(&h, egui::Key::Z);
+        h.run();
+    }
+
     select_only(&mut h, "i4");
     h.key_press(egui::Key::H);
     h.run();

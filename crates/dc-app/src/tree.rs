@@ -389,10 +389,24 @@ pub enum MenuItem {
     Lock,
     /// Unlock the rows.
     Unlock,
+    /// **Cut** (phase 5, capability 98): the rows to the clipboard and
+    /// out of the project ([`crate::App::cut_selection`]).
+    Cut,
+    /// **Copy**: the rows to the clipboard ([`crate::App::copy_selection`]).
+    Copy,
+    /// **Paste**: the clipboard's shapes ([`crate::App::paste`]); listed
+    /// while it holds any.
+    Paste,
     /// Linked copies (capability 59).
     Duplicate,
     /// Delete, with the targets and tabs that go with it (capability 59).
     Delete,
+    /// **Make Unique** (capability 98): listed while a row is a linked
+    /// copy.
+    MakeUnique,
+    /// **Convert to Path** (capability 84): listed while a row keeps its
+    /// sizes.
+    ConvertToPath,
     /// Frame the rows on the Viewport: view state, no command.
     ZoomTo,
     /// *Add operation ▸*: the Operations step's Add menu for the rows
@@ -414,12 +428,33 @@ fn all(project: &Project, ids: &[InstanceId]) -> (bool, bool) {
 
 /// The menu for `ids`, as the shell lists it: Rename, Hide or Show (Show
 /// when any is hidden), Lock or Unlock (Unlock when every one is locked),
-/// Duplicate, Delete, Zoom to, Add operation, and, while operation `op`
-/// is selected, *Add to* it when it lacks one of `ids` and *Remove from*
-/// it when it targets one (capability 57).
+/// Cut, Copy, Paste while `can_paste`, Duplicate, Delete, Make Unique
+/// while one of `ids` is a linked copy, Convert to Path while one keeps
+/// its sizes, Zoom to, Add operation, and, while operation `op` is
+/// selected, *Add to* it when it lacks one of `ids` and *Remove from* it
+/// when it targets one (capabilities 57, 84 and 98).
 #[must_use]
-pub fn menu(project: &Project, ids: &[InstanceId], op: Option<&Operation>) -> Vec<MenuItem> {
+pub fn menu(
+    project: &Project,
+    ids: &[InstanceId],
+    op: Option<&Operation>,
+    can_paste: bool,
+) -> Vec<MenuItem> {
     let (visible, locked) = all(project, ids);
+    let chosen = || project.instances.iter().filter(|i| ids.contains(&i.id));
+    let linked = chosen().any(|instance| {
+        project
+            .instances
+            .iter()
+            .any(|other| other.id != instance.id && other.definition == instance.definition)
+    });
+    let sized = chosen().any(|instance| {
+        project
+            .definitions
+            .get(&instance.definition)
+            .and_then(|definition| definition.shape.as_ref())
+            .is_some_and(crate::command::keeps_sizes)
+    });
     let mut items = vec![
         MenuItem::Rename,
         if visible {
@@ -432,11 +467,20 @@ pub fn menu(project: &Project, ids: &[InstanceId], op: Option<&Operation>) -> Ve
         } else {
             MenuItem::Lock
         },
-        MenuItem::Duplicate,
-        MenuItem::Delete,
-        MenuItem::ZoomTo,
-        MenuItem::AddOperation,
+        MenuItem::Cut,
+        MenuItem::Copy,
     ];
+    if can_paste {
+        items.push(MenuItem::Paste);
+    }
+    items.extend([MenuItem::Duplicate, MenuItem::Delete]);
+    if linked {
+        items.push(MenuItem::MakeUnique);
+    }
+    if sized {
+        items.push(MenuItem::ConvertToPath);
+    }
+    items.extend([MenuItem::ZoomTo, MenuItem::AddOperation]);
     if let Some(op) = op {
         if ids.iter().any(|id| !op.targets().contains(id)) {
             items.push(MenuItem::AddTo);
@@ -492,7 +536,12 @@ pub fn menu_command(project: &Project, item: MenuItem, ids: &[InstanceId]) -> Op
         MenuItem::Unlock => Some(flags(None, Some(false))),
         MenuItem::Duplicate => Some(Command::DuplicateInstances(ids)),
         MenuItem::Delete => Some(Command::DeleteInstances(ids)),
+        MenuItem::MakeUnique => Some(Command::MakeUnique(ids)),
+        MenuItem::ConvertToPath => Some(Command::ConvertToPath(ids)),
         MenuItem::Rename
+        | MenuItem::Cut
+        | MenuItem::Copy
+        | MenuItem::Paste
         | MenuItem::ZoomTo
         | MenuItem::AddOperation
         | MenuItem::AddTo
@@ -587,6 +636,11 @@ pub fn bitmap_menu_command(project: &Project, item: MenuItem, ids: &[BitmapId]) 
         MenuItem::Delete => Some(Command::DeleteBitmaps(ids)),
         MenuItem::Rename
         | MenuItem::ZoomTo
+        | MenuItem::Cut
+        | MenuItem::Copy
+        | MenuItem::Paste
+        | MenuItem::MakeUnique
+        | MenuItem::ConvertToPath
         | MenuItem::Duplicate
         | MenuItem::AddOperation
         | MenuItem::AddTo

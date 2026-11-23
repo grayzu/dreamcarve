@@ -2689,7 +2689,8 @@ fn p5_editing_dir() -> PathBuf {
 /// The phase 5 editing set (`docs/phase-5-worklog.md`, slice 17): a path
 /// in the Edit nodes tool with a corner selected and the bar's buttons;
 /// the corner filleted; the Shape menu; Offset… in the tool bar with its
-/// preview; and the Trim tool over the piece a click would take out. Dark
+/// preview; the Trim tool over the piece a click would take out; and
+/// (slice 18) the Viewport's context menu and the Edit menu. Dark
 /// and light at 1×, written to `docs/specs/phase-5/review/editing/`,
 /// where they are committed.
 ///
@@ -2780,6 +2781,33 @@ fn phase5_editing_screenshots() {
     h.run_steps(8);
     point_at(&mut h, 50.0, 40.0, false);
     shoot_in(&mut h, &out, "05-trim-the-piece-inside", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 06: the Viewport's context menu on a shape, something copied.
+    let shape = h.state().app().project().instances[0].id.clone();
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![shape]));
+    h.state_mut().app_mut().copy_selection();
+    h.run();
+    let at = point_at(&mut h, 80.0, 30.0, false);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(8);
+    shoot_in(&mut h, &out, "06-context-menu-on-a-shape", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 07: the Edit menu, with Cut, Copy and Paste.
+    click(&mut h, "Edit");
+    shoot_in(&mut h, &out, "07-edit-menu", &looks);
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }

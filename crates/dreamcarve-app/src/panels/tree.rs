@@ -34,7 +34,7 @@ use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
 
 use crate::panels;
 use crate::shell::theme::{self, Palette};
-use crate::shell::window::{Action, FrameState};
+use crate::shell::window::{Action, FrameState, PasteAt};
 use crate::widgets::button::focus_ring_round;
 use crate::widgets::checkbox::{BOX_PX, paint_box};
 use crate::widgets::icon::Icon;
@@ -750,17 +750,20 @@ fn shape_row(
         } else {
             vec![row.id.clone()]
         };
-        context_menu(ui, state, (&row.id, &chosen), out);
+        context_menu(ui, state, (&row.id, &chosen), PasteAt::Offset, out);
     });
     response
 }
 
 /// The context menu of row `on` for `ids`, the selection it acts on
-/// (capability 57). *Rename* renames the row itself.
-fn context_menu(
+/// (capabilities 57 and 98): a Design Tree row's, and a shape's on the
+/// Viewport. *Rename* renames the row itself; *Paste* puts its shapes
+/// where `paste` says.
+pub(crate) fn context_menu(
     ui: &mut Ui,
     state: &FrameState<'_>,
     (on, ids): (&InstanceId, &[InstanceId]),
+    paste: PasteAt,
     out: &mut Vec<Action>,
 ) {
     let app = state.app;
@@ -769,7 +772,8 @@ fn context_menu(
     let op = app
         .editing()
         .and_then(|id| project.operations.iter().find(|o| o.id() == id));
-    for item in dc_app::tree::menu(project, ids, op) {
+    let items = dc_app::tree::menu(project, ids, op, app.can_paste());
+    for item in items.iter().copied() {
         // *Add to "Panel"* and *Remove from "Panel"*, under their own rule.
         if let (MenuItem::AddTo | MenuItem::RemoveFrom, Some(op)) = (item, op) {
             if item == MenuItem::AddTo || !ids.iter().any(|id| !op.targets().contains(id)) {
@@ -798,8 +802,13 @@ fn context_menu(
             MenuItem::Show => StrKey::TreeShow,
             MenuItem::Lock => StrKey::TreeLock,
             MenuItem::Unlock => StrKey::TreeUnlock,
+            MenuItem::Cut => StrKey::AppMenuCut,
+            MenuItem::Copy => StrKey::AppMenuCopy,
+            MenuItem::Paste => StrKey::AppMenuPaste,
             MenuItem::Duplicate => StrKey::TreeDuplicate,
             MenuItem::Delete => StrKey::TreeDelete,
+            MenuItem::MakeUnique => StrKey::AppMenuMakeUnique,
+            MenuItem::ConvertToPath => StrKey::AppMenuConvertToPath,
             MenuItem::ZoomTo => StrKey::TreeZoomTo,
             MenuItem::AddOperation => StrKey::TreeAddOperation,
             MenuItem::AddTo | MenuItem::RemoveFrom => continue,
@@ -812,13 +821,27 @@ fn context_menu(
             });
             continue;
         }
-        if matches!(item, MenuItem::Delete | MenuItem::Hide | MenuItem::Show) {
+        // Rename | Hide, Lock | Cut, Copy, Paste, Duplicate, Delete |
+        // Make Unique, Convert to Path | Zoom to.
+        let first_of_its_group = match item {
+            MenuItem::Hide | MenuItem::Show | MenuItem::Cut | MenuItem::ZoomTo => true,
+            MenuItem::MakeUnique => true,
+            MenuItem::ConvertToPath => !items.contains(&MenuItem::MakeUnique),
+            _ => false,
+        };
+        if first_of_its_group {
             ui.separator();
         }
         if ui.button(strings.get(key)).clicked() {
             match item {
                 MenuItem::Rename => out.push(Action::Rename(on.clone())),
                 MenuItem::ZoomTo => out.push(Action::ZoomToSelection),
+                // The clipboard's are the selection's, which the menu's
+                // shapes are: a row not selected was selected as the
+                // menu opened.
+                MenuItem::Cut => out.push(Action::Cut),
+                MenuItem::Copy => out.push(Action::Copy),
+                MenuItem::Paste => out.push(Action::Paste(paste)),
                 _ => {
                     if let Some(command) = dc_app::tree::menu_command(project, item, ids) {
                         out.push(Action::Run(Box::new(command)));
@@ -1090,7 +1113,14 @@ fn picture_menu(
             MenuItem::ZoomTo => StrKey::TreeZoomTo,
             MenuItem::AddOperation => StrKey::TreeAddOperation,
             // A picture's menu has none of these.
-            MenuItem::Duplicate | MenuItem::AddTo | MenuItem::RemoveFrom => continue,
+            MenuItem::Duplicate
+            | MenuItem::Cut
+            | MenuItem::Copy
+            | MenuItem::Paste
+            | MenuItem::MakeUnique
+            | MenuItem::ConvertToPath
+            | MenuItem::AddTo
+            | MenuItem::RemoveFrom => continue,
         };
         if item == MenuItem::AddOperation {
             ui.separator();

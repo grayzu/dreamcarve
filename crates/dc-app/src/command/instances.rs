@@ -47,7 +47,7 @@ pub(super) fn find_mut<'a>(
 }
 
 /// `ids` is not empty and every one exists.
-fn require_all(project: &Project, ids: &[InstanceId]) -> Result<(), CommandError> {
+pub(super) fn require_all(project: &Project, ids: &[InstanceId]) -> Result<(), CommandError> {
     if ids.is_empty() {
         return Err(CommandError::NothingSelected);
     }
