@@ -469,9 +469,14 @@ fn target_rows_marked_for_selected_operation() {
     let none = dc_app::tree::menu(harness.app.project(), &[id("i4")], None, false);
     assert!(!none.contains(&MenuItem::AddTo) && !none.contains(&MenuItem::RemoveFrom));
 
-    let add = dc_app::tree::target_command(&panel(&harness), MenuItem::AddTo, &[id("i4")])
-        .expect("the file takes it")
-        .expect("a change");
+    let add = dc_app::tree::target_command(
+        harness.app.project(),
+        &panel(&harness),
+        MenuItem::AddTo,
+        &[id("i4")],
+    )
+    .expect("the file takes it")
+    .expect("a change");
     assert_eq!(harness.run(add).expect("adds"), "Set targets of “Panel”");
     assert_eq!(
         marked(&harness),
@@ -481,9 +486,14 @@ fn target_rows_marked_for_selected_operation() {
             ("square".to_owned(), 2)
         ]
     );
-    let remove = dc_app::tree::target_command(&panel(&harness), MenuItem::RemoveFrom, &[id("i3")])
-        .expect("the file takes it")
-        .expect("a change");
+    let remove = dc_app::tree::target_command(
+        harness.app.project(),
+        &panel(&harness),
+        MenuItem::RemoveFrom,
+        &[id("i3")],
+    )
+    .expect("the file takes it")
+    .expect("a change");
     harness.run(remove).expect("removes");
     assert_eq!(
         marked(&harness),

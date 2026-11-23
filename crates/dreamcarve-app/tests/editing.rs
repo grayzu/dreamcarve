@@ -1012,3 +1012,74 @@ fn an_array_from_the_arrange_menu() {
     assert_eq!(selected(&h).len(), 4, "the array is selected whole");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 100 in the window: the Properties panel's Construction
+/// switch marks the selection, which leaves its operation; the Design
+/// Tree's row says so; the row's menu and the Shape menu tick it; and a
+/// drawing tool's bar has the switch for the shapes that follow.
+#[test]
+fn construction_geometry_in_the_window() {
+    let (mut h, dir) = plaque("construction");
+    common::go_to(&mut h, "Design");
+    select(&mut h, &["i4"]);
+    let targeted = |h: &Harness<'_, Shell>| {
+        h.state()
+            .app()
+            .project()
+            .operations
+            .iter()
+            .any(|op| op.targets().iter().any(|t| t.as_str() == "i4"))
+    };
+    assert!(targeted(&h));
+    let switch = h.get_by_role_and_label(Role::Switch, "Construction");
+    assert_eq!(
+        switch.accesskit_node().toggled(),
+        Some(egui::accesskit::Toggled::False)
+    );
+    switch.click();
+    h.run();
+    let app = h.state().app();
+    assert_eq!(app.undo_label(), Some("Turn Construction on for “square”"));
+    assert!(app.project().instances[3].construction);
+    assert!(!targeted(&h), "it left the Square recess");
+    assert_eq!(
+        h.get_by_role_and_label(Role::Switch, "Construction")
+            .accesskit_node()
+            .toggled(),
+        Some(egui::accesskit::Toggled::True)
+    );
+
+    // The row's menu: Construction is ticked; choosing it turns it off.
+    h.get_by_role_and_label(Role::TreeItem, "square")
+        .click_secondary();
+    h.run_steps(8);
+    let row = h.get_by_role_and_label(Role::Button, "Construction");
+    assert_eq!(
+        row.accesskit_node().toggled(),
+        Some(egui::accesskit::Toggled::True)
+    );
+    row.click();
+    h.run_steps(8);
+    assert!(!h.state().app().project().instances[3].construction);
+
+    // The Shape menu's row turns it on again.
+    h.get_by_role_and_label(Role::Button, "Shape").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Construction")
+        .click();
+    h.run_steps(8);
+    assert!(h.state().app().project().instances[3].construction);
+
+    // A drawing tool's bar: the shapes that follow are construction.
+    key(&mut h, egui::Key::M);
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::RadioButton, "On").click();
+    h.run_steps(8);
+    for (x, y) in [(150.0, 6.0), (160.0, 12.0)] {
+        let at = on_screen(&h, Point::new(x, y));
+        click_at(&mut h, at, egui::Modifiers::NONE);
+    }
+    let drawn = h.state().app().project().instances.last().unwrap();
+    assert!(drawn.construction, "{}", drawn.name);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 19: 3,683.
+`0.5.0-alpha.1`. After slice 22: 3,690.
 
 ## Decisions waiting for the maintainer
 
@@ -209,6 +209,20 @@ Decisions made while building are added here.
   *Copies*. The Inspector is now closed while any tool-bar command
   (Offset…, Fillet Corners…, Join…, Array…) is armed, as it is while
   drawing.
+- Slice 22: one palette token is added, `viewport.construction`
+  (`#4F63C6` light, `#8EA2FF` dark), as a row of phase 4's
+  `experience.md` table, which the theme's test reads; the other
+  tokens the design first listed (draft, node, handle, snap) are not
+  added, since those are drawn in existing colours. One renderer style,
+  not two: selected or under the pointer, construction geometry takes
+  the open-path styles, so it stays dashed. The drawing tools' switch
+  is a two-way choice (*Off*, *On*), the bar having no switch of its
+  own. *Add operation* on a mixed selection makes the operation for
+  the shapes that are cut and passes the construction ones by without
+  a word; alone, they are refused with the reason. Turning
+  Construction off does not put a shape back in the operations it
+  left. A new shape drawn while a group's shapes are selected joins the
+  group, as capability 90 says of any folder.
 
 ## Slices
 
@@ -251,7 +265,7 @@ The numbers are the design spec's.
 | 19 | Arrays (done after slice 21: an array files its copies in a group): `dc_app::array` (port: grid and circular), `CopyInstances`' `folder`, the Array mode of the tool bar (`tool::arrays`), Arrange ▸ Array…. Gate: 3,683 tests | done |
 | 20 | Align and distribute: `dc_app::align` (port), `arrange::Action::{Align, Distribute}`, `Command::PlaceInstances`, the Align section of Properties, Arrange ▸ Align and Distribute. Gate: 3,667 tests | done |
 | 21 | Folders and groups: `Command::{NewFolder, RenameFolder, DeleteFolder, Ungroup, MoveRows}`, folder rows in `dc_app::tree`, group selection on the Viewport, the Design Tree's folder rows with fold, rename, menu and row drag and drop, the Shapes header's New Folder, Arrange ▸ Group and Ungroup (⌘G, ⇧⌘G). Gate: 3,677 tests | done |
-| 22 | Construction geometry | todo |
+| 22 | Construction geometry: `Command::SetConstruction`, the pickers and target editing passing it by, the artwork checks and Fit Stock to Shapes too, the tree's glyph and menu row, the drawing tools' Construction choice, the Properties switch, Shape ▸ Construction, the `viewport.construction` token and style. Gate: 3,690 tests | done |
 
 ### 5.4 Text
 

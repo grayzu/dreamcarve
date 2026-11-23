@@ -1003,19 +1003,49 @@ the tool bar of slice 9 is its form.
 - `keyboard.rs`: `Group` (⌘G) and `Ungroup` (⇧⌘G), rows of the Arrange
   menu.
 
+### Construction geometry (slice 22)
+
+- `Command::SetConstruction { ids, construction }`
+  (`command::instances::set_construction`): the flag, and, turning it
+  on, the instances taken out of every operation's `targets` and every
+  Inlay's `boundary`, as `DeleteInstances` takes them. Nothing to do
+  when every one is so already.
+- No picker offers construction geometry: `operations::cuttable` is
+  the instances of a list that are not; `add_menu` and `add` judge and
+  target those, and give `OperationsReasonConstruction` when none is
+  left; `tree::menu` offers *Add to* for those and `target_command`
+  (which now takes the project) adds those; `App::toggle_target` and
+  `box_targets` pass the others by; `editor::offered_boundaries` leaves
+  them out.
+- `dc_job::checks::project` reads the visible instances that are not
+  construction; `FitStockToShapes` fits round the same.
+- `tree::ShapeRow::construction` and the menu's `Construction` or
+  `NotConstruction` (when every row is), one ticked row in the window.
+- Every drawing tool's bar ends with the *Construction* choice (*Off*,
+  *On*), added in `App::tool_bar` from the session's switch, which
+  outlives a change of tool.
+- The window: `StyleId::Construction` and the `viewport.construction`
+  token ("Visual design"); the tree's `square-dashed` glyph;
+  `panels::properties::construction_row`, a switch under the placement
+  fields; Shape ▸ **Construction**, ticked while every selected shape
+  is.
+
 ## Visual design
 
-Phase 4's tokens and components hold. Added to the palette, in both
-themes, with the spec tables' tests extended: `viewport.construction`
-(the dashed construction outline), `viewport.draft` (a shape being
-drawn; the accent), `viewport.node` and `viewport.node_selected`,
-`viewport.handle` (a curve's handle and its stem), `viewport.snap`
-(the marker and its label), `viewport.measure`. Slice 9 adds none of
-them yet: the draft is drawn in `accent` and the snap marker in
-`viewport.shape.hover`, which are the colours `viewport.draft` and
-`viewport.snap` were to alias; the tokens come with the first slice
-that needs a colour of its own (construction geometry, nodes). The renderer gains two
-styles, `Construction` and `ConstructionSelected`; the draft, the
+Phase 4's tokens and components hold. One token is added to the
+palette, in both themes, as a row of `experience.md`'s table, which
+`theme::tokens_match_experience_md` reads: `viewport.construction`
+(`#4F63C6` light, `#8EA2FF` dark; 5.3 and 7.2 to 1 on the stock), the
+dashed construction outline (slice 22). The others first planned are
+not added: the draft and a selected node are drawn in `accent`, the
+snap marker in `viewport.shape.hover`, a node and a handle in the
+selection handles' colours, which are the colours `viewport.draft`,
+`viewport.snap`, `viewport.node` and `viewport.handle` were to alias.
+The renderer gains one style, `Construction` (1 px, dashed 3/3), for
+closed and open outlines alike; under the pointer and selected,
+construction geometry takes the open styles (`HoverOpen`,
+`SelectedOpen`), so it stays dashed, and locked it is the lock's grey.
+The draft, the
 nodes, the snap marker and the size labels are egui painter overlays,
 as phase 4's handles are. A node is a 9 px square, a handle a 7 px
 circle, hit within 9 px and 7 px (upstream's radii). The snap marker is
@@ -1209,8 +1239,11 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `rows_reorder_the_file`, `a_group_selects_as_one`, `delete_and_rename_a_folder`,
 `a_group_goes_with_its_last_shape`, `the_row_menu_makes_folders_and_groups`, and in the window
 `editing::` `folders_in_the_design_tree`, `folders_drag_and_drop`, `a_group_is_selected_as_one`;
-`command::construction_leaves_every_operation`, `operations::pickers_skip_construction`,
-`dc_job::checks::construction_is_not_checked` (acc 122–125).
+`dc_app` `tests/construction.rs` (slice 22): `construction_leaves_every_operation`,
+`pickers_skip_construction`, `checks_and_fit_stock_pass_it_by`,
+`the_tree_marks_construction_rows`, `the_drawing_tools_have_a_construction_switch`,
+`dc_job::checks::construction_is_not_checked`, and in the window
+`editing::construction_geometry_in_the_window` (acc 122–125).
 
 **Text (slices 23–24)** `dc_text::` `capital_height_is_the_asked_height`,
 `counters_nest_as_holes`, `lines_align`, `letter_spacing_adds_per_gap`,

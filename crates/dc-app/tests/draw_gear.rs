@@ -117,7 +117,9 @@ fn gear_previews_and_commits() {
     let mut app = armed();
     assert_eq!(bar(&app).prompt, "Click the centre");
     assert_eq!(fields(&app), [SizeField::X, SizeField::Y]);
-    assert!(bar(&app).choices.is_empty());
+    // Only the switch every drawing tool has.
+    assert_eq!(bar(&app).choices.len(), 1);
+    assert_eq!(bar(&app).choices[0].label, "Construction");
     click(&mut app, pt(60.0, 60.0));
     assert_eq!(
         bar(&app).prompt,
@@ -189,6 +191,7 @@ fn gear_previews_and_commits() {
             ("Flanks".to_owned(), names(&["Involute", "Straight"]), 0),
             ("Root".to_owned(), names(&["Rounded", "Flat", "Sharp"]), 0),
             ("Crest".to_owned(), names(&["Flat", "Rounded"]), 0),
+            ("Construction".to_owned(), names(&["Off", "On"]), 0),
         ]
     );
     assert_eq!(

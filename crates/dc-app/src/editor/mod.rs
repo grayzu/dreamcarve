@@ -1101,6 +1101,8 @@ pub fn offered_boundaries(project: &Project, op: &Operation) -> Vec<(InstanceId,
     project
         .instances
         .iter()
+        // Construction geometry bounds nothing that is cut.
+        .filter(|instance| !instance.construction)
         .filter(|instance| dc_project::boundary_instance(project, inlay, &instance.id).is_ok())
         .map(|instance| (instance.id.clone(), instance.name.clone()))
         .collect()

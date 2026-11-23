@@ -211,6 +211,16 @@ pub enum Command {
     /// copy of it, so an edit of one no longer changes the others.
     /// Refused when none is a linked copy.
     MakeUnique(Vec<InstanceId>),
+    /// Mark instances as construction geometry, or as cut geometry again
+    /// (capability 100). Construction geometry is never cut: marking a
+    /// shape takes it out of every operation's targets and every Inlay's
+    /// boundary. Nothing to do when every one is so already.
+    SetConstruction {
+        /// The instances.
+        ids: Vec<InstanceId>,
+        /// Whether they are construction geometry.
+        construction: bool,
+    },
     /// A folder of the Design Tree under the next free `f<n>`, holding
     /// `ids`, which are gathered where the first of them is (capability
     /// 99). A group, whose shapes are selected together, needs two.
@@ -608,6 +618,9 @@ impl Command {
             Self::FitStockToShapes { margin_mm } => {
                 next = instances::fit_stock(project, *margin_mm)?;
             }
+            Self::SetConstruction { ids, construction } => {
+                next = instances::set_construction(project, ids, *construction)?;
+            }
             Self::NewFolder { name, ids, group } => {
                 next = folders::new_folder(project, name, ids, *group)?;
             }
@@ -863,6 +876,14 @@ impl Command {
             }
             Self::ReplaceShapes { from, what, .. } => {
                 shapes::edit_label(strings, *what, None, &subject_of(from))
+            }
+            Self::SetConstruction { ids, construction } => {
+                let key = if *construction {
+                    StrKey::CommandLabelMarkConstruction
+                } else {
+                    StrKey::CommandLabelUnmarkConstruction
+                };
+                with_subject(key, &subject_of(ids))
             }
             Self::NewFolder {
                 ids, group: true, ..

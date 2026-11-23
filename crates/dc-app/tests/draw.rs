@@ -839,11 +839,14 @@ fn the_bar_carries_the_tools_options() {
             .map(|(field, ..)| field)
             .collect()
     };
+    // The tool's own choices: the Construction switch, which every
+    // drawing tool has last, is `construction.rs`'s.
     let chosen = |app: &App| -> Vec<(String, usize)> {
         app.tool_bar()
             .unwrap()
             .choices
             .into_iter()
+            .filter(|choice| choice.label != "Construction")
             .map(|choice| (choice.label, choice.selected))
             .collect()
     };
@@ -947,7 +950,7 @@ fn the_bar_carries_the_tools_options() {
             measured: Measured::Flats,
         })
     );
-    // The other tools have none.
+    // The other tools have none of their own.
     app.arm(Tool::Draw(Drawing::Circle));
-    assert!(app.tool_bar().unwrap().choices.is_empty());
+    assert!(chosen(&app).is_empty());
 }

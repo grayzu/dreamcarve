@@ -461,6 +461,7 @@ shade off white in light.
 | viewport.shape.hover | `#0A8A6C` (accent.hover) | `#3FE0A8` (accent.hover) | 4.0 / 11.1 |
 | viewport.shape.selected | `#08795E` (accent) | `#2AD79A` (accent) | 5.0 / 10.1 |
 | viewport.shape.locked | `#8A929E` + padlock glyph | `#7B8491` + padlock | 2.9 / 5.0 |
+| viewport.construction (construction geometry: 1 px, dashed 3/3; phase 5) | `#4F63C6` | `#8EA2FF` | 5.3 / 7.2 |
 | viewport.shape.hidden | not drawn | not drawn | |
 | viewport.picture | the bitmap at 100 %, 60 % when any shape is selected | same | |
 | viewport.rapid (thin dashed) | `#8A959D` | `#6F7A82` | 2.8 / 4.3 |

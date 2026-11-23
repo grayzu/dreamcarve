@@ -157,12 +157,15 @@ pub enum StyleId {
     TargetHalo,
     /// An open target that is also selected.
     TargetHaloOpen,
+    /// Construction geometry, closed or open: 1 px, dashed 3/3, in its
+    /// own colour (phase 5, capability 100).
+    Construction,
 }
 
 /// The style table's rows, in [`StyleId`] order. The operation colours
 /// follow them in the buffer, eight rows from here (`shader.wgsl`'s
 /// `OP_BASE`).
-pub const STYLE_COUNT: usize = 26;
+pub const STYLE_COUNT: usize = 27;
 /// The operation colour rows after the styles.
 pub const OPERATION_COLOURS: usize = 8;
 
@@ -365,6 +368,7 @@ pub fn styles(palette: &crate::theme::Palette) -> StyleTable {
             dashed(per_op, TARGET_PT, 4.0, 3.0),
             solid(per_op, TARGET_HALO_PT),
             dashed(per_op, TARGET_HALO_PT, 4.0, 3.0),
+            dashed(palette.viewport_construction, 1.0, 3.0, 3.0),
         ],
         operations: std::array::from_fn(|k| palette.operation(k)),
         ramp: palette.depth_ramp,
@@ -1361,7 +1365,7 @@ mod tests {
     fn shader_reads_the_operation_colours_after_the_styles() {
         let source = include_str!("shader.wgsl");
         assert!(source.contains("const OP_BASE: u32 = 0u;"));
-        assert_eq!(StyleId::TargetHaloOpen as usize + 1, STYLE_COUNT);
+        assert_eq!(StyleId::Construction as usize + 1, STYLE_COUNT);
     }
 
     /// A style word keeps its parts apart: the row, the depth step, the

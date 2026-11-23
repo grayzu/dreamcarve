@@ -933,6 +933,10 @@ impl App {
     /// A click on shape `id` while target editing: in the draft or out of
     /// it. The marks follow; nothing is written.
     pub fn toggle_target(&mut self, id: &InstanceId) {
+        // Construction geometry is no target (capability 100).
+        if crate::operations::cuttable(self.project(), std::slice::from_ref(id)).is_empty() {
+            return;
+        }
         if let Some(editing) = self.target_edit.as_mut() {
             editing.toggle(id);
             self.refresh_marks();
@@ -942,6 +946,7 @@ impl App {
     /// A marquee over `ids` while target editing: each added to the
     /// draft, or with Alt held (`remove`) taken out of it.
     pub fn box_targets(&mut self, ids: &[InstanceId], remove: bool) {
+        let ids = &crate::operations::cuttable(self.project(), ids);
         if let Some(editing) = self.target_edit.as_mut() {
             editing.boxed(ids, remove);
             self.refresh_marks();

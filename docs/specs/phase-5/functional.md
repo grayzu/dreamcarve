@@ -596,14 +596,21 @@ capability 52); what a tool holds before it commits is not project data.
     deleted or dragged out goes with it. Text converted to paths and an
     array's copies arrive grouped.
 100. **Construction geometry** (PureCutCNC's construction role). Any
-    shape can be marked **Construction** (Properties, the context menu,
-    the tool bar's switch while drawing): it is drawn thin and dashed in
-    its own colour, snaps and measures like any shape, and is **never
-    cut**: no operation offers it as a target, marking a shape
-    construction takes it out of every operation's targets (the
-    Warnings drawer says which operation is left with none, as deleting
-    does), the artwork checks ignore it, and *Fit stock to shapes*
-    ignores it. A project file that names a construction shape as a
+    shape can be marked **Construction** (the switch in Properties, the
+    ticked row of the context menu and of the Shape menu, the tool
+    bar's *Construction* choice while drawing, which stays as it is set
+    for the shapes that follow and across the drawing tools): it is
+    drawn thin and dashed in its own colour, snaps and measures like
+    any shape, and is **never cut**: no operation offers it as a
+    target, marking a shape construction takes it out of every
+    operation's targets and every Inlay's boundary (the Warnings drawer
+    says which operation is left with none, as deleting does), the
+    artwork checks ignore it, and *Fit stock to shapes* ignores it.
+    *Add operation* on a selection that holds construction geometry
+    makes the operation for the other shapes, and says why not when
+    there are none; *Add to* an operation and target editing pass a
+    construction shape by. Turning Construction off does not put a
+    shape back in the operations it left. A project file that names a construction shape as a
     target is an error, and nothing is exported (S21). The tree shows
     its row with the construction glyph.
 

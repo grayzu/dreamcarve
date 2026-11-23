@@ -202,7 +202,8 @@ pub(super) fn fit_stock(project: &Project, margin_mm: f64) -> Result<Project, Co
     let visible: Vec<InstanceId> = project
         .instances
         .iter()
-        .filter(|i| i.visible)
+        // Construction geometry is no part of what is cut.
+        .filter(|i| i.visible && !i.construction)
         .map(|i| i.id.clone())
         .collect();
     if visible.is_empty() {
@@ -213,6 +214,40 @@ pub(super) fn fit_stock(project: &Project, margin_mm: f64) -> Result<Project, Co
     let mut next = shift_all(project, &all, fit.shift);
     next.stock.width_mm = fit.width_mm;
     next.stock.height_mm = fit.height_mm;
+    Ok(next)
+}
+
+/// `SetConstruction`: the flag set on each of `ids`. Marked, a shape
+/// leaves every operation's targets and every Inlay's drawn `boundary`,
+/// as a deleted one does: construction geometry is never cut (capability
+/// 100). Unmarked, it is not put back.
+pub(super) fn set_construction(
+    project: &Project,
+    ids: &[InstanceId],
+    construction: bool,
+) -> Result<Project, CommandError> {
+    require_all(project, ids)?;
+    let mut next = project.clone();
+    let mut changed = false;
+    for instance in &mut next.instances {
+        if ids.contains(&instance.id) && instance.construction != construction {
+            instance.construction = construction;
+            changed = true;
+        }
+    }
+    if !changed {
+        return Err(CommandError::NothingToDo);
+    }
+    if construction {
+        for operation in &mut next.operations {
+            if let Some(targets) = super::operations::targets_mut(operation) {
+                targets.retain(|t| !ids.contains(t));
+            }
+            if let dc_project::Operation::Inlay(inlay) = operation {
+                inlay.boundary.retain(|shape| !ids.contains(shape));
+            }
+        }
+    }
     Ok(next)
 }
 

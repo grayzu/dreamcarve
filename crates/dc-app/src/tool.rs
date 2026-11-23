@@ -634,15 +634,24 @@ impl App {
     /// which have none.
     #[must_use]
     pub fn tool_bar(&self) -> Option<ToolBar> {
-        match self.tool.tool {
-            Tool::Draw(drawing) if draw::draws(drawing) => Some(self.draw_bar(drawing)),
-            Tool::Draw(drawing) if path::draws(drawing) => Some(self.path_bar(drawing)),
-            Tool::Draw(drawing) if gear::draws(drawing) => Some(self.gear_bar()),
-            Tool::Nodes => Some(self.node_bar()),
-            Tool::Trim => Some(self.trim_bar()),
-            Tool::Adjust(adjust) => Some(self.adjust_bar(adjust)),
-            _ => None,
+        let mut bar = match self.tool.tool {
+            Tool::Draw(drawing) if draw::draws(drawing) => self.draw_bar(drawing),
+            Tool::Draw(drawing) if path::draws(drawing) => self.path_bar(drawing),
+            Tool::Draw(drawing) if gear::draws(drawing) => self.gear_bar(),
+            Tool::Nodes => self.node_bar(),
+            Tool::Trim => self.trim_bar(),
+            Tool::Adjust(adjust) => self.adjust_bar(adjust),
+            _ => return None,
+        };
+        // Every drawing tool's last choice: whether the shapes that
+        // follow are construction geometry (capability 100).
+        if matches!(self.tool.tool, Tool::Draw(_)) {
+            bar.choices.push(crate::shape::construction_choice(
+                self.strings(),
+                self.tool.construction,
+            ));
         }
+        Some(bar)
     }
 
     /// Whether the shapes drawn next are construction geometry.

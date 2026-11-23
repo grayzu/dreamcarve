@@ -137,7 +137,8 @@ fn skipped(error: &ImportError) -> Check {
 /// The two checks that still apply to a project (`shapes_overlap`,
 /// `feature_below_size`), read from the regions of its visible shapes
 /// with the design's height from their joint bounding box (phase 3
-/// functional, 49a): what `check` prints after its warnings. Shapes that
+/// functional, 49a): what `check` prints after its warnings. Construction
+/// geometry is passed by (phase 5, capability 100). Shapes that
 /// do not resolve into regions are left out; validation reports them.
 /// `shapes_overlap` carries the ids of the pair it names.
 #[must_use]
@@ -146,7 +147,8 @@ pub fn project(project: &Project) -> Vec<Check> {
         project
             .instances
             .iter()
-            .filter(|instance| instance.visible)
+            // Construction geometry is never cut, so it is not artwork.
+            .filter(|instance| instance.visible && !instance.construction)
             .filter_map(|instance| {
                 Some((instance, project.definitions.get(&instance.definition)?))
             }),
@@ -356,6 +358,29 @@ mod tests {
         );
         assert!(checks[1].shapes.is_empty());
         assert!(checks.iter().all(Check::read_from_shapes));
+    }
+
+    /// Construction geometry is never cut, so it is not artwork to check
+    /// (phase 5, capability 100): one of the two overlapping squares
+    /// marked construction, they no longer overlap; the dot marked, it is
+    /// no speck.
+    #[test]
+    fn construction_is_not_checked() {
+        let mut project_ = dc_project::load(MESSY_DCV).unwrap().project;
+        let mark = |project_: &mut Project, name: &str| {
+            for instance in &mut project_.instances {
+                if instance.name == name {
+                    instance.construction = true;
+                }
+            }
+        };
+        mark(&mut project_, "sq-b");
+        assert_eq!(codes(&project(&project_)), ["feature_below_size"]);
+        let speck = project(&project_)[0].message.clone();
+        for instance in &mut project_.instances {
+            instance.construction = instance.name != "sq-a";
+        }
+        assert!(codes(&project(&project_)).is_empty(), "{speck}");
     }
 
     /// Two shapes of one name are told apart: the pair named is the pair

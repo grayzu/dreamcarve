@@ -2692,8 +2692,8 @@ fn p5_editing_dir() -> PathBuf {
 /// preview; the Trim tool over the piece a click would take out;
 /// (slice 18) the Viewport's context menu and the Edit menu; (slice 20)
 /// Align and Distribute in Properties; (slice 21) a group and a
-/// folder in the Design Tree; and (slice 19) a grid and a circular array
-/// in the tool bar. Dark
+/// folder in the Design Tree; (slice 19) a grid and a circular array in
+/// the tool bar; and (slice 22) construction geometry. Dark
 /// and light at 1×, written to `docs/specs/phase-5/review/editing/`,
 /// where they are committed.
 ///
@@ -2904,6 +2904,31 @@ fn phase5_editing_screenshots() {
     h.run_steps(8);
     park_pointer(&mut h);
     shoot_in(&mut h, &out, "11-array-circular", &looks);
+
+    // 12: construction geometry (slice 22): the array made, its source
+    // and three of its copies marked Construction, one of them selected.
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(8);
+    let ids: Vec<_> = h
+        .state()
+        .app()
+        .project()
+        .instances
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    {
+        let app = h.state_mut().app_mut();
+        app.run(dc_app::Command::SetConstruction {
+            ids: ids.iter().take(4).cloned().collect(),
+            construction: true,
+        })
+        .unwrap();
+        app.select(dc_app::Selection::Instances(vec![ids[1].clone()]));
+    }
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "12-construction-geometry", &looks);
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }

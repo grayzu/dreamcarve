@@ -183,6 +183,8 @@ pub enum Icon {
     FolderPlus,
     /// `group`: a group's row in the Design Tree.
     Group,
+    /// `square-dashed`: construction geometry's row in the Design Tree.
+    SquareDashed,
 }
 
 impl Icon {
@@ -274,6 +276,7 @@ impl Icon {
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
             Self::Group => "group",
+            Self::SquareDashed => "square-dashed",
         }
     }
 
@@ -364,12 +367,13 @@ impl Icon {
             Self::Folder => '\u{e0d7}',
             Self::FolderPlus => '\u{e0d9}',
             Self::Group => '\u{e464}',
+            Self::SquareDashed => '\u{e1cb}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 83] = [
+    pub const ALL: [Self; 84] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -453,6 +457,7 @@ impl Icon {
         Self::Folder,
         Self::FolderPlus,
         Self::Group,
+        Self::SquareDashed,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

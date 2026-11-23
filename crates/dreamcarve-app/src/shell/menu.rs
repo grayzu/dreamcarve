@@ -569,8 +569,26 @@ fn shape(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         Action::run(dc_app::Command::ConvertToPath(selected.to_vec())),
         out,
     );
-    let linked = dc_app::tree::menu(app.project(), selected, None, false)
-        .contains(&dc_app::tree::MenuItem::MakeUnique);
+    let items = dc_app::tree::menu(app.project(), selected, None, false);
+    let linked = items.contains(&dc_app::tree::MenuItem::MakeUnique);
+    // Construction (capability 100): ticked while every selected shape
+    // is construction geometry.
+    let marked = items.contains(&dc_app::tree::MenuItem::NotConstruction);
+    let construction = checked_item_with(
+        ui,
+        strings.get(StrKey::AppMenuConstruction),
+        marked,
+        None,
+        !selected.is_empty(),
+    );
+    if construction.clicked() {
+        out.push(Action::run(dc_app::Command::SetConstruction {
+            ids: selected.to_vec(),
+            construction: !marked,
+        }));
+        ui.close();
+    }
+    ui.separator();
     item_text(
         ui,
         strings.get(StrKey::AppMenuMakeUnique),
@@ -836,7 +854,7 @@ pub(crate) fn appearance_items(ui: &mut Ui, state: &FrameState<'_>, out: &mut Ve
 
 /// A menu row with a check in front when `checked`: one of a choice
 /// (mock-up 14). Screen readers hear it as a toggled button.
-fn checked_item(ui: &mut Ui, text: &str, checked: bool) -> egui::Response {
+pub(crate) fn checked_item(ui: &mut Ui, text: &str, checked: bool) -> egui::Response {
     checked_item_with(ui, text, checked, None, true)
 }
 

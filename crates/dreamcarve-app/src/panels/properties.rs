@@ -579,6 +579,40 @@ fn shape_section(ui: &mut Ui, state: &FrameState<'_>, id: &InstanceId, out: &mut
     ui.add_space(8.0);
 }
 
+/// The **Construction** switch for the selected shapes `ids` (phase 5,
+/// capability 100): on while every one is construction geometry; turned
+/// on, the shapes leave every operation's targets.
+fn construction_row(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    ids: &[InstanceId],
+    out: &mut Vec<Action>,
+) {
+    let app = state.app;
+    let strings = app.strings();
+    let on = !ids.is_empty()
+        && app
+            .project()
+            .instances
+            .iter()
+            .filter(|instance| ids.contains(&instance.id))
+            .all(|instance| instance.construction);
+    let name = strings.get(StrKey::PlacementConstruction);
+    let (label, switch) = row(
+        ui,
+        name,
+        strings.get(StrKey::PlacementConstructionHelp),
+        |ui| toggle(ui, on, name),
+    );
+    let switch = switch.labelled_by(label.id);
+    if switch.clicked() {
+        out.push(Action::run(dc_app::Command::SetConstruction {
+            ids: ids.to_vec(),
+            construction: !on,
+        }));
+    }
+}
+
 /// A button of the Align section: an icon, 28 px square.
 const ALIGN_BUTTON_PX: f32 = 28.0;
 
@@ -742,6 +776,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out:
             if properties::read_only(&placement) {
                 locked_note(ui, state, ids, out);
             }
+            construction_row(ui, state, ids, out);
             align_section(ui, state, ids, out);
             ui.add_space(4.0);
             let targeted = if placement.targeted_by.is_empty() {

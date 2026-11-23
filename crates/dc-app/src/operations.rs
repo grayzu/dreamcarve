@@ -208,6 +208,22 @@ fn refusal(kind: Kind, of: &[Outlines]) -> Option<StrKey> {
     }
 }
 
+/// Those of `ids` an operation can cut: every one that is not
+/// construction geometry (phase 5, capability 100), in `ids`' order.
+#[must_use]
+pub fn cuttable(project: &Project, ids: &[InstanceId]) -> Vec<InstanceId> {
+    ids.iter()
+        .filter(|id| {
+            project
+                .instances
+                .iter()
+                .find(|instance| instance.id == **id)
+                .is_none_or(|instance| !instance.construction)
+        })
+        .cloned()
+        .collect()
+}
+
 /// The Add menu for the shapes `selected` and the pictures `pictures`
 /// selected ([`crate::App::selected_pictures`]; capability 65). The kinds
 /// that cut shapes are offered when every selected shape can take them,
@@ -222,7 +238,11 @@ pub fn add_menu(
     selected: &[InstanceId],
     pictures: &[BitmapId],
 ) -> AddMenu {
-    let of: Vec<Outlines> = selected.iter().map(|id| outlines(project, id)).collect();
+    // Construction geometry is never cut: an operation is offered for
+    // the selected shapes that are, and takes those.
+    let cut = cuttable(project, selected);
+    let only_construction = !selected.is_empty() && cut.is_empty();
+    let of: Vec<Outlines> = cut.iter().map(|id| outlines(project, id)).collect();
     let mut menu = AddMenu {
         prompt: selected
             .is_empty()
@@ -235,6 +255,7 @@ pub fn add_menu(
             Kind::PhotoVCarve => photo_target(project, pictures).err().map(Some),
             // The prompt says it for every kind that cuts shapes.
             _ if selected.is_empty() => Some(None),
+            _ if only_construction => Some(Some(StrKey::OperationsReasonConstruction)),
             _ => refusal(kind, &of).map(Some),
         };
         match refused {
@@ -475,7 +496,7 @@ pub fn add(
         let image = photo_target(project, pictures).ok()?;
         new_photo_v_carve(project, strings, &image)
     } else {
-        new_operation(project, strings, kind, selected)?
+        new_operation(project, strings, kind, &cuttable(project, selected))?
     };
     Some(Command::AddOperation(operation))
 }

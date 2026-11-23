@@ -87,6 +87,9 @@ pub struct ShapeRow {
     /// The folder it is filed in (phase 5, capability 99): its row is
     /// under the folder's.
     pub folder: Option<FolderId>,
+    /// Construction geometry (capability 100): never cut, and its glyph
+    /// says so.
+    pub construction: bool,
     /// What the shape is, as its leading glyph says.
     pub glyph: ShapeGlyph,
     /// Another instance places the same definition (the `component`
@@ -226,6 +229,7 @@ impl Tree {
                     name: instance.name.clone(),
                     visible: instance.visible,
                     locked: instance.locked,
+                    construction: instance.construction,
                     // A folder the file does not have files nothing.
                     folder: instance
                         .folder
@@ -582,6 +586,12 @@ pub enum MenuItem {
     /// **Convert to Path** (capability 84): listed while a row keeps its
     /// sizes.
     ConvertToPath,
+    /// **Construction** (capability 100): the rows marked construction
+    /// geometry; listed while one is not.
+    Construction,
+    /// **Construction**, ticked: the rows made cut geometry again;
+    /// listed while every one is construction geometry.
+    NotConstruction,
     /// Frame the rows on the Viewport: view state, no command.
     ZoomTo,
     /// *Add operation ▸*: the Operations step's Add menu for the rows
@@ -662,9 +672,18 @@ pub fn menu(
     if sized {
         items.push(MenuItem::ConvertToPath);
     }
+    items.push(if chosen().all(|instance| instance.construction) {
+        MenuItem::NotConstruction
+    } else {
+        MenuItem::Construction
+    });
     items.extend([MenuItem::ZoomTo, MenuItem::AddOperation]);
     if let Some(op) = op {
-        if ids.iter().any(|id| !op.targets().contains(id)) {
+        // Construction geometry is no target.
+        if crate::operations::cuttable(project, ids)
+            .iter()
+            .any(|id| !op.targets().contains(id))
+        {
             items.push(MenuItem::AddTo);
         }
         if ids.iter().any(|id| op.targets().contains(id)) {
@@ -682,12 +701,14 @@ pub fn menu(
 ///
 /// [`CommandError::FieldRefused`] if the file refuses the record.
 pub fn target_command(
+    project: &Project,
     op: &Operation,
     item: MenuItem,
     ids: &[InstanceId],
 ) -> Result<Option<Command>, CommandError> {
     match item {
-        MenuItem::AddTo => targets::add(op, ids),
+        // Construction geometry among `ids` is passed by.
+        MenuItem::AddTo => targets::add(op, &crate::operations::cuttable(project, ids)),
         MenuItem::RemoveFrom => targets::remove(op, ids),
         _ => Ok(None),
     }
@@ -720,6 +741,14 @@ pub fn menu_command(project: &Project, item: MenuItem, ids: &[InstanceId]) -> Op
         MenuItem::Delete => Some(Command::DeleteInstances(ids)),
         MenuItem::MakeUnique => Some(Command::MakeUnique(ids)),
         MenuItem::ConvertToPath => Some(Command::ConvertToPath(ids)),
+        MenuItem::Construction => Some(Command::SetConstruction {
+            ids,
+            construction: true,
+        }),
+        MenuItem::NotConstruction => Some(Command::SetConstruction {
+            ids,
+            construction: false,
+        }),
         MenuItem::NewFolder => Some(Command::NewFolder {
             name: next_folder_name(project, false),
             ids,
@@ -837,6 +866,8 @@ pub fn bitmap_menu_command(project: &Project, item: MenuItem, ids: &[BitmapId]) 
         | MenuItem::Paste
         | MenuItem::MakeUnique
         | MenuItem::ConvertToPath
+        | MenuItem::Construction
+        | MenuItem::NotConstruction
         | MenuItem::NewFolder
         | MenuItem::Group
         | MenuItem::Ungroup

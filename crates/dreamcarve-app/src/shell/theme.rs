@@ -137,6 +137,9 @@ pub struct Palette {
     pub viewport_shape_selected: Color32,
     /// A locked outline and its padlock.
     pub viewport_shape_locked: Color32,
+    /// Construction geometry: thin and dashed, never cut (phase 5,
+    /// capability 100).
+    pub viewport_construction: Color32,
     /// The park point's crossed circle.
     pub viewport_park: Color32,
     /// Rapids, thin and dashed.
@@ -215,6 +218,7 @@ pub const LIGHT: Palette = Palette {
     viewport_shape_hover: rgb(0x0A8A6C),
     viewport_shape_selected: rgb(0x08795E),
     viewport_shape_locked: rgb(0x8A929E),
+    viewport_construction: rgb(0x4F63C6),
     viewport_park: rgb(0x5B6472),
     viewport_rapid: rgb(0x8A959D),
     viewport_plunge: rgb(0xC62E27),
@@ -286,6 +290,7 @@ pub const DARK: Palette = Palette {
     viewport_shape_hover: rgb(0x3FE0A8),
     viewport_shape_selected: rgb(0x2AD79A),
     viewport_shape_locked: rgb(0x7B8491),
+    viewport_construction: rgb(0x8EA2FF),
     viewport_park: rgb(0xA3ABB7),
     viewport_rapid: rgb(0x6F7A82),
     viewport_plunge: rgb(0xF2726A),
@@ -359,6 +364,7 @@ impl Palette {
             ("viewport.shape.hover", self.viewport_shape_hover),
             ("viewport.shape.selected", self.viewport_shape_selected),
             ("viewport.shape.locked", self.viewport_shape_locked),
+            ("viewport.construction", self.viewport_construction),
             ("viewport.park", self.viewport_park),
             ("viewport.rapid", self.viewport_rapid),
             ("viewport.plunge", self.viewport_plunge),

@@ -501,6 +501,28 @@ pub(crate) fn corners_choice(strings: &Strings, chosen: CornerStyle) -> Choice {
     )
 }
 
+/// The drawing tools' Construction switch as a choice: off or on.
+pub(crate) fn construction_choice(strings: &Strings, on: bool) -> Choice {
+    choice(
+        strings,
+        (
+            StrKey::DrawChoiceConstruction,
+            StrKey::DrawChoiceConstructionHelp,
+        ),
+        &[
+            (
+                StrKey::DrawChoiceConstructionOff,
+                ToolOption::Construction(false),
+            ),
+            (
+                StrKey::DrawChoiceConstructionOn,
+                ToolOption::Construction(true),
+            ),
+        ],
+        &ToolOption::Construction(on),
+    )
+}
+
 /// What a polygon's radius reaches as a choice: its corners or its
 /// flats.
 pub(crate) fn measure_choice(strings: &Strings, measured: Measured) -> Choice {

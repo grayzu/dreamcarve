@@ -366,6 +366,7 @@ fn the_context_menu_offers_what_applies() {
             MenuItem::Delete,
             MenuItem::NewFolder,
             MenuItem::MakeUnique,
+            MenuItem::Construction,
             MenuItem::ZoomTo,
             MenuItem::AddOperation,
         ]

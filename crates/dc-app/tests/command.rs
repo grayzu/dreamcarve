@@ -158,6 +158,7 @@ fn kind(command: &Command) -> &'static str {
         Command::MakeUnique(_) => "MakeUnique",
         Command::CopyInstances { .. } => "CopyInstances",
         Command::PlaceInstances { .. } => "PlaceInstances",
+        Command::SetConstruction { .. } => "SetConstruction",
         Command::NewFolder { .. } => "NewFolder",
         Command::RenameFolder { .. } => "RenameFolder",
         Command::DeleteFolder(_) => "DeleteFolder",
@@ -430,6 +431,13 @@ fn every_command() -> Vec<(Project, Command)> {
                 .apply(&plaque)
                 .expect("the square duplicates"),
             Command::MakeUnique(vec![instance("i4")]),
+        ),
+        (
+            plaque.clone(),
+            Command::SetConstruction {
+                ids: vec![instance("i4")],
+                construction: true,
+            },
         ),
         (
             plaque.clone(),

@@ -816,6 +816,8 @@ fn shape_row(
     let indent = if row.folder.is_some() { INDENT_PX } else { 0.0 };
     let glyph_rect = lock_rect.translate(egui::vec2(ICON_BOX_PX + 2.0 + indent, 0.0));
     let (shape_icon, shape_tip) = match row.glyph {
+        // Construction geometry says so before it says what it is.
+        _ if row.construction => (Icon::SquareDashed, StrKey::TreeGlyphConstruction),
         ShapeGlyph::Closed => (Icon::Square, StrKey::TreeGlyphClosed),
         ShapeGlyph::Circle => (Icon::Circle, StrKey::TreeGlyphCircle),
         ShapeGlyph::Open => (Icon::Spline, StrKey::TreeGlyphOpen),
@@ -1229,7 +1231,7 @@ pub(crate) fn context_menu(
                 .button(strings.fmt(key, &[("name", op.name())]))
                 .clicked()
             {
-                match dc_app::tree::target_command(op, item, ids) {
+                match dc_app::tree::target_command(project, op, item, ids) {
                     Ok(command) => out.extend(command.map(Action::run)),
                     Err(e) => out.push(Action::Refused(e.to_string())),
                 }
@@ -1253,6 +1255,7 @@ pub(crate) fn context_menu(
             MenuItem::Ungroup => StrKey::AppMenuUngroup,
             MenuItem::MakeUnique => StrKey::AppMenuMakeUnique,
             MenuItem::ConvertToPath => StrKey::AppMenuConvertToPath,
+            MenuItem::Construction | MenuItem::NotConstruction => StrKey::AppMenuConstruction,
             MenuItem::ZoomTo => StrKey::TreeZoomTo,
             MenuItem::AddOperation => StrKey::TreeAddOperation,
             MenuItem::AddTo | MenuItem::RemoveFrom => continue,
@@ -1276,10 +1279,24 @@ pub(crate) fn context_menu(
             | MenuItem::ZoomTo
             | MenuItem::MakeUnique => true,
             MenuItem::ConvertToPath => !items.contains(&MenuItem::MakeUnique),
+            MenuItem::Construction | MenuItem::NotConstruction => {
+                !items.contains(&MenuItem::MakeUnique) && !items.contains(&MenuItem::ConvertToPath)
+            }
             _ => false,
         };
         if first_of_its_group {
             ui.separator();
+        }
+        // Construction is a tick: on while every row is construction.
+        if matches!(item, MenuItem::Construction | MenuItem::NotConstruction) {
+            let ticked = item == MenuItem::NotConstruction;
+            if crate::shell::menu::checked_item(ui, strings.get(key), ticked).clicked() {
+                if let Some(command) = dc_app::tree::menu_command(project, item, ids) {
+                    out.push(Action::run(command));
+                }
+                ui.close();
+            }
+            continue;
         }
         if ui.button(strings.get(key)).clicked() {
             match item {
@@ -1563,6 +1580,8 @@ fn picture_menu(
             MenuItem::AddOperation => StrKey::TreeAddOperation,
             // A picture's menu has none of these.
             MenuItem::Duplicate
+            | MenuItem::Construction
+            | MenuItem::NotConstruction
             | MenuItem::NewFolder
             | MenuItem::Group
             | MenuItem::Ungroup

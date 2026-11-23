@@ -206,7 +206,7 @@ fn push_placed(
 
 /// Every visible shape but those in `moving` (drawn by the selection layer
 /// where a drag will put them): closed solid, open dashed, locked in its
-/// grey; while an operation's targets are marked, every shape that is not
+/// grey, construction geometry thin and dashed in its colour; while an operation's targets are marked, every shape that is not
 /// one of them at 40 % (capability 67).
 #[must_use]
 pub(crate) fn shapes(scene: &Scene, tolerance_mm: f64, moving: &[InstanceId]) -> Vec<Segment> {
@@ -218,7 +218,10 @@ pub(crate) fn shapes(scene: &Scene, tolerance_mm: f64, moving: &[InstanceId]) ->
     {
         let faded = scene.style(&shape.instance) == ShapeStyle::Faded;
         for outline in &shape.outlines {
+            // Construction geometry is thin and dashed in its own
+            // colour, closed or open; locked, it is the lock's grey.
             let style = match (shape.locked, outline.is_closed()) {
+                (false, _) if shape.construction => StyleId::Construction,
                 (false, true) => StyleId::Shape,
                 (false, false) => StyleId::ShapeOpen,
                 (true, true) => StyleId::Locked,
@@ -293,7 +296,13 @@ pub(crate) fn highlighted(
             .filter(|(moving, _)| moving.contains(id))
             .map(|(_, t)| t);
         for outline in &shape.outlines {
-            let style = if outline.is_closed() { closed } else { open };
+            // Construction geometry stays dashed under the pointer and
+            // selected.
+            let style = if outline.is_closed() && !shape.construction {
+                closed
+            } else {
+                open
+            };
             match placed {
                 Some(t) => push_placed(&mut out, outline, tolerance_mm, t, style),
                 None => push_outline(&mut out, outline, tolerance_mm, style),
