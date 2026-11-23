@@ -366,7 +366,7 @@ items. Each is tracked here.
 
 | Item | Kind | Where it stands |
 | --- | --- | --- |
-| How to make an array | Question | Answered (Arrange ▸ Array…), and Array… is now in a shape's right-click menu |
+| How to make an array | Question | Answered (Arrange ▸ Array…); Array… is now in a shape's right-click menu and, at the maintainer's second word, a button of the tool strip beside Trim |
 | Group the drawing tools as Affinity does | Change | Done: the tool strip, with three groups and Text, Trim and Measure as buttons |
 | Join open shapes into a closed one | Question | Answered (Shape ▸ Join…; Edit nodes, an end dragged onto an end) |
 | What the Tab tool on Design is for | Question | Answered; the tool moves beside Trim and Measure in the regrouping |

@@ -20,7 +20,7 @@ parts:
 | --- | --- | --- |
 | Select and edit | **Select** (V), **Edit nodes** (N) | Select, move, resize and turn shapes; reshape a path ([Editing nodes](editing-nodes.md)) |
 | Draw | The **line tools**, the **shape tools**, the **slot and gear tools**, **Text** (Shift+T) | Draw new shapes |
-| Work on what is drawn | **Trim**, **Measure** (K), the **Tab tool** (T) | Cut an outline at a crossing ([Changing shapes](changing-shapes.md#trim)); read a distance ([Measuring](measuring.md)); place a tab ([Tabs](tabs.md)) |
+| Work on what is drawn | **Trim**, **Array**, **Measure** (K), the **Tab tool** (T) | Cut an outline at a crossing ([Changing shapes](changing-shapes.md#trim)); copy the selection in a pattern ([Copies, arrays and alignment](copies-and-arrays.md#arrays)); read a distance ([Measuring](measuring.md)); place a tab ([Tabs](tabs.md)) |
 | Snapping | **Snapping** (Shift+S) | Turn snapping on or off, and choose what a point snaps to ([Snapping and the grid](snapping.md)) |
 
 Three of the drawing buttons are **groups**, marked with a small

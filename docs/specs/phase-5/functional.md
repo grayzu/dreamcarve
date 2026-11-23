@@ -82,8 +82,9 @@ capability 52); what a tool holds before it commits is not project data.
       `P`, Arc `A`, Spline `S`), the **shape tools** (Rectangle `M`,
       Circle `C`, Ellipse `E`, Polygon `G`) and the **slot and gear
       tools** (Slot `O`, Gear), then **Text** (`⇧T`);
-    - what works on what is drawn: **Trim** (96), **Measure** (`K`, 103)
-      and the **Tab tool** (`T`, phase 4);
+    - what works on what is drawn: **Trim** (96), **Array** (98, off
+      until a shape is selected), **Measure** (`K`, 103) and the **Tab
+      tool** (`T`, phase 4);
     - **Snapping** (82).
 
     A group's button shows the tool of the group last used, with a mark
@@ -567,7 +568,8 @@ capability 52); what a tool holds before it commits is not project data.
       Paste and Select All. In the Edit nodes tool it is the tool
       bar's buttons for the node or segment under the pointer, with
       Delete and Select All.
-    - **Array…** (**Arrange ▸ Array…**, and a shape's context menu;
+    - **Array…** (**Arrange ▸ Array…**, the tool strip's **Array**
+      button, and a shape's context menu;
       PureCutCNC's feature distribution, grid and radial), which takes
       its values in the tool bar (81). **Grid**: Columns, Rows (2 and 1 at first), and
       the Spacing between copies along X and along Y, measured as a gap

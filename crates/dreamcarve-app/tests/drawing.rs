@@ -184,6 +184,38 @@ fn the_tool_strip_groups_the_drawing_tools() {
         assert_eq!(tool(&h), armed, "{name}");
     }
 
+    // Array is in the strip too, beside Trim: off until a shape is
+    // selected, since it copies the selection; then it takes its values
+    // in the tool bar, as Arrange ▸ Array… does.
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.run_steps(8);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Array")
+            .accesskit_node()
+            .is_disabled(),
+        "nothing is selected to copy"
+    );
+    let square = dc_project::InstanceId::new("i4");
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![square.clone()]));
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Array").click();
+    h.run_steps(8);
+    assert_eq!(
+        tool(&h),
+        Tool::Adjust(dc_app::tool::Adjust::Array),
+        "the strip's Array"
+    );
+    assert_eq!(h.state().app().selection().instances(), [square]);
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Columns")
+            .is_some(),
+        "its values are in the tool bar"
+    );
+    key(&mut h, egui::Key::Escape);
+    assert_eq!(tool(&h), Tool::Select);
+
     // Snapping: the master switch and a tick for each kind.
     assert!(h.state().app().prefs().snap.enabled);
     let button = h.get_by_role_and_label(Role::Button, "Snapping").rect();

@@ -42,7 +42,8 @@ before that; its changes are those under Unreleased.
   export waits until it is cut again.
 - **Copies and order.** Make Unique for a linked copy; cut, copy and
   paste, also between projects; Alt-drag to copy; **Arrange ▸ Array…**
-  for copies in a grid or round a centre; Align and Distribute, to each
+  for copies in a grid or round a centre, also a button of the tool
+  strip and a row of a shape's menu; Align and Distribute, to each
   other or to the stock; groups in the Shapes list; and
   construction geometry, drawn dashed, snapped to and never cut.
 - **Tracing and measuring.** A picture's **Opacity** and **Set

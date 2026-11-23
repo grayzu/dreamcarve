@@ -48,7 +48,8 @@ Two things are new if you have only imported drawings before:
 
 - The **tool strip** down the left of the Viewport holds the tools, in
   four parts: **Select** and **Edit nodes**; the tools that draw;
-  **Trim**, **Measure** and the **Tab tool**; and **Snapping**. The
+  **Trim**, **Array**, **Measure** and the **Tab tool**; and
+  **Snapping**. The
   drawing tools are three buttons, each a group: the **line tools**
   (Line, Arc, Spline), the **shape tools** (Rectangle, Circle, Ellipse,
   Polygon) and the **slot and gear tools**, then **Text**. A group's
@@ -220,7 +221,7 @@ list.
 | `Text 1` | **Arrange ▸ Align ▸ Centre** | **Y** 58 |
 
 For the slot: click `Slot 1` in the list, then choose **Arrange ▸
-Array…** from the menu bar. The tool bar takes the array's values. Type
+Array…** from the menu bar, or click **Array** in the tool strip. The tool bar takes the array's values. Type
 **Columns** `2` and **Rows** `1`, click **Pitch** beside **Spacing**,
 and type **Spacing X** `70`. A **pitch** is measured from one copy to
 the same point of the next, so the second slot starts 70 mm to the right

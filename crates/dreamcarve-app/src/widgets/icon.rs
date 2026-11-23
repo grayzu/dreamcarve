@@ -161,6 +161,8 @@ pub enum Icon {
     Ruler,
     /// `magnet`: snapping.
     Magnet,
+    /// `layout-grid`: Array, copies of the selection in a pattern.
+    LayoutGrid,
     /// `align-start-vertical`: Align left.
     AlignStartVertical,
     /// `align-center-vertical`: Align centre.
@@ -265,6 +267,7 @@ impl Icon {
             Self::Scissors => "scissors",
             Self::Ruler => "ruler",
             Self::Magnet => "magnet",
+            Self::LayoutGrid => "layout-grid",
             Self::AlignStartVertical => "align-start-vertical",
             Self::AlignCenterVertical => "align-center-vertical",
             Self::AlignEndVertical => "align-end-vertical",
@@ -356,6 +359,7 @@ impl Icon {
             Self::Scissors => '\u{e14e}',
             Self::Ruler => '\u{e14b}',
             Self::Magnet => '\u{e2b5}',
+            Self::LayoutGrid => '\u{e0ff}',
             Self::AlignStartVertical => '\u{e271}',
             Self::AlignCenterVertical => '\u{e26d}',
             Self::AlignEndVertical => '\u{e26f}',
@@ -373,7 +377,7 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 84] = [
+    pub const ALL: [Self; 85] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -446,6 +450,7 @@ impl Icon {
         Self::Scissors,
         Self::Ruler,
         Self::Magnet,
+        Self::LayoutGrid,
         Self::AlignStartVertical,
         Self::AlignCenterVertical,
         Self::AlignEndVertical,

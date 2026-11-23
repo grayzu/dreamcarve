@@ -91,8 +91,8 @@ Rules divide the strip into four parts:
   gear tools), each a button with a list beside it, and **Text**
   ([Drawing shapes](drawing-shapes.md#the-tools)). The **Draw** menu
   lists them too.
-- **Trim**, **Measure** (K) and the **Tab tool** (T), which work on
-  what is already drawn ([Tabs](tabs.md)).
+- **Trim**, **Array**, **Measure** (K) and the **Tab tool** (T), which
+  work on what is already drawn ([Tabs](tabs.md)).
 - **Snapping**, which turns snapping on and off and lists what a point
   snaps to ([Snapping and the grid](snapping.md)).
 

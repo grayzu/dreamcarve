@@ -491,6 +491,8 @@ measure_help = "Measure between two points, and read the length and area of the 
 # a group's button holds its tool last used, and lists the others.
 group_help = "Draw with the {tool} tool; the list beside it also has {others}"
 text_help = "Click where the text starts, then type its words"
+array_help = "Array: copies of the selected shapes in a grid or round a centre"
+array_help_select = "Array: copies of shapes in a grid or round a centre. Select the shapes to copy first"
 snapping = "Snapping"
 snapping_help = "Snapping on or off, and what a point snaps to"
 tab_tool = "Tab tool"

@@ -1273,8 +1273,10 @@ thing, a group: see "The maintainer's review of 2026-11-23", below.
   carry the one `group` glyph, and the row's menu has *Select Together*
   as a tick. Tests: `dc-app` `tests/groups.rs` (was `folders.rs`),
   `editing::groups_in_the_design_tree`, `groups_drag_and_drop`.
-- **Array… in the menu.** `tree::MenuItem::Array`, after Duplicate; the
-  window arms `Adjust::Array`.
+- **Array… in the menu and the strip.** `tree::MenuItem::Array`, after
+  Duplicate; the window arms `Adjust::Array`. The strip has an *Array*
+  button after Trim (`STRIP_BUTTONS` is 11), enabled while a shape is
+  selected, its tooltip saying to select one while none is.
 - Tests: `dc-app` `handles::a_side_handle_stretches_one_way_and_keeps_the_far_side`,
   `a_short_side_has_no_handle`, `tools::a_tool_added_from_an_operations_picker_is_chosen_for_it`,
   `operations::an_operation_that_cuts_nothing_says_so`,

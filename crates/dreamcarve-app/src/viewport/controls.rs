@@ -55,8 +55,8 @@ const READOUT_PX: f32 = 28.0;
 /// The gap between a pill's controls, px.
 const GAP_PX: f32 = 2.0;
 /// The tool strip's buttons: two that select and edit, the three groups
-/// and Text, three that act on what is drawn, and Snapping.
-const STRIP_BUTTONS: f32 = 10.0;
+/// and Text, four that act on what is drawn, and Snapping.
+const STRIP_BUTTONS: f32 = 11.0;
 /// The rules that divide the strip into its four segments.
 const STRIP_RULES: f32 = 3.0;
 /// The tool strip's height, px: its buttons, the gaps between what it
@@ -527,8 +527,8 @@ fn snap_menu(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 /// pill (review feedback, 2026-11-23; Affinity's tools are laid out so):
 /// the tool in use shows pressed, and rules divide it into what selects
 /// and edits (*Select*, *Edit nodes*), what draws (the three groups and
-/// *Text*), what acts on what is drawn (*Trim*, *Measure*, the *Tab
-/// tool*), and *Snapping*. Returns the strip's rectangle.
+/// *Text*), what acts on what is drawn (*Trim*, *Array*, *Measure*, the
+/// *Tab tool*), and *Snapping*. Returns the strip's rectangle.
 fn strip(
     ui: &mut Ui,
     (pane, top): (Rect, f32),
@@ -644,6 +644,22 @@ fn strip(
         dc_app::Tool::Trim,
         out,
     );
+    // Array copies the selection, so it is off until there is one; its
+    // tooltip says so.
+    let array_tool = dc_app::Tool::Adjust(dc_app::tool::Adjust::Array);
+    let can_array = !state.app.selection().instances().is_empty() && !editing_targets;
+    let array_tip = strings.get(if can_array {
+        StrKey::AppViewportArrayHelp
+    } else {
+        StrKey::AppViewportArrayHelpSelect
+    });
+    let array = tool(strings, StrKey::AdjustNameArray, Icon::LayoutGrid)
+        .tooltip(array_tip)
+        .pressed(in_use == array_tool)
+        .enabled(can_array);
+    if button(ui, array).clicked() {
+        out.push(Action::Arm(array_tool));
+    }
     arm(
         ui,
         (
