@@ -247,6 +247,14 @@ fn arrange(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             );
         }
     });
+    // Array… takes its values in the tool bar (capability 98).
+    let array = Button::new(strings.get(StrKey::ArrangeMenuArray));
+    if ui.add_enabled(count > 0, array).clicked() {
+        out.push(Action::Arm(dc_app::Tool::Adjust(
+            dc_app::tool::Adjust::Array,
+        )));
+        ui.close();
+    }
     ui.separator();
     // Group and Ungroup (capability 99): a group is a folder whose
     // shapes a click on the Viewport selects together.

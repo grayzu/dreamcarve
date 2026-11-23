@@ -666,8 +666,13 @@ impl App {
             ToolOption::Construction(construction) => self.tool.construction = construction,
             // The Gear tool's, which holds them with the gear being set.
             ToolOption::Flanks(_) | ToolOption::Root(_) | ToolOption::Crest(_) => {}
-            // The Shape menu's Offset's, which it keeps itself.
-            ToolOption::OffsetSide(_) | ToolOption::KeepOriginal(_) => {}
+            // The Shape menu's Offset's and the Arrange menu's Array's,
+            // which keep their own.
+            ToolOption::OffsetSide(_)
+            | ToolOption::KeepOriginal(_)
+            | ToolOption::ArrayKind(_)
+            | ToolOption::ArraySpacing(_)
+            | ToolOption::ArrayTurn(_) => {}
         }
     }
 
@@ -755,6 +760,11 @@ pub(crate) const fn field_label(field: SizeField) -> StrKey {
         SizeField::Sides => StrKey::DrawFieldSides,
         SizeField::Distance => StrKey::DrawFieldDistance,
         SizeField::Tolerance => StrKey::DrawFieldTolerance,
+        SizeField::Columns => StrKey::DrawFieldColumns,
+        SizeField::Rows => StrKey::DrawFieldRows,
+        SizeField::SpacingX => StrKey::DrawFieldSpacingX,
+        SizeField::SpacingY => StrKey::DrawFieldSpacingY,
+        SizeField::Copies => StrKey::DrawFieldCopies,
     }
 }
 
@@ -779,6 +789,11 @@ pub(crate) const fn field_help(field: SizeField) -> StrKey {
         SizeField::Sides => StrKey::DrawHelpSides,
         SizeField::Distance => StrKey::DrawHelpDistance,
         SizeField::Tolerance => StrKey::DrawHelpTolerance,
+        SizeField::Columns => StrKey::DrawHelpColumns,
+        SizeField::Rows => StrKey::DrawHelpRows,
+        SizeField::SpacingX => StrKey::DrawHelpSpacingX,
+        SizeField::SpacingY => StrKey::DrawHelpSpacingY,
+        SizeField::Copies => StrKey::DrawHelpCopies,
     }
 }
 

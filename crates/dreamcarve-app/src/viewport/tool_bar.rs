@@ -83,6 +83,9 @@ fn name(strings: &dc_app::Strings, bar: &ToolBar) -> String {
             strings.get(StrKey::AdjustNameFillet).to_owned()
         }
         Tool::Adjust(dc_app::tool::Adjust::Join) => strings.get(StrKey::AdjustNameJoin).to_owned(),
+        Tool::Adjust(dc_app::tool::Adjust::Array) => {
+            strings.get(StrKey::AdjustNameArray).to_owned()
+        }
         Tool::Select | Tool::Tab | Tool::Measure => String::new(),
     }
 }

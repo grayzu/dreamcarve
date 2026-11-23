@@ -2691,8 +2691,9 @@ fn p5_editing_dir() -> PathBuf {
 /// the corner filleted; the Shape menu; Offset… in the tool bar with its
 /// preview; the Trim tool over the piece a click would take out;
 /// (slice 18) the Viewport's context menu and the Edit menu; (slice 20)
-/// Align and Distribute in Properties; and (slice 21) a group and a
-/// folder in the Design Tree. Dark
+/// Align and Distribute in Properties; (slice 21) a group and a
+/// folder in the Design Tree; and (slice 19) a grid and a circular array
+/// in the tool bar. Dark
 /// and light at 1×, written to `docs/specs/phase-5/review/editing/`,
 /// where they are committed.
 ///
@@ -2864,6 +2865,45 @@ fn phase5_editing_screenshots() {
     h.run();
     park_pointer(&mut h);
     shoot_in(&mut h, &out, "09-a-group-and-a-folder", &looks);
+    drop(h);
+
+    // 10 and 11: Array… in the tool bar (slice 19): a grid of a small
+    // rectangle, then a circular array of it, each previewed.
+    let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
+        return;
+    };
+    click(&mut h, "Draw from scratch");
+    // The Rectangle tool, whichever the last window left armed.
+    h.key_press(egui::Key::M);
+    h.run();
+    click_mm(&mut h, 12.0, 14.0);
+    click_mm(&mut h, 24.0, 22.0);
+    h.key_press(egui::Key::V);
+    h.run();
+    assert_eq!(h.state().app().project().instances.len(), 1);
+    {
+        let app = h.state_mut().app_mut();
+        let array = &mut app.prefs_mut().adjust.array;
+        array.columns = 4;
+        array.rows = 3;
+        array.x_mm = Some(8.0);
+        array.y_mm = Some(10.0);
+        app.arm(dc_app::Tool::Adjust(dc_app::tool::Adjust::Array));
+    }
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "10-array-grid", &looks);
+    h.get_by_role_and_label(Role::RadioButton, "Circular")
+        .click();
+    h.run_steps(8);
+    {
+        let app = h.state_mut().app_mut();
+        app.prefs_mut().adjust.array.count = 8;
+    }
+    click_mm(&mut h, 50.0, 50.0);
+    h.run_steps(8);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "11-array-circular", &looks);
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }

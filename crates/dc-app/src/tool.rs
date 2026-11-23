@@ -16,6 +16,7 @@
 //! history, and gone when another tool is armed.
 
 mod adjust;
+mod arrays;
 mod draw;
 mod gear;
 mod node;
@@ -32,6 +33,7 @@ use crate::App;
 use crate::snap::{self, Pointer, Snapped, Targets};
 
 pub use adjust::AdjustPrefs;
+pub use arrays::{ArrayKind, ArrayPrefs};
 pub use draw::MIN_SIZE_MM;
 pub(crate) use draw::{field_label, parse_angle_deg, polygon_name, size_text};
 pub use node::{
@@ -71,6 +73,9 @@ pub enum Adjust {
     FilletCorners,
     /// **Join**: a tolerance.
     Join,
+    /// **Array…** (the Arrange menu's): a grid's counts and spacing, or
+    /// a circular array's count, centre and angle.
+    Array,
 }
 
 /// A drawing tool (CONTEXT: Drawing Tool), in the order the Draw popover
@@ -221,6 +226,16 @@ pub enum SizeField {
     Distance,
     /// How near two ends must be to be joined.
     Tolerance,
+    /// How many columns a grid of copies has.
+    Columns,
+    /// How many rows a grid of copies has.
+    Rows,
+    /// A grid's spacing along X.
+    SpacingX,
+    /// A grid's spacing along Y.
+    SpacingY,
+    /// How many copies a circular array has, the source among them.
+    Copies,
 }
 
 /// How a size's text is read and shown.
@@ -236,7 +251,7 @@ pub enum Quantity {
 
 impl SizeField {
     /// Every size, in declaration order.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 24] = [
         Self::X,
         Self::Y,
         Self::Width,
@@ -256,6 +271,11 @@ impl SizeField {
         Self::Sides,
         Self::Distance,
         Self::Tolerance,
+        Self::Columns,
+        Self::Rows,
+        Self::SpacingX,
+        Self::SpacingY,
+        Self::Copies,
     ];
 
     /// The size's label in the tool bar.
@@ -275,7 +295,9 @@ impl SizeField {
     pub const fn quantity(self) -> Quantity {
         match self {
             Self::Angle | Self::PressureAngle => Quantity::Angle,
-            Self::Teeth | Self::Sides => Quantity::Count,
+            Self::Teeth | Self::Sides | Self::Columns | Self::Rows | Self::Copies => {
+                Quantity::Count
+            }
             _ => Quantity::Length,
         }
     }
@@ -283,7 +305,10 @@ impl SizeField {
     /// Whether the size must be above zero. A coordinate and an angle
     /// may be anything.
     const fn must_be_positive(self) -> bool {
-        !matches!(self, Self::X | Self::Y | Self::Angle)
+        !matches!(
+            self,
+            Self::X | Self::Y | Self::Angle | Self::SpacingX | Self::SpacingY
+        )
     }
 }
 
@@ -416,6 +441,12 @@ pub enum ToolOption {
     OffsetSide(crate::edit::OffsetSide),
     /// Whether an offset's original stays.
     KeepOriginal(bool),
+    /// Whether an array is a grid or circular.
+    ArrayKind(ArrayKind),
+    /// What a grid's spacings measure.
+    ArraySpacing(crate::array::GridSpacing),
+    /// Whether a circular array's copies are turned.
+    ArrayTurn(bool),
 }
 
 /// What the window tells the tool.
@@ -512,6 +543,9 @@ pub(crate) struct Session {
     /// Whether the shapes that follow are construction geometry
     /// (capability 90): the tool bar's switch, for this session.
     pub(crate) construction: bool,
+    /// The centre of the circular array being set, once it is typed or
+    /// clicked (capability 98).
+    array_centre: Option<Point>,
 }
 
 impl App {

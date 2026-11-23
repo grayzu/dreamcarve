@@ -112,7 +112,9 @@ capability 52); what a tool holds before it commits is not project data.
     under it, and a fitted view refits as the tool is taken up and put
     down. While a drawing tool is armed the Inspector stays closed: what
     is drawn is selected, and its Properties show when the tool is put
-    down.
+    down. It stays closed too while a command takes its values in the
+    tool bar (Offset…, Fillet Corners…, Join…, Array…), whose preview
+    is of the selection as it is.
 
     In a Viewport too narrow for its two top pills, *Layers* loses its
     label first, then the zoom percentage goes, then the two zoom
@@ -533,15 +535,25 @@ capability 52); what a tool holds before it commits is not project data.
       bar's buttons for the node or segment under the pointer, with
       Delete and Select All.
     - **Array…** (**Arrange ▸ Array…**; PureCutCNC's feature
-      distribution, grid and radial). **Grid**: Columns, Rows, and the
-      Spacing between copies along X and along Y, measured as a pitch
-      or as a gap. **Circular**: Count, the Centre (typed, or picked on
-      the Viewport with snapping), the Total angle (360° by default),
-      and whether the copies turn to face the centre. The copies
-      preview as the values change; **Create** makes them linked copies
-      of the selection, in one grouped folder (99) named `<name>
-      array`, in one undo step. An array is not remembered as an
-      array: it is copies, as PureCutCNC's is.
+      distribution, grid and radial), which takes its values in the
+      tool bar (81). **Grid**: Columns, Rows (2 and 1 at first), and
+      the Spacing between copies along X and along Y, measured as a gap
+      (the default; 20 mm or 2 in at first) or as a pitch; a spacing
+      below nothing goes the other way. **Circular**: Count (the
+      selection among them; 4 at first), the centre's X and Y (typed,
+      or clicked on the Viewport with snapping), the Angle the copies
+      are spread over (360° by default, positive anticlockwise; round
+      a whole turn the last copy stops short of the first, over less it
+      is at the angle's end), and whether the copies turn as they go
+      round or are kept upright. The selection is the array's first
+      cell and stays where it is. The copies preview as the values
+      change; **Done** makes them linked copies of the selection, in
+      one group (99) named `<name> array` that the selection joins, in
+      one undo step, and leaves the whole array selected. An array is
+      not remembered as an array: it is copies, as PureCutCNC's is. An
+      array of one, copies that would lie on one another, a centre at
+      the selection's own middle, and more than 1000 copies are refused
+      at the field that mends them.
 98a. **Align and distribute** (Properties, under the placement fields,
     and the Arrange menu; PureCutCNC's, with Y re-derived for Y-up).
     **Align** Left, Centre, Right, Top, Middle, Bottom moves each

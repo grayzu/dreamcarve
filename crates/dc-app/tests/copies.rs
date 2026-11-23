@@ -301,6 +301,7 @@ fn copy_instances_places_linked_copies() {
         .run(Command::CopyInstances {
             ids: vec![id("i1")],
             placements: vec![Transform::translate(40.0, 5.0)],
+            folder: None,
         })
         .unwrap();
     assert_eq!(label, "Copy “square”");
@@ -320,6 +321,7 @@ fn copy_instances_places_linked_copies() {
             Transform::translate(0.0, 30.0),
             Transform::translate(0.0, 60.0),
         ],
+        folder: None,
     })
     .unwrap();
     assert_eq!(
@@ -334,6 +336,7 @@ fn copy_instances_places_linked_copies() {
         app.run(Command::CopyInstances {
             ids: vec![id("i1")],
             placements: Vec::new(),
+            folder: None,
         }),
         Err(CommandError::NothingToDo)
     ));

@@ -61,6 +61,9 @@ pub enum CommandError {
     /// definition (functional spec, capability 98).
     #[error("nothing selected is a linked copy")]
     NotLinked,
+    /// An array that is no array (functional spec, capability 98).
+    #[error(transparent)]
+    Array(#[from] crate::array::ArrayError),
     /// A shape was given no outline.
     #[error("a shape needs an outline")]
     EmptyOutline,

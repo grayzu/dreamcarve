@@ -386,7 +386,12 @@ pub(crate) const fn edit_word(shape: Option<&Shape>, edit: Edit) -> StrKey {
             | SizeField::Y
             | SizeField::Angle
             | SizeField::Distance
-            | SizeField::Tolerance => StrKey::ShapeSizeSize,
+            | SizeField::Tolerance
+            | SizeField::Columns
+            | SizeField::Rows
+            | SizeField::SpacingX
+            | SizeField::SpacingY
+            | SizeField::Copies => StrKey::ShapeSizeSize,
         },
         Edit::Corners => StrKey::ShapeSizeCorners,
         Edit::Measured => StrKey::ShapeSizeMeasure,

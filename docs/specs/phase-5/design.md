@@ -244,9 +244,9 @@ pub enum Command { /* phase 4's, and: */
     ReplaceShapes { from: Vec<InstanceId>, keep: bool, add: Vec<NewShape>,
                     inherit: Vec<(InstanceId, usize)>, what: Edit },
     MakeUnique(Vec<InstanceId>),
-    /// Linked copies of `ids`, one set per transform (slice 19 adds the grouped folder an array
-    /// files them in).
-    CopyInstances { ids: Vec<InstanceId>, placements: Vec<Transform> },
+    /// Linked copies of `ids`, one set per transform; with `folder`, they and their sources are
+    /// filed in a new group of that name (an array).
+    CopyInstances { ids: Vec<InstanceId>, placements: Vec<Transform>, folder: Option<String> },
     /// Cut: `DeleteInstances` under its own name. Paste: each clip (a definition and the
     /// instance that placed it) a new instance of a new definition.
     CutInstances(Vec<InstanceId>), PasteShapes(Vec<clipboard::Clip>),
@@ -744,7 +744,24 @@ Grid: copy `(c, r)` is the selection translated by `(c · px, r · py)`,
 `px` the pitch, or the selection's width plus the gap. Circular: copy
 `k` is the selection rotated by `k · total / n` about the centre (`n`
 copies for a full turn, `n − 1` steps for less), or translated to that
-position when the copies are not turned. Align and distribute compute
+position when the copies are not turned. `dc_app::array` (slice 19; a
+port of `featureDistribution.ts`'s grid and radial plans): `Array`
+(`Grid { columns, rows, x_mm, y_mm, spacing }`, `Circular { count,
+centre, total_deg, turn }`), `placements(array, bounds)` (one
+transform a copy, the source's cell left out, a grid's row by row),
+`ArrayError` (one cell, more than `MAX_COPIES` = 1000, no spacing, no
+angle, the centre on the selection, no centre yet; carried as
+`CommandError::Array`) and `command`, a `CopyInstances` whose `folder`
+is `<name> array`. The Array mode is `Tool::Adjust(Adjust::Array)`
+(`tool::arrays`): `ArrayPrefs` in `AdjustPrefs` (kind, counts,
+spacings, total angle, turn; for the session), the circular centre in
+the tool's session (a press takes the snapped point; a typed X or Y
+starts level with the selection's middle), four option fields and two
+choices in the bar, a refusal said at the field that mends it
+(`SizeField::{Columns, Rows, SpacingX, SpacingY, Copies}` are new), the
+draft's outlines the copies. Done runs the command, selects the group
+and arms Select. Arrange ▸ **Array…** arms it; while any `Adjust` mode
+is armed `panels/side.rs` shows no Inspector. Align and distribute compute
 one translation per instance from the instances' placed boxes, as
 `featureSlice.ts` does.
 
@@ -1179,8 +1196,11 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `copy_instances_places_linked_copies`, `the_context_menu_offers_what_applies`; in the window
 (`tests/editing.rs`) `copy_and_paste_events`, `the_viewport_has_a_context_menu`,
 `the_node_context_menu_fillets`, `alt_drag_copies_and_make_unique_unlinks`;
-`array::` the ports of `featureDistribution.test.ts` (grid and radial),
-`array::copies_are_linked_and_grouped`; `dc_app` `tests/align.rs` (slice 20; ports from
+`dc_app` `tests/array.rs` (slice 19; ports from `featureDistribution.test.ts`):
+`grid_places_by_pitch_and_by_gap`, `circular_starts_at_the_source`,
+`copies_are_linked_and_grouped`, `the_array_bar_previews_and_creates_a_grid`,
+`the_array_bar_takes_a_circular_centre`, and in the window
+`editing::an_array_from_the_arrange_menu`; `dc_app` `tests/align.rs` (slice 20; ports from
 `featureLifecycleOps.test.ts`): `align_left_right_and_centre`, `top_is_the_greatest_y`, `to_stock`,
 `distribute_by_gaps_and_by_centres`, `a_locked_shape_stays_and_is_named`,
 `a_turned_shape_aligns_by_its_placed_box`, and in the window

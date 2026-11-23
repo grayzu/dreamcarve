@@ -41,6 +41,8 @@ pub struct AdjustPrefs {
     /// Whether Align aligns to the stock whatever is selected
     /// (capability 98a).
     pub align_to_stock: bool,
+    /// What Array… was last given (capability 98).
+    pub array: super::ArrayPrefs,
 }
 
 impl Default for AdjustPrefs {
@@ -53,6 +55,7 @@ impl Default for AdjustPrefs {
             fillet_mm: None,
             join_tolerance_mm: edit::JOIN_TOLERANCE_MM,
             align_to_stock: false,
+            array: super::ArrayPrefs::default(),
         }
     }
 }
@@ -67,6 +70,8 @@ impl AdjustPrefs {
             Adjust::Offset => self.offset_mm.unwrap_or(default),
             Adjust::FilletCorners => self.fillet_mm.unwrap_or(default),
             Adjust::Join => self.join_tolerance_mm,
+            // An array's values are its own (`tool::arrays`).
+            Adjust::Array => 0.0,
         }
     }
 }
@@ -77,6 +82,7 @@ const fn field_of(adjust: Adjust) -> SizeField {
         Adjust::Offset => SizeField::Distance,
         Adjust::FilletCorners => SizeField::Radius,
         Adjust::Join => SizeField::Tolerance,
+        Adjust::Array => SizeField::Columns,
     }
 }
 
@@ -121,6 +127,7 @@ impl App {
                 let text = units::field_text(radius, units);
                 Ok((edit::fillet_corners(project, strings, id, &text)?, None))
             }
+            Adjust::Array => Err(CommandError::NothingToDo),
             Adjust::Join => {
                 let joined =
                     edit::join(project, strings, ids, self.prefs().adjust.join_tolerance_mm)?;
@@ -137,6 +144,9 @@ impl App {
 
     /// Hands `event` to the armed Shape command `adjust`.
     pub(super) fn adjust_event(&mut self, adjust: Adjust, event: Event) -> Reply {
+        if adjust == Adjust::Array {
+            return self.array_event(event);
+        }
         let reply = match event {
             Event::Key(Key::Escape) => {
                 self.arm(Tool::Select);
@@ -193,6 +203,7 @@ impl App {
                     Adjust::Offset => prefs.offset_mm = Some(value),
                     Adjust::FilletCorners => prefs.fillet_mm = Some(value),
                     Adjust::Join => prefs.join_tolerance_mm = value,
+                    Adjust::Array => {}
                 }
             }
             Ok(_) => {
@@ -210,6 +221,10 @@ impl App {
 
     /// The preview: an offset as it would be made.
     pub(super) fn refresh_adjust_draft(&mut self, adjust: Adjust) {
+        if adjust == Adjust::Array {
+            self.refresh_array_draft();
+            return;
+        }
         let mut draft = Draft::default();
         if adjust == Adjust::Offset {
             draft.outlines = edit::offset_outlines(
@@ -243,6 +258,9 @@ impl App {
 
     /// The tool bar for the armed Shape command `adjust`.
     pub(super) fn adjust_bar(&self, adjust: Adjust) -> ToolBar {
+        if adjust == Adjust::Array {
+            return self.array_bar();
+        }
         let strings = self.strings();
         let units = self.project().display_units;
         let prefs = self.prefs().adjust;
@@ -252,7 +270,7 @@ impl App {
             (_, Err(CommandError::NothingSelected)) => StrKey::AdjustPromptSelect,
             (Adjust::Offset, _) => StrKey::AdjustPromptOffset,
             (Adjust::FilletCorners, _) => StrKey::AdjustPromptFillet,
-            (Adjust::Join, _) => StrKey::AdjustPromptJoin,
+            (Adjust::Join | Adjust::Array, _) => StrKey::AdjustPromptJoin,
         };
         let choice = |label: StrKey,
                       help: StrKey,

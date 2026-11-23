@@ -69,7 +69,8 @@ pub(super) fn make_unique(project: &Project, ids: &[InstanceId]) -> Result<Proje
 
 /// `CopyInstances`: for each of `placements`, a linked copy of each of
 /// `ids`, placed by the placement after the instance's own transform and
-/// named as a duplicate is. The copies of one placement are in the
+/// named as a duplicate is; with `folder`, they and their sources are
+/// filed in a new group of that name. The copies of one placement are in the
 /// Design Tree's order, whatever order the selection was made in
 /// (`sourcesInAuthoredOrder`): the order shapes are listed in is the
 /// order they are cut in.
@@ -77,6 +78,7 @@ pub(super) fn copy(
     project: &Project,
     ids: &[InstanceId],
     placements: &[Transform],
+    folder: Option<&str>,
 ) -> Result<Project, CommandError> {
     if ids.is_empty() {
         return Err(CommandError::NothingSelected);
@@ -111,6 +113,18 @@ pub(super) fn copy(
             };
             next.instances.push(copy);
         }
+    }
+    // An array's copies and their sources are one group.
+    if let Some(name) = folder {
+        let made: Vec<InstanceId> = next
+            .instances
+            .iter()
+            .skip(project.instances.len())
+            .map(|instance| instance.id.clone())
+            .collect();
+        let mut filed = ids.to_vec();
+        filed.extend(made);
+        next = super::folders::new_folder(&next, name, &filed, true)?;
     }
     Ok(next)
 }

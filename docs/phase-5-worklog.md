@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 21: 3,677.
+`0.5.0-alpha.1`. After slice 19: 3,683.
 
 ## Decisions waiting for the maintainer
 
@@ -198,6 +198,17 @@ Decisions made while building are added here.
   group. A double-click on a shape of a group selects that shape and
   does not arm Edit nodes. Which folders are folded is not saved.
   Dragging rows does not scroll the tree at its edges.
+- Slice 19: Array… takes its values in the tool bar, as Offset… does,
+  not in a popover; its button is *Done*, not *Create*. The group an
+  array makes holds its source too, so the array moves as one (the
+  spec said the copies). A grid's spacing is a gap by default, where
+  upstream's is a pitch: copies of a wide shape do not overlap at the
+  first values. Upstream's taper of sizes along an array and its array
+  along a path are not ported. At most 1000 copies. The bar's count
+  field of a circular array is labelled *Count*, its turn choice
+  *Copies*. The Inspector is now closed while any tool-bar command
+  (Offset…, Fillet Corners…, Join…, Array…) is armed, as it is while
+  drawing.
 
 ## Slices
 
@@ -237,7 +248,7 @@ The numbers are the design spec's.
 | Slice | What | Status |
 | --- | --- | --- |
 | 18 | Make Unique, cut, copy, paste, Alt-drag: `Command::{MakeUnique, CopyInstances, CutInstances, PasteShapes}`, the app's clipboard (`dc_app::clipboard`), Edit ▸ Cut, Copy, Paste and their keys, Shape ▸ Make Unique, the Viewport's context menu (a shape's is its Design Tree row's; the Edit nodes tool's is its bar's buttons), an Alt-drag's linked copy. Gate: 3,660 tests | done |
-| 19 | Arrays (after slice 21: an array files its copies in a grouped folder) | todo |
+| 19 | Arrays (done after slice 21: an array files its copies in a group): `dc_app::array` (port: grid and circular), `CopyInstances`' `folder`, the Array mode of the tool bar (`tool::arrays`), Arrange ▸ Array…. Gate: 3,683 tests | done |
 | 20 | Align and distribute: `dc_app::align` (port), `arrange::Action::{Align, Distribute}`, `Command::PlaceInstances`, the Align section of Properties, Arrange ▸ Align and Distribute. Gate: 3,667 tests | done |
 | 21 | Folders and groups: `Command::{NewFolder, RenameFolder, DeleteFolder, Ungroup, MoveRows}`, folder rows in `dc_app::tree`, group selection on the Viewport, the Design Tree's folder rows with fold, rename, menu and row drag and drop, the Shapes header's New Folder, Arrange ▸ Group and Ungroup (⌘G, ⇧⌘G). Gate: 3,677 tests | done |
 | 22 | Construction geometry | todo |

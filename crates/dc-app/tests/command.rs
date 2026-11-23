@@ -474,6 +474,7 @@ fn every_command() -> Vec<(Project, Command)> {
             Command::CopyInstances {
                 ids: vec![instance("i4")],
                 placements: vec![Transform::translate(5.0, 0.0)],
+                folder: Some("square array".into()),
             },
         ),
         (drawing.clone(), wider_slot()),

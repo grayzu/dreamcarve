@@ -54,6 +54,7 @@ paste = "Paste {subject}"
 make_unique = "Make {subject} unique"
 align = "Align {subject}"
 distribute = "Distribute {subject}"
+array = "Array {subject}"
 new_folder = "New folder {subject}"
 group = "Group {subject}"
 rename_folder = "Rename folder {subject}"
@@ -1383,6 +1384,7 @@ menu_rotate = "Rotate…"
 menu_flip_horizontal = "Flip Horizontal"
 menu_flip_vertical = "Flip Vertical"
 menu_centre_on_stock = "Centre on Stock"
+menu_array = "Array…"
 menu_align = "Align"
 menu_align_left = "Left"
 menu_align_centre = "Centre"
@@ -1620,6 +1622,11 @@ corner_size = "Corner size"
 sides = "Sides"
 distance = "Distance"
 tolerance = "Tolerance"
+columns = "Columns"
+rows = "Rows"
+spacing_x = "Spacing X"
+spacing_y = "Spacing Y"
+copies = "Count"
 
 # What each size is: its label's tooltip in the tool bar and in the
 # Properties panel's Shape section (capabilities 83 and 84).
@@ -1643,6 +1650,11 @@ corner_size = "The radius of a rounded corner, or how far a chamfered one is cut
 sides = "How many sides the polygon has, 3 to 50."
 distance = "How far the offset is from the outline, as the shape is seen, in the project's units; above 0."
 tolerance = "How near two ends must be to be joined; a gap that near is bridged by a straight segment."
+columns = "How many copies lie side by side along X, the selection counted as the first: 1 or more."
+rows = "How many rows of copies there are along Y, the selection's row counted as the first: 1 or more."
+spacing_x = "How far apart the columns are, as a gap between copies or as their pitch; below 0 goes to the left."
+spacing_y = "How far apart the rows are, as a gap between copies or as their pitch; below 0 goes downward."
+copies = "How many there are round the centre, the selection counted as the first: 2 or more."
 
 # A tool's choices in the tool bar, and what each can be (capability 86).
 [draw.choice]
@@ -1748,6 +1760,28 @@ intersect = "{name} intersect"
 offset = "Offset"
 fillet = "Fillet Corners"
 join = "Join"
+array = "Array"
+
+# Arrange ▸ Array… (phase 5, capability 98): the tool bar is its form.
+[array]
+name = "{name} array"
+kind = "Kind"
+kind_help = "A grid is rows and columns of copies; a circular array is copies round a centre. The selection is the first of them."
+kind_grid = "Grid"
+kind_circular = "Circular"
+spacing = "Spacing"
+spacing_help = "A gap is measured from one copy's side to the next copy's near side; a pitch, to its same side."
+spacing_gap = "Gap"
+spacing_pitch = "Pitch"
+turn = "Copies"
+turn_help = "Turned, each copy faces the centre as the selection does; kept upright, the copies are moved and not turned."
+turn_on = "Turn"
+turn_off = "Keep upright"
+
+[array.prompt]
+grid = "Set the copies and their spacing, then Done"
+centre = "Click the centre of the circle, or type it"
+circular = "Set the copies and the angle, then Done"
 
 [adjust]
 side = "Side"

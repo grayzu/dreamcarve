@@ -6,6 +6,7 @@
 mod align;
 pub mod app;
 pub mod arrange;
+pub mod array;
 pub mod clipboard;
 pub mod command;
 pub mod edit;

@@ -953,3 +953,62 @@ fn a_group_is_selected_as_one() {
     assert!(h.state().app().project().folders.is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 98 in the window: Arrange ▸ Array… takes its values in the
+/// tool bar and previews the copies; Done makes them, linked and in one
+/// group. A circular array's centre is a click on the Viewport.
+#[test]
+fn an_array_from_the_arrange_menu() {
+    let (mut h, dir) = plaque("array");
+    select(&mut h, &["i4"]);
+    let count = h.state().app().project().instances.len();
+    let open = |h: &mut Harness<'_, Shell>| {
+        h.get_by_role_and_label(Role::Button, "Arrange").click();
+        h.run();
+        h.get_by_role_and_label(Role::Button, "Array…").click();
+        h.run_steps(8);
+    };
+    open(&mut h);
+    assert_eq!(tool(&h), Tool::Adjust(Adjust::Array));
+    for field in ["Columns", "Rows", "Spacing X", "Spacing Y"] {
+        assert!(
+            h.query_by_role_and_label(Role::TextInput, field).is_some(),
+            "{field}"
+        );
+    }
+    assert_eq!(h.state().app().draft().outlines.len(), 1, "one copy shown");
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(8);
+    let app = h.state().app();
+    assert_eq!(app.undo_label(), Some("Array “square”"));
+    assert_eq!(app.project().instances.len(), count + 1);
+    assert_eq!(tool(&h), Tool::Select);
+    assert!(listed(&h).contains(&"{square array}".to_owned()));
+    assert_eq!(
+        definition_of(&h, "i4"),
+        app.project().instances[4].definition.as_str(),
+        "the copy is linked, and filed beside its source"
+    );
+
+    // Circular: the centre is clicked.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run();
+    select(&mut h, &["i4"]);
+    open(&mut h);
+    h.get_by_role_and_label(Role::RadioButton, "Circular")
+        .click();
+    h.run_steps(8);
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Done").is_none(),
+        "no centre yet"
+    );
+    let middle = square_middle(&h);
+    let at = on_screen(&h, Point::new(middle.x + 30.0, middle.y));
+    click_at(&mut h, at, egui::Modifiers::NONE);
+    assert_eq!(h.state().app().draft().outlines.len(), 3);
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(8);
+    assert_eq!(h.state().app().project().instances.len(), count + 3);
+    assert_eq!(selected(&h).len(), 4, "the array is selected whole");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

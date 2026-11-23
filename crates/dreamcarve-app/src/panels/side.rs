@@ -353,8 +353,13 @@ pub(crate) fn inspecting<'a>(state: &FrameState<'a>) -> Option<Inspecting<'a>> {
     match state.step {
         // While a drawing tool is armed the Viewport is the tool's: what
         // it draws is selected, and its Properties show when the tool is
-        // put down (phase 5, capability 90), not over the drawing.
-        Step::Design if matches!(app.tool(), dc_app::Tool::Draw(_)) => None,
+        // put down (phase 5, capability 90), not over the drawing. A
+        // command that takes its values in the tool bar (Offset…,
+        // Array…) has the Viewport the same way: its preview is on the
+        // stock, and Properties would change what it is a preview of.
+        Step::Design if matches!(app.tool(), dc_app::Tool::Draw(_) | dc_app::Tool::Adjust(_)) => {
+            None
+        }
         Step::Design => match app.selection() {
             Selection::Instances(ids) if !ids.is_empty() => Some(Inspecting::Shapes(ids)),
             Selection::Tabs(ids) if !ids.is_empty() => Some(Inspecting::Tabs(ids)),

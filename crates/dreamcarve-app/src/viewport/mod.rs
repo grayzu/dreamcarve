@@ -1163,6 +1163,7 @@ fn gestures(
                     Command::CopyInstances {
                         ids,
                         placements: vec![preview.delta],
+                        folder: None,
                     }
                 } else {
                     Command::TransformInstances {

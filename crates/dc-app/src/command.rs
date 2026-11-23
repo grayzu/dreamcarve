@@ -261,6 +261,9 @@ pub enum Command {
         ids: Vec<InstanceId>,
         /// Where each set of copies goes, from where its original is.
         placements: Vec<Transform>,
+        /// The name of a new group that the copies and their sources
+        /// are filed in: an array's (capability 98).
+        folder: Option<String>,
     },
     /// Append an operation under an id the project does not have.
     AddOperation(Operation),
@@ -511,9 +514,11 @@ impl Command {
             Self::PasteShapes(clips) => next = copies::paste(project, clips)?,
             Self::MakeUnique(ids) => next = copies::make_unique(project, ids)?,
             Self::PlaceInstances { moves, .. } => next = instances::place(project, moves)?,
-            Self::CopyInstances { ids, placements } => {
-                next = copies::copy(project, ids, placements)?;
-            }
+            Self::CopyInstances {
+                ids,
+                placements,
+                folder,
+            } => next = copies::copy(project, ids, placements, folder.as_deref())?,
             Self::AddOperation(operation) => {
                 if next.operations.iter().any(|o| o.id() == operation.id()) {
                     return Err(CommandError::DuplicateId {
@@ -751,8 +756,13 @@ impl Command {
                 with_subject(StrKey::CommandLabelPaste, &subject)
             }
             Self::MakeUnique(ids) => with_subject(StrKey::CommandLabelMakeUnique, &subject_of(ids)),
-            Self::CopyInstances { ids, .. } => {
-                with_subject(StrKey::CommandLabelCopy, &subject_of(ids))
+            Self::CopyInstances { ids, folder, .. } => {
+                let key = if folder.is_some() {
+                    StrKey::CommandLabelArray
+                } else {
+                    StrKey::CommandLabelCopy
+                };
+                with_subject(key, &subject_of(ids))
             }
             Self::PlaceInstances { moves, what } => {
                 let ids: Vec<InstanceId> = moves.iter().map(|(id, _)| id.clone()).collect();
