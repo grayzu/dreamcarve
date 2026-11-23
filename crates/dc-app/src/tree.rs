@@ -21,7 +21,9 @@
 //! construction rows have no counterpart here.
 
 use dc_geometry::{Transform, as_circle};
-use dc_project::{BitmapId, FeatureDefinition, InstanceId, Operation, OperationId, Project, TabId};
+use dc_project::{
+    BitmapId, FeatureDefinition, FolderId, InstanceId, Operation, OperationId, Project, TabId,
+};
 
 use crate::command::Command;
 use crate::editor::targets;
@@ -82,6 +84,9 @@ pub struct ShapeRow {
     pub visible: bool,
     /// The padlock: refuses transforms.
     pub locked: bool,
+    /// The folder it is filed in (phase 5, capability 99): its row is
+    /// under the folder's.
+    pub folder: Option<FolderId>,
     /// What the shape is, as its leading glyph says.
     pub glyph: ShapeGlyph,
     /// Another instance places the same definition (the `component`
@@ -94,6 +99,24 @@ pub struct ShapeRow {
     /// operation's place in the palette, for the bar on the row's left
     /// edge. `None` until [`Tree::with_targets`] marks the rows.
     pub target: Option<usize>,
+}
+
+/// A folder's row (phase 5, capability 99), over the rows filed in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderRow {
+    /// The folder.
+    pub id: FolderId,
+    /// Its name.
+    pub name: String,
+    /// It is a group: its shapes are selected together on the Viewport.
+    pub group: bool,
+    /// The instances filed in it, in row order.
+    pub rows: Vec<InstanceId>,
+    /// Its eye: every row shown (`Some(true)`), every row hidden, or
+    /// mixed (`None`, as for a folder with no rows).
+    pub visible: Option<bool>,
+    /// Its padlock, as its eye.
+    pub locked: Option<bool>,
 }
 
 /// The placed tabs on one outline, as one row.
@@ -152,6 +175,9 @@ pub enum Section {
 pub enum Row<'a> {
     /// A section's header, drawn whether or not it has rows.
     Header(Section),
+    /// A folder's row, before the rows filed in it; a folder with no
+    /// rows comes after the shapes.
+    Folder(&'a FolderRow),
     /// An instance's row.
     Shape(&'a ShapeRow),
     /// An outline's placed tabs.
@@ -173,8 +199,12 @@ pub struct SectionState {
 /// The Design Tree of one snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Tree {
-    /// The Shapes section: one row per instance, in file order.
+    /// The Shapes section: one row per instance, in file order, a
+    /// folder's rows together where the first of them is.
     pub shapes: Vec<ShapeRow>,
+    /// The folders: those with rows in the order their first row has,
+    /// then the empty ones in the file's order.
+    pub folders: Vec<FolderRow>,
     /// The Tabs section: one row per outline with placed tabs, in the
     /// order of the instances, then of the outlines.
     pub tabs: Vec<TabRow>,
@@ -186,9 +216,9 @@ impl Tree {
     /// The rows of `project`.
     #[must_use]
     pub fn build(project: &Project) -> Self {
-        let shapes = project
-            .instances
-            .iter()
+        let shapes: Vec<ShapeRow> = gathered(project)
+            .into_iter()
+            .filter_map(|index| project.instances.get(index))
             .map(|instance| {
                 let definition = project.definitions.get(&instance.definition);
                 ShapeRow {
@@ -196,6 +226,11 @@ impl Tree {
                     name: instance.name.clone(),
                     visible: instance.visible,
                     locked: instance.locked,
+                    // A folder the file does not have files nothing.
+                    folder: instance
+                        .folder
+                        .clone()
+                        .filter(|id| project.folders.iter().any(|f| f.id == *id)),
                     glyph: definition.map_or(ShapeGlyph::Closed, |d| {
                         ShapeGlyph::of(d, instance.transform, project.flatten_tolerance_mm)
                     }),
@@ -265,8 +300,37 @@ impl Tree {
             })
             .collect();
 
+        let mut folders: Vec<FolderRow> = project
+            .folders
+            .iter()
+            .map(|folder| {
+                let rows: Vec<&ShapeRow> = shapes
+                    .iter()
+                    .filter(|row| row.folder.as_ref() == Some(&folder.id))
+                    .collect();
+                FolderRow {
+                    id: folder.id.clone(),
+                    name: folder.name.clone(),
+                    group: folder.group,
+                    visible: common_bool(&rows, |r| Some(r.visible)),
+                    locked: common_bool(&rows, |r| Some(r.locked)),
+                    rows: rows.iter().map(|row| row.id.clone()).collect(),
+                }
+            })
+            .collect();
+        // Those with rows where their first row is; the empty ones last.
+        let first = |folder: &FolderRow| {
+            folder
+                .rows
+                .first()
+                .and_then(|id| shapes.iter().position(|row| row.id == *id))
+                .unwrap_or(usize::MAX)
+        };
+        folders.sort_by_key(first);
+
         Self {
             shapes,
+            folders,
             tabs,
             bitmaps,
         }
@@ -300,7 +364,23 @@ impl Tree {
         let mut rows =
             Vec::with_capacity(3 + self.shapes.len() + self.tabs.len() + self.bitmaps.len());
         rows.push(Row::Header(Section::Shapes));
-        rows.extend(self.shapes.iter().map(Row::Shape));
+        for shape in &self.shapes {
+            // A folder's row goes before the first row filed in it.
+            if let Some(folder) = self
+                .folders
+                .iter()
+                .find(|folder| folder.rows.first() == Some(&shape.id))
+            {
+                rows.push(Row::Folder(folder));
+            }
+            rows.push(Row::Shape(shape));
+        }
+        rows.extend(
+            self.folders
+                .iter()
+                .filter(|folder| folder.rows.is_empty())
+                .map(Row::Folder),
+        );
         rows.push(Row::Header(Section::Tabs));
         rows.extend(self.tabs.iter().map(Row::Tab));
         rows.push(Row::Header(Section::Pictures));
@@ -357,6 +437,94 @@ impl Tree {
     }
 }
 
+/// The instances of `project`, by index, in the order the Design Tree
+/// lists them (phase 5, capability 99): the file's, with each folder's
+/// rows together after the first of them. The folder commands leave the
+/// file in this order; a file written by hand may not be.
+#[must_use]
+pub fn gathered(project: &Project) -> Vec<usize> {
+    let filed = |index: usize| {
+        project
+            .instances
+            .get(index)
+            .and_then(|instance| instance.folder.as_ref())
+            .filter(|id| project.folders.iter().any(|folder| folder.id == **id))
+    };
+    let mut order = Vec::with_capacity(project.instances.len());
+    for index in 0..project.instances.len() {
+        if order.contains(&index) {
+            continue;
+        }
+        order.push(index);
+        if let Some(folder) = filed(index) {
+            order.extend(
+                (index.saturating_add(1)..project.instances.len())
+                    .filter(|other| filed(*other) == Some(folder)),
+            );
+        }
+    }
+    order
+}
+
+/// `<Folder|Group> <n>` for the least `n` from 1 that no folder of
+/// `project` is named.
+#[must_use]
+pub fn next_folder_name(project: &Project, group: bool) -> String {
+    let base = if group { "Group" } else { "Folder" };
+    (1u32..)
+        .map(|n| format!("{base} {n}"))
+        .find(|name| !project.folders.iter().any(|folder| folder.name == *name))
+        .unwrap_or_else(|| format!("{base} 1"))
+}
+
+/// `ids` with each shape of a group replaced by the group's shapes
+/// (CONTEXT: Group): what a click on the Viewport selects. Each shape
+/// once, in the order first met.
+#[must_use]
+pub fn with_groups(project: &Project, ids: &[InstanceId]) -> Vec<InstanceId> {
+    let mut out: Vec<InstanceId> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let group = project
+            .instances
+            .iter()
+            .find(|instance| instance.id == *id)
+            .and_then(|instance| instance.folder.as_ref())
+            .filter(|folder| project.folders.iter().any(|f| f.id == **folder && f.group));
+        let members: Vec<InstanceId> = match group {
+            Some(group) => project
+                .instances
+                .iter()
+                .filter(|instance| instance.folder.as_ref() == Some(group))
+                .map(|instance| instance.id.clone())
+                .collect(),
+            None => vec![id.clone()],
+        };
+        for member in members {
+            if !out.contains(&member) {
+                out.push(member);
+            }
+        }
+    }
+    out
+}
+
+/// The groups that hold one of `ids`, in the file's order: what
+/// *Ungroup* dissolves.
+#[must_use]
+pub fn groups_of(project: &Project, ids: &[InstanceId]) -> Vec<FolderId> {
+    project
+        .folders
+        .iter()
+        .filter(|folder| {
+            folder.group
+                && project.instances.iter().any(|instance| {
+                    ids.contains(&instance.id) && instance.folder.as_ref() == Some(&folder.id)
+                })
+        })
+        .map(|folder| folder.id.clone())
+        .collect()
+}
+
 /// The ids of `rows` from `from` to `to` inclusive, in row order; `to`
 /// alone when `from` is not among them, and none when `to` is not.
 fn between<T: Clone + PartialEq>(rows: &[&T], from: &T, to: &T) -> Vec<T> {
@@ -401,6 +569,13 @@ pub enum MenuItem {
     Duplicate,
     /// Delete, with the targets and tabs that go with it (capability 59).
     Delete,
+    /// **New Folder** (capability 99): a folder holding the rows.
+    NewFolder,
+    /// **Group**: a group of the rows; listed for two or more.
+    Group,
+    /// **Ungroup**: the groups that hold a row dissolved; listed while
+    /// one does.
+    Ungroup,
     /// **Make Unique** (capability 98): listed while a row is a linked
     /// copy.
     MakeUnique,
@@ -428,9 +603,10 @@ fn all(project: &Project, ids: &[InstanceId]) -> (bool, bool) {
 
 /// The menu for `ids`, as the shell lists it: Rename, Hide or Show (Show
 /// when any is hidden), Lock or Unlock (Unlock when every one is locked),
-/// Cut, Copy, Paste while `can_paste`, Duplicate, Delete, Make Unique
-/// while one of `ids` is a linked copy, Convert to Path while one keeps
-/// its sizes, Zoom to, Add operation, and, while operation `op` is
+/// Cut, Copy, Paste while `can_paste`, Duplicate, Delete, New Folder,
+/// Group for two rows or more, Ungroup while one is in a group, Make
+/// Unique while one of `ids` is a linked copy, Convert to Path while one
+/// keeps its sizes, Zoom to, Add operation, and, while operation `op` is
 /// selected, *Add to* it when it lacks one of `ids` and *Remove from* it
 /// when it targets one (capabilities 57, 84 and 98).
 #[must_use]
@@ -473,7 +649,13 @@ pub fn menu(
     if can_paste {
         items.push(MenuItem::Paste);
     }
-    items.extend([MenuItem::Duplicate, MenuItem::Delete]);
+    items.extend([MenuItem::Duplicate, MenuItem::Delete, MenuItem::NewFolder]);
+    if ids.len() > 1 {
+        items.push(MenuItem::Group);
+    }
+    if !groups_of(project, ids).is_empty() {
+        items.push(MenuItem::Ungroup);
+    }
     if linked {
         items.push(MenuItem::MakeUnique);
     }
@@ -538,6 +720,20 @@ pub fn menu_command(project: &Project, item: MenuItem, ids: &[InstanceId]) -> Op
         MenuItem::Delete => Some(Command::DeleteInstances(ids)),
         MenuItem::MakeUnique => Some(Command::MakeUnique(ids)),
         MenuItem::ConvertToPath => Some(Command::ConvertToPath(ids)),
+        MenuItem::NewFolder => Some(Command::NewFolder {
+            name: next_folder_name(project, false),
+            ids,
+            group: false,
+        }),
+        MenuItem::Group => (ids.len() > 1).then(|| Command::NewFolder {
+            name: next_folder_name(project, true),
+            ids,
+            group: true,
+        }),
+        MenuItem::Ungroup => {
+            let groups = groups_of(project, &ids);
+            (!groups.is_empty()).then_some(Command::Ungroup(groups))
+        }
         MenuItem::Rename
         | MenuItem::Cut
         | MenuItem::Copy
@@ -641,6 +837,9 @@ pub fn bitmap_menu_command(project: &Project, item: MenuItem, ids: &[BitmapId]) 
         | MenuItem::Paste
         | MenuItem::MakeUnique
         | MenuItem::ConvertToPath
+        | MenuItem::NewFolder
+        | MenuItem::Group
+        | MenuItem::Ungroup
         | MenuItem::Duplicate
         | MenuItem::AddOperation
         | MenuItem::AddTo

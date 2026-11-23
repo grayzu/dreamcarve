@@ -675,8 +675,15 @@ fn linked_copies_follow() {
     harness
         .run(Command::DuplicateInstances(vec![id("i2")]))
         .unwrap();
-    let copy = harness.app.project().instances.last().unwrap().clone();
-    assert_eq!(copy.name, "Rectangle 1 (2)");
+    // The copy is filed in the rectangle's folder, beside it.
+    let copy = harness
+        .app
+        .project()
+        .instances
+        .iter()
+        .find(|instance| instance.name == "Rectangle 1 (2)")
+        .expect("the copy")
+        .clone();
     assert_eq!(
         type_size(&mut harness, copy.id.as_str(), SizeField::Width, "80")
             .ok()

@@ -718,3 +718,238 @@ fn align_and_distribute_from_properties_and_the_menu() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The Shapes section as the tree lists it: a folder as `[name]`, a
+/// group as `{name}`, a row in a folder indented.
+fn listed(h: &Harness<'_, Shell>) -> Vec<String> {
+    use dc_app::tree::{Row, Tree};
+    let tree = Tree::build(h.state().app().project());
+    let mut out = Vec::new();
+    for row in tree.rows() {
+        match row {
+            Row::Folder(f) if f.group => out.push(format!("{{{}}}", f.name)),
+            Row::Folder(f) => out.push(format!("[{}]", f.name)),
+            Row::Shape(s) if s.folder.is_some() => out.push(format!("  {}", s.name)),
+            Row::Shape(s) => out.push(s.name.clone()),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn selected(h: &Harness<'_, Shell>) -> Vec<String> {
+    h.state()
+        .app()
+        .selection()
+        .instances()
+        .iter()
+        .map(|id| id.as_str().to_owned())
+        .collect()
+}
+
+/// Capability 99 in the Design Tree: *New Folder* files the selection;
+/// the folder's row folds its rows away, selects them, is renamed in
+/// place, and its menu ungroups or deletes it.
+#[test]
+fn folders_in_the_design_tree() {
+    let (mut h, dir) = plaque("folders");
+    common::go_to(&mut h, "Design");
+    select(&mut h, &["i5", "i6"]);
+    h.get_by_role_and_label(Role::Button, "New folder holding the selected shapes")
+        .click();
+    h.run();
+    assert_eq!(h.state().app().undo_label(), Some("New folder “Folder 1”"));
+    assert_eq!(
+        listed(&h)[4..8],
+        ["[Folder 1]", "  holes-1", "  holes-2", "holes-3"]
+    );
+    assert!(
+        h.query_by_role_and_label(Role::TreeItem, "Folder 1")
+            .is_some()
+    );
+
+    // Folded, its rows are not listed; unfolded, they are.
+    h.get_by_role_and_label(Role::Button, "Collapse Folder 1")
+        .click();
+    h.run();
+    assert!(
+        h.query_by_role_and_label(Role::TreeItem, "holes-1")
+            .is_none()
+    );
+    h.get_by_role_and_label(Role::Button, "Expand Folder 1")
+        .click();
+    h.run();
+    assert!(
+        h.query_by_role_and_label(Role::TreeItem, "holes-1")
+            .is_some()
+    );
+
+    // A click on the folder selects its shapes.
+    select(&mut h, &["i1"]);
+    h.get_by_role_and_label(Role::TreeItem, "Folder 1").click();
+    h.run();
+    assert_eq!(selected(&h), ["i5", "i6"]);
+
+    // Rename, from its menu, in place.
+    h.get_by_role_and_label(Role::TreeItem, "Folder 1")
+        .click_secondary();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Rename").click();
+    h.run_steps(8);
+    h.get_by_label("Rename folder Folder 1").type_text("Feet");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Rename folder “Folder 1”")
+    );
+    assert_eq!(listed(&h)[4], "[Feet]");
+
+    // Ungroup keeps the shapes; Delete takes them with the folder.
+    let count = h.state().app().project().instances.len();
+    h.get_by_role_and_label(Role::TreeItem, "Feet")
+        .click_secondary();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Ungroup").click();
+    h.run_steps(8);
+    assert!(h.state().app().project().folders.is_empty());
+    assert_eq!(h.state().app().project().instances.len(), count);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run();
+    h.get_by_role_and_label(Role::TreeItem, "Feet")
+        .click_secondary();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Delete").click();
+    h.run_steps(8);
+    assert_eq!(h.state().app().undo_label(), Some("Delete folder “Feet”"));
+    assert_eq!(h.state().app().project().instances.len(), count - 2);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Rows drag within the Design Tree (capability 99): onto a folder to
+/// file them, between rows to reorder, and past the last shape to take
+/// one out.
+#[test]
+fn folders_drag_and_drop() {
+    let (mut h, dir) = plaque("drag-rows");
+    common::go_to(&mut h, "Design");
+    select(&mut h, &["i5", "i6"]);
+    h.get_by_role_and_label(Role::Button, "New folder holding the selected shapes")
+        .click();
+    h.run();
+    let row =
+        |h: &Harness<'_, Shell>, name: &str| h.get_by_role_and_label(Role::TreeItem, name).rect();
+    let upper = |rect: egui::Rect| egui::pos2(rect.center().x, rect.top() + 6.0);
+    let lower = |rect: egui::Rect| egui::pos2(rect.center().x, rect.bottom() - 6.0);
+
+    // The square, onto the folder's lower half: filed in it, first.
+    let from = row(&h, "square").center();
+    let to = lower(row(&h, "Folder 1"));
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Move “square” to “Folder 1”")
+    );
+    assert_eq!(
+        listed(&h)[3..8],
+        [
+            "[Folder 1]",
+            "  square",
+            "  holes-1",
+            "  holes-2",
+            "holes-3"
+        ]
+    );
+
+    // Between rows: the island, before the outline.
+    let from = row(&h, "island").center();
+    let to = upper(row(&h, "outline"));
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    assert_eq!(h.state().app().undo_label(), Some("Reorder “island”"));
+    assert_eq!(listed(&h)[..3], ["island", "outline", "pocket"]);
+
+    // Out of the folder, to the end: onto the Tabs header. A selected
+    // row takes the selection with it, here both holes.
+    assert_eq!(selected(&h), ["i5", "i6"]);
+    let from = row(&h, "holes-1").center();
+    let to = h
+        .get_by_role_and_label(Role::Heading, "Tabs")
+        .rect()
+        .center();
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    assert_eq!(h.state().app().undo_label(), Some("Reorder 2 shapes"));
+    let rows = listed(&h);
+    assert_eq!(rows[rows.len() - 2..], ["holes-1", "holes-2"]);
+    assert_eq!(rows[3..6], ["[Folder 1]", "  square", "holes-3"]);
+
+    // Let go where it was: nothing changes, and nothing is said.
+    let steps = h.state().app().undo_label().map(str::to_owned);
+    let said = h.state().message().map(str::to_owned);
+    let from = row(&h, "pocket").center();
+    let to = upper(row(&h, "pocket"));
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    assert_eq!(h.state().app().undo_label().map(str::to_owned), steps);
+    assert_eq!(h.state().message().map(str::to_owned), said);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A group is selected as one on the Viewport, and a double-click
+/// reaches the one shape (capability 99); Arrange ▸ Ungroup dissolves it.
+#[test]
+fn a_group_is_selected_as_one() {
+    let (mut h, dir) = plaque("group");
+    select(&mut h, &["i5", "i6"]);
+    h.get_by_role_and_label(Role::Button, "Arrange").click();
+    h.run();
+    let group = h
+        .query_all_by_role(Role::Button)
+        .find(|node| {
+            node.accesskit_node()
+                .label()
+                .is_some_and(|label| label.starts_with("Group"))
+        })
+        .expect("Arrange has Group");
+    group.click();
+    h.run_steps(8);
+    assert_eq!(h.state().app().undo_label(), Some("Group 2 shapes"));
+    assert!(listed(&h).contains(&"{Group 1}".to_owned()));
+
+    // A click on one hole selects both; a double-click, the one. The
+    // menu's click is let grow old first: egui would count a third click
+    // within its delay of two others as a triple-click.
+    select(&mut h, &["i1"]);
+    h.run_steps(30);
+    // On the hole's own outline: the plaque's and the pocket's insides
+    // hold its middle too.
+    let hole = box_of(&h, "i5");
+    let at = on_screen(
+        &h,
+        Point::new(hole.max.x, f64::midpoint(hole.min.y, hole.max.y)),
+    );
+    click_at(&mut h, at, egui::Modifiers::NONE);
+    assert_eq!(selected(&h), ["i5", "i6"]);
+    click_at(&mut h, at, egui::Modifiers::NONE);
+    assert_eq!(selected(&h), ["i5"], "the double-click reaches the one");
+    assert_eq!(tool(&h), Tool::Select);
+
+    // Dragging one moves both.
+    select(&mut h, &["i1"]);
+    let before = box_of(&h, "i6");
+    let to = egui::pos2(at.x + 40.0, at.y);
+    // Frames far enough apart that the press is no double-click.
+    h.run_steps(30);
+    common::drag(&mut h, at, to, egui::PointerButton::Primary);
+    assert_eq!(h.state().app().undo_label(), Some("Move 2 shapes"));
+    assert!(box_of(&h, "i6").min.x > before.min.x + 1.0);
+
+    select(&mut h, &["i5"]);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::G,
+    );
+    h.run();
+    assert_eq!(h.state().app().undo_label(), Some("Ungroup “Group 1”"));
+    assert!(h.state().app().project().folders.is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

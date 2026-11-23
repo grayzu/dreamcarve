@@ -254,8 +254,9 @@ pub enum Command { /* phase 4's, and: */
     PlaceInstances { moves: Vec<(InstanceId, Transform)>, what: Placing },   // Align | Distribute
     SetConstruction { ids: Vec<InstanceId>, construction: bool },
     NewFolder { name: String, ids: Vec<InstanceId>, group: bool },
-    RenameFolder { id: FolderId, name: String }, DeleteFolder(FolderId), Ungroup(FolderId),
-    /// Rows moved to `before` (an index into `instances`, or the end) and into `folder`.
+    RenameFolder { id: FolderId, name: String }, DeleteFolder(FolderId), Ungroup(Vec<FolderId>),
+    /// Rows moved before row `before` (or after the folder's last row, or to the end) and into
+    /// `folder`.
     MoveRows { ids: Vec<InstanceId>, before: Option<InstanceId>, folder: Option<FolderId> },
     SetBitmapOpacity { ids: Vec<BitmapId>, opacity_fraction: f64 },
     PlaceBitmap { id: BitmapId, x_mm: f64, y_mm: f64, width_mm: f64 },   // scale by two points
@@ -944,6 +945,47 @@ the tool bar of slice 9 is its form.
   `AdjustPrefs::align_to_stock`, for the session. Ten Lucide icons
   (`align-start-vertical` … `align-vertical-distribute-center`).
 
+### Folders and groups (slice 21)
+
+- `dc_app::command::folders` (ported from `featureSlice.ts`'s folder
+  actions): `new_folder`, `rename`, `delete_folder` (its shapes go as
+  `DeleteInstances` removes them), `ungroup` (several folders in one
+  step), `move_rows`. There is no tree beside the shapes, as upstream
+  has: a folder's rows are the instances that name it, and `settle`,
+  run at the end of `Command::apply` whenever a command changed which
+  instances there are or where one is filed, removes a group left
+  empty (`prune_groups`) and puts each folder's rows together after
+  the first of them (`gather`, by `tree::gathered`). So a duplicate, a
+  paste or a drawn shape filed in a folder lands beside the folder's
+  rows, and the order listed is the order in the file.
+- `dc_app::tree`: `FolderRow { id, name, group, rows, visible, locked
+  }`, `ShapeRow::folder`, `Row::Folder` before a folder's first row
+  (an empty folder after the shapes), `Tree::folders`,
+  `next_folder_name`, `with_groups` (a shape of a group replaced by
+  the group's shapes) and `groups_of`. `menu` gains *New Folder*,
+  *Group* (two rows or more) and *Ungroup* (a row in a group).
+  `Tree::build` lists a file whose folder rows are apart as if they
+  were together.
+- `Selection::clicked_in` and `boxed_in` are the Viewport's click and
+  marquee: a shape of a group is its group, toggled as one. The tree's
+  rows keep `clicked`. A drag that starts on a shape of a group not
+  selected takes the group; a double-click selects the one shape and
+  arms Edit nodes only for a shape in no group.
+- The window, `panels/tree.rs`: `folder_row` (eye, padlock, chevron,
+  folder or group glyph, name or rename field, count; a click selects
+  its rows; its menu is *Rename*, *Ungroup*, *Delete*); rows of a
+  folder set in 16 px; which folders are folded is egui's memory, for
+  the session; the Shapes header's *New Folder* button
+  (`folder-plus`). Rows sense drags: the rows dragged (the selection
+  with a selected row, else the one) are kept in egui's memory while
+  the button is down; each row and folder header says where a release
+  over it would put them (`DropAt`: before a row, into a folder, the
+  Tabs header for the end), a 2 px `accent` line is drawn there, and
+  the release runs one `MoveRows`, or nothing when it would change
+  nothing.
+- `keyboard.rs`: `Group` (⌘G) and `Ungroup` (⇧⌘G), rows of the Arrange
+  menu.
+
 ## Visual design
 
 Phase 4's tokens and components hold. Added to the palette, in both
@@ -1142,8 +1184,11 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `featureLifecycleOps.test.ts`): `align_left_right_and_centre`, `top_is_the_greatest_y`, `to_stock`,
 `distribute_by_gaps_and_by_centres`, `a_locked_shape_stays_and_is_named`,
 `a_turned_shape_aligns_by_its_placed_box`, and in the window
-`editing::align_and_distribute_from_properties_and_the_menu`; `tree::folders_file_rows`,
-`tree::rows_reorder_the_file`, `tree::a_group_selects_as_one`,
+`editing::align_and_distribute_from_properties_and_the_menu`; `dc_app` `tests/folders.rs` (slice
+21; ports from `folderGroup.test.ts`): `a_new_folder_holds_the_selection`, `folders_file_rows`,
+`rows_reorder_the_file`, `a_group_selects_as_one`, `delete_and_rename_a_folder`,
+`a_group_goes_with_its_last_shape`, `the_row_menu_makes_folders_and_groups`, and in the window
+`editing::` `folders_in_the_design_tree`, `folders_drag_and_drop`, `a_group_is_selected_as_one`;
 `command::construction_leaves_every_operation`, `operations::pickers_skip_construction`,
 `dc_job::checks::construction_is_not_checked` (acc 122–125).
 

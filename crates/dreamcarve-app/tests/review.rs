@@ -2690,8 +2690,9 @@ fn p5_editing_dir() -> PathBuf {
 /// in the Edit nodes tool with a corner selected and the bar's buttons;
 /// the corner filleted; the Shape menu; Offset… in the tool bar with its
 /// preview; the Trim tool over the piece a click would take out;
-/// (slice 18) the Viewport's context menu and the Edit menu; and (slice
-/// 20) Align and Distribute in Properties. Dark
+/// (slice 18) the Viewport's context menu and the Edit menu; (slice 20)
+/// Align and Distribute in Properties; and (slice 21) a group and a
+/// folder in the Design Tree. Dark
 /// and light at 1×, written to `docs/specs/phase-5/review/editing/`,
 /// where they are committed.
 ///
@@ -2833,6 +2834,36 @@ fn phase5_editing_screenshots() {
     h.run();
     park_pointer(&mut h);
     shoot_in(&mut h, &out, "08-align-and-distribute", &looks);
+
+    // 09: a group and a folder in the Design Tree (slice 21).
+    let ids: Vec<_> = h
+        .state()
+        .app()
+        .project()
+        .instances
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    let app = h.state_mut().app_mut();
+    app.run(dc_app::Command::NewFolder {
+        name: "Group 1".to_owned(),
+        ids: vec![ids[0].clone(), ids[2].clone()],
+        group: true,
+    })
+    .unwrap();
+    app.run(dc_app::Command::NewFolder {
+        name: "Guides".to_owned(),
+        ids: vec![ids[1].clone()],
+        group: false,
+    })
+    .unwrap();
+    app.select(dc_app::Selection::Instances(vec![
+        ids[0].clone(),
+        ids[2].clone(),
+    ]));
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "09-a-group-and-a-folder", &looks);
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }

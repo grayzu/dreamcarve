@@ -158,6 +158,11 @@ fn kind(command: &Command) -> &'static str {
         Command::MakeUnique(_) => "MakeUnique",
         Command::CopyInstances { .. } => "CopyInstances",
         Command::PlaceInstances { .. } => "PlaceInstances",
+        Command::NewFolder { .. } => "NewFolder",
+        Command::RenameFolder { .. } => "RenameFolder",
+        Command::DeleteFolder(_) => "DeleteFolder",
+        Command::Ungroup(_) => "Ungroup",
+        Command::MoveRows { .. } => "MoveRows",
     }
 }
 
@@ -425,6 +430,37 @@ fn every_command() -> Vec<(Project, Command)> {
                 .apply(&plaque)
                 .expect("the square duplicates"),
             Command::MakeUnique(vec![instance("i4")]),
+        ),
+        (
+            plaque.clone(),
+            Command::NewFolder {
+                name: "Folder 1".into(),
+                ids: vec![instance("i4"), instance("i2")],
+                group: false,
+            },
+        ),
+        (
+            drawing.clone(),
+            Command::RenameFolder {
+                id: dc_project::FolderId::new("f1"),
+                name: "Feet".into(),
+            },
+        ),
+        (
+            drawing.clone(),
+            Command::DeleteFolder(dc_project::FolderId::new("f1")),
+        ),
+        (
+            drawing.clone(),
+            Command::Ungroup(vec![dc_project::FolderId::new("f1")]),
+        ),
+        (
+            plaque.clone(),
+            Command::MoveRows {
+                ids: vec![instance("i4")],
+                before: Some(instance("i1")),
+                folder: None,
+            },
         ),
         (
             plaque.clone(),

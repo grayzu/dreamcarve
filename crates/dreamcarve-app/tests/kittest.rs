@@ -5857,6 +5857,35 @@ fn keyboard_shortcuts_reach_their_commands() {
         h.run();
     }
 
+    // Group and Ungroup (capability 99).
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![
+            dc_project::InstanceId::new("i5"),
+            dc_project::InstanceId::new("i6"),
+        ]));
+    h.run();
+    command_key(&h, egui::Key::G);
+    h.run();
+    assert_eq!(
+        h.state().app().project().folders.len(),
+        1,
+        "Ctrl G groups the selection"
+    );
+    assert!(h.state().app().project().folders[0].group);
+    reached.insert(Key::Group);
+    shift_command_key(&h, egui::Key::G);
+    h.run();
+    assert!(
+        h.state().app().project().folders.is_empty(),
+        "Shift Ctrl G ungroups it"
+    );
+    reached.insert(Key::Ungroup);
+    for _ in 0..2 {
+        command_key(&h, egui::Key::Z);
+        h.run();
+    }
+
     select_only(&mut h, "i4");
     h.key_press(egui::Key::H);
     h.run();

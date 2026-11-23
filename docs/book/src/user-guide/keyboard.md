@@ -37,6 +37,8 @@ except in an open sheet.
 | Shift+R | ⇧R | Rotate the selection 90° anticlockwise | Arrange ▸ Rotate 90° Anticlockwise |
 | Ctrl+Shift+H | ⇧⌘H | Flip the selection left to right | Arrange ▸ Flip Horizontal |
 | Ctrl+Shift+V | ⇧⌘V | Flip the selection top to bottom | Arrange ▸ Flip Vertical |
+| Ctrl+G | ⌘G | Group the selected shapes, so that a click selects them all | Arrange ▸ Group |
+| Ctrl+Shift+G | ⇧⌘G | Ungroup the selected shapes' groups | Arrange ▸ Ungroup |
 | F | F | Fit the Viewport to the stock and shapes | View ▸ Fit View |
 | Shift+F | ⇧F | Fit the Viewport to the selection | View ▸ Zoom to Selection |
 | Ctrl+1 | ⌘1 | Open the Design step | View ▸ Go to Design |

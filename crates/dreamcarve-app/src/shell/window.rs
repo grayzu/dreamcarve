@@ -484,6 +484,9 @@ pub(crate) enum Action {
     Tool(dc_app::tool::Event),
     /// The snapping preferences (View ▸ Snapping, ⇧S; capability 82).
     SetSnap(dc_app::SnapSettings),
+    /// Turn a folder's name into a field in its Design Tree row (its
+    /// menu's *Rename*; capability 99).
+    RenameFolder(dc_project::FolderId),
     /// Whether Align aligns to the stock whatever is selected (the
     /// Properties panel's switch, Arrange ▸ Align ▸ To Stock; capability
     /// 98a).
@@ -1621,6 +1624,10 @@ impl Shell {
                 self.go_to(Step::Design);
                 panels::tree::start_rename_picture(ctx, self.app.project(), &id);
             }
+            Action::RenameFolder(id) => {
+                self.go_to(Step::Design);
+                panels::tree::start_rename_folder(ctx, self.app.project(), &id);
+            }
             Action::ShowProject => self.go_to(Step::Stock),
             Action::SetSection { name, open } => {
                 self.app.prefs_mut().sections.insert(name, open);
@@ -2198,6 +2205,14 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         Shortcut::Copy => (!selected.is_empty()).then_some(Action::Copy),
         Shortcut::Paste => app.can_paste().then_some(Action::Paste(PasteAt::Pointer)),
         Shortcut::Duplicate => on_selection(dc_app::tree::MenuItem::Duplicate),
+        Shortcut::Group => {
+            dc_app::tree::menu_command(project, dc_app::tree::MenuItem::Group, selected)
+                .map(Action::run)
+        }
+        Shortcut::Ungroup => {
+            dc_app::tree::menu_command(project, dc_app::tree::MenuItem::Ungroup, selected)
+                .map(Action::run)
+        }
         Shortcut::Delete => {
             // Selected tabs (#546) delete as one step, like shapes.
             let tabs = app.selection().tabs();

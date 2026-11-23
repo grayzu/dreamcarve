@@ -16,6 +16,7 @@
 
 mod bitmaps;
 mod copies;
+mod folders;
 mod instances;
 mod operations;
 mod shapes;
@@ -34,8 +35,8 @@ use dc_geometry::{Polyline, Transform, approx_eq};
 use dc_job::Drawing;
 use dc_job::picture::PictureSize;
 use dc_project::{
-    BitmapId, Grayscale, Heights, InstanceId, MachineOrigin, Operation, OperationId, PlacedTab,
-    PostProcessorRef, Project, Shape, Stock, TabId, Tool, ToolId, Units, switch_post,
+    BitmapId, FolderId, Grayscale, Heights, InstanceId, MachineOrigin, Operation, OperationId,
+    PlacedTab, PostProcessorRef, Project, Shape, Stock, TabId, Tool, ToolId, Units, switch_post,
 };
 
 use crate::arrange::Flip;
@@ -210,6 +211,39 @@ pub enum Command {
     /// copy of it, so an edit of one no longer changes the others.
     /// Refused when none is a linked copy.
     MakeUnique(Vec<InstanceId>),
+    /// A folder of the Design Tree under the next free `f<n>`, holding
+    /// `ids`, which are gathered where the first of them is (capability
+    /// 99). A group, whose shapes are selected together, needs two.
+    NewFolder {
+        /// The folder's name.
+        name: String,
+        /// The instances filed in it.
+        ids: Vec<InstanceId>,
+        /// Whether it is a group.
+        group: bool,
+    },
+    /// Rename a folder.
+    RenameFolder {
+        /// The folder.
+        id: FolderId,
+        /// Its new name.
+        name: String,
+    },
+    /// Remove a folder and its shapes, as Delete removes them.
+    DeleteFolder(FolderId),
+    /// Remove folders; their shapes stay where they are, in no folder.
+    Ungroup(Vec<FolderId>),
+    /// Rows of the Design Tree moved: placed before row `before` (with
+    /// none, after the folder's last row, or at the end of the file)
+    /// and filed in `folder`.
+    MoveRows {
+        /// The instances moved, which keep their order.
+        ids: Vec<InstanceId>,
+        /// The row they go before.
+        before: Option<InstanceId>,
+        /// The folder they are filed in, if any.
+        folder: Option<FolderId>,
+    },
     /// Each instance moved by its own transform, applied after the one
     /// it has: align and distribute (capability 98a). Refused when one
     /// is locked; nothing to do when no shape moves.
@@ -569,7 +603,21 @@ impl Command {
             Self::FitStockToShapes { margin_mm } => {
                 next = instances::fit_stock(project, *margin_mm)?;
             }
+            Self::NewFolder { name, ids, group } => {
+                next = folders::new_folder(project, name, ids, *group)?;
+            }
+            Self::RenameFolder { id, name } => next = folders::rename(project, id, name)?,
+            Self::DeleteFolder(id) => next = folders::delete_folder(project, id)?,
+            Self::Ungroup(ids) => next = folders::ungroup(project, ids)?,
+            Self::MoveRows {
+                ids,
+                before,
+                folder,
+            } => next = folders::move_rows(project, ids, before.as_ref(), folder.as_ref())?,
         }
+        // A copy is filed beside its folder's other rows, and a group
+        // whose shapes are gone goes with them.
+        folders::settle(project, &mut next);
         Ok(next)
     }
 
@@ -585,6 +633,10 @@ impl Command {
         let op_subject = |id: &OperationId| operations::subject(strings, before, id);
         let plain = |key: StrKey| strings.get(key).to_owned();
         let with_subject = |key: StrKey, subject: &str| strings.fmt(key, &[("subject", subject)]);
+        let folder_subject = |id: &FolderId| {
+            let name = folders::find(before, id).map_or(id.as_str(), |folder| folder.name.as_str());
+            one(strings, name)
+        };
         match self {
             Self::SetStock(_) => plain(StrKey::CommandLabelSetStock),
             Self::SetOrigin(_) => plain(StrKey::CommandLabelSetOrigin),
@@ -801,6 +853,44 @@ impl Command {
             }
             Self::ReplaceShapes { from, what, .. } => {
                 shapes::edit_label(strings, *what, None, &subject_of(from))
+            }
+            Self::NewFolder {
+                ids, group: true, ..
+            } => with_subject(StrKey::CommandLabelGroup, &subject_of(ids)),
+            Self::NewFolder { name, .. } => {
+                with_subject(StrKey::CommandLabelNewFolder, &one(strings, name))
+            }
+            Self::RenameFolder { id, .. } => {
+                with_subject(StrKey::CommandLabelRenameFolder, &folder_subject(id))
+            }
+            Self::DeleteFolder(id) => {
+                with_subject(StrKey::CommandLabelDeleteFolder, &folder_subject(id))
+            }
+            Self::Ungroup(ids) => match ids.as_slice() {
+                [id] => with_subject(StrKey::CommandLabelUngroup, &folder_subject(id)),
+                many => strings.fmt(
+                    StrKey::CommandLabelUngroupMany,
+                    &[("count", &many.len().to_string())],
+                ),
+            },
+            Self::MoveRows { ids, folder, .. } => {
+                // Named for the folder when a row enters it.
+                let entered = folder.as_ref().filter(|folder| {
+                    ids.iter().any(|id| {
+                        instances::find(before, id)
+                            .is_ok_and(|instance| instance.folder.as_ref() != Some(*folder))
+                    })
+                });
+                match entered {
+                    Some(folder) => strings.fmt(
+                        StrKey::CommandLabelMoveToFolder,
+                        &[
+                            ("subject", &subject_of(ids)),
+                            ("folder", &folder_subject(folder)),
+                        ],
+                    ),
+                    None => with_subject(StrKey::CommandLabelReorderRows, &subject_of(ids)),
+                }
             }
             Self::ConvertToPath(ids) => match shapes::sized(before, ids).as_slice() {
                 [id] => with_subject(

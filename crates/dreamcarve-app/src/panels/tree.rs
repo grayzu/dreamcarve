@@ -27,10 +27,12 @@
 //! row answers the same way among the pictures, which are selected on
 //! their own ([`start_rename_picture`], `dc_app::tree::bitmap_menu`).
 
-use dc_app::tree::{BitmapRow, MenuItem, Row, Section, ShapeGlyph, ShapeRow, TabRow, Tree};
+use dc_app::tree::{
+    BitmapRow, FolderRow, MenuItem, Row, Section, ShapeGlyph, ShapeRow, TabRow, Tree,
+};
 use dc_app::{ClickMode, Selection, StrKey, Strings};
-use dc_project::{BitmapId, InstanceId, Project};
-use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
+use dc_project::{BitmapId, FolderId, InstanceId, Project};
+use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
 
 use crate::panels;
 use crate::shell::theme::{self, Palette};
@@ -97,6 +99,60 @@ pub(crate) fn start_rename_picture(ctx: &egui::Context, project: &Project, id: &
             );
         });
     }
+}
+
+/// The folder whose name is a field, and the text typed so far.
+fn renaming_folder_id() -> Id {
+    Id::unique("design_tree_renaming_folder")
+}
+
+/// Turns folder `id`'s name into a field in place, the name selected, on
+/// the tree's next frame (its menu's *Rename*).
+pub(crate) fn start_rename_folder(ctx: &egui::Context, project: &Project, id: &FolderId) {
+    if let Some(folder) = project.folders.iter().find(|f| f.id == *id) {
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                renaming_folder_id(),
+                (id.clone(), folder.name.clone(), true),
+            );
+        });
+    }
+}
+
+/// The folders whose rows are folded away: view state, kept while the
+/// app runs.
+fn collapsed_id() -> Id {
+    Id::unique("design_tree_collapsed")
+}
+
+/// The rows being dragged, while a drag is under way.
+fn dragging_id() -> Id {
+    Id::unique("design_tree_dragging")
+}
+
+/// How far a row filed in a folder is set in from the rows that are not.
+const INDENT_PX: f32 = 16.0;
+
+/// Where the rows being dragged would go if they were let go now
+/// (capability 99), and where the line that says so is drawn.
+#[derive(Debug, Clone, PartialEq)]
+struct DropAt {
+    /// The row they go before.
+    before: Option<InstanceId>,
+    /// The folder they are filed in.
+    folder: Option<FolderId>,
+    /// The line: its height in the panel, and how far it is set in.
+    line: (f32, f32),
+}
+
+/// Which half of `rect` the pointer is in, while rows are dragged over
+/// it: `Some(true)` for the upper.
+fn drop_half(ui: &Ui, dragging: bool, rect: Rect) -> Option<bool> {
+    if !dragging {
+        return None;
+    }
+    let at = ui.input(|i| i.pointer.interact_pos())?;
+    rect.contains(at).then(|| at.y < rect.center().y)
 }
 
 /// The selection the tree last drew, to tell when it changed.
@@ -206,7 +262,8 @@ fn section(
     title: &str,
     state: Option<dc_app::tree::SectionState>,
     (names, disabled_reason): ([StrKey; 4], Option<&str>),
-) -> (bool, bool) {
+    extra: Option<(Icon, &str)>,
+) -> (bool, bool, bool) {
     let palette = Palette::current(ui);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), SECTION_PX), Sense::hover());
@@ -264,7 +321,21 @@ fn section(
         disabled_reason.unwrap_or(lock_name),
         enabled,
     );
-    (eye.clicked(), lock.clicked())
+    // A button of the section's own, before the eye: the Shapes
+    // section's New Folder.
+    let extra = extra.is_some_and(|(icon, name)| {
+        icon_button(
+            ui,
+            eye_rect.translate(egui::vec2(-ICON_BOX_PX - 4.0, 0.0)),
+            ui.make_persistent_id((title, "extra")),
+            icon,
+            palette.text_secondary,
+            name,
+            true,
+        )
+        .clicked()
+    });
+    (eye.clicked(), lock.clicked(), extra)
 }
 
 /// The Shapes header's buttons: hide all, show all, unlock all, lock all.
@@ -314,17 +385,32 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 .then(|| pictures.first().cloned())
                 .flatten();
             ui.data_mut(|d| d.insert_temp(seen_pictures_id(), pictures));
+            // Rows dragged within the tree (capability 99): where they
+            // would go is read row by row, and a line drawn there.
+            let collapsed: Vec<FolderId> =
+                ui.data(|d| d.get_temp(collapsed_id())).unwrap_or_default();
+            let dragging: Option<Vec<InstanceId>> = ui.data(|d| d.get_temp(dragging_id()));
+            let mut drop: Option<DropAt> = None;
             // An empty section is its header alone (capability 57).
             for line in tree.rows() {
                 match line {
                     Row::Header(Section::Shapes) => {
-                        let (eye, lock) = section(
+                        let (eye, lock, new_folder) = section(
                             ui,
                             strings,
                             strings.get(StrKey::TreeShapes),
                             (!tree.shapes.is_empty()).then(|| tree.shapes_header()),
                             (SHAPE_FLAGS, None),
+                            Some((Icon::FolderPlus, strings.get(StrKey::TreeNewFolderHelp))),
                         );
+                        // New Folder holds the selection, or nothing.
+                        if new_folder && app.target_editing().is_none() {
+                            out.push(Action::run(dc_app::Command::NewFolder {
+                                name: dc_app::tree::next_folder_name(project, false),
+                                ids: app.selection().instances().to_vec(),
+                                group: false,
+                            }));
+                        }
                         let all = every_instance(project);
                         if eye && let Some(command) = dc_app::tree::toggle_visible(project, &all) {
                             out.push(Action::Run(Box::new(command)));
@@ -333,7 +419,46 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                             out.push(Action::Run(Box::new(command)));
                         }
                     }
+                    Row::Folder(row) => {
+                        let folded = collapsed.contains(&row.id);
+                        let response = folder_row(ui, state, row, folded, out);
+                        let rect = surface_rect(response.rect);
+                        // Dropped on its upper half, rows go before the
+                        // folder; on its lower, in it, first. A folder
+                        // folded away or empty takes them last.
+                        match drop_half(ui, dragging.is_some(), rect) {
+                            Some(_) if folded || row.rows.is_empty() => {
+                                drop = Some(DropAt {
+                                    before: None,
+                                    folder: Some(row.id.clone()),
+                                    line: (rect.bottom(), INDENT_PX),
+                                });
+                            }
+                            Some(upper) => {
+                                drop = Some(DropAt {
+                                    before: row.rows.first().cloned(),
+                                    folder: (!upper).then(|| row.id.clone()),
+                                    line: if upper {
+                                        (rect.top(), 0.0)
+                                    } else {
+                                        (rect.bottom(), INDENT_PX)
+                                    },
+                                });
+                            }
+                            None => {}
+                        }
+                    }
                     Row::Shape(row) => {
+                        // A folded folder's rows are not listed, unless
+                        // one is to be revealed.
+                        if row
+                            .folder
+                            .as_ref()
+                            .is_some_and(|folder| collapsed.contains(folder))
+                            && reveal.as_ref() != Some(&row.id)
+                        {
+                            continue;
+                        }
                         // A row out of view keeps its place and is not
                         // laid out, so 500 shapes cost a frame what a
                         // screenful does (acceptance 87); the row to
@@ -350,24 +475,70 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         if reveal.as_ref() == Some(&row.id) {
                             response.scroll_to_me(None);
                         }
+                        let rect = surface_rect(response.rect);
+                        let indent = if row.folder.is_some() { INDENT_PX } else { 0.0 };
+                        match drop_half(ui, dragging.is_some(), rect) {
+                            Some(true) => {
+                                drop = Some(DropAt {
+                                    before: Some(row.id.clone()),
+                                    folder: row.folder.clone(),
+                                    line: (rect.top(), indent),
+                                });
+                            }
+                            // After this row, in the folder it is in:
+                            // before the next row of that folder, or as
+                            // its last. A row in no folder is followed
+                            // by whatever row comes next.
+                            Some(false) => {
+                                let next = tree
+                                    .shapes
+                                    .iter()
+                                    .skip_while(|other| other.id != row.id)
+                                    .nth(1);
+                                let beside = next.filter(|next| {
+                                    next.folder == row.folder || row.folder.is_none()
+                                });
+                                drop = Some(DropAt {
+                                    before: beside.map(|next| next.id.clone()),
+                                    folder: row.folder.clone(),
+                                    line: (rect.bottom(), indent),
+                                });
+                            }
+                            None => {}
+                        }
                     }
                     Row::Header(Section::Tabs) => {
+                        let top = ui.cursor().min.y;
                         section(
                             ui,
                             strings,
                             strings.get(StrKey::TreeTabs),
                             None,
                             (SHAPE_FLAGS, Some(strings.get(StrKey::TreeTabsNoFlags))),
+                            None,
                         );
+                        // Past the last shape: the end, in no folder.
+                        let header = Rect::from_min_max(
+                            egui::pos2(ui.min_rect().left(), top),
+                            egui::pos2(ui.min_rect().right(), top + SECTION_PX),
+                        );
+                        if drop_half(ui, dragging.is_some(), header).is_some() {
+                            drop = Some(DropAt {
+                                before: None,
+                                folder: None,
+                                line: (top, 0.0),
+                            });
+                        }
                     }
                     Row::Tab(row) => tab_row(ui, state, row, out),
                     Row::Header(Section::Pictures) => {
-                        let (eye, lock) = section(
+                        let (eye, lock, _) = section(
                             ui,
                             strings,
                             strings.get(StrKey::TreePictures),
                             (!tree.bitmaps.is_empty()).then(|| tree.bitmaps_header()),
                             (PICTURE_FLAGS, None),
+                            None,
                         );
                         let all: Vec<BitmapId> =
                             tree.bitmaps.iter().map(|row| row.id.clone()).collect();
@@ -387,6 +558,35 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         let response = bitmap_row(ui, state, &tree, row, out);
                         if reveal_picture.as_ref() == Some(&row.id) {
                             response.scroll_to_me(None);
+                        }
+                    }
+                }
+            }
+            if let Some(ids) = dragging {
+                let (released, down) =
+                    ui.input(|i| (i.pointer.any_released(), i.pointer.any_down()));
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                if let Some(at) = &drop {
+                    let (y, indent) = at.line;
+                    let inner = surface_rect(ui.min_rect());
+                    ui.painter().hline(
+                        (inner.left() + indent)..=inner.right(),
+                        y,
+                        Stroke::new(2.0, Palette::current(ui).accent),
+                    );
+                }
+                if released || !down {
+                    ui.data_mut(|d| d.remove::<Vec<InstanceId>>(dragging_id()));
+                    if let (true, Some(at)) = (released, drop) {
+                        let command = dc_app::Command::MoveRows {
+                            ids,
+                            before: at.before,
+                            folder: at.folder,
+                        };
+                        // Rows let go where they were change nothing,
+                        // and say nothing.
+                        if command.apply(project).is_ok() {
+                            out.push(Action::run(command));
                         }
                     }
                 }
@@ -487,11 +687,24 @@ fn shape_row(
     // Target editing (capability 67): the row toggles the shape in the
     // draft, its eye is a checkbox, and nothing else of it answers.
     let editing = state.app.target_editing();
-    let (slot, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
+    // A row is dragged to reorder it, or to file it (capability 99).
+    let (slot, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), ROW_PX),
+        Sense::click_and_drag(),
+    );
     let name = row.name.clone();
     response
         .widget_info(|| egui::WidgetInfo::selected(egui::Role::TreeItem, true, selected, &name));
+    if response.drag_started() && editing.is_none() {
+        // The selection goes with a selected row; another row goes
+        // alone.
+        let ids = if selected {
+            state.app.selection().instances().to_vec()
+        } else {
+            vec![row.id.clone()]
+        };
+        ui.data_mut(|d| d.insert_temp(dragging_id(), ids));
+    }
 
     let painter = ui.painter().clone();
     // The row's own surface, inset from the card's edges.
@@ -598,8 +811,10 @@ fn shape_row(
         out.push(Action::Run(Box::new(command)));
     }
 
-    // The shape glyph: what the shape is, never a word.
-    let glyph_rect = lock_rect.translate(egui::vec2(ICON_BOX_PX + 2.0, 0.0));
+    // The shape glyph: what the shape is, never a word. A row filed in a
+    // folder is set in under the folder's.
+    let indent = if row.folder.is_some() { INDENT_PX } else { 0.0 };
+    let glyph_rect = lock_rect.translate(egui::vec2(ICON_BOX_PX + 2.0 + indent, 0.0));
     let (shape_icon, shape_tip) = match row.glyph {
         ShapeGlyph::Closed => (Icon::Square, StrKey::TreeGlyphClosed),
         ShapeGlyph::Circle => (Icon::Circle, StrKey::TreeGlyphCircle),
@@ -755,6 +970,232 @@ fn shape_row(
     response
 }
 
+/// A folder's row (capability 99): its eye and padlock, which act on
+/// every row filed in it; the chevron that folds its rows away; its
+/// glyph, a folder's or a group's; its name, a field while it is
+/// renamed; and how many shapes it holds. A click selects its shapes, a
+/// double-click renames it, and its menu is *Rename*, *Ungroup* (the
+/// folder goes, its shapes stay) and *Delete* (its shapes go with it).
+fn folder_row(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    row: &FolderRow,
+    folded: bool,
+    out: &mut Vec<Action>,
+) -> egui::Response {
+    let palette = Palette::current(ui);
+    let app = state.app;
+    let strings = app.strings();
+    let project = app.project();
+    let editing = app.target_editing().is_some();
+    let held = app.selection().instances();
+    let selected = !row.rows.is_empty() && row.rows.iter().all(|id| held.contains(id));
+    let (slot, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
+    let name = row.name.clone();
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::Role::TreeItem, true, selected, &name));
+    let painter = ui.painter().clone();
+    let rect = surface_rect(slot);
+    surface(ui, rect, false, response.hovered());
+    focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
+
+    // The eye and the padlock, for every row of the folder.
+    let eye_rect = Rect::from_center_size(
+        egui::pos2(rect.left() + 8.0 + ICON_BOX_PX / 2.0, rect.center().y),
+        egui::vec2(ICON_BOX_PX, ICON_BOX_PX),
+    );
+    let lock_rect = eye_rect.translate(egui::vec2(ICON_BOX_PX + 4.0, 0.0));
+    let has_rows = !row.rows.is_empty() && !editing;
+    let colour = if has_rows {
+        palette.text_secondary
+    } else {
+        palette.text_disabled
+    };
+    let (eye_icon, eye_key) = match row.visible {
+        Some(false) => (Icon::EyeOff, StrKey::TreeShowAll),
+        Some(true) => (Icon::Eye, StrKey::TreeHideAll),
+        None => (Icon::Eye, StrKey::TreeShowAll),
+    };
+    let (lock_icon, lock_key) = match row.locked {
+        Some(true) => (Icon::Lock, StrKey::TreeUnlockAll),
+        _ => (Icon::LockOpen, StrKey::TreeLockAll),
+    };
+    let eye = icon_button(
+        ui,
+        eye_rect,
+        ui.make_persistent_id(("tree_folder_eye", row.id.as_str())),
+        eye_icon,
+        colour,
+        strings.get(eye_key),
+        has_rows,
+    );
+    if eye.clicked()
+        && let Some(command) = dc_app::tree::toggle_visible(project, &row.rows)
+    {
+        out.push(Action::run(command));
+    }
+    let lock = icon_button(
+        ui,
+        lock_rect,
+        ui.make_persistent_id(("tree_folder_lock", row.id.as_str())),
+        lock_icon,
+        colour,
+        strings.get(lock_key),
+        has_rows,
+    );
+    if lock.clicked()
+        && let Some(command) = dc_app::tree::toggle_locked(project, &row.rows)
+    {
+        out.push(Action::run(command));
+    }
+
+    // The chevron folds the rows away; the glyph says folder or group.
+    let chevron_rect = lock_rect.translate(egui::vec2(ICON_BOX_PX + 2.0, 0.0));
+    let (chevron_icon, chevron_key) = if folded {
+        (Icon::ChevronRight, StrKey::TreeExpand)
+    } else {
+        (Icon::ChevronDown, StrKey::TreeCollapse)
+    };
+    let chevron = icon_button(
+        ui,
+        chevron_rect,
+        ui.make_persistent_id(("tree_folder_chevron", row.id.as_str())),
+        chevron_icon,
+        palette.text_secondary,
+        &strings.fmt(chevron_key, &[("name", &row.name)]),
+        true,
+    );
+    if chevron.clicked() {
+        let mut collapsed: Vec<FolderId> =
+            ui.data(|d| d.get_temp(collapsed_id())).unwrap_or_default();
+        if folded {
+            collapsed.retain(|id| *id != row.id);
+        } else {
+            collapsed.push(row.id.clone());
+        }
+        ui.data_mut(|d| d.insert_temp(collapsed_id(), collapsed));
+    }
+    let glyph_rect = chevron_rect.translate(egui::vec2(ICON_BOX_PX, 0.0));
+    let (folder_icon, folder_tip) = if row.group {
+        (Icon::Group, StrKey::TreeGroup)
+    } else {
+        (Icon::Folder, StrKey::TreeFolder)
+    };
+    glyph(ui, glyph_rect, folder_icon, palette.text_secondary);
+    ui.interact(
+        glyph_rect,
+        ui.make_persistent_id(("tree_folder_glyph", row.id.as_str())),
+        Sense::hover(),
+    )
+    .on_hover_text(strings.get(folder_tip));
+
+    // How many shapes it holds, right.
+    let count = row.rows.len().to_string();
+    let count_galley = ui.painter().layout_no_wrap(
+        count.clone(),
+        TextStyle::Small.resolve(ui.style()),
+        palette.text_secondary,
+    );
+    let count_rect = Rect::from_min_max(
+        egui::pos2(
+            rect.right() - ROW_PADDING_PX - count_galley.size().x.max(ICON_BOX_PX),
+            rect.top(),
+        ),
+        egui::pos2(rect.right() - ROW_PADDING_PX, rect.bottom()),
+    );
+    painter.galley(
+        egui::pos2(
+            count_rect.right() - count_galley.size().x,
+            rect.center().y - count_galley.size().y / 2.0,
+        ),
+        count_galley,
+        palette.text_secondary,
+    );
+    ui.interact(
+        count_rect,
+        ui.make_persistent_id(("tree_folder_count", row.id.as_str())),
+        Sense::hover(),
+    )
+    .on_hover_text(strings.fmt(StrKey::TreeFolderRows, &[("count", &count)]));
+
+    // The name, or the rename field.
+    let name_rect = Rect::from_min_max(
+        egui::pos2(glyph_rect.right() + 6.0, rect.top()),
+        egui::pos2(count_rect.left() - 8.0, rect.bottom()),
+    );
+    let renaming: Option<(FolderId, String, bool)> = ui.data(|d| d.get_temp(renaming_folder_id()));
+    match renaming {
+        Some((id, text, fresh)) if id == row.id => {
+            let label = strings.fmt(StrKey::TreeRenameFolder, &[("name", &row.name)]);
+            let field_id = ui.make_persistent_id(("tree_rename_folder", row.id.as_str()));
+            match rename_field(ui, name_rect, field_id, &label, text, fresh) {
+                Renamed::Typing(text) => {
+                    ui.data_mut(|d| d.insert_temp(renaming_folder_id(), (id, text, false)));
+                }
+                Renamed::Reverted => {
+                    ui.data_mut(|d| d.remove::<(FolderId, String, bool)>(renaming_folder_id()));
+                }
+                Renamed::Committed(text) => {
+                    ui.data_mut(|d| d.remove::<(FolderId, String, bool)>(renaming_folder_id()));
+                    let command = dc_app::Command::RenameFolder {
+                        id: row.id.clone(),
+                        name: text,
+                    };
+                    // The name it had, or none, changes nothing.
+                    if command.apply(project).is_ok() {
+                        out.push(Action::run(command));
+                    }
+                }
+            }
+        }
+        _ => {
+            let galley = truncated(
+                ui,
+                &row.name,
+                &TextStyle::Body,
+                palette.text_primary,
+                name_rect.width(),
+            );
+            painter.galley(
+                egui::pos2(name_rect.left(), rect.center().y - galley.size().y / 2.0),
+                galley,
+                palette.text_primary,
+            );
+        }
+    }
+
+    if editing {
+        return response;
+    }
+    if response.double_clicked() {
+        ui.data_mut(|d| {
+            d.insert_temp(
+                renaming_folder_id(),
+                (row.id.clone(), row.name.clone(), true),
+            );
+        });
+    } else if response.clicked() && !row.rows.is_empty() {
+        out.push(Action::Select(Selection::Instances(row.rows.clone())));
+    }
+    response.context_menu(|ui| {
+        if ui.button(strings.get(StrKey::TreeRenameItem)).clicked() {
+            out.push(Action::RenameFolder(row.id.clone()));
+            ui.close();
+        }
+        if ui.button(strings.get(StrKey::AppMenuUngroup)).clicked() {
+            out.push(Action::run(dc_app::Command::Ungroup(vec![row.id.clone()])));
+            ui.close();
+        }
+        ui.separator();
+        if ui.button(strings.get(StrKey::TreeDelete)).clicked() {
+            out.push(Action::run(dc_app::Command::DeleteFolder(row.id.clone())));
+            ui.close();
+        }
+    });
+    response
+}
+
 /// The context menu of row `on` for `ids`, the selection it acts on
 /// (capabilities 57 and 98): a Design Tree row's, and a shape's on the
 /// Viewport. *Rename* renames the row itself; *Paste* puts its shapes
@@ -807,6 +1248,9 @@ pub(crate) fn context_menu(
             MenuItem::Paste => StrKey::AppMenuPaste,
             MenuItem::Duplicate => StrKey::TreeDuplicate,
             MenuItem::Delete => StrKey::TreeDelete,
+            MenuItem::NewFolder => StrKey::TreeNewFolder,
+            MenuItem::Group => StrKey::AppMenuGroup,
+            MenuItem::Ungroup => StrKey::AppMenuUngroup,
             MenuItem::MakeUnique => StrKey::AppMenuMakeUnique,
             MenuItem::ConvertToPath => StrKey::AppMenuConvertToPath,
             MenuItem::ZoomTo => StrKey::TreeZoomTo,
@@ -822,10 +1266,15 @@ pub(crate) fn context_menu(
             continue;
         }
         // Rename | Hide, Lock | Cut, Copy, Paste, Duplicate, Delete |
-        // Make Unique, Convert to Path | Zoom to.
+        // New Folder, Group, Ungroup | Make Unique, Convert to Path |
+        // Zoom to.
         let first_of_its_group = match item {
-            MenuItem::Hide | MenuItem::Show | MenuItem::Cut | MenuItem::ZoomTo => true,
-            MenuItem::MakeUnique => true,
+            MenuItem::Hide
+            | MenuItem::Show
+            | MenuItem::Cut
+            | MenuItem::NewFolder
+            | MenuItem::ZoomTo
+            | MenuItem::MakeUnique => true,
             MenuItem::ConvertToPath => !items.contains(&MenuItem::MakeUnique),
             _ => false,
         };
@@ -1114,6 +1563,9 @@ fn picture_menu(
             MenuItem::AddOperation => StrKey::TreeAddOperation,
             // A picture's menu has none of these.
             MenuItem::Duplicate
+            | MenuItem::NewFolder
+            | MenuItem::Group
+            | MenuItem::Ungroup
             | MenuItem::Cut
             | MenuItem::Copy
             | MenuItem::Paste

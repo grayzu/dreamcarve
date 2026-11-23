@@ -61,6 +61,11 @@ pub enum Command {
     FlipHorizontal,
     /// Arrange ▸ Flip Vertical.
     FlipVertical,
+    /// Arrange ▸ Group: the selected shapes in a new group (phase 5,
+    /// capability 99).
+    Group,
+    /// Arrange ▸ Ungroup: the groups of the selected shapes dissolved.
+    Ungroup,
     /// View ▸ Fit View.
     FitView,
     /// View ▸ Zoom to Selection.
@@ -452,6 +457,24 @@ pub const SHORTCUTS: &[Shortcut] = &[
         Menu::Arrange,
         StrKey::ArrangeMenuFlipVertical,
         "Flip the selection top to bottom",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::Group,
+        COMMAND,
+        &[Key::G],
+        Menu::Arrange,
+        StrKey::AppMenuGroup,
+        "Group the selected shapes, so that a click selects them all",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::Ungroup,
+        COMMAND_SHIFT,
+        &[Key::G],
+        Menu::Arrange,
+        StrKey::AppMenuUngroup,
+        "Ungroup the selected shapes' groups",
         Scope::OutsideFields,
     ),
     menu_row(

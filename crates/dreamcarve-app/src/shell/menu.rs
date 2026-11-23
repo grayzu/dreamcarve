@@ -248,6 +248,25 @@ fn arrange(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         }
     });
     ui.separator();
+    // Group and Ungroup (capability 99): a group is a folder whose
+    // shapes a click on the Viewport selects together.
+    for (command, key) in [
+        (Shortcut::Group, StrKey::AppMenuGroup),
+        (Shortcut::Ungroup, StrKey::AppMenuUngroup),
+    ] {
+        let mut button = Button::new(strings.get(key));
+        if let Some((modifiers, key)) = keyboard::binding(command) {
+            button = button.shortcut_text(shortcut_text(ui.ctx(), modifiers, key));
+        }
+        let action = shortcut_action(state.app, command);
+        if ui.add_enabled(action.is_some(), button).clicked()
+            && let Some(action) = action
+        {
+            out.push(action);
+            ui.close();
+        }
+    }
+    ui.separator();
     row(
         ui,
         out,

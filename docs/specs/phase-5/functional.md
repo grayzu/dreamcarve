@@ -335,8 +335,8 @@ capability 52); what a tool holds before it commits is not project data.
     is a *Line*, an *Arc* or a *Spline* when its segments are all of
     that kind, else a *Path*),
     selected when the tool is left, visible and unlocked. It goes at the
-    end of the Design Tree, in the folder that holds the selection if
-    there is one. The tool bar's **Construction** switch (100) makes the
+    end of the Design Tree, or, when a folder holds the selection, in
+    that folder after its other rows. The tool bar's **Construction** switch (100) makes the
     shapes that follow construction geometry until it is turned off. A
     shape too small to be one (under 0.01 mm across, PureCutCNC's
     minimum) is not made, and the tool stays as it was.
@@ -557,20 +557,32 @@ capability 52); what a tool holds before it commits is not project data.
     themselves. One undo step each, named for the shapes it was asked
     of; shapes already in place make no step.
 99. **Folders and groups** (PureCutCNC's flat folders). The Design
-    Tree's shapes can be filed in **folders**: *New Folder* (the tree's
-    header and context menu) makes one holding the selection; rows drag
-    into, out of and between folders, and within the tree to reorder
-    (the order is the file's and the drawing order); a folder has a
-    name, collapses, and its eye and padlock act on every shape in it.
-    Folders do not nest. Deleting a folder asks nothing and deletes its
-    shapes (one undo step); *Ungroup* or dragging the rows out keeps
-    them.
+    Tree's shapes can be filed in **folders**: *New Folder* (the Shapes
+    header's button and a row's context menu) makes one holding the
+    selection, or an empty one; rows drag into, out of and between
+    folders, and within the tree to reorder (the order is the file's
+    and the drawing order), a line showing where they will go; a
+    selected row takes the selection with it. A folder has a name
+    (*Folder 1*; a double-click or its menu renames it in place),
+    folds its rows away, lists how many shapes it holds, and its eye
+    and padlock act on every shape in it; a click on it selects its
+    shapes. Folders do not nest. A folder's rows lie together in the
+    tree and in the file: a shape filed in a folder, by a drag, a
+    copy, a paste or a drawing tool, goes after the folder's other
+    rows. Deleting a folder (its menu) asks nothing and deletes its
+    shapes (one undo step); *Ungroup* (its menu) or dragging the rows
+    out keeps them. A plain folder may be empty, and is then listed
+    after the shapes.
 
     A **group** is a folder marked as one (**Arrange ▸ Group**,
-    `Ctrl`/`⌘ G`; *Ungroup*, `⇧ Ctrl`/`⌘ G`): clicking any of its shapes
-    on the Viewport selects all of them, so they move, turn and scale
-    as one; a double-click reaches the one shape. Text converted to
-    paths and an array's copies arrive grouped.
+    `Ctrl`/`⌘ G`, for two shapes or more; *Ungroup*, `⇧ Ctrl`/`⌘ G`,
+    which dissolves every group that holds a selected shape): clicking
+    any of its shapes on the Viewport selects all of them, as does a
+    marquee that touches one, so they move, turn and scale as one; a
+    double-click reaches the one shape. In the Design Tree a click on a
+    row of a group selects that row alone. A group whose last shape is
+    deleted or dragged out goes with it. Text converted to paths and an
+    array's copies arrive grouped.
 100. **Construction geometry** (PureCutCNC's construction role). Any
     shape can be marked **Construction** (Properties, the context menu,
     the tool bar's switch while drawing): it is drawn thin and dashed in

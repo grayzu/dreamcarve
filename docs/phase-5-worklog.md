@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 20: 3,667.
+`0.5.0-alpha.1`. After slice 21: 3,677.
 
 ## Decisions waiting for the maintainer
 
@@ -182,6 +182,22 @@ Decisions made while building are added here.
   Inspector's header, which has no room for ten more. *To stock* is
   kept for the session only. The undo step is *Align 3 shapes*, without
   the side.
+- Slice 21: every command now leaves a folder's rows together in the
+  file, so a copy, a paste or a new shape filed in a folder goes after
+  the folder's other rows, not at the end of the file (capability 90
+  said the end; it is reworded). A file written by hand with a
+  folder's rows apart is listed as if they were together, and is put
+  so by the next command that adds, deletes or files a shape. Deleting
+  a folder deletes its shapes, as the spec says; upstream keeps them.
+  A shape can be dragged out of a group (upstream refuses), and a
+  group left with no shape goes; a plain folder may stay empty.
+  `Ungroup` takes several folders, so shapes of two groups ungroup in
+  one step. *Ungroup* on a plain folder dissolves it too; there is no
+  way yet to turn a folder into a group or back but to ungroup and
+  group again. A marquee that touches one shape of a group takes the
+  group. A double-click on a shape of a group selects that shape and
+  does not arm Edit nodes. Which folders are folded is not saved.
+  Dragging rows does not scroll the tree at its edges.
 
 ## Slices
 
@@ -223,7 +239,7 @@ The numbers are the design spec's.
 | 18 | Make Unique, cut, copy, paste, Alt-drag: `Command::{MakeUnique, CopyInstances, CutInstances, PasteShapes}`, the app's clipboard (`dc_app::clipboard`), Edit ▸ Cut, Copy, Paste and their keys, Shape ▸ Make Unique, the Viewport's context menu (a shape's is its Design Tree row's; the Edit nodes tool's is its bar's buttons), an Alt-drag's linked copy. Gate: 3,660 tests | done |
 | 19 | Arrays (after slice 21: an array files its copies in a grouped folder) | todo |
 | 20 | Align and distribute: `dc_app::align` (port), `arrange::Action::{Align, Distribute}`, `Command::PlaceInstances`, the Align section of Properties, Arrange ▸ Align and Distribute. Gate: 3,667 tests | done |
-| 21 | Folders and groups | todo |
+| 21 | Folders and groups: `Command::{NewFolder, RenameFolder, DeleteFolder, Ungroup, MoveRows}`, folder rows in `dc_app::tree`, group selection on the Viewport, the Design Tree's folder rows with fold, rename, menu and row drag and drop, the Shapes header's New Folder, Arrange ▸ Group and Ungroup (⌘G, ⇧⌘G). Gate: 3,677 tests | done |
 | 22 | Construction geometry | todo |
 
 ### 5.4 Text

@@ -772,7 +772,8 @@ fn points_snap_and_sizes_are_shown() {
 }
 
 /// A new shape goes in the folder that holds the selection (capability
-/// 90), and at the end of the Design Tree.
+/// 90), after the folder's other rows; with nothing selected, in no
+/// folder and at the end of the Design Tree.
 #[test]
 fn a_new_shape_joins_the_selections_folder() {
     let project = dc_project::test_support::drawing_project();
@@ -783,14 +784,42 @@ fn a_new_shape_joins_the_selections_folder() {
     app.arm(Tool::Draw(Drawing::Circle));
     click(&mut app, pt(200.0, 50.0));
     click(&mut app, pt(205.0, 50.0));
-    let (instance, _) = last(&app);
-    assert_eq!(instance.folder, Some(dc_project::FolderId::new("f1")));
+    // What was drawn is what is selected.
+    let drawn = |app: &App| {
+        let id = &app.selection().instances()[0];
+        app.project()
+            .instances
+            .iter()
+            .find(|instance| instance.id == *id)
+            .unwrap()
+            .clone()
+    };
+    let f1 = Some(dc_project::FolderId::new("f1"));
+    let instance = drawn(&app);
+    assert_eq!(instance.folder, f1);
     assert_eq!(instance.name, "Circle 2", "the fixture has a Circle 1");
+    // It is the last of the folder's rows, which lie together.
+    let filed: Vec<usize> = app
+        .project()
+        .instances
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.folder == f1)
+        .map(|(at, _)| at)
+        .collect();
+    assert!(
+        filed.windows(2).all(|pair| pair[1] == pair[0] + 1),
+        "{filed:?}"
+    );
+    assert_eq!(
+        app.project().instances[*filed.last().unwrap()].id,
+        instance.id
+    );
     // With the new circle selected, also in the folder, the next joins it
     // too; with nothing selected, none.
     click(&mut app, pt(220.0, 50.0));
     click(&mut app, pt(225.0, 50.0));
-    assert_eq!(last(&app).0.folder, Some(dc_project::FolderId::new("f1")));
+    assert_eq!(drawn(&app).folder, f1);
     app.select(dc_app::Selection::Nothing);
     click(&mut app, pt(240.0, 50.0));
     click(&mut app, pt(245.0, 50.0));

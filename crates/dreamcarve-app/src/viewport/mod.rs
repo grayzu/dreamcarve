@@ -646,6 +646,8 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             Shortcut::Copy,
             Shortcut::Paste,
             Shortcut::Duplicate,
+            Shortcut::Group,
+            Shortcut::Ungroup,
             Shortcut::Show,
             Shortcut::Hide,
             Shortcut::Lock,
@@ -893,9 +895,11 @@ fn start_transform(
             return start_picture_drag(state, start, ids, pictures::Grip::Corner(corner), out);
         }
         Target::Shape(id) if selected.contains(&id) => (selected.to_vec(), Grab::Move),
+        // A shape of a group is its group (capability 99).
         Target::Shape(id) => {
-            out.push(Action::Select(Selection::Instances(vec![id.clone()])));
-            (vec![id], Grab::Move)
+            let ids = dc_app::tree::with_groups(project, std::slice::from_ref(&id));
+            out.push(Action::Select(Selection::Instances(ids.clone())));
+            (ids, Grab::Move)
         }
         Target::Handle(grab) => (selected.to_vec(), grab),
     };
@@ -1137,7 +1141,11 @@ fn gestures(
                 let pictures = pick::pictures_touching(state.app.scene(), rect);
                 out.push(Action::Select(selection.boxed_pictures(&pictures, mode)));
             } else {
-                out.push(Action::Select(selection.boxed(&ids, mode)));
+                out.push(Action::Select(selection.boxed_in(
+                    state.app.project(),
+                    &ids,
+                    mode,
+                )));
             }
         }
         // The release commits a picture's drag: one command, one step.
@@ -1199,8 +1207,15 @@ fn gestures(
                 PICK_TOLERANCE_PX,
                 0,
             ) {
+                // In a group the double-click reaches the one shape,
+                // which the first click selected with its group.
+                let alone =
+                    dc_app::tree::with_groups(state.app.project(), std::slice::from_ref(&id)).len()
+                        < 2;
                 out.push(Action::Select(Selection::Instances(vec![id])));
-                out.push(Action::Arm(Tool::Nodes));
+                if alone {
+                    out.push(Action::Arm(Tool::Nodes));
+                }
             }
         }
         Some(Drag::Marquee { .. } | Drag::Press { .. }) => {
@@ -1215,7 +1230,11 @@ fn gestures(
             match hit {
                 // A cut opens its operation; the shapes stay selected.
                 Hit::Toolpath(id) => out.push(Action::ShowOperation(id)),
-                hit => out.push(Action::Select(selection.clicked(&hit, mode))),
+                hit => out.push(Action::Select(selection.clicked_in(
+                    app.project(),
+                    &hit,
+                    mode,
+                ))),
             }
         }
         // The release commits the tab's new point: one `MoveTab`.
@@ -1685,7 +1704,9 @@ fn context_menu(
             pick::pick(app.scene(), camera, at_px, PICK_TOLERANCE_PX, 0)
         {
             if !app.selection().instances().contains(&id) {
-                out.push(Action::Select(Selection::Instances(vec![id.clone()])));
+                out.push(Action::Select(Selection::Instances(
+                    dc_app::tree::with_groups(app.project(), std::slice::from_ref(&id)),
+                )));
             }
             on = Some(id);
         }

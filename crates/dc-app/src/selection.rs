@@ -152,6 +152,51 @@ impl Selection {
         }
     }
 
+    /// [`Selection::clicked`] on the Viewport, where a click on a shape
+    /// of a group is a click on the group (phase 5, capability 99;
+    /// CONTEXT: Group): its shapes are selected alone, added, or, with a
+    /// toggle, taken out when every one was selected and added when not.
+    #[must_use]
+    pub fn clicked_in(&self, project: &Project, hit: &Hit, mode: ClickMode) -> Self {
+        let Hit::Instance(id) = hit else {
+            return self.clicked(hit, mode);
+        };
+        let members = crate::tree::with_groups(project, std::slice::from_ref(id));
+        if members.len() < 2 {
+            return self.clicked(hit, mode);
+        }
+        let held = self.instances();
+        let ids: Vec<InstanceId> = match mode {
+            ClickMode::Replace => members,
+            ClickMode::Toggle if members.iter().all(|member| held.contains(member)) => held
+                .iter()
+                .filter(|id| !members.contains(id))
+                .cloned()
+                .collect(),
+            ClickMode::Add | ClickMode::Toggle => {
+                let mut ids = held.to_vec();
+                for member in members {
+                    if !ids.contains(&member) {
+                        ids.push(member);
+                    }
+                }
+                ids
+            }
+        };
+        if ids.is_empty() {
+            Self::Nothing
+        } else {
+            Self::Instances(ids)
+        }
+    }
+
+    /// [`Selection::boxed`] on the Viewport: a marquee that touches a
+    /// shape of a group takes the group.
+    #[must_use]
+    pub fn boxed_in(&self, project: &Project, ids: &[InstanceId], mode: ClickMode) -> Self {
+        self.boxed(&crate::tree::with_groups(project, ids), mode)
+    }
+
     /// The selected placed tabs, or none.
     #[must_use]
     pub fn tabs(&self) -> &[TabId] {
