@@ -7,8 +7,9 @@
 
 //! The commands that change a shape's outline as a whole
 //! (`docs/specs/phase-5/design.md`, "Module layout"; functional
-//! capabilities 93 to 97): **Shape ▸ Fillet Corners…** here, and the
-//! offset, the booleans, trim and join as their slices arrive. Each is a
+//! capabilities 93 to 97): **Shape ▸ Fillet Corners…**, **Offset…**,
+//! **Weld**, **Subtract** and **Intersect** here, and trim and join as
+//! their slices arrive. Each is a
 //! pure function of the project that gives the one command to run, as
 //! `dc_app::properties` and `dc_app::shape` do.
 //!
@@ -16,10 +17,10 @@
 //! keeps curves, else each profile exactly. A shape that keeps its sizes
 //! is no path until it is converted (capability 84).
 
-use dc_geometry::{CornerError, Path, Polyline};
-use dc_project::{FeatureDefinition, InstanceId, Project, Shape, Units};
+use dc_geometry::{BooleanOp, Contour, CornerError, Path, Polyline, Region};
+use dc_project::{FeatureDefinition, FeatureInstance, InstanceId, Project, Shape, Units};
 
-use crate::command::{Command, Edit, find_instance};
+use crate::command::{Command, Edit, NewShape, copy_name, find_instance};
 use crate::error::CommandError;
 use crate::strings::{StrKey, Strings};
 use crate::units;
@@ -159,5 +160,327 @@ pub fn fillet_corners(
         shape,
         profiles,
         what: Edit::Fillet { count: rounded },
+    })
+}
+
+/// Which side of an outline an offset is made on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OffsetSide {
+    /// Outside a closed outline; left of an open path's direction.
+    #[default]
+    Outward,
+    /// Inside a closed outline; right of an open path's direction.
+    Inward,
+    /// Both.
+    Both,
+}
+
+/// What **Shape ▸ Offset…** asks for (capability 94).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Offset {
+    /// How far from the outline, mm, as the shape is placed; above 0.
+    pub distance_mm: f64,
+    /// Which side.
+    pub side: OffsetSide,
+    /// Whether the shape offset stays.
+    pub keep_original: bool,
+}
+
+/// The command an offset makes, and the shapes it made nothing of.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Offsets {
+    /// One `ReplaceShapes`: a new path beside, or in place of, each shape
+    /// that has an offset.
+    pub command: Command,
+    /// The shapes whose offset vanished (inward by more than half their
+    /// width), by name.
+    pub vanished: Vec<String>,
+}
+
+/// A definition's closed outlines as the regions they enclose, holes
+/// known as holes; `None` when they cross each other or themselves.
+fn regions(profiles: &[Polyline]) -> Option<Vec<Region>> {
+    let contours: Vec<Contour> = profiles
+        .iter()
+        .filter(|profile| profile.is_closed())
+        .map(|profile| Contour::new(profile.clone()))
+        .collect::<Result<_, _>>()
+        .ok()?;
+    dc_geometry::nest(contours).ok().map(|(regions, _)| regions)
+}
+
+/// The offsets of `profiles`, a definition's outlines, by `distance_mm`
+/// in definition space on `side`: a closed outline grown or shrunk with
+/// its holes the other way, arcs kept and outside corners rounded
+/// (`dc_geometry::offset`, the engine's own); an open path moved to its
+/// left or its right.
+fn offset_profiles(profiles: &[Polyline], distance_mm: f64, side: OffsetSide) -> Vec<Polyline> {
+    let signs: &[f64] = match side {
+        OffsetSide::Outward => &[1.0],
+        OffsetSide::Inward => &[-1.0],
+        OffsetSide::Both => &[1.0, -1.0],
+    };
+    let mut out = Vec::new();
+    let closed = regions(profiles);
+    for sign in signs {
+        let delta = sign * distance_mm;
+        if let Some(closed) = &closed {
+            for region in closed {
+                // The outline moves away from the material it bounds, or
+                // into it; a hole's edge moves the same way through the
+                // material, which is the other way for the hole.
+                let outer = dc_geometry::offset(region.outer(), delta);
+                out.extend(outer.into_iter().map(Contour::into_polyline));
+                for hole in region.holes() {
+                    let moved = dc_geometry::offset(hole, -delta);
+                    out.extend(moved.into_iter().map(Contour::into_polyline));
+                }
+            }
+        }
+        for open in profiles.iter().filter(|profile| !profile.is_closed()) {
+            out.extend(dc_geometry::offset_open(open, delta));
+        }
+    }
+    out
+}
+
+/// A name for a shape made from `instance`: its name and `suffix`
+/// (*Plate offset*), or the next copy of that when it is taken.
+fn derived_name(strings: &Strings, taken: &[String], name: &str, suffix: StrKey) -> String {
+    let derived = strings.fmt(suffix, &[("name", name)]);
+    if taken.iter().any(|t| t == &derived) {
+        let taken: Vec<&str> = taken.iter().map(String::as_str).collect();
+        copy_name(&taken, &derived)
+    } else {
+        derived
+    }
+}
+
+/// The offsets of shapes `ids` as [`offset`] would make them, in project
+/// space: the popover's preview. Empty for a distance that is not above
+/// 0.
+#[must_use]
+pub fn offset_outlines(project: &Project, ids: &[InstanceId], offset: &Offset) -> Vec<Polyline> {
+    if !(offset.distance_mm.is_finite() && offset.distance_mm > 0.0) {
+        return Vec::new();
+    }
+    ids.iter()
+        .filter_map(|id| find_instance(project, id).ok())
+        .flat_map(|instance| {
+            let scale = crate::shape::even_scale(instance.transform);
+            let profiles = project
+                .definitions
+                .get(&instance.definition)
+                .map(|definition| definition.profiles.as_slice())
+                .unwrap_or_default();
+            scale
+                .map(|scale| offset_profiles(profiles, offset.distance_mm / scale, offset.side))
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|outline| instance.transform.apply_polyline(&outline).ok())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// **Shape ▸ Offset…** on shapes `ids` (capability 94): each offset by
+/// itself, the result a new plain path named `<name> offset`, placed as
+/// its source is, beside it or, with `keep_original` off, in its place
+/// with what cut it.
+///
+/// # Errors
+///
+/// [`CommandError::NothingSelected`] for no shapes;
+/// [`CommandError::InvalidValue`] for a distance that is not above 0;
+/// [`CommandError::Stretched`] for a shape whose placement is not an even
+/// scale; [`CommandError::NotAQuantity`] with the reason when every
+/// offset vanishes.
+pub fn offset(
+    project: &Project,
+    strings: &Strings,
+    ids: &[InstanceId],
+    offset: &Offset,
+) -> Result<Offsets, CommandError> {
+    if ids.is_empty() {
+        return Err(CommandError::NothingSelected);
+    }
+    if !(offset.distance_mm.is_finite() && offset.distance_mm > 0.0) {
+        return Err(CommandError::InvalidValue {
+            field: "distance",
+            value: offset.distance_mm,
+        });
+    }
+    let mut taken: Vec<String> = project.instances.iter().map(|i| i.name.clone()).collect();
+    let mut made = Vec::new();
+    let mut from = Vec::new();
+    let mut inherit = Vec::new();
+    let mut vanished = Vec::new();
+    for id in ids {
+        let instance = find_instance(project, id)?;
+        let scale = crate::shape::even_scale(instance.transform).ok_or_else(|| {
+            CommandError::Stretched {
+                name: instance.name.clone(),
+            }
+        })?;
+        let profiles = project
+            .definitions
+            .get(&instance.definition)
+            .map(|definition| definition.profiles.as_slice())
+            .unwrap_or_default();
+        let outlines = offset_profiles(profiles, offset.distance_mm / scale, offset.side);
+        if outlines.is_empty() {
+            vanished.push(instance.name.clone());
+            continue;
+        }
+        let name = derived_name(strings, &taken, &instance.name, StrKey::EditNameOffset);
+        taken.push(name.clone());
+        inherit.push((id.clone(), made.len()));
+        from.push(id.clone());
+        made.push(derived(instance, name, outlines));
+    }
+    if made.is_empty() {
+        let units = project.display_units;
+        return Err(CommandError::NotAQuantity {
+            text: units::field_text(offset.distance_mm, units),
+            reason: strings.fmt(
+                StrKey::EditRefusedOffsetNothing,
+                &[("names", &vanished.join(", "))],
+            ),
+        });
+    }
+    Ok(Offsets {
+        command: Command::ReplaceShapes {
+            from,
+            keep: offset.keep_original,
+            add: made,
+            inherit,
+            what: Edit::Offset,
+        },
+        vanished,
+    })
+}
+
+/// A plain path made from `instance`: placed, filed and marked as it is.
+fn derived(instance: &FeatureInstance, name: String, profiles: Vec<Polyline>) -> NewShape {
+    NewShape {
+        name,
+        shape: None,
+        profiles,
+        transform: instance.transform,
+        construction: instance.construction,
+        folder: instance.folder.clone(),
+    }
+}
+
+/// What **Shape ▸ Weld**, **Subtract** and **Intersect** make of two or
+/// more closed shapes (capability 95).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Boolean {
+    /// Their union, one shape.
+    Weld,
+    /// The first less every other.
+    Subtract,
+    /// What all of them share.
+    Intersect,
+}
+
+/// The area shape `instance` encloses, in project space.
+fn placed_regions(
+    project: &Project,
+    strings: &Strings,
+    instance: &FeatureInstance,
+) -> Result<Vec<Region>, CommandError> {
+    let not_closed = || CommandError::NotAQuantity {
+        text: instance.name.clone(),
+        reason: strings.fmt(StrKey::EditRefusedNotClosed, &[("name", &instance.name)]),
+    };
+    let profiles = project
+        .definitions
+        .get(&instance.definition)
+        .map(|definition| definition.profiles.as_slice())
+        .unwrap_or_default();
+    if profiles.is_empty() || profiles.iter().any(|profile| !profile.is_closed()) {
+        return Err(not_closed());
+    }
+    let placed: Vec<Polyline> = profiles
+        .iter()
+        .map(|profile| instance.transform.apply_polyline(profile))
+        .collect::<Result<_, _>>()?;
+    regions(&placed)
+        .filter(|r| !r.is_empty())
+        .ok_or_else(not_closed)
+}
+
+/// **Shape ▸ Weld**, **Subtract** or **Intersect** on shapes `ids`, in
+/// the order they were selected: the originals are replaced by the one
+/// result, a plain path named for the first (`<name> weld`), placed as
+/// the first is, with holes where the result has holes, and what cut the
+/// first cuts it. Curved edges come out as straight segments within the
+/// project's flatten tolerance, as the engine's boolean makes them.
+///
+/// # Errors
+///
+/// [`CommandError::NotAQuantity`] with the reason: fewer than two
+/// shapes, one that is not closed, or a result of nothing (no overlap to
+/// intersect, a first shape wholly taken away).
+pub fn boolean(
+    project: &Project,
+    strings: &Strings,
+    ids: &[InstanceId],
+    op: Boolean,
+) -> Result<Command, CommandError> {
+    let refused = |key: StrKey| CommandError::NotAQuantity {
+        text: String::new(),
+        reason: strings.get(key).to_owned(),
+    };
+    let [first_id, rest @ ..] = ids else {
+        return Err(refused(StrKey::EditRefusedTwoShapes));
+    };
+    if rest.is_empty() {
+        return Err(refused(StrKey::EditRefusedTwoShapes));
+    }
+    let first = find_instance(project, first_id)?;
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let mut result = placed_regions(project, strings, first)?;
+    for id in rest {
+        let other = placed_regions(project, strings, find_instance(project, id)?)?;
+        let engine = match op {
+            Boolean::Weld => BooleanOp::Union,
+            Boolean::Subtract => BooleanOp::Difference,
+            Boolean::Intersect => BooleanOp::Intersection,
+        };
+        result = dc_geometry::boolean(&result, &other, engine, tolerance_mm);
+    }
+    if result.is_empty() {
+        return Err(refused(match op {
+            Boolean::Intersect => StrKey::EditRefusedNoOverlap,
+            Boolean::Weld | Boolean::Subtract => StrKey::EditRefusedNothingLeft,
+        }));
+    }
+    // Back into the first shape's own space, where the result is placed.
+    let to_definition = first
+        .transform
+        .inverse()
+        .ok_or(CommandError::SingularTransform)?;
+    let mut profiles = Vec::new();
+    for region in &result {
+        profiles.push(to_definition.apply_polyline(region.outer().polyline())?);
+        for hole in region.holes() {
+            profiles.push(to_definition.apply_polyline(hole.polyline())?);
+        }
+    }
+    let (suffix, what) = match op {
+        Boolean::Weld => (StrKey::EditNameWeld, Edit::Weld),
+        Boolean::Subtract => (StrKey::EditNameSubtract, Edit::Subtract),
+        Boolean::Intersect => (StrKey::EditNameIntersect, Edit::Intersect),
+    };
+    let taken: Vec<String> = project.instances.iter().map(|i| i.name.clone()).collect();
+    let name = derived_name(strings, &taken, &first.name, suffix);
+    Ok(Command::ReplaceShapes {
+        from: ids.to_vec(),
+        keep: false,
+        add: vec![derived(first, name, profiles)],
+        inherit: vec![(first_id.clone(), 0)],
+        what,
     })
 }

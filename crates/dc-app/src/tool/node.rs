@@ -715,7 +715,8 @@ impl App {
             let joined = mine.joined(&theirs, JOIN_TOLERANCE_MM)?;
             let (shape, profiles) = outline_of(vec![joined], project.flatten_tolerance_mm);
             return Some(Command::ReplaceShapes {
-                remove: vec![edited.instance.id.clone(), instance.id.clone()],
+                from: vec![edited.instance.id.clone(), instance.id.clone()],
+                keep: false,
                 add: vec![NewShape {
                     name: edited.instance.name.clone(),
                     shape,
@@ -724,7 +725,7 @@ impl App {
                     construction: edited.instance.construction,
                     folder: edited.instance.folder.clone(),
                 }],
-                inherit: Some(edited.instance.id.clone()),
+                inherit: vec![(edited.instance.id.clone(), 0)],
                 what: Edit::JoinEnds,
             });
         }
@@ -871,12 +872,13 @@ impl App {
             }
         };
         let command = Command::ReplaceShapes {
-            remove: vec![edited.instance.id.clone()],
+            from: vec![edited.instance.id.clone()],
+            keep: false,
             add: vec![
                 part(edited.instance.name.clone(), first),
                 part(copy_name(&taken, &edited.instance.name), second),
             ],
-            inherit: Some(edited.instance.id.clone()),
+            inherit: vec![(edited.instance.id.clone(), 0)],
             what,
         };
         self.run_node_command(command)

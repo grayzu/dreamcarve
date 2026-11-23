@@ -415,9 +415,10 @@ fn every_command() -> Vec<(Project, Command)> {
         (
             drawing,
             Command::ReplaceShapes {
-                remove: vec![instance("i9")],
+                from: vec![instance("i9")],
+                keep: false,
                 add: vec![new_slot("Slot 1"), new_slot("Slot 1 (2)")],
-                inherit: Some(instance("i9")),
+                inherit: vec![(instance("i9"), 0)],
                 what: dc_app::command::Edit::Break,
             },
         ),
@@ -891,9 +892,10 @@ fn replace_shapes_hands_targets_and_tabs_to_the_first() {
         .position(|i| i.id == instance("i1"))
         .unwrap();
     let command = Command::ReplaceShapes {
-        remove: vec![instance("i1"), instance("i4")],
+        from: vec![instance("i1"), instance("i4")],
+        keep: false,
         add: vec![new_slot("Slot 1"), new_slot("Slot 2")],
-        inherit: Some(instance("i1")),
+        inherit: vec![(instance("i1"), 0)],
         what: Edit::JoinEnds,
     };
     let after = command.apply(&before).unwrap();
@@ -938,10 +940,29 @@ fn replace_shapes_hands_targets_and_tabs_to_the_first() {
         command.apply(&locked),
         Err(CommandError::Locked { .. })
     ));
-    let nothing = Command::ReplaceShapes {
-        remove: Vec::new(),
+    // Kept, the sources stay as they are, locked or not, and the new
+    // shapes stand after the last of them; nothing is retargeted.
+    let kept = Command::ReplaceShapes {
+        from: vec![instance("i1")],
+        keep: true,
         add: vec![new_slot("Slot 1")],
-        inherit: None,
+        inherit: Vec::new(),
+        what: Edit::Offset,
+    };
+    let beside = kept.apply(&locked).unwrap();
+    assert_eq!(beside.instances.len(), before.instances.len() + 1);
+    assert_eq!(beside.instances[at + 1].name, "Slot 1");
+    assert_eq!(cut_out(&beside), [instance("i1")]);
+    assert_eq!(beside.tabs, before.tabs);
+    assert_eq!(
+        kept.label(&Strings::default(), &locked, &beside),
+        "Offset “outline”"
+    );
+    let nothing = Command::ReplaceShapes {
+        from: Vec::new(),
+        keep: false,
+        add: vec![new_slot("Slot 1")],
+        inherit: Vec::new(),
         what: Edit::Break,
     };
     assert!(matches!(

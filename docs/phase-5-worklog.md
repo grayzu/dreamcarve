@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 12: 3,625.
+`0.5.0-alpha.1`. After slice 14: 3,630.
 
 ## Decisions waiting for the maintainer
 
@@ -130,6 +130,13 @@ Decisions made while building are added here.
   serves Fillet, Chamfer and the Rectangle tool's corners. Fillet
   Corners takes one shape at a time: several would need several
   definitions changed in one undo step, which no command does yet.
+- Slices 13 and 14: the design's `ReplaceShapes { remove, inherit:
+  Option }` became `{ from, keep, inherit: Vec<(shape, index)> }`, so
+  an offset of several shapes without their originals hands each one's
+  operations to its own result, an offset that keeps its originals is
+  still named for them, and its results stand beside them. For an open
+  path *Outward* is the left of its direction and *Inward* the right;
+  the window is to label them Left and Right.
 
 ## Slices
 
@@ -158,8 +165,8 @@ The numbers are the design spec's.
 | 10 | Edit nodes, in the app core (`dc_app::tool::node`): the one selected path's nodes, handles and arc middles; select by click, Shift and a box; drag a node, several, a straight side, a curve's handle (Alt for a corner), an arc's middle, each previewed and one undo step, through the instance's inverse transform so linked copies follow; a node's X and Y and an arc's radius typed; add a node (double-click, Ctrl-click), delete nodes or a segment, Break; an end dropped on an end closes the path or joins two shapes; a sized shape converted first; `ReplaceShapes`; `Path::transformed` and `Path::joined`. The window's side is slice 17. Gate: 3,622 tests | done |
 | 11 | Fillet and chamfer, in the app core: the Edit nodes bar's *Fillet* and *Chamfer* on the selected corners by its corner size, those that cannot take it left and named; `dc_app::edit::fillet_corners` for Shape ▸ Fillet Corners… | done |
 | 12 | Segment kinds, in the app core: the selected segment made straight, an arc or a curve from the bar. Gate: 3,625 tests | done |
-| 13 | Offset | todo |
-| 14 | Weld, Subtract, Intersect | todo |
+| 13 | Offset, in the app core (`dc_app::edit::offset`, `offset_outlines` for the preview): each shape by itself, outward, inward or both, holes the other way, open paths to a side; the original kept or replaced with its operations handed on; `ReplaceShapes` keeps its sources or hands each one's operations and tabs to its own result | done |
+| 14 | Weld, Subtract, Intersect, in the app core (`dc_app::edit::boolean`): the selection in order, one path named for the first, placed as it is, with what cut it. Gate: 3,630 tests | done |
 | 15 | Intersections and Trim | todo |
 | 16 | Join | todo |
 | 17 | The window, editing | todo |

@@ -57,6 +57,15 @@ pub enum Edit {
     CloseEnds,
     /// Two open paths joined at their ends into one.
     JoinEnds,
+    /// Shapes offset: copies a distance outside or inside their outlines
+    /// (capability 94).
+    Offset,
+    /// Shapes welded into their union (capability 95).
+    Weld,
+    /// The other shapes taken out of the first.
+    Subtract,
+    /// What the shapes all share.
+    Intersect,
     /// Corners rounded by arcs (capability 93).
     Fillet {
         /// How many.
@@ -95,6 +104,10 @@ pub(super) fn edit_label(
         Edit::DeleteSegment => with(StrKey::CommandLabelDeleteSegment),
         Edit::CloseEnds => with(StrKey::CommandLabelClosePath),
         Edit::JoinEnds => with(StrKey::CommandLabelJoinPaths),
+        Edit::Offset => with(StrKey::CommandLabelOffset),
+        Edit::Weld => with(StrKey::CommandLabelWeld),
+        Edit::Subtract => with(StrKey::CommandLabelSubtract),
+        Edit::Intersect => with(StrKey::CommandLabelIntersect),
         Edit::Fillet { count: 1 } => with(StrKey::CommandLabelFillet),
         Edit::Fillet { count } => counted(StrKey::CommandLabelFillets, count),
         Edit::Chamfer { count: 1 } => with(StrKey::CommandLabelChamfer),
@@ -369,55 +382,78 @@ pub(super) fn sized<'a>(project: &'a Project, ids: &'a [InstanceId]) -> Vec<&'a 
         .collect()
 }
 
-/// `ReplaceShapes`: the instances `remove` go and the shapes `add` take
-/// their place in the Design Tree, each a new instance of a new
-/// definition. An operation that targeted `inherit`, and an Inlay that
-/// had it in its boundary, has the first new shape in its place; the
-/// other removed shapes leave every target list. The tabs on `inherit`
-/// move to the first new shape, re-seated on its outline (it is placed as
-/// `inherit` was); the tabs on the others go.
+/// `ReplaceShapes`: the shapes `new`, made from the instances `from`,
+/// each a new instance of a new definition, in the Design Tree where the
+/// first of `from` is (after the last of them when they are kept).
+///
+/// Unless `keep`, the instances `from` go. For each pair of `inherit`, a
+/// shape of `from` and an index into `new`: an operation that targeted
+/// that shape, and an Inlay that had it in its boundary, has that new
+/// shape in its place, and its tabs move to the new shape, re-seated on
+/// its outline (it is placed as the old one was, so the tabs' points are
+/// in the same space). The other removed shapes leave every target list
+/// and their tabs go.
 ///
 /// # Errors
 ///
-/// [`CommandError::NothingSelected`] for nothing to remove,
+/// [`CommandError::NothingSelected`] for no shapes to make them from,
 /// [`CommandError::NothingToDo`] for nothing to add,
-/// [`CommandError::Locked`] when a removed shape is locked, and
+/// [`CommandError::Locked`] when a shape to remove is locked, and
 /// [`add`]'s for a shape that cannot be.
 pub(super) fn replace(
     project: &Project,
-    remove: &[InstanceId],
+    from: &[InstanceId],
+    keep: bool,
     new: &[NewShape],
-    inherit: Option<&InstanceId>,
+    inherit: &[(InstanceId, usize)],
 ) -> Result<Project, CommandError> {
-    if remove.is_empty() {
+    if from.is_empty() {
         return Err(CommandError::NothingSelected);
     }
     let mut locked = Vec::new();
-    for id in remove {
+    for id in from {
         let instance = find(project, id)?;
-        if instance.locked {
+        if instance.locked && !keep {
             locked.push(instance.name.clone());
         }
     }
     if !locked.is_empty() {
         return Err(CommandError::Locked { names: locked });
     }
+    let is_from = |i: &FeatureInstance| from.contains(&i.id);
+    let mut next = add(project, new)?;
+    let added: Vec<FeatureInstance> = next.instances.split_off(project.instances.len());
+    if keep {
+        // Beside what they were made from.
+        let after = project
+            .instances
+            .iter()
+            .rposition(is_from)
+            .map_or(project.instances.len(), |at| at + 1);
+        next.instances.splice(after..after, added);
+        return Ok(next);
+    }
     let position = project
         .instances
         .iter()
-        .position(|i| remove.contains(&i.id))
+        .position(is_from)
         .unwrap_or(project.instances.len());
-    let mut next = add(project, new)?;
-    let added: Vec<FeatureInstance> = next.instances.split_off(project.instances.len());
-    let first = added.first().map(|i| i.id.clone());
-    // What cut or bounded the inherited shape cuts or bounds the first
-    // new one.
+    let heir = |old: &InstanceId| -> Option<&FeatureInstance> {
+        let (_, index) = inherit.iter().find(|(id, _)| id == old)?;
+        added.get(*index)
+    };
+    // What cut or bounded an inherited shape cuts or bounds its heir.
     let retarget = |targets: &mut Vec<InstanceId>| {
-        let mut kept = Vec::with_capacity(targets.len());
+        let mut kept: Vec<InstanceId> = Vec::with_capacity(targets.len());
         for target in targets.drain(..) {
-            if Some(&target) == inherit {
-                kept.extend(first.clone());
-            } else if !remove.contains(&target) {
+            let next_target = if from.contains(&target) {
+                heir(&target).map(|new| new.id.clone())
+            } else {
+                Some(target)
+            };
+            if let Some(target) = next_target
+                && !kept.contains(&target)
+            {
                 kept.push(target);
             }
         }
@@ -431,29 +467,46 @@ pub(super) fn replace(
             retarget(&mut inlay.boundary);
         }
     }
-    // The inherited shape's tabs go with its outline.
-    let old_profiles = inherit
-        .and_then(|id| find(project, id).ok())
-        .and_then(|instance| project.definitions.get(&instance.definition))
-        .map(|definition| definition.profiles.clone());
+    // An inherited shape's tabs go with its outline; the others' go.
     next.tabs
-        .retain(|tab| Some(&tab.instance) == inherit || !remove.contains(&tab.instance));
-    if let (Some(inherit), Some(first), Some(old), Some(shape)) =
-        (inherit, &first, old_profiles, new.first())
-    {
-        for tab in &mut next.tabs {
-            if &tab.instance == inherit {
-                tab.instance = first.clone();
-            }
-        }
+        .retain(|tab| !from.contains(&tab.instance) || heir(&tab.instance).is_some());
+    for (old, index) in inherit {
+        let (Some(new_instance), Some(shape)) = (added.get(*index), new.get(*index)) else {
+            continue;
+        };
+        let Some(old_profiles) = find(project, old)
+            .ok()
+            .and_then(|instance| project.definitions.get(&instance.definition))
+            .map(|definition| definition.profiles.clone())
+        else {
+            continue;
+        };
+        // Only this shape's tabs are re-seated: the heir may have others'
+        // already.
+        let mut moved = Project {
+            tabs: Vec::new(),
+            ..next.clone()
+        };
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut next.tabs)
+            .into_iter()
+            .partition(|tab| &tab.instance == old);
+        moved.tabs = mine
+            .into_iter()
+            .map(|mut tab| {
+                tab.instance = new_instance.id.clone();
+                tab
+            })
+            .collect();
         reseat_tabs(
-            &mut next,
-            std::slice::from_ref(first),
-            &old,
+            &mut moved,
+            std::slice::from_ref(&new_instance.id),
+            &old_profiles,
             &shape.profiles,
         );
+        next.tabs = rest;
+        next.tabs.extend(moved.tabs);
     }
-    next.instances.retain(|i| !remove.contains(&i.id));
+    next.instances.retain(|i| !from.contains(&i.id));
     let at = position.min(next.instances.len());
     next.instances.splice(at..at, added);
     let used: Vec<DefinitionId> = next

@@ -238,9 +238,11 @@ pub enum Command { /* phase 4's, and: */
     SetOutline { instance: InstanceId, shape: Option<Shape>, profiles: Vec<Polyline>, what: Edit },
     /// Shapes that keep their sizes made plain paths with the same outlines.
     ConvertToPath(Vec<InstanceId>),
-    /// Shapes replaced by others: offset without its original, weld, subtract, intersect, trim, join.
-    /// Operations and boundaries naming `inherit` name the first new shape instead.
-    ReplaceShapes { remove: Vec<InstanceId>, add: Vec<NewShape>, inherit: Option<InstanceId>, what: Edit },
+    /// Shapes made from others: a broken path, a join, an offset, weld, subtract, intersect, trim.
+    /// `from` go unless `keep`; each pair of `inherit` hands a removed shape's operations,
+    /// boundaries and tabs to the new shape at that index.
+    ReplaceShapes { from: Vec<InstanceId>, keep: bool, add: Vec<NewShape>,
+                    inherit: Vec<(InstanceId, usize)>, what: Edit },
     MakeUnique(Vec<InstanceId>),
     /// Linked copies of `ids`, one set per transform, optionally filed in a new grouped folder.
     CopyInstances { ids: Vec<InstanceId>, placements: Vec<Transform>, folder: Option<String> },
@@ -260,7 +262,8 @@ pub enum Edit { Size(SizeField), Corners, Measured, Flanks, Root, Crest,   // sl
                 MoveNodes { count }, Reshape, AddNode, DeleteNodes { count }, Break, DeleteSegment,
                 CloseEnds, JoinEnds,                                      // slice 10
                 Fillet { count }, Chamfer { count }, SegmentKind(SpanKind), // slices 11, 12
-                Offset, Weld, Subtract, Intersect, Trim, Join, JoinEnds,
+                Offset, Weld, Subtract, Intersect,                          // slices 13, 14
+                Weld, Subtract, Intersect, Trim, Join, JoinEnds,
                 Align(Side), Distribute(Axis), Regenerate }   // the undo label's words
 ```
 
@@ -346,12 +349,34 @@ and changing any of them is a preference the user set
 (`shell::window::user_set`).
 
 `ReplaceShapes` (slice 10, where a broken path first needs it) puts the
-new shapes where the first removed one was in the Design Tree. An
-operation's targets and an Inlay's boundary have the first new shape in
-`inherit`'s place and lose the other removed shapes; the tabs on
-`inherit` move to the first new shape and are re-seated on its outline
-(it is placed as `inherit` was, so their points are in the same space);
-the tabs on the others go. A locked shape is not replaced.
+new shapes where the first of `from` was in the Design Tree, or, with
+`keep`, after the last of them, and names its undo step for `from`.
+For each pair of `inherit`, an operation's targets and an Inlay's
+boundary have that new shape in the removed one's place, and the
+removed one's tabs move to it and are re-seated on its outline (it is
+placed as the old one was, so their points are in the same space). The
+other removed shapes leave every target list and their tabs go. A
+locked shape is not removed.
+
+**Offset and the booleans** (`dc_app::edit`, slices 13 and 14) are pure
+functions of the project giving one `ReplaceShapes`. `offset` works in
+each shape's own space, by the distance divided by its placement's even
+scale: its closed outlines are nested into regions (`dc_geometry::nest`)
+so a hole is known as a hole, each outer is offset by the signed
+distance and each hole by its negative (`dc_geometry::offset`, round
+joins, arcs kept), and each open outline is moved left or right
+(`offset_open`); *Outward* is the left of an open path's direction. The
+result is one plain path per source, `<name> offset`, placed, filed and
+marked as its source; a source whose offset is empty is returned in
+`Offsets::vanished`, and an offset that makes nothing at all is
+refused. `offset_outlines` is the same in project space for the
+popover's preview. `boolean` places every shape's outlines in project
+space, nests them, folds `dc_geometry::boolean` over them in selection
+order at the project's flatten tolerance, and brings the result back
+into the first shape's space: one path, `<name> weld` (`subtract`,
+`intersect`), with the first shape's placement and its operations. A
+shape with an open outline, fewer than two shapes and an empty result
+are refused with the reason.
 
 `Selection` is unchanged; the nodes selected in Edit nodes are the
 tool's state. `Scene::Shape` gains `construction: bool`, the
@@ -945,7 +970,7 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `segment_kinds`,
 `an_edit_regenerates_only_what_targets_it` (acc 117, 118, 127).
 
-**Changing shapes (slices 13–16)** `dc_app::edit::` `offset_outward_rounds_corners`,
+**Changing shapes (slices 13–16)** `dc_app` `tests/edit.rs`: `offset_outward_rounds_corners`,
 `offset_inward_past_the_middle_makes_nothing`, `offset_of_an_open_path`,
 `weld_subtract_intersect_areas`, `a_result_inherits_the_first_shapes_operations`,
 `dc_geometry::intersect::` the ports (42), `dc_geometry::trim::`

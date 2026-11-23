@@ -446,7 +446,11 @@ capability 52); what a tool holds before it commits is not project data.
     engine's own; PureCutCNC mitres its offsets and loses the arcs).
     Each selected shape is offset by itself; an offset that vanishes
     (inward by more than half the width) makes nothing and is said. The
-    results are new paths named `<name> offset`, selected.
+    results are new paths named `<name> offset`, selected, each beside
+    its source in the Design Tree, or in its place, with what cut it,
+    when the original is not kept. A shape with a hole grows outward
+    while its hole shrinks. The distance is as the shape is seen: a
+    shape scaled to twice its size is offset by the distance typed.
 95. **Weld, Subtract, Intersect** (**Shape** menu; PureCutCNC's Join
     and Cut, with the intersection it lacks). For two or more closed
     shapes: **Weld** makes their union one shape; **Subtract** removes
@@ -457,8 +461,11 @@ capability 52); what a tool holds before it commits is not project data.
     first shape target the result. Curved edges come out as short
     straight segments within the flatten tolerance (the engine's
     boolean does; arc fitting at export restores arcs in the program).
-    A result of nothing (no overlap to intersect) changes nothing and
-    is said.
+    A result of nothing (no overlap to intersect, a first shape wholly
+    taken away) changes nothing and is said. Shapes are read in the
+    order they were selected. A weld of shapes that do not touch is one
+    shape of several outlines. The result is placed as the first shape
+    is, and its tabs stay with it.
 96. **Trim** (the Trim tool; PureCutCNC's trim, with the interior case
     it leaves undone). With the tool armed, the part of an outline
     under the pointer, between the two nearest crossings with other

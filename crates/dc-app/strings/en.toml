@@ -79,6 +79,10 @@ chamfers = "Chamfer {count} {count|corner|corners} of {subject}"
 make_straight = "Straighten segment of {subject}"
 make_arc = "Make segment of {subject} an arc"
 make_curve = "Make segment of {subject} a curve"
+offset = "Offset {subject}"
+weld = "Weld {subject}"
+subtract = "Subtract from {subject}"
+intersect = "Intersect {subject}"
 close_path = "Close {subject}"
 join_paths = "Join {subject}"
 convert_to_path = "Convert {subject} to a path"
@@ -1654,6 +1658,21 @@ intersection = "Intersection"
 on_outline = "On outline"
 perpendicular = "Perpendicular"
 grid = "Grid"
+
+# Shapes made from shapes (capabilities 94 and 95): what the result is
+# called, and why there is none.
+[edit.name]
+offset = "{name} offset"
+weld = "{name} weld"
+subtract = "{name} subtract"
+intersect = "{name} intersect"
+
+[edit.refused]
+offset_nothing = "nothing is left of {names} that far inside its outline"
+not_closed = "“{name}” is not a closed outline, so it encloses no area to weld, subtract or intersect"
+two_shapes = "Select two or more closed shapes."
+no_overlap = "The shapes share no area, so there is nothing to keep."
+nothing_left = "Nothing is left of the first shape."
 
 # The Edit nodes tool (capability 92): its bar's prompt and buttons, and
 # why an edit was refused.

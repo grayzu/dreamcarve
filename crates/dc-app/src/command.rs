@@ -273,19 +273,23 @@ pub enum Command {
     /// outlines, and so their linked copies (capability 84, **Convert to
     /// Path**). A shape that is a path already is left as it is.
     ConvertToPath(Vec<InstanceId>),
-    /// Shapes replaced by others, in their place in the Design Tree: a
-    /// path broken in two, two paths joined into one (capability 92), and
-    /// the shape-changing commands to come (offset without its original,
-    /// weld, subtract, intersect, trim, join). Refused when a shape to
-    /// remove is locked.
+    /// Shapes made from others: a path broken in two, two paths joined
+    /// into one (capability 92), an offset (94), a weld, a subtraction, an
+    /// intersection (95), and trim and join to come. The new shapes go
+    /// where the first of `from` is in the Design Tree. Refused when a
+    /// shape to remove is locked.
     ReplaceShapes {
-        /// The shapes that go.
-        remove: Vec<InstanceId>,
-        /// The shapes that take their place; ids are `apply`'s.
+        /// The shapes the new ones are made from, which the undo step
+        /// names.
+        from: Vec<InstanceId>,
+        /// Whether `from` stay (an offset that keeps its original); else
+        /// they go.
+        keep: bool,
+        /// The new shapes; ids are `apply`'s.
         add: Vec<NewShape>,
-        /// The removed shape whose operations, boundaries and tabs the
-        /// first new shape takes over.
-        inherit: Option<InstanceId>,
+        /// For a removed shape, the new shape (an index into `add`) that
+        /// takes over what cut it, what it bounded and its tabs.
+        inherit: Vec<(InstanceId, usize)>,
         /// What was done, for the undo step's name.
         what: Edit,
     },
@@ -514,11 +518,12 @@ impl Command {
             } => next = shapes::set_outline(project, instance, shape.as_ref(), profiles)?,
             Self::ConvertToPath(ids) => next = shapes::convert_to_path(project, ids)?,
             Self::ReplaceShapes {
-                remove,
+                from,
+                keep,
                 add,
                 inherit,
                 ..
-            } => next = shapes::replace(project, remove, add, inherit.as_ref())?,
+            } => next = shapes::replace(project, from, *keep, add, inherit)?,
             Self::CentreOnStock(ids) => next = instances::centre_on_stock(project, ids)?,
             Self::FitStockToShapes { margin_mm } => {
                 next = instances::fit_stock(project, *margin_mm)?;
@@ -730,8 +735,8 @@ impl Command {
                     &subject_of(std::slice::from_ref(instance)),
                 )
             }
-            Self::ReplaceShapes { remove, what, .. } => {
-                shapes::edit_label(strings, *what, None, &subject_of(remove))
+            Self::ReplaceShapes { from, what, .. } => {
+                shapes::edit_label(strings, *what, None, &subject_of(from))
             }
             Self::ConvertToPath(ids) => match shapes::sized(before, ids).as_slice() {
                 [id] => with_subject(
