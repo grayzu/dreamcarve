@@ -68,7 +68,7 @@ Use the [drawing tools](drawing-shapes.md). Some things that help:
 - **Line** with **A** for the arcs follows most mechanical outlines.
   Click the corners, and press **A** before an arc.
 - Draw centre lines as
-  [construction geometry](folders-and-construction.md#construction-geometry)
+  [construction geometry](groups-and-construction.md#construction-geometry)
   first, then snap holes and slots to them.
 - Where the drawing gives a size, type it. A typed diameter is better
   than one traced from a thick pencil line.

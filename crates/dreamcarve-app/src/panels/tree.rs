@@ -401,14 +401,14 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                             strings.get(StrKey::TreeShapes),
                             (!tree.shapes.is_empty()).then(|| tree.shapes_header()),
                             (SHAPE_FLAGS, None),
-                            Some((Icon::FolderPlus, strings.get(StrKey::TreeNewFolderHelp))),
+                            Some((Icon::Group, strings.get(StrKey::TreeNewGroupHelp))),
                         );
                         // New Folder holds the selection, or nothing.
                         if new_folder && app.target_editing().is_none() {
                             out.push(Action::run(dc_app::Command::NewFolder {
-                                name: dc_app::tree::next_folder_name(project, false),
+                                name: dc_app::tree::next_group_name(project),
                                 ids: app.selection().instances().to_vec(),
-                                group: false,
+                                group: true,
                             }));
                         }
                         let all = every_instance(project);
@@ -1079,12 +1079,14 @@ fn folder_row(
         ui.data_mut(|d| d.insert_temp(collapsed_id(), collapsed));
     }
     let glyph_rect = chevron_rect.translate(egui::vec2(ICON_BOX_PX, 0.0));
-    let (folder_icon, folder_tip) = if row.group {
-        (Icon::Group, StrKey::TreeGroup)
+    // One glyph for a group; its tooltip says how its shapes are
+    // selected.
+    let folder_tip = if row.group {
+        StrKey::TreeGroup
     } else {
-        (Icon::Folder, StrKey::TreeFolder)
+        StrKey::TreeGroupApart
     };
-    glyph(ui, glyph_rect, folder_icon, palette.text_secondary);
+    glyph(ui, glyph_rect, Icon::Group, palette.text_secondary);
     ui.interact(
         glyph_rect,
         ui.make_persistent_id(("tree_folder_glyph", row.id.as_str())),
@@ -1185,6 +1187,15 @@ fn folder_row(
             out.push(Action::RenameFolder(row.id.clone()));
             ui.close();
         }
+        // Select Together: a tick, on for a group as it is made.
+        let together = strings.get(StrKey::TreeSelectTogether);
+        if crate::shell::menu::checked_item(ui, together, row.group).clicked() {
+            out.push(Action::run(dc_app::Command::SetGroupTogether {
+                id: row.id.clone(),
+                together: !row.group,
+            }));
+            ui.close();
+        }
         if ui.button(strings.get(StrKey::AppMenuUngroup)).clicked() {
             out.push(Action::run(dc_app::Command::Ungroup(vec![row.id.clone()])));
             ui.close();
@@ -1251,7 +1262,6 @@ pub(crate) fn context_menu(
             MenuItem::Duplicate => StrKey::TreeDuplicate,
             MenuItem::Array => StrKey::ArrangeMenuArray,
             MenuItem::Delete => StrKey::TreeDelete,
-            MenuItem::NewFolder => StrKey::TreeNewFolder,
             MenuItem::Group => StrKey::AppMenuGroup,
             MenuItem::Ungroup => StrKey::AppMenuUngroup,
             MenuItem::MakeUnique => StrKey::AppMenuMakeUnique,
@@ -1276,7 +1286,6 @@ pub(crate) fn context_menu(
             MenuItem::Hide
             | MenuItem::Show
             | MenuItem::Cut
-            | MenuItem::NewFolder
             | MenuItem::ZoomTo
             | MenuItem::MakeUnique => true,
             MenuItem::ConvertToPath => !items.contains(&MenuItem::MakeUnique),
@@ -1588,7 +1597,6 @@ fn picture_menu(
             | MenuItem::Array
             | MenuItem::Construction
             | MenuItem::NotConstruction
-            | MenuItem::NewFolder
             | MenuItem::Group
             | MenuItem::Ungroup
             | MenuItem::Cut

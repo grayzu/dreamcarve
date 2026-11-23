@@ -5,9 +5,12 @@
 // Ported to Rust and modified from PureCutCNC:
 //   src/store/folderGroup.test.ts
 
-//! Slice 21 of phase 5 (`docs/specs/phase-5/design.md`, "Test plan →
-//! Organising"): folders and groups (functional capability 99). Folders
-//! are flat; a group is a folder whose shapes are selected together.
+//! Groups (functional capability 99, as the maintainer's review of
+//! 2026-11-23 merged it): one thing files shapes in the Shapes list and
+//! keeps them together on the Viewport. It was two, a folder and a group;
+//! a group is now a folder, and whether its shapes are selected together
+//! is a switch on it, on when it is made. The file and the code still
+//! call the record a folder.
 
 #![allow(
     clippy::panic,
@@ -76,8 +79,9 @@ fn folder_of(app: &App, instance: &str) -> Option<String> {
         .map(|f| f.as_str().to_owned())
 }
 
-/// The Shapes section as it is listed: a folder as `[name]`, a group as
-/// `{name}`, a row in a folder indented.
+/// The Shapes section as it is listed: a group as `{name}`, one whose
+/// shapes are selected one at a time as `[name]`, a row in a group
+/// indented.
 fn listed(app: &App) -> Vec<String> {
     let tree = Tree::build(app.project());
     let mut out = Vec::new();
@@ -93,56 +97,68 @@ fn listed(app: &App) -> Vec<String> {
     out
 }
 
-fn new_folder(ids: &[&str], group: bool) -> Command {
+/// *New Group*, or Arrange ▸ Group, of `ids`.
+fn group(ids: &[&str]) -> Command {
     Command::NewFolder {
-        name: if group { "Group 1" } else { "Folder 1" }.to_owned(),
+        name: "Group 1".to_owned(),
         ids: ids.iter().map(|i| id(i)).collect(),
-        group,
+        group: true,
     }
 }
 
-/// *New Folder* makes a folder holding the selection: its rows are
-/// gathered where the first of them was, in their order, and the folder
-/// is listed there. One undo step.
+/// A group holds the selection: its rows are gathered where the first of
+/// them was, in their order, and the group is listed there, its shapes
+/// selected together. One undo step. A group may be made of one shape,
+/// or of none, to be filled.
 #[test]
-fn a_new_folder_holds_the_selection() {
+fn a_new_group_holds_the_selection() {
     let mut app = four();
-    assert_eq!(tree::next_folder_name(app.project(), false), "Folder 1");
-    let label = app.run(new_folder(&["i3", "i1"], false)).unwrap();
-    assert_eq!(label, "New folder “Folder 1”");
+    assert_eq!(tree::next_group_name(app.project()), "Group 1");
+    let label = app.run(group(&["i3", "i1"])).unwrap();
+    assert_eq!(label, "Group 2 shapes");
     let project = app.project();
     assert_eq!(project.folders.len(), 1);
     let made = &project.folders[0];
     assert_eq!(
         (made.id.as_str(), made.name.as_str(), made.group),
-        ("f1", "Folder 1", false)
+        ("f1", "Group 1", true)
     );
     assert_eq!(folder_of(&app, "i1").as_deref(), Some("f1"));
     assert_eq!(folder_of(&app, "i3").as_deref(), Some("f1"));
     assert_eq!(folder_of(&app, "i2"), None);
     assert_eq!(names(&app), ["A", "C", "B", "D"], "gathered, in file order");
-    assert_eq!(listed(&app), ["[Folder 1]", "  A", "  C", "B", "D"]);
-    assert_eq!(tree::next_folder_name(app.project(), false), "Folder 2");
-    assert_eq!(tree::next_folder_name(app.project(), true), "Group 1");
+    assert_eq!(listed(&app), ["{Group 1}", "  A", "  C", "B", "D"]);
+    assert_eq!(tree::next_group_name(app.project()), "Group 2");
 
     assert!(app.undo().is_some());
     assert!(app.project().folders.is_empty());
     assert_eq!(names(&app), ["A", "B", "C", "D"]);
 
-    // With nothing selected the folder is empty, and listed after the
-    // shapes.
-    app.run(new_folder(&[], false)).unwrap();
-    assert_eq!(listed(&app), ["A", "B", "C", "D", "[Folder 1]"]);
+    // One shape is a group too.
+    assert_eq!(app.run(group(&["i2"])).unwrap(), "Group “B”");
+    assert_eq!(listed(&app), ["A", "{Group 1}", "  B", "C", "D"]);
+    app.undo();
+    // With nothing selected the group is empty, listed after the shapes,
+    // and stays until it is filled.
+    assert_eq!(app.run(group(&[])).unwrap(), "New group “Group 1”");
+    assert_eq!(listed(&app), ["A", "B", "C", "D", "{Group 1}"]);
+    app.run(Command::SetInstanceFlags {
+        ids: vec![id("i1")],
+        visible: Some(false),
+        locked: None,
+    })
+    .unwrap();
+    assert_eq!(app.project().folders.len(), 1, "another change leaves it");
 }
 
-/// A folder is shown where its first row is with its rows under it, its
-/// eye and padlock the rows' common state; a row filed in a folder that
+/// A group is shown where its first row is with its rows under it, its
+/// eye and padlock the rows' common state; a row filed in a group that
 /// is not there is refused.
 #[test]
-fn folders_file_rows() {
+fn groups_file_rows() {
     let mut app = four();
-    app.run(new_folder(&["i2", "i3"], false)).unwrap();
-    assert_eq!(listed(&app), ["A", "[Folder 1]", "  B", "  C", "D"]);
+    app.run(group(&["i2", "i3"])).unwrap();
+    assert_eq!(listed(&app), ["A", "{Group 1}", "  B", "  C", "D"]);
     let tree = Tree::build(app.project());
     let row = &tree.folders[0];
     assert_eq!(
@@ -157,13 +173,13 @@ fn folders_file_rows() {
     .unwrap();
     assert_eq!(Tree::build(app.project()).folders[0].visible, None, "mixed");
 
-    // A copy of a row in a folder is filed with it, beside the folder's
+    // A copy of a row in a group is filed with it, beside the group's
     // other rows, not at the end of the file.
     app.run(Command::DuplicateInstances(vec![id("i3")]))
         .unwrap();
     assert_eq!(
         listed(&app),
-        ["A", "[Folder 1]", "  B", "  C", "  C (2)", "D"]
+        ["A", "{Group 1}", "  B", "  C", "  C (2)", "D"]
     );
     assert_eq!(names(&app), ["A", "B", "C", "C (2)", "D"]);
 
@@ -178,8 +194,8 @@ fn folders_file_rows() {
     ));
 }
 
-/// Rows drag within the tree, into a folder and out of one: the order
-/// is the file's.
+/// Rows drag within the tree, into a group and out of one: the order is
+/// the file's. A group whose last row is dragged out goes with it.
 #[test]
 fn rows_reorder_the_file() {
     let mut app = four();
@@ -200,32 +216,34 @@ fn rows_reorder_the_file() {
         Err(CommandError::NothingToDo)
     ));
 
-    // Into a folder, before one of its rows; and out again.
-    app.run(new_folder(&["i2", "i3"], false)).unwrap();
-    assert_eq!(listed(&app), ["[Folder 1]", "  B", "  C", "D", "A"]);
+    // Into a group, before one of its rows; and out again.
+    app.run(group(&["i2", "i3"])).unwrap();
+    assert_eq!(listed(&app), ["{Group 1}", "  B", "  C", "D", "A"]);
     let label = app.run(moved(&["i1"], Some("i3"), Some("f1"))).unwrap();
-    assert_eq!(label, "Move “A” to “Folder 1”");
-    assert_eq!(listed(&app), ["[Folder 1]", "  B", "  A", "  C", "D"]);
-    // Onto the folder itself: its last row.
+    assert_eq!(label, "Move “A” to “Group 1”");
+    assert_eq!(listed(&app), ["{Group 1}", "  B", "  A", "  C", "D"]);
+    // Onto the group itself: its last row.
     app.run(moved(&["i4"], None, Some("f1"))).unwrap();
-    assert_eq!(listed(&app), ["[Folder 1]", "  B", "  A", "  C", "  D"]);
+    assert_eq!(listed(&app), ["{Group 1}", "  B", "  A", "  C", "  D"]);
     app.run(moved(&["i2"], None, None)).unwrap();
-    assert_eq!(listed(&app), ["[Folder 1]", "  A", "  C", "  D", "B"]);
+    assert_eq!(listed(&app), ["{Group 1}", "  A", "  C", "  D", "B"]);
     assert_eq!(folder_of(&app, "i2"), None);
-    // Every row out: a plain folder stays, empty.
+    // Every row out: the group goes with the last of them.
     app.run(moved(&["i1", "i3", "i4"], Some("i2"), None))
         .unwrap();
-    assert_eq!(listed(&app), ["A", "C", "D", "B", "[Folder 1]"]);
+    assert_eq!(listed(&app), ["A", "C", "D", "B"]);
+    assert!(app.project().folders.is_empty());
 }
 
 /// Port of *groupSelectedFeaturesIntoNewFolder creates a new grouped
 /// folder* and of the selection tests: a group's shapes are selected
-/// together from the Viewport; Ungroup keeps the shapes; a group left
-/// with no shape goes.
+/// together from the Viewport; with *Select Together* off they are
+/// selected one at a time and the group only files them; Ungroup keeps
+/// the shapes.
 #[test]
 fn a_group_selects_as_one() {
     let mut app = four();
-    let label = app.run(new_folder(&["i2", "i3"], true)).unwrap();
+    let label = app.run(group(&["i2", "i3"])).unwrap();
     assert_eq!(label, "Group 2 shapes");
     assert_eq!(listed(&app), ["A", "{Group 1}", "  B", "  C", "D"]);
     let project = app.project();
@@ -268,43 +286,62 @@ fn a_group_selects_as_one() {
     let boxed = Selection::Nothing.boxed_in(project, &[id("i2"), id("i4")], ClickMode::Replace);
     assert_eq!(boxed.instances(), [id("i2"), id("i3"), id("i4")]);
 
-    // A plain folder's shapes are selected one at a time.
-    app.run(new_folder(&["i1", "i4"], false)).unwrap();
-    assert_eq!(tree::with_groups(app.project(), &[id("i1")]), [id("i1")]);
-    app.undo();
+    // Select Together off: the group still files its shapes, and each is
+    // selected on its own. It is one undo step, and on again is another.
+    let apart = Command::SetGroupTogether {
+        id: folder("f1"),
+        together: false,
+    };
+    assert_eq!(
+        app.run(apart.clone()).unwrap(),
+        "Select the shapes of “Group 1” one at a time"
+    );
+    assert!(matches!(app.run(apart), Err(CommandError::NothingToDo)));
+    assert_eq!(listed(&app), ["A", "[Group 1]", "  B", "  C", "D"]);
+    assert_eq!(tree::with_groups(app.project(), &[id("i3")]), [id("i3")]);
+    // It is still a group to ungroup.
+    assert_eq!(tree::groups_of(app.project(), &[id("i3")]), [folder("f1")]);
+    let together = Command::SetGroupTogether {
+        id: folder("f1"),
+        together: true,
+    };
+    assert_eq!(
+        app.run(together).unwrap(),
+        "Select the shapes of “Group 1” together"
+    );
+    assert_eq!(
+        tree::with_groups(app.project(), &[id("i3")]),
+        [id("i2"), id("i3")]
+    );
+    assert!(matches!(
+        app.run(Command::SetGroupTogether {
+            id: folder("f9"),
+            together: false,
+        }),
+        Err(CommandError::UnknownFolder(_))
+    ));
 
-    // Ungroup: the folder goes, its rows stay where they are.
+    // Ungroup: the group goes, its rows stay where they are.
     let label = app.run(Command::Ungroup(vec![folder("f1")])).unwrap();
     assert_eq!(label, "Ungroup “Group 1”");
     assert_eq!(listed(&app), ["A", "B", "C", "D"]);
     assert!(app.project().folders.is_empty());
-    app.undo();
-
-    // The last shape dragged out of a group: the group goes with it.
-    app.run(Command::MoveRows {
-        ids: vec![id("i2"), id("i3")],
-        before: None,
-        folder: None,
-    })
-    .unwrap();
-    assert_eq!(listed(&app), ["A", "D", "B", "C"]);
-    assert!(app.project().folders.is_empty());
 }
 
-/// Deleting a folder deletes its shapes, as Delete would, in one step;
+/// Deleting a group deletes its shapes, as Delete would, in one step;
 /// renaming it is one step.
 #[test]
-fn delete_and_rename_a_folder() {
+fn delete_and_rename_a_group() {
     let mut app = four();
-    app.run(new_folder(&["i2", "i3"], false)).unwrap();
+    app.run(group(&["i2", "i3"])).unwrap();
     let label = app
         .run(Command::RenameFolder {
             id: folder("f1"),
             name: "Feet".to_owned(),
         })
         .unwrap();
-    assert_eq!(label, "Rename folder “Folder 1”");
-    assert_eq!(listed(&app), ["A", "[Feet]", "  B", "  C", "D"]);
+    assert_eq!(label, "Rename group “Group 1”");
+    assert_eq!(listed(&app), ["A", "{Feet}", "  B", "  C", "D"]);
     assert!(matches!(
         app.run(Command::RenameFolder {
             id: folder("f1"),
@@ -314,12 +351,12 @@ fn delete_and_rename_a_folder() {
     ));
 
     let label = app.run(Command::DeleteFolder(folder("f1"))).unwrap();
-    assert_eq!(label, "Delete folder “Feet”");
+    assert_eq!(label, "Delete group “Feet”");
     assert_eq!(names(&app), ["A", "D"]);
     assert!(app.project().folders.is_empty());
     assert_eq!(app.project().definitions.len(), 2);
     assert!(app.undo().is_some());
-    assert_eq!(listed(&app), ["A", "[Feet]", "  B", "  C", "D"]);
+    assert_eq!(listed(&app), ["A", "{Feet}", "  B", "  C", "D"]);
 
     assert!(matches!(
         app.run(Command::DeleteFolder(folder("f9"))),
@@ -327,25 +364,43 @@ fn delete_and_rename_a_folder() {
     ));
 }
 
-/// Deleting every shape of a group deletes the group; a plain folder
-/// emptied by Delete stays.
+/// A group goes with its last shape, deleted or moved out, whether its
+/// shapes are selected together or not; a project saved with an empty
+/// one keeps it.
 #[test]
 fn a_group_goes_with_its_last_shape() {
     let mut app = four();
-    app.run(new_folder(&["i2", "i3"], true)).unwrap();
-    app.run(Command::DeleteInstances(vec![id("i2"), id("i3")]))
-        .unwrap();
+    app.run(group(&["i2", "i3"])).unwrap();
+    app.run(Command::DeleteInstances(vec![id("i2")])).unwrap();
+    assert_eq!(app.project().folders.len(), 1, "one shape is left in it");
+    app.run(Command::DeleteInstances(vec![id("i3")])).unwrap();
     assert!(app.project().folders.is_empty());
-    app.run(new_folder(&["i1"], false)).unwrap();
+    app.run(group(&["i1"])).unwrap();
+    app.run(Command::SetGroupTogether {
+        id: folder("f1"),
+        together: false,
+    })
+    .unwrap();
     app.run(Command::DeleteInstances(vec![id("i1")])).unwrap();
-    assert_eq!(listed(&app), ["D", "[Folder 1]"]);
+    assert_eq!(listed(&app), ["D"]);
+    // Grouping shapes that are another group's takes them from it, and
+    // a group left empty by that goes too.
+    let mut app = four();
+    app.run(group(&["i1", "i2"])).unwrap();
+    app.run(Command::NewFolder {
+        name: "Group 2".to_owned(),
+        ids: vec![id("i1"), id("i2"), id("i3")],
+        group: true,
+    })
+    .unwrap();
+    assert_eq!(listed(&app), ["{Group 2}", "  A", "  B", "  C", "D"]);
 }
 
-/// The row menu's folder items: New Folder for any rows, Group for two
-/// or more, Ungroup while one of them is in a group; several groups are
-/// dissolved in one step.
+/// The row menu: Group for any rows, Ungroup while one of them is in a
+/// group; several groups are dissolved in one step. There is no second
+/// way to file rows.
 #[test]
-fn the_row_menu_makes_folders_and_groups() {
+fn the_row_menu_groups_and_ungroups() {
     use dc_app::tree::MenuItem;
     let mut app = four();
     let items = |app: &App, ids: &[&str]| {
@@ -353,8 +408,8 @@ fn the_row_menu_makes_folders_and_groups() {
         tree::menu(app.project(), &ids, None, false)
     };
     let one = items(&app, &["i1"]);
-    assert!(one.contains(&MenuItem::NewFolder));
-    assert!(!one.contains(&MenuItem::Group) && !one.contains(&MenuItem::Ungroup));
+    assert!(one.contains(&MenuItem::Group), "one shape can be grouped");
+    assert!(!one.contains(&MenuItem::Ungroup));
     assert!(items(&app, &["i1", "i2"]).contains(&MenuItem::Group));
 
     let both = [id("i1"), id("i2")];
@@ -374,7 +429,7 @@ fn the_row_menu_makes_folders_and_groups() {
     assert_eq!(app.run(ungroup).unwrap(), "Ungroup 2 groups");
     assert_eq!(listed(&app), ["A", "B", "C", "D"]);
 
-    let folder = tree::menu_command(app.project(), MenuItem::NewFolder, &[id("i4")]).unwrap();
-    assert_eq!(app.run(folder).unwrap(), "New folder “Folder 1”");
-    assert_eq!(listed(&app), ["A", "B", "C", "[Folder 1]", "  D"]);
+    let single = tree::menu_command(app.project(), MenuItem::Group, &[id("i4")]).unwrap();
+    assert_eq!(app.run(single).unwrap(), "Group “D”");
+    assert_eq!(listed(&app), ["A", "B", "C", "{Group 1}", "  D"]);
 }

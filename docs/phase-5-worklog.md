@@ -373,7 +373,7 @@ items. Each is tracked here.
 | A more prominent division of the tool bar | Change | Done: the view's controls keep the top pill; the strip under it has a rule between each of its four segments |
 | Control of snapping | Feature | Exists in View ▸ Snapping and Snap To; now also the strip's Snapping button, with the switch and a tick per kind |
 | An origin for an object | Feature | Done, as the maintainer answered: the point a resize, a turn and a flip are made about. `dc_app::origin`, the Origin row in Properties, the mark on the selection |
-| Folder and group | Question | Answered; one concept with a *Select together* switch is offered, not done |
+| Folder and group | Question | Answered, and merged at the maintainer's word: one thing, a **group**, with *Select Together* in its menu |
 | A tool added in an operation should be chosen | Bug | Done: `Command::AddToolForOperation`, `editor::add_from_library_for` |
 | Start and stop points for an operation | Feature | Skipped for now, at the maintainer's word |
 | An operation that cuts nothing is too quiet | Bug | Done: `operations::cuts_nothing`, the row's second line, the editor's banner |
@@ -389,8 +389,13 @@ Open, waiting for the maintainer's answer:
   where it starts, so "stop" is asked about: an open path's direction,
   or where the bit lifts. This is CAM, phase 4's ground, and wants a
   short spec before it is built.
-- **Folder and group as one thing**: a folder with a *Select together*
-  switch in place of a separate group. Offered, not done.
+- **The file's names for a group.** The app says group everywhere; the
+  project file still writes `folders`, an instance's `folder` and the
+  entry's `group` flag, and the code's types are named to match
+  (`Folder`, `FolderId`, `Command::NewFolder`). Renaming them in the
+  file is a change to format 29, to its migration, to eleven fixtures
+  and to the Project file chapter. Format 29 has not been released, so
+  it is cheapest now; it is not done without the maintainer's word.
 
 Decisions taken with these, for the maintainer:
 
@@ -404,6 +409,11 @@ Decisions taken with these, for the maintainer:
   warning code, so `dreamcarve check` prints what it printed.
 - With several tools ticked, *Add from library…* adds them all and
   chooses none.
+- Every group is made with *Select Together* on, also one made empty
+  from the Shapes header; a group that only files shapes is that with
+  the tick off. A group now goes with its last shape whether the tick
+  is on or off, where a plain folder used to stay empty; one made empty
+  stays until it is used. A shape can be a group of one.
 - The origin is a preference of the app, not of a shape or of the
   project: it stays as set for whatever is selected next, and is the
   centre again when the app is started. X and Y still read the

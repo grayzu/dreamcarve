@@ -187,4 +187,4 @@ pressure angles are the same.
 The **Construction** choice at the end of every drawing tool's bar makes
 the shapes that follow construction geometry: lines to draw by, which
 are never cut. It stays as you set it. See
-[Folders, groups and construction geometry](folders-and-construction.md).
+[Groups and construction geometry](groups-and-construction.md).

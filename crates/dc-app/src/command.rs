@@ -257,16 +257,28 @@ pub enum Command {
         /// Whether they are construction geometry.
         construction: bool,
     },
-    /// A folder of the Design Tree under the next free `f<n>`, holding
+    /// A group of the Design Tree under the next free `f<n>`, holding
     /// `ids`, which are gathered where the first of them is (capability
-    /// 99). A group, whose shapes are selected together, needs two.
+    /// 99). The file and this command call the record a folder: the
+    /// first build had folders and groups, which the maintainer's review
+    /// of 2026-11-23 made one thing.
     NewFolder {
-        /// The folder's name.
+        /// The group's name.
         name: String,
-        /// The instances filed in it.
+        /// The instances filed in it; none makes it empty, to be filled.
         ids: Vec<InstanceId>,
-        /// Whether it is a group.
+        /// Whether its shapes are selected together on the Viewport,
+        /// as those of every group made in the app are until its
+        /// *Select Together* is turned off.
         group: bool,
+    },
+    /// Turn a group's *Select Together* on or off: whether a click on
+    /// one of its shapes on the Viewport selects them all.
+    SetGroupTogether {
+        /// The group.
+        id: FolderId,
+        /// Whether its shapes are selected together.
+        together: bool,
     },
     /// Rename a folder.
     RenameFolder {
@@ -677,6 +689,9 @@ impl Command {
             Self::NewFolder { name, ids, group } => {
                 next = folders::new_folder(project, name, ids, *group)?;
             }
+            Self::SetGroupTogether { id, together } => {
+                next = folders::set_together(project, id, *together)?;
+            }
             Self::RenameFolder { id, name } => next = folders::rename(project, id, name)?,
             Self::DeleteFolder(id) => next = folders::delete_folder(project, id)?,
             Self::Ungroup(ids) => next = folders::ungroup(project, ids)?,
@@ -953,11 +968,21 @@ impl Command {
                 };
                 with_subject(key, &subject_of(ids))
             }
-            Self::NewFolder {
-                ids, group: true, ..
-            } => with_subject(StrKey::CommandLabelGroup, &subject_of(ids)),
-            Self::NewFolder { name, .. } => {
-                with_subject(StrKey::CommandLabelNewFolder, &one(strings, name))
+            // An empty group is named for itself; one that holds shapes,
+            // for them.
+            Self::NewFolder { name, ids, .. } if ids.is_empty() => {
+                with_subject(StrKey::CommandLabelNewGroup, &one(strings, name))
+            }
+            Self::NewFolder { ids, .. } => {
+                with_subject(StrKey::CommandLabelGroup, &subject_of(ids))
+            }
+            Self::SetGroupTogether { id, together } => {
+                let key = if *together {
+                    StrKey::CommandLabelSelectTogether
+                } else {
+                    StrKey::CommandLabelSelectApart
+                };
+                with_subject(key, &folder_subject(id))
             }
             Self::RenameFolder { id, .. } => {
                 with_subject(StrKey::CommandLabelRenameFolder, &folder_subject(id))

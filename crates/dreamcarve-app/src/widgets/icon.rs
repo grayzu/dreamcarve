@@ -181,10 +181,6 @@ pub enum Icon {
     AlignHorizontalDistributeCenter,
     /// `align-vertical-distribute-center`: Distribute vertically by centres.
     AlignVerticalDistributeCenter,
-    /// `folder`: a folder's row in the Design Tree.
-    Folder,
-    /// `folder-plus`: New Folder.
-    FolderPlus,
     /// `group`: a group's row in the Design Tree.
     Group,
     /// `square-dashed`: construction geometry's row in the Design Tree.
@@ -279,8 +275,6 @@ impl Icon {
             Self::AlignVerticalSpaceBetween => "align-vertical-space-between",
             Self::AlignHorizontalDistributeCenter => "align-horizontal-distribute-center",
             Self::AlignVerticalDistributeCenter => "align-vertical-distribute-center",
-            Self::Folder => "folder",
-            Self::FolderPlus => "folder-plus",
             Self::Group => "group",
             Self::SquareDashed => "square-dashed",
         }
@@ -372,8 +366,6 @@ impl Icon {
             Self::AlignVerticalSpaceBetween => '\u{e27b}',
             Self::AlignHorizontalDistributeCenter => '\u{e03c}',
             Self::AlignVerticalDistributeCenter => '\u{e27e}',
-            Self::Folder => '\u{e0d7}',
-            Self::FolderPlus => '\u{e0d9}',
             Self::Group => '\u{e464}',
             Self::SquareDashed => '\u{e1cb}',
         }
@@ -381,7 +373,7 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 86] = [
+    pub const ALL: [Self; 84] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -464,8 +456,6 @@ impl Icon {
         Self::AlignVerticalSpaceBetween,
         Self::AlignHorizontalDistributeCenter,
         Self::AlignVerticalDistributeCenter,
-        Self::Folder,
-        Self::FolderPlus,
         Self::Group,
         Self::SquareDashed,
     ];

@@ -43,7 +43,7 @@ before that; its changes are those under Unreleased.
 - **Copies and order.** Make Unique for a linked copy; cut, copy and
   paste, also between projects; Alt-drag to copy; **Arrange ▸ Array…**
   for copies in a grid or round a centre; Align and Distribute, to each
-  other or to the stock; folders and groups in the Shapes list; and
+  other or to the stock; groups in the Shapes list; and
   construction geometry, drawn dashed, snapped to and never cut.
 - **Tracing and measuring.** A picture's **Opacity** and **Set
   scale…** (two points and the real distance between them) make it a
@@ -456,6 +456,14 @@ before that; its changes are those under Unreleased.
 
 ### Changed
 
+- **Folders and groups are one thing, a group.** The Shapes list had
+  folders, which filed shapes, and groups, which also selected together
+  on the Viewport. There is now only the group: **Arrange ▸ Group**,
+  **Group** in a shape's menu and the **New group** button all make
+  one, of any number of shapes or none. A group's menu has **Select
+  Together**, ticked when it is made; unticked, the group only files
+  its shapes. A group goes with its last shape. The project file keeps
+  its names (`folders`, `folder`, `group`).
 - **A side handle stretches a shape one way.** A selected shape has a
   handle at the middle of each side as well as at each corner. Dragging
   one moves that side and leaves the opposite side where it is.

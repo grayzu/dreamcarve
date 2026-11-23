@@ -60,20 +60,27 @@ pub(super) fn gather(project: &mut Project) {
         .collect();
 }
 
-/// Removes every group no instance is filed in: a group is its shapes.
-pub(super) fn prune_groups(project: &mut Project) {
-    let used: Vec<FolderId> = project
+/// The folders an instance of `project` is filed in.
+fn used(project: &Project) -> Vec<FolderId> {
+    project
         .instances
         .iter()
         .filter_map(|instance| instance.folder.clone())
-        .collect();
-    project
-        .folders
-        .retain(|folder| !folder.group || used.contains(&folder.id));
+        .collect()
 }
 
-/// What every command leaves of the folders: no empty group, and each
-/// folder's rows together. Run when a command changed which instances
+/// Removes every group of `next` that held a shape in `before` and holds
+/// none now: a group goes with its last shape, deleted or moved out. One
+/// that was empty already (made empty, to be filled; or read so from a
+/// file) stays.
+pub(super) fn prune_emptied(before: &Project, next: &mut Project) {
+    let (held, holds) = (used(before), used(next));
+    next.folders
+        .retain(|folder| holds.contains(&folder.id) || !held.contains(&folder.id));
+}
+
+/// What every command leaves of the groups: none it emptied, and each
+/// group's rows together. Run when a command changed which instances
 /// there are or where one is filed.
 pub(super) fn settle(project: &Project, next: &mut Project) {
     if next.folders.is_empty() {
@@ -86,14 +93,14 @@ pub(super) fn settle(project: &Project, next: &mut Project) {
             .collect()
     };
     if layout(project) != layout(next) {
-        prune_groups(next);
+        prune_emptied(project, next);
         gather(next);
     }
 }
 
-/// `NewFolder`: a folder under the next free `f<n>`, holding `ids`,
-/// which are gathered where the first of them is. A group needs two
-/// shapes; a plain folder may be made empty.
+/// `NewFolder`: a group under the next free `f<n>`, holding `ids`, which
+/// are gathered where the first of them is. It may hold one shape, or
+/// none, to be filled; a group it takes the last shape of goes.
 pub(super) fn new_folder(
     project: &Project,
     name: &str,
@@ -101,7 +108,7 @@ pub(super) fn new_folder(
     group: bool,
 ) -> Result<Project, CommandError> {
     let name = name.trim();
-    if name.is_empty() || (group && ids.len() < 2) {
+    if name.is_empty() {
         return Err(CommandError::NothingToDo);
     }
     if !ids.is_empty() {
@@ -120,8 +127,27 @@ pub(super) fn new_folder(
             instance.folder = Some(id.clone());
         }
     }
-    prune_groups(&mut next);
+    prune_emptied(project, &mut next);
     gather(&mut next);
+    Ok(next)
+}
+
+/// `SetGroupTogether`: whether a group's shapes are selected together on
+/// the Viewport.
+pub(super) fn set_together(
+    project: &Project,
+    id: &FolderId,
+    together: bool,
+) -> Result<Project, CommandError> {
+    if find(project, id)?.group == together {
+        return Err(CommandError::NothingToDo);
+    }
+    let mut next = project.clone();
+    for folder in &mut next.folders {
+        if folder.id == *id {
+            folder.group = together;
+        }
+    }
     Ok(next)
 }
 
@@ -220,7 +246,7 @@ pub(super) fn move_rows(
     .unwrap_or(rest.len());
     rest.splice(at..at, moved);
     next.instances = rest;
-    prune_groups(&mut next);
+    prune_emptied(project, &mut next);
     gather(&mut next);
     if next == *project {
         return Err(CommandError::NothingToDo);

@@ -470,15 +470,14 @@ pub fn gathered(project: &Project) -> Vec<usize> {
     order
 }
 
-/// `<Folder|Group> <n>` for the least `n` from 1 that no folder of
-/// `project` is named.
+/// `Group <n>` for the least `n` from 1 that no group of `project` is
+/// named.
 #[must_use]
-pub fn next_folder_name(project: &Project, group: bool) -> String {
-    let base = if group { "Group" } else { "Folder" };
+pub fn next_group_name(project: &Project) -> String {
     (1u32..)
-        .map(|n| format!("{base} {n}"))
+        .map(|n| format!("Group {n}"))
         .find(|name| !project.folders.iter().any(|folder| folder.name == *name))
-        .unwrap_or_else(|| format!("{base} 1"))
+        .unwrap_or_else(|| "Group 1".to_owned())
 }
 
 /// `ids` with each shape of a group replaced by the group's shapes
@@ -520,10 +519,10 @@ pub fn groups_of(project: &Project, ids: &[InstanceId]) -> Vec<FolderId> {
         .folders
         .iter()
         .filter(|folder| {
-            folder.group
-                && project.instances.iter().any(|instance| {
-                    ids.contains(&instance.id) && instance.folder.as_ref() == Some(&folder.id)
-                })
+            // Whether or not its shapes are selected together.
+            project.instances.iter().any(|instance| {
+                ids.contains(&instance.id) && instance.folder.as_ref() == Some(&folder.id)
+            })
         })
         .map(|folder| folder.id.clone())
         .collect()
@@ -577,9 +576,7 @@ pub enum MenuItem {
     Array,
     /// Delete, with the targets and tabs that go with it (capability 59).
     Delete,
-    /// **New Folder** (capability 99): a folder holding the rows.
-    NewFolder,
-    /// **Group**: a group of the rows; listed for two or more.
+    /// **Group** (capability 99): a group holding the rows.
     Group,
     /// **Ungroup**: the groups that hold a row dissolved; listed while
     /// one does.
@@ -667,11 +664,8 @@ pub fn menu(
         MenuItem::Duplicate,
         MenuItem::Array,
         MenuItem::Delete,
-        MenuItem::NewFolder,
+        MenuItem::Group,
     ]);
-    if ids.len() > 1 {
-        items.push(MenuItem::Group);
-    }
     if !groups_of(project, ids).is_empty() {
         items.push(MenuItem::Ungroup);
     }
@@ -760,13 +754,8 @@ pub fn menu_command(project: &Project, item: MenuItem, ids: &[InstanceId]) -> Op
             ids,
             construction: false,
         }),
-        MenuItem::NewFolder => Some(Command::NewFolder {
-            name: next_folder_name(project, false),
-            ids,
-            group: false,
-        }),
-        MenuItem::Group => (ids.len() > 1).then(|| Command::NewFolder {
-            name: next_folder_name(project, true),
+        MenuItem::Group => (!ids.is_empty()).then(|| Command::NewFolder {
+            name: next_group_name(project),
             ids,
             group: true,
         }),
@@ -879,7 +868,6 @@ pub fn bitmap_menu_command(project: &Project, item: MenuItem, ids: &[BitmapId]) 
         | MenuItem::ConvertToPath
         | MenuItem::Construction
         | MenuItem::NotConstruction
-        | MenuItem::NewFolder
         | MenuItem::Group
         | MenuItem::Ungroup
         | MenuItem::Duplicate

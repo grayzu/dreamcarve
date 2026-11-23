@@ -744,36 +744,39 @@ fn selected(h: &Harness<'_, Shell>) -> Vec<String> {
         .collect()
 }
 
-/// Capability 99 in the Design Tree: *New Folder* files the selection;
-/// the folder's row folds its rows away, selects them, is renamed in
+/// Capability 99 in the Design Tree: *New Group* files the selection;
+/// the group's row folds its rows away, selects them, is renamed in
 /// place, and its menu ungroups or deletes it.
 #[test]
-fn folders_in_the_design_tree() {
+fn groups_in_the_design_tree() {
     let (mut h, dir) = plaque("folders");
     common::go_to(&mut h, "Design");
     select(&mut h, &["i5", "i6"]);
-    h.get_by_role_and_label(Role::Button, "New folder holding the selected shapes")
-        .click();
+    h.get_by_role_and_label(
+        Role::Button,
+        "New group holding the selected shapes, or an empty one to drag shapes into",
+    )
+    .click();
     h.run();
-    assert_eq!(h.state().app().undo_label(), Some("New folder “Folder 1”"));
+    assert_eq!(h.state().app().undo_label(), Some("Group 2 shapes"));
     assert_eq!(
         listed(&h)[4..8],
-        ["[Folder 1]", "  holes-1", "  holes-2", "holes-3"]
+        ["{Group 1}", "  holes-1", "  holes-2", "holes-3"]
     );
     assert!(
-        h.query_by_role_and_label(Role::TreeItem, "Folder 1")
+        h.query_by_role_and_label(Role::TreeItem, "Group 1")
             .is_some()
     );
 
     // Folded, its rows are not listed; unfolded, they are.
-    h.get_by_role_and_label(Role::Button, "Collapse Folder 1")
+    h.get_by_role_and_label(Role::Button, "Collapse Group 1")
         .click();
     h.run();
     assert!(
         h.query_by_role_and_label(Role::TreeItem, "holes-1")
             .is_none()
     );
-    h.get_by_role_and_label(Role::Button, "Expand Folder 1")
+    h.get_by_role_and_label(Role::Button, "Expand Group 1")
         .click();
     h.run();
     assert!(
@@ -781,29 +784,43 @@ fn folders_in_the_design_tree() {
             .is_some()
     );
 
-    // A click on the folder selects its shapes.
+    // A click on the group's row selects its shapes.
     select(&mut h, &["i1"]);
-    h.get_by_role_and_label(Role::TreeItem, "Folder 1").click();
+    h.get_by_role_and_label(Role::TreeItem, "Group 1").click();
     h.run();
     assert_eq!(selected(&h), ["i5", "i6"]);
 
     // Rename, from its menu, in place.
-    h.get_by_role_and_label(Role::TreeItem, "Folder 1")
+    h.get_by_role_and_label(Role::TreeItem, "Group 1")
         .click_secondary();
     h.run_steps(8);
     h.get_by_role_and_label(Role::Button, "Rename").click();
     h.run_steps(8);
-    h.get_by_label("Rename folder Folder 1").type_text("Feet");
+    h.get_by_label("Rename group Group 1").type_text("Feet");
     h.run();
     h.key_press(egui::Key::Enter);
     h.run();
+    assert_eq!(h.state().app().undo_label(), Some("Rename group “Group 1”"));
+    assert_eq!(listed(&h)[4], "{Feet}");
+
+    // Select Together, in the row's menu, is ticked for a new group: off,
+    // a click on one of its shapes on the Viewport selects that one.
+    h.get_by_role_and_label(Role::TreeItem, "Feet")
+        .click_secondary();
+    h.run_steps(8);
+    h.get_by_label("Select Together").click();
+    h.run_steps(8);
     assert_eq!(
         h.state().app().undo_label(),
-        Some("Rename folder “Folder 1”")
+        Some("Select the shapes of “Feet” one at a time")
     );
     assert_eq!(listed(&h)[4], "[Feet]");
+    assert!(!h.state().app().project().folders[0].group);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run();
+    assert!(h.state().app().project().folders[0].group);
 
-    // Ungroup keeps the shapes; Delete takes them with the folder.
+    // Ungroup keeps the shapes; Delete takes them with the group.
     let count = h.state().app().project().instances.len();
     h.get_by_role_and_label(Role::TreeItem, "Feet")
         .click_secondary();
@@ -819,44 +836,41 @@ fn folders_in_the_design_tree() {
     h.run_steps(8);
     h.get_by_role_and_label(Role::Button, "Delete").click();
     h.run_steps(8);
-    assert_eq!(h.state().app().undo_label(), Some("Delete folder “Feet”"));
+    assert_eq!(h.state().app().undo_label(), Some("Delete group “Feet”"));
     assert_eq!(h.state().app().project().instances.len(), count - 2);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Rows drag within the Design Tree (capability 99): onto a folder to
+/// Rows drag within the Design Tree (capability 99): onto a group to
 /// file them, between rows to reorder, and past the last shape to take
 /// one out.
 #[test]
-fn folders_drag_and_drop() {
+fn groups_drag_and_drop() {
     let (mut h, dir) = plaque("drag-rows");
     common::go_to(&mut h, "Design");
     select(&mut h, &["i5", "i6"]);
-    h.get_by_role_and_label(Role::Button, "New folder holding the selected shapes")
-        .click();
+    h.get_by_role_and_label(
+        Role::Button,
+        "New group holding the selected shapes, or an empty one to drag shapes into",
+    )
+    .click();
     h.run();
     let row =
         |h: &Harness<'_, Shell>, name: &str| h.get_by_role_and_label(Role::TreeItem, name).rect();
     let upper = |rect: egui::Rect| egui::pos2(rect.center().x, rect.top() + 6.0);
     let lower = |rect: egui::Rect| egui::pos2(rect.center().x, rect.bottom() - 6.0);
 
-    // The square, onto the folder's lower half: filed in it, first.
+    // The square, onto the group's lower half: filed in it, first.
     let from = row(&h, "square").center();
-    let to = lower(row(&h, "Folder 1"));
+    let to = lower(row(&h, "Group 1"));
     common::drag(&mut h, from, to, egui::PointerButton::Primary);
     assert_eq!(
         h.state().app().undo_label(),
-        Some("Move “square” to “Folder 1”")
+        Some("Move “square” to “Group 1”")
     );
     assert_eq!(
         listed(&h)[3..8],
-        [
-            "[Folder 1]",
-            "  square",
-            "  holes-1",
-            "  holes-2",
-            "holes-3"
-        ]
+        ["{Group 1}", "  square", "  holes-1", "  holes-2", "holes-3"]
     );
 
     // Between rows: the island, before the outline.
@@ -878,7 +892,7 @@ fn folders_drag_and_drop() {
     assert_eq!(h.state().app().undo_label(), Some("Reorder 2 shapes"));
     let rows = listed(&h);
     assert_eq!(rows[rows.len() - 2..], ["holes-1", "holes-2"]);
-    assert_eq!(rows[3..6], ["[Folder 1]", "  square", "holes-3"]);
+    assert_eq!(rows[3..6], ["{Group 1}", "  square", "holes-3"]);
 
     // Let go where it was: nothing changes, and nothing is said.
     let steps = h.state().app().undo_label().map(str::to_owned);

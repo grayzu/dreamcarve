@@ -31,7 +31,7 @@
 - [Editing nodes](user-guide/editing-nodes.md)
 - [Changing shapes](user-guide/changing-shapes.md)
 - [Copies, arrays and alignment](user-guide/copies-and-arrays.md)
-- [Folders, groups and construction geometry](user-guide/folders-and-construction.md)
+- [Groups and construction geometry](user-guide/groups-and-construction.md)
 - [Tracing a picture](user-guide/tracing.md)
 - [Measuring](user-guide/measuring.md)
 - [Stock, origin and heights](user-guide/stock-and-origin.md)

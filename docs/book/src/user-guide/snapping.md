@@ -28,7 +28,7 @@ never thrown away.
 Shapes snap as they are drawn, so a slot's end centres, a rounded
 corner's arc and the corners of a letter are all offered. A hidden shape
 is not. A locked shape and
-[construction geometry](folders-and-construction.md) are. A picture does
+[construction geometry](groups-and-construction.md) are. A picture does
 not snap.
 
 ## Turning it on and off

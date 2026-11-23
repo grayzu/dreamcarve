@@ -985,6 +985,9 @@ the tool bar of slice 9 is its form.
 
 ### Folders and groups (slice 21)
 
+As first built. The maintainer's review of 2026-11-23 made the two one
+thing, a group: see "The maintainer's review of 2026-11-23", below.
+
 - `dc_app::command::folders` (ported from `featureSlice.ts`'s folder
   actions): `new_folder`, `rename`, `delete_folder` (its shapes go as
   `DeleteInstances` removes them), `ungroup` (several folders in one
@@ -1253,6 +1256,23 @@ the tool bar of slice 9 is its form.
   draws the chooser (nine radio buttons named *Origin: Top left* …)
   and the selection's handles carry a ring at the pivot. Tests:
   `dc-app` `tests/origin.rs`; `editing::the_origin_is_chosen_and_changes_are_about_it`.
+- **One group.** Folders and groups are one thing to the user, a group
+  (capability 99). The file and the code keep their names: `Folder`,
+  `FolderId`, `Project::folders`, `FeatureInstance::folder`, and
+  `Folder::group`, which is now the group's *Select Together*.
+  `Command::NewFolder` no longer needs two shapes and is labelled
+  *Group …*, or *New group …* when it holds none;
+  `Command::SetGroupTogether { id, together }` is the switch.
+  `command::folders::prune_emptied(before, next)` replaces
+  `prune_groups`: a group that held a shape before the command and
+  holds none after it is removed, whatever its switch, and one that was
+  empty already stays. `tree::next_group_name`, `groups_of` (every
+  group that holds one of the shapes, switch on or off) and
+  `MenuItem::Group` for any number of rows; `MenuItem::NewFolder` is
+  gone. In the window the Shapes header's button and every group's row
+  carry the one `group` glyph, and the row's menu has *Select Together*
+  as a tick. Tests: `dc-app` `tests/groups.rs` (was `folders.rs`),
+  `editing::groups_in_the_design_tree`, `groups_drag_and_drop`.
 - **Array… in the menu.** `tree::MenuItem::Array`, after Duplicate; the
   window arms `Adjust::Array`.
 - Tests: `dc-app` `handles::a_side_handle_stretches_one_way_and_keeps_the_far_side`,

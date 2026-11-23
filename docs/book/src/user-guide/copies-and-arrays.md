@@ -70,7 +70,7 @@ A **Circular** array is copies round a centre:
 
 The selection is the first of the array and stays where it is. The
 copies are linked copies of it, filed with it in a
-[group](folders-and-construction.md#groups) named `<name> array`.
+[group](groups-and-construction.md#groups) named `<name> array`.
 
 An array is not remembered as an array. Once made, it is copies: to
 change the spacing, undo and make it again, or move the copies.

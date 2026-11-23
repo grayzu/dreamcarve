@@ -615,33 +615,47 @@ capability 52); what a tool holds before it commits is not project data.
     to one that is locked. Distribute spaces the unlocked shapes among
     themselves. One undo step each, named for the shapes it was asked
     of; shapes already in place make no step.
-99. **Folders and groups** (PureCutCNC's flat folders). The Design
-    Tree's shapes can be filed in **folders**: *New Folder* (the Shapes
-    header's button and a row's context menu) makes one holding the
-    selection, or an empty one; rows drag into, out of and between
-    folders, and within the tree to reorder (the order is the file's
-    and the drawing order), a line showing where they will go; a
-    selected row takes the selection with it. A folder has a name
-    (*Folder 1*; a double-click or its menu renames it in place),
-    folds its rows away, lists how many shapes it holds, and its eye
-    and padlock act on every shape in it; a click on it selects its
-    shapes. Folders do not nest. A folder's rows lie together in the
-    tree and in the file: a shape filed in a folder, by a drag, a
-    copy, a paste or a drawing tool, goes after the folder's other
-    rows. Deleting a folder (its menu) asks nothing and deletes its
-    shapes (one undo step); *Ungroup* (its menu) or dragging the rows
-    out keeps them. A plain folder may be empty, and is then listed
-    after the shapes.
+99. **Groups** (PureCutCNC's flat folders and its grouped folder, as one
+    thing). The first build had **folders**, which filed shapes in the
+    Design Tree, and **groups**, folders whose shapes were also
+    selected together; the maintainer's review of 2026-11-23 made them
+    one, the **group**, and nothing the user reads says folder.
 
-    A **group** is a folder marked as one (**Arrange ▸ Group**,
-    `Ctrl`/`⌘ G`, for two shapes or more; *Ungroup*, `⇧ Ctrl`/`⌘ G`,
-    which dissolves every group that holds a selected shape): clicking
-    any of its shapes on the Viewport selects all of them, as does a
-    marquee that touches one, so they move, turn and scale as one; a
-    double-click reaches the one shape. In the Design Tree a click on a
-    row of a group selects that row alone. A group whose last shape is
-    deleted or dragged out goes with it. Text converted to paths and an
-    array's copies arrive grouped.
+    A group is a named row of the Design Tree with its shapes under it.
+    It is made of the selection by **Arrange ▸ Group** (`Ctrl`/`⌘ G`),
+    by **Group** in a shape's context menu, or by the Shapes header's
+    **New group** button, which with nothing selected makes an empty
+    one to drag shapes into; a group may hold one shape. It is named
+    *Group 1* (a double-click or its menu renames it in place), folds
+    its rows away, lists how many shapes it holds, and its eye and
+    padlock act on every shape in it. Rows drag into, out of and
+    between groups, and within the tree to reorder (the order is the
+    file's and the drawing order), a line showing where they will go; a
+    selected row takes the selection with it. Groups do not nest. A
+    group's rows lie together in the tree and in the file: a shape that
+    joins a group, by a drag, a copy, a paste or a drawing tool, goes
+    after the group's other rows.
+
+    A group's shapes act as one on the Viewport: clicking any of them
+    selects all of them, as does a marquee that touches one, so they
+    move, turn and scale together; a double-click reaches the one
+    shape. In the Design Tree a click on the group's row selects its
+    shapes, and a click on a shape's row selects that row alone. The
+    group's menu has **Select Together**, ticked when the group is
+    made; unticked, its shapes are selected one at a time and the group
+    only files them. Either way it is one undo step.
+
+    *Ungroup* (the group's menu, or **Arrange ▸ Ungroup**, `⇧ Ctrl`/`⌘
+    G`, which dissolves every group that holds a selected shape) keeps
+    the shapes. Deleting a group (its menu) asks nothing and deletes
+    its shapes, in one undo step. A group goes with its last shape,
+    deleted or dragged out; one that is empty because it was made so
+    stays until it is used, listed after the shapes. Text converted to
+    paths and an array's copies arrive grouped.
+
+    The project file keeps the names it had: a group is an entry of
+    `folders`, a shape's group its `folder`, and *Select Together* the
+    entry's `group` (104).
 100. **Construction geometry** (PureCutCNC's construction role). Any
     shape can be marked **Construction** (the switch in Properties, the
     ticked row of the context menu and of the Shape menu, the tool
@@ -890,12 +904,14 @@ saves. Tolerances are `EPS_MM` (1e-6 mm) unless stated.
      To stock aligns to the stock's sides; Distribute Horizontally by
      gaps makes the two gaps equal and leaves the outer two where they
      were; a locked shape stays and is named.
-124. **Folders and groups** (99). New Folder files the selection;
-     dragging a row out unfiles it; reordering rows reorders
-     `instances`; a folder's eye hides its shapes; deleting a folder
-     deletes them and takes them from operations' targets; a click on
-     one shape of a group selects all of it and a transform moves all.
-     All of it survives save and load.
+124. **Groups** (99). Group files the selection in a group, of one
+     shape or several, and the Shapes header's button makes an empty
+     one; rows drag into, out of and between groups and reorder the
+     file; a click on a grouped shape on the Viewport selects the
+     group, and with *Select Together* off selects that shape; Ungroup
+     keeps the shapes and Delete takes them; a group goes with its last
+     shape, and one made empty stays. All of it survives save and
+     load.
 125. **Construction** (100, S21). Marking the plaque's `hole` shape
      construction takes it from the Drill's targets in the same step;
      no Add menu or picker offers it; the artwork checks and Fit stock
@@ -1036,7 +1052,7 @@ has the slices.
 | --- | --- | --- |
 | 5.1 | **Drawing**: format 29, parametric shapes, the tool model, snapping and the grid, typed sizes, every drawing tool but Text | 81–90, 102, 104, 106 |
 | 5.2 | **Editing**: Edit nodes, fillet and chamfer, offset, weld, subtract, intersect, trim, join | 92–97, 105 |
-| 5.3 | **Organising**: Make Unique, cut, copy and paste, arrays, align and distribute, folders and groups, construction geometry | 98–100 |
+| 5.3 | **Organising**: Make Unique, cut, copy and paste, arrays, align and distribute, groups, construction geometry | 98–100 |
 | 5.4 | **Text**: `dc-text`, the bundled fonts, user fonts, the Text tool | 91 |
 | 5.5 | **Tracing and measuring**: backdrops, Measure | 101, 103 |
 | 5.6 | **Release**: the hook plate, the quick start and the chapters, the review pictures, the exit-criteria audit | exit |

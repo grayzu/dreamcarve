@@ -79,16 +79,17 @@ measured, never cut. No operation may name one.
 _Avoid_: Guide, helper line, reference geometry
 _PureCutCNC_: `construction` feature operation
 
-**Folder**:
-A named set of feature instances in the Design Tree (`folders`, format 29).
-Folders do not nest.
-_Avoid_: Layer (a DXF's, used only at import), directory
-_PureCutCNC_: FeatureFolder
-
 **Group**:
-A folder marked `group`: a click on one of its shapes selects them all.
-_Avoid_: Compound, block
-_PureCutCNC_: a `grouped` folder
+A named set of feature instances in the Design Tree, filed together in the
+list and, while its *Select Together* is on (as it is when made), selected
+together on the Viewport. Groups do not nest. The project file and the
+code call the record a folder (`folders`, an instance's `folder`, format
+29) and its *Select Together* `group`: the first build had folders and
+groups as two things, and the maintainer's review of 2026-11-23 made them
+one, named for what the user sees.
+_Avoid_: Folder (in anything the user reads), layer (a DXF's, used only at
+import), compound, block
+_PureCutCNC_: FeatureFolder, a `grouped` folder
 
 **Snap**:
 A drawing or editing point taken from nearby geometry or the grid instead of

@@ -140,7 +140,7 @@ The fields, in the order DreamCarve writes them:
 | `tools` | The tools. |
 | `operations` | The operations, in cutting order. |
 | `tabs` | The project's placed tabs. See [`tabs`](#tabs). |
-| `folders` | The Design Tree's folders (from format version 29). `[]` until you make one in the app. See [`folders`](#folders). |
+| `folders` | The Shapes list's groups (from format version 29; the file calls a group a folder). `[]` until you make one in the app. See [`folders`](#folders). |
 | `instances` | Placed copies of the shapes. |
 | `bitmaps` | Pictures placed on the stock, each stored in the file, for a Photo V-Carve to carve (from format version 27). `[]` in a project made from a drawing. See [`bitmaps`](#bitmaps). |
 | `post_processor` | Which bundled post-processor and version, and your settings for it. See [`post_processor`](#post_processor). |
@@ -328,7 +328,7 @@ polygon of two sides) is an error at that field.
 | `name` | Shown in messages. |
 | `visible`, `locked` | For the app: whether the shape is drawn, and whether it can be moved ([Placing shapes](placing-shapes.md#hiding-and-locking)). Neither changes a cut. |
 | `construction` | `true` for construction geometry: a shape drawn to snap to and measure from, never cut (from format version 29). An enabled operation that targets one is the error `construction_targeted`, and nothing is exported. `false` for every shape `init` makes. |
-| `folder` | The id of the folder the shape is filed in, or `null` (from format version 29). See [`folders`](#folders). |
+| `folder` | The id of the group the shape is in, or `null` (from format version 29). See [`folders`](#folders). |
 | `z_top_mm`, `z_bottom_mm` | The feature's top and bottom, mm above the material bottom, for future operations. `null` means not set, which is how `init` writes them. This build does not use them, but when both are set, `z_bottom_mm` above `z_top_mm` is an error. |
 
 To move a shape on the stock, change `e` and `f`. In the app, drag it or
@@ -559,8 +559,10 @@ file damaged in transit.
 
 ## `folders`
 
-The Design Tree's folders, made in the app (from format version 29); `[]`
-in a project made by `init`:
+The groups of the Shapes list, made in the app (from format version 29);
+`[]` in a project made by `init`. The app calls each one a **group**
+([Groups and construction geometry](groups-and-construction.md#groups)).
+The file's word for it is a folder, from when the app had both:
 
 ```json
 "folders": [
@@ -572,11 +574,11 @@ in a project made by `init`:
 | --- | --- |
 | `id` | `"f1"`, `"f2"`, …, unique among the folders (`duplicate_folder_id`). An instance's `folder` names it (`dangling_folder` when none has it). |
 | `name` | Your name for it. |
-| `group` | `true` when the folder is a group: in the app, a click on one of its shapes selects them all. |
+| `group` | The group's **Select Together**: `true` when a click on one of its shapes on the Viewport selects them all, as for every group the app makes until that is turned off; `false` for a group that only files its shapes in the list. |
 
-A folder holds no list of its own: its shapes are the instances that name
-it, in the order of `instances`. Folders do not nest, and nothing that is
-cut reads them.
+A group holds no list of its own: its shapes are the instances whose
+`folder` names it, in the order of `instances`. Groups do not nest, and
+nothing that is cut reads them.
 
 ## `post_processor`
 

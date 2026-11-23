@@ -163,6 +163,7 @@ fn kind(command: &Command) -> &'static str {
         Command::PlaceInstances { .. } => "PlaceInstances",
         Command::SetConstruction { .. } => "SetConstruction",
         Command::NewFolder { .. } => "NewFolder",
+        Command::SetGroupTogether { .. } => "SetGroupTogether",
         Command::RenameFolder { .. } => "RenameFolder",
         Command::DeleteFolder(_) => "DeleteFolder",
         Command::Ungroup(_) => "Ungroup",
@@ -468,9 +469,16 @@ fn every_command() -> Vec<(Project, Command)> {
         (
             plaque.clone(),
             Command::NewFolder {
-                name: "Folder 1".into(),
+                name: "Group 1".into(),
                 ids: vec![instance("i4"), instance("i2")],
-                group: false,
+                group: true,
+            },
+        ),
+        (
+            drawing.clone(),
+            Command::SetGroupTogether {
+                id: dc_project::FolderId::new("f1"),
+                together: false,
             },
         ),
         (
