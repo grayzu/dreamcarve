@@ -126,7 +126,11 @@ fn arrange(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
     let disabled =
         dc_app::arrange::disabled(state.app.project(), state.app.selection().instances(), 0);
-    let mut row = |ui: &mut Ui, key: StrKey, shortcut: Option<Shortcut>, action: Action| {
+    let row = |ui: &mut Ui,
+               out: &mut Vec<Action>,
+               key: StrKey,
+               shortcut: Option<Shortcut>,
+               action: Action| {
         let mut button = Button::new(strings.get(key));
         if let Some((modifiers, key)) = shortcut.and_then(keyboard::binding) {
             button = button.shortcut_text(shortcut_text(ui.ctx(), modifiers, key));
@@ -143,33 +147,110 @@ fn arrange(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     };
     row(
         ui,
+        out,
         StrKey::ArrangeMenuRotateClockwise,
         Some(Shortcut::RotateClockwise),
         Action::Arrange(Arrange::RotateClockwise),
     );
     row(
         ui,
+        out,
         StrKey::ArrangeMenuRotateAnticlockwise,
         Some(Shortcut::RotateAnticlockwise),
         Action::Arrange(Arrange::RotateAnticlockwise),
     );
-    row(ui, StrKey::ArrangeMenuRotate, None, Action::OpenRotate);
+    row(ui, out, StrKey::ArrangeMenuRotate, None, Action::OpenRotate);
     ui.separator();
     row(
         ui,
+        out,
         StrKey::ArrangeMenuFlipHorizontal,
         Some(Shortcut::FlipHorizontal),
         Action::Arrange(Arrange::FlipHorizontal),
     );
     row(
         ui,
+        out,
         StrKey::ArrangeMenuFlipVertical,
         Some(Shortcut::FlipVertical),
         Action::Arrange(Arrange::FlipVertical),
     );
     ui.separator();
+    // Align and Distribute (phase 5, capability 98a). One shape aligns
+    // to the stock, as do several while To Stock is ticked.
+    use dc_app::arrange::{Align, Axis, Spacing};
+    let count = state.app.selection().instances().len();
+    let to_stock = state.app.prefs().adjust.align_to_stock;
+    ui.menu_button(strings.get(StrKey::ArrangeMenuAlign), |ui| {
+        for (key, side) in [
+            (StrKey::ArrangeMenuAlignLeft, Align::Left),
+            (StrKey::ArrangeMenuAlignCentre, Align::Centre),
+            (StrKey::ArrangeMenuAlignRight, Align::Right),
+            (StrKey::ArrangeMenuAlignTop, Align::Top),
+            (StrKey::ArrangeMenuAlignMiddle, Align::Middle),
+            (StrKey::ArrangeMenuAlignBottom, Align::Bottom),
+        ] {
+            if side == Align::Top {
+                ui.separator();
+            }
+            row(
+                ui,
+                out,
+                key,
+                None,
+                Action::Arrange(Arrange::Align { side, to_stock }),
+            );
+        }
+        ui.separator();
+        let stock = checked_item(
+            ui,
+            strings.get(StrKey::ArrangeMenuToStock),
+            to_stock || count == 1,
+        );
+        if stock.clicked() {
+            out.push(Action::SetAlignToStock(!to_stock));
+            ui.close();
+        }
+    });
+    ui.menu_button(strings.get(StrKey::ArrangeMenuDistribute), |ui| {
+        for (key, axis, spacing) in [
+            (
+                StrKey::ArrangeMenuDistributeHorizontal,
+                Axis::Horizontal,
+                Spacing::Gaps,
+            ),
+            (
+                StrKey::ArrangeMenuDistributeVertical,
+                Axis::Vertical,
+                Spacing::Gaps,
+            ),
+            (
+                StrKey::ArrangeMenuDistributeHorizontalCentres,
+                Axis::Horizontal,
+                Spacing::Centres,
+            ),
+            (
+                StrKey::ArrangeMenuDistributeVerticalCentres,
+                Axis::Vertical,
+                Spacing::Centres,
+            ),
+        ] {
+            if (axis, spacing) == (Axis::Horizontal, Spacing::Centres) {
+                ui.separator();
+            }
+            row(
+                ui,
+                out,
+                key,
+                None,
+                Action::Arrange(Arrange::Distribute { axis, spacing }),
+            );
+        }
+    });
+    ui.separator();
     row(
         ui,
+        out,
         StrKey::ArrangeMenuCentreOnStock,
         None,
         Action::Arrange(Arrange::CentreOnStock),

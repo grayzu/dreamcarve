@@ -216,6 +216,39 @@ pub(super) fn fit_stock(project: &Project, margin_mm: f64) -> Result<Project, Co
     Ok(next)
 }
 
+/// What a [`crate::Command::PlaceInstances`] step is named for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placing {
+    /// Align.
+    Align,
+    /// Distribute.
+    Distribute,
+}
+
+/// `PlaceInstances`: each instance's transform followed by its move.
+/// The moves name every shape the step was asked of, those already in
+/// place with no move, so the step is named for them all. Refused when
+/// one is locked, or when a move leaves an outline no reader would take.
+pub(super) fn place(
+    project: &Project,
+    moves: &[(InstanceId, Transform)],
+) -> Result<Project, CommandError> {
+    // A step that moves nothing is no step: the shapes were in place.
+    if moves.iter().all(|(_, moved)| *moved == Transform::IDENTITY) {
+        return Err(CommandError::NothingToDo);
+    }
+    let ids: Vec<InstanceId> = moves.iter().map(|(id, _)| id.clone()).collect();
+    require_all(project, &ids)?;
+    require_unlocked(project, &ids)?;
+    let mut next = project.clone();
+    for (id, moved) in moves {
+        let instance = find_mut(&mut next, id)?;
+        instance.transform = instance.transform.then(*moved);
+    }
+    bounds(&next, &ids)?;
+    Ok(next)
+}
+
 /// `DuplicateInstances`: a linked copy of each, sharing its definition,
 /// offset by [`DUPLICATE_OFFSET_MM`], named `<name> (2)` or the next free
 /// suffix, appended in selection order (capability 59).

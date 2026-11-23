@@ -157,6 +157,26 @@ pub enum Icon {
     Waypoints,
     /// `scissors`: the Trim tool.
     Scissors,
+    /// `align-start-vertical`: Align left.
+    AlignStartVertical,
+    /// `align-center-vertical`: Align centre.
+    AlignCenterVertical,
+    /// `align-end-vertical`: Align right.
+    AlignEndVertical,
+    /// `align-start-horizontal`: Align top.
+    AlignStartHorizontal,
+    /// `align-center-horizontal`: Align middle.
+    AlignCenterHorizontal,
+    /// `align-end-horizontal`: Align bottom.
+    AlignEndHorizontal,
+    /// `align-horizontal-space-between`: Distribute horizontally by gaps.
+    AlignHorizontalSpaceBetween,
+    /// `align-vertical-space-between`: Distribute vertically by gaps.
+    AlignVerticalSpaceBetween,
+    /// `align-horizontal-distribute-center`: Distribute horizontally by centres.
+    AlignHorizontalDistributeCenter,
+    /// `align-vertical-distribute-center`: Distribute vertically by centres.
+    AlignVerticalDistributeCenter,
 }
 
 impl Icon {
@@ -235,6 +255,16 @@ impl Icon {
             Self::Type => "type",
             Self::Waypoints => "waypoints",
             Self::Scissors => "scissors",
+            Self::AlignStartVertical => "align-start-vertical",
+            Self::AlignCenterVertical => "align-center-vertical",
+            Self::AlignEndVertical => "align-end-vertical",
+            Self::AlignStartHorizontal => "align-start-horizontal",
+            Self::AlignCenterHorizontal => "align-center-horizontal",
+            Self::AlignEndHorizontal => "align-end-horizontal",
+            Self::AlignHorizontalSpaceBetween => "align-horizontal-space-between",
+            Self::AlignVerticalSpaceBetween => "align-vertical-space-between",
+            Self::AlignHorizontalDistributeCenter => "align-horizontal-distribute-center",
+            Self::AlignVerticalDistributeCenter => "align-vertical-distribute-center",
         }
     }
 
@@ -312,12 +342,22 @@ impl Icon {
             Self::Type => '\u{e198}',
             Self::Waypoints => '\u{e542}',
             Self::Scissors => '\u{e14e}',
+            Self::AlignStartVertical => '\u{e271}',
+            Self::AlignCenterVertical => '\u{e26d}',
+            Self::AlignEndVertical => '\u{e26f}',
+            Self::AlignStartHorizontal => '\u{e270}',
+            Self::AlignCenterHorizontal => '\u{e26c}',
+            Self::AlignEndHorizontal => '\u{e26e}',
+            Self::AlignHorizontalSpaceBetween => '\u{e276}',
+            Self::AlignVerticalSpaceBetween => '\u{e27b}',
+            Self::AlignHorizontalDistributeCenter => '\u{e03c}',
+            Self::AlignVerticalDistributeCenter => '\u{e27e}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 70] = [
+    pub const ALL: [Self; 80] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -388,6 +428,16 @@ impl Icon {
         Self::Type,
         Self::Waypoints,
         Self::Scissors,
+        Self::AlignStartVertical,
+        Self::AlignCenterVertical,
+        Self::AlignEndVertical,
+        Self::AlignStartHorizontal,
+        Self::AlignCenterHorizontal,
+        Self::AlignEndHorizontal,
+        Self::AlignHorizontalSpaceBetween,
+        Self::AlignVerticalSpaceBetween,
+        Self::AlignHorizontalDistributeCenter,
+        Self::AlignVerticalDistributeCenter,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

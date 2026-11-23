@@ -579,6 +579,145 @@ fn shape_section(ui: &mut Ui, state: &FrameState<'_>, id: &InstanceId, out: &mut
     ui.add_space(8.0);
 }
 
+/// A button of the Align section: an icon, 28 px square.
+const ALIGN_BUTTON_PX: f32 = 28.0;
+
+/// **Align** and **Distribute** for the selected shapes `ids` (phase 5,
+/// capability 98a), under the placement fields: six buttons that align
+/// the shapes by a side or a middle of their boxes, the *To stock*
+/// switch with two shapes or more (one shape always aligns to the
+/// stock), and, with three or more, four that space them evenly. Each
+/// label is over its buttons, which take the panel's width.
+fn align_section(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out: &mut Vec<Action>) {
+    use dc_app::arrange::{Action as Arrange, Align, Axis, Spacing};
+    let app = state.app;
+    let strings = app.strings();
+    let disabled = dc_app::arrange::disabled(app.project(), ids, 0);
+    let reason = disabled.map(|why| strings.get(why.reason()));
+    let to_stock = app.prefs().adjust.align_to_stock;
+    let icon_button = |ui: &mut Ui, icon: Icon, key: StrKey| {
+        let name = strings.get(key);
+        let spec = ButtonSpec::new(Kind::Quiet, "")
+            .icon(icon, theme::ICON_LARGE_PX)
+            .height(ALIGN_BUTTON_PX)
+            .width(ALIGN_BUTTON_PX)
+            .named(name)
+            .tooltip(reason.unwrap_or(name))
+            .enabled(disabled.is_none());
+        button(ui, spec).clicked()
+    };
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        crate::widgets::row::inline_label(
+            ui,
+            strings.get(StrKey::ArrangeAlign),
+            strings.get(StrKey::ArrangeAlignHelp),
+        );
+        if ids.len() > 1 {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let name = strings.get(StrKey::ArrangeToStock);
+                let switch = toggle(ui, to_stock, name)
+                    .on_hover_text(strings.get(StrKey::ArrangeToStockHelp));
+                if switch.clicked() {
+                    out.push(Action::SetAlignToStock(!to_stock));
+                }
+                crate::widgets::row::inline_label(
+                    ui,
+                    name,
+                    strings.get(StrKey::ArrangeToStockHelp),
+                );
+            });
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for (icon, key, side) in [
+            (
+                Icon::AlignStartVertical,
+                StrKey::ArrangeAlignLeft,
+                Align::Left,
+            ),
+            (
+                Icon::AlignCenterVertical,
+                StrKey::ArrangeAlignCentre,
+                Align::Centre,
+            ),
+            (
+                Icon::AlignEndVertical,
+                StrKey::ArrangeAlignRight,
+                Align::Right,
+            ),
+            (
+                Icon::AlignStartHorizontal,
+                StrKey::ArrangeAlignTop,
+                Align::Top,
+            ),
+            (
+                Icon::AlignCenterHorizontal,
+                StrKey::ArrangeAlignMiddle,
+                Align::Middle,
+            ),
+            (
+                Icon::AlignEndHorizontal,
+                StrKey::ArrangeAlignBottom,
+                Align::Bottom,
+            ),
+        ] {
+            if side == Align::Top {
+                ui.add_space(8.0);
+            }
+            if icon_button(ui, icon, key) {
+                out.push(Action::Arrange(Arrange::Align { side, to_stock }));
+            }
+        }
+    });
+    if ids.len() < 3 {
+        return;
+    }
+    ui.add_space(4.0);
+    crate::widgets::row::inline_label(
+        ui,
+        strings.get(StrKey::ArrangeDistribute),
+        strings.get(StrKey::ArrangeDistributeHelp),
+    );
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for (icon, key, axis, spacing) in [
+            (
+                Icon::AlignHorizontalSpaceBetween,
+                StrKey::ArrangeDistributeHorizontal,
+                Axis::Horizontal,
+                Spacing::Gaps,
+            ),
+            (
+                Icon::AlignVerticalSpaceBetween,
+                StrKey::ArrangeDistributeVertical,
+                Axis::Vertical,
+                Spacing::Gaps,
+            ),
+            (
+                Icon::AlignHorizontalDistributeCenter,
+                StrKey::ArrangeDistributeHorizontalCentres,
+                Axis::Horizontal,
+                Spacing::Centres,
+            ),
+            (
+                Icon::AlignVerticalDistributeCenter,
+                StrKey::ArrangeDistributeVerticalCentres,
+                Axis::Vertical,
+                Spacing::Centres,
+            ),
+        ] {
+            if (axis, spacing) == (Axis::Horizontal, Spacing::Centres) {
+                ui.add_space(8.0);
+            }
+            if icon_button(ui, icon, key) {
+                out.push(Action::Arrange(Arrange::Distribute { axis, spacing }));
+            }
+        }
+    });
+}
+
 /// Draws the placement of `ids`.
 pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out: &mut Vec<Action>) {
     let strings = state.app.strings();
@@ -603,6 +742,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out:
             if properties::read_only(&placement) {
                 locked_note(ui, state, ids, out);
             }
+            align_section(ui, state, ids, out);
             ui.add_space(4.0);
             let targeted = if placement.targeted_by.is_empty() {
                 strings.get(StrKey::PlacementNotTargeted).to_owned()

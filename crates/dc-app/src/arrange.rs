@@ -18,7 +18,8 @@
 
 use dc_project::{InstanceId, Project};
 
-use crate::command::{Command, find_instance};
+pub use crate::align::{Align, Axis, Spacing};
+use crate::command::{Command, Placing, find_instance};
 use crate::error::CommandError;
 use crate::strings::{StrKey, Strings};
 
@@ -52,6 +53,23 @@ pub enum Action {
     FlipVertical,
     /// Arrange ▸ Centre on Stock (capability 61).
     CentreOnStock,
+    /// Align the shapes by a side of their boxes (phase 5, capability
+    /// 98a): to the selection's box, or to the stock when `to_stock` or
+    /// when one shape is selected.
+    Align {
+        /// The side.
+        side: Align,
+        /// Align to the stock whatever is selected.
+        to_stock: bool,
+    },
+    /// Space three shapes or more evenly between the outermost two
+    /// (capability 98a).
+    Distribute {
+        /// Along X or along Y.
+        axis: Axis,
+        /// Equal gaps, or equal distances between middles.
+        spacing: Spacing,
+    },
 }
 
 /// Why the Arrange group is disabled, shown in its tooltip.
@@ -63,6 +81,8 @@ pub enum Disabled {
     AllLocked,
     /// Only pictures are selected, and a picture cannot turn.
     OnlyPictures,
+    /// Distribute was asked of fewer than three unlocked shapes.
+    TooFewToDistribute,
 }
 
 impl Disabled {
@@ -73,6 +93,7 @@ impl Disabled {
             Self::NothingSelected => StrKey::ArrangeDisabledNothing,
             Self::AllLocked => StrKey::ArrangeDisabledLocked,
             Self::OnlyPictures => StrKey::ArrangeDisabledPictures,
+            Self::TooFewToDistribute => StrKey::ArrangeDisabledDistribute,
         }
     }
 }
@@ -143,6 +164,19 @@ pub fn arrange(
         Action::FlipHorizontal => flip(Flip::Horizontal),
         Action::FlipVertical => flip(Flip::Vertical),
         Action::CentreOnStock => Command::CentreOnStock(ids.clone()),
+        Action::Align { side, to_stock } => Command::PlaceInstances {
+            moves: crate::align::align(project, instances, &ids, side, to_stock),
+            what: Placing::Align,
+        },
+        Action::Distribute { axis, spacing } => {
+            if ids.len() < 3 {
+                return Err(Disabled::TooFewToDistribute);
+            }
+            Command::PlaceInstances {
+                moves: crate::align::distribute(project, &ids, axis, spacing),
+                what: Placing::Distribute,
+            }
+        }
     };
     Ok(Arranged { command, locked })
 }

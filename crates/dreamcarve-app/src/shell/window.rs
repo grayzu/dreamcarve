@@ -484,6 +484,10 @@ pub(crate) enum Action {
     Tool(dc_app::tool::Event),
     /// The snapping preferences (View ▸ Snapping, ⇧S; capability 82).
     SetSnap(dc_app::SnapSettings),
+    /// Whether Align aligns to the stock whatever is selected (the
+    /// Properties panel's switch, Arrange ▸ Align ▸ To Stock; capability
+    /// 98a).
+    SetAlignToStock(bool),
     /// Edit ▸ Cut: the selected shapes to the clipboard and out of the
     /// project (capability 98).
     Cut,
@@ -1646,6 +1650,7 @@ impl Shell {
                 ctx.request_repaint();
             }
             Action::SetSnap(snap) => self.app.prefs_mut().snap = snap.normalized(),
+            Action::SetAlignToStock(on) => self.app.prefs_mut().adjust.align_to_stock = on,
             Action::Copy => {
                 if self.app.copy_selection() > 0 {
                     self.clipboard_filled(ctx);

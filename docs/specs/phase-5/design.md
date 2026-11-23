@@ -251,7 +251,7 @@ pub enum Command { /* phase 4's, and: */
     /// instance that placed it) a new instance of a new definition.
     CutInstances(Vec<InstanceId>), PasteShapes(Vec<clipboard::Clip>),
     /// One transform per instance: align, distribute.
-    PlaceInstances { moves: Vec<(InstanceId, Transform)>, what: Edit },
+    PlaceInstances { moves: Vec<(InstanceId, Transform)>, what: Placing },   // Align | Distribute
     SetConstruction { ids: Vec<InstanceId>, construction: bool },
     NewFolder { name: String, ids: Vec<InstanceId>, group: bool },
     RenameFolder { id: FolderId, name: String }, DeleteFolder(FolderId), Ungroup(FolderId),
@@ -921,6 +921,29 @@ the tool bar of slice 9 is its form.
   `CopyInstances` with the drag's delta, and the layers draw the
   originals in place under the moving selection.
 
+### Align and distribute (slice 20)
+
+- `dc_app::align` (ported from `featureSlice.ts`'s `alignFeatures` and
+  `distributeFeatures`): one translation per movable shape from the
+  boxes the shapes fill as placed. Top is the greatest Y. The box
+  aligned to is the selection's, its locked shapes included, or the
+  stock's when one shape is selected or `to_stock`. Distribute sorts
+  the unlocked shapes by their least side (gaps) or their middle
+  (centres), keeps the outermost two, and needs three. A move under
+  1 nm is no move.
+- `dc_app::arrange::Action::{Align { side, to_stock }, Distribute {
+  axis, spacing }}` make a `PlaceInstances` through `arrange`, which
+  names the locked shapes left behind as it does for a turn;
+  `Disabled::TooFewToDistribute`. The moves name every shape asked of,
+  those in place with the identity, so the step is *Align 3 shapes*
+  whichever of them moved; all identities are `NothingToDo`.
+- The window: `panels::properties::align_section` under the placement
+  fields (six 28 px buttons, the *To stock* switch with two shapes or
+  more, four Distribute buttons with three or more), and Arrange ▸
+  **Align** and **Distribute** submenus. *To stock* is
+  `AdjustPrefs::align_to_stock`, for the session. Ten Lucide icons
+  (`align-start-vertical` … `align-vertical-distribute-center`).
+
 ## Visual design
 
 Phase 4's tokens and components hold. Added to the palette, in both
@@ -1115,8 +1138,11 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 (`tests/editing.rs`) `copy_and_paste_events`, `the_viewport_has_a_context_menu`,
 `the_node_context_menu_fillets`, `alt_drag_copies_and_make_unique_unlinks`;
 `array::` the ports of `featureDistribution.test.ts` (grid and radial),
-`array::copies_are_linked_and_grouped`, `arrange::align_and_distribute`,
-`arrange::top_is_the_greatest_y`, `arrange::to_stock`, `tree::folders_file_rows`,
+`array::copies_are_linked_and_grouped`; `dc_app` `tests/align.rs` (slice 20; ports from
+`featureLifecycleOps.test.ts`): `align_left_right_and_centre`, `top_is_the_greatest_y`, `to_stock`,
+`distribute_by_gaps_and_by_centres`, `a_locked_shape_stays_and_is_named`,
+`a_turned_shape_aligns_by_its_placed_box`, and in the window
+`editing::align_and_distribute_from_properties_and_the_menu`; `tree::folders_file_rows`,
 `tree::rows_reorder_the_file`, `tree::a_group_selects_as_one`,
 `command::construction_leaves_every_operation`, `operations::pickers_skip_construction`,
 `dc_job::checks::construction_is_not_checked` (acc 122–125).

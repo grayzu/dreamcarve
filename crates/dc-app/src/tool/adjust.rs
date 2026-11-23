@@ -38,6 +38,9 @@ pub struct AdjustPrefs {
     pub fillet_mm: Option<f64>,
     /// How near two ends must be to be joined, mm.
     pub join_tolerance_mm: f64,
+    /// Whether Align aligns to the stock whatever is selected
+    /// (capability 98a).
+    pub align_to_stock: bool,
 }
 
 impl Default for AdjustPrefs {
@@ -49,6 +52,7 @@ impl Default for AdjustPrefs {
             keep_original: true,
             fillet_mm: None,
             join_tolerance_mm: edit::JOIN_TOLERANCE_MM,
+            align_to_stock: false,
         }
     }
 }

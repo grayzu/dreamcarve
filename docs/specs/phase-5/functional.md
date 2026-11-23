@@ -542,16 +542,20 @@ capability 52); what a tool holds before it commits is not project data.
       of the selection, in one grouped folder (99) named `<name>
       array`, in one undo step. An array is not remembered as an
       array: it is copies, as PureCutCNC's is.
-98a. **Align and distribute** (the Arrange group and menu; PureCutCNC's,
-    with Y re-derived for Y-up). **Align** Left, Centre, Right, Top,
-    Middle, Bottom moves each selected shape so that side of its
-    bounding box meets the same side of the selection's; with one shape
-    selected, or with **To stock** ticked, the stock is what they align
-    to (PureCutCNC has no align to stock). **Distribute** Horizontally
-    or Vertically, three shapes or more, spaces them evenly between the
-    two outermost, by equal gaps or by equal centre distances. Top is
-    the highest Y. Locked shapes do not move and are named in the status
-    bar. One undo step each.
+98a. **Align and distribute** (Properties, under the placement fields,
+    and the Arrange menu; PureCutCNC's, with Y re-derived for Y-up).
+    **Align** Left, Centre, Right, Top, Middle, Bottom moves each
+    selected shape so that side of its bounding box meets the same side
+    of the selection's; with one shape selected, or with **To stock**
+    on, the stock is what they align to (PureCutCNC has no align to
+    stock). **Distribute** Horizontally or Vertically, three shapes or
+    more, spaces them evenly between the two outermost, by equal gaps
+    or by equal centre distances. Top is the highest Y. Locked shapes
+    do not move and are named in the status bar; a locked shape still
+    counts toward the box the others align to, so shapes can be aligned
+    to one that is locked. Distribute spaces the unlocked shapes among
+    themselves. One undo step each, named for the shapes it was asked
+    of; shapes already in place make no step.
 99. **Folders and groups** (PureCutCNC's flat folders). The Design
     Tree's shapes can be filed in **folders**: *New Folder* (the tree's
     header and context menu) makes one holding the selection; rows drag

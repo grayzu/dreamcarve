@@ -21,6 +21,7 @@ mod operations;
 mod shapes;
 
 pub(crate) use bitmaps::{check_move as check_bitmap_move, check_resize as check_bitmap_resize};
+pub use instances::Placing;
 pub(crate) use instances::{
     about, bounds as selection_bounds, centre, copy_name, find as find_instance, next_free_id,
 };
@@ -209,6 +210,15 @@ pub enum Command {
     /// copy of it, so an edit of one no longer changes the others.
     /// Refused when none is a linked copy.
     MakeUnique(Vec<InstanceId>),
+    /// Each instance moved by its own transform, applied after the one
+    /// it has: align and distribute (capability 98a). Refused when one
+    /// is locked; nothing to do when no shape moves.
+    PlaceInstances {
+        /// The instances and how each moves.
+        moves: Vec<(InstanceId, Transform)>,
+        /// What the step is named for.
+        what: Placing,
+    },
     /// Linked copies of `ids`, a set per placement, each placement
     /// applied after the instance's own transform: what an Alt-drag
     /// leaves.
@@ -466,6 +476,7 @@ impl Command {
             }
             Self::PasteShapes(clips) => next = copies::paste(project, clips)?,
             Self::MakeUnique(ids) => next = copies::make_unique(project, ids)?,
+            Self::PlaceInstances { moves, .. } => next = instances::place(project, moves)?,
             Self::CopyInstances { ids, placements } => {
                 next = copies::copy(project, ids, placements)?;
             }
@@ -690,6 +701,14 @@ impl Command {
             Self::MakeUnique(ids) => with_subject(StrKey::CommandLabelMakeUnique, &subject_of(ids)),
             Self::CopyInstances { ids, .. } => {
                 with_subject(StrKey::CommandLabelCopy, &subject_of(ids))
+            }
+            Self::PlaceInstances { moves, what } => {
+                let ids: Vec<InstanceId> = moves.iter().map(|(id, _)| id.clone()).collect();
+                let key = match what {
+                    Placing::Align => StrKey::CommandLabelAlign,
+                    Placing::Distribute => StrKey::CommandLabelDistribute,
+                };
+                with_subject(key, &subject_of(&ids))
             }
             Self::AddOperation(operation) => with_subject(
                 StrKey::CommandLabelAddOperation,

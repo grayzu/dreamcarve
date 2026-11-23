@@ -157,6 +157,7 @@ fn kind(command: &Command) -> &'static str {
         Command::PasteShapes(_) => "PasteShapes",
         Command::MakeUnique(_) => "MakeUnique",
         Command::CopyInstances { .. } => "CopyInstances",
+        Command::PlaceInstances { .. } => "PlaceInstances",
     }
 }
 
@@ -424,6 +425,13 @@ fn every_command() -> Vec<(Project, Command)> {
                 .apply(&plaque)
                 .expect("the square duplicates"),
             Command::MakeUnique(vec![instance("i4")]),
+        ),
+        (
+            plaque.clone(),
+            Command::PlaceInstances {
+                moves: vec![(instance("i4"), Transform::translate(0.0, 3.0))],
+                what: dc_app::command::Placing::Align,
+            },
         ),
         (
             plaque,

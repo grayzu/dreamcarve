@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 18: 3,660.
+`0.5.0-alpha.1`. After slice 20: 3,667.
 
 ## Decisions waiting for the maintainer
 
@@ -174,6 +174,14 @@ Decisions made while building are added here.
   nothing on the system's clipboard ⌘V still does nothing, and Edit ▸
   Paste works. `CopyInstances` has no folder yet: it comes with arrays,
   which file their copies in one.
+- Slice 20, done before 19 because arrays need slice 21's folders: a
+  locked shape counts toward the box the others align to (upstream
+  aligns the unlocked ones among themselves), so a shape can be aligned
+  to a locked one. Align and Distribute are a section of Properties,
+  under the placement fields, not buttons of the Arrange group in the
+  Inspector's header, which has no room for ten more. *To stock* is
+  kept for the session only. The undo step is *Align 3 shapes*, without
+  the side.
 
 ## Slices
 
@@ -213,8 +221,8 @@ The numbers are the design spec's.
 | Slice | What | Status |
 | --- | --- | --- |
 | 18 | Make Unique, cut, copy, paste, Alt-drag: `Command::{MakeUnique, CopyInstances, CutInstances, PasteShapes}`, the app's clipboard (`dc_app::clipboard`), Edit ▸ Cut, Copy, Paste and their keys, Shape ▸ Make Unique, the Viewport's context menu (a shape's is its Design Tree row's; the Edit nodes tool's is its bar's buttons), an Alt-drag's linked copy. Gate: 3,660 tests | done |
-| 19 | Arrays | todo |
-| 20 | Align and distribute | todo |
+| 19 | Arrays (after slice 21: an array files its copies in a grouped folder) | todo |
+| 20 | Align and distribute: `dc_app::align` (port), `arrange::Action::{Align, Distribute}`, `Command::PlaceInstances`, the Align section of Properties, Arrange ▸ Align and Distribute. Gate: 3,667 tests | done |
 | 21 | Folders and groups | todo |
 | 22 | Construction geometry | todo |
 

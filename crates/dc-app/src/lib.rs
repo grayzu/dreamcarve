@@ -3,6 +3,7 @@
 
 #![doc = include_str!("../README.md")]
 
+mod align;
 pub mod app;
 pub mod arrange;
 pub mod clipboard;

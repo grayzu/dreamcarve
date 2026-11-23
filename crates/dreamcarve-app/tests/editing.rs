@@ -470,6 +470,7 @@ fn copy_and_paste_events() {
 
     // In a field, Copy is the field's: the shapes' clipboard is not
     // refilled from the selection.
+    common::go_to(&mut h, "Design");
     select(&mut h, &["i1"]);
     h.get_by_role_and_label(Role::TextInput, "X").focus();
     h.run();
@@ -625,5 +626,95 @@ fn alt_drag_copies_and_make_unique_unlinks() {
             .accesskit_node()
             .is_disabled()
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Where instance `id` lies in the project.
+fn box_of(h: &Harness<'_, Shell>, id: &str) -> dc_geometry::Rect {
+    let project = h.state().app().project();
+    let instance = project
+        .instances
+        .iter()
+        .find(|i| i.id.as_str() == id)
+        .unwrap();
+    instance
+        .transform
+        .apply_polyline(&project.definitions[&instance.definition].profiles[0])
+        .unwrap()
+        .bounds()
+        .unwrap()
+}
+
+/// Capability 98a in the window: the Properties panel's Align buttons
+/// and the Arrange menu's rows. One shape aligns to the stock; several
+/// align to their own box, or to the stock with *To stock* on;
+/// Distribute shows with three shapes or more.
+#[test]
+fn align_and_distribute_from_properties_and_the_menu() {
+    let (mut h, dir) = plaque("align");
+    // The plaque opens on Export; Properties is the Design step's.
+    common::go_to(&mut h, "Design");
+    select(&mut h, &["i4"]);
+    assert!(
+        h.query_by_role_and_label(Role::Switch, "To stock")
+            .is_none(),
+        "one shape always aligns to the stock"
+    );
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Distribute horizontally by gaps")
+            .is_none()
+    );
+    h.get_by_role_and_label(Role::Button, "Align left").click();
+    h.run();
+    assert_eq!(h.state().app().undo_label(), Some("Align “square”"));
+    assert!(box_of(&h, "i4").min.x.abs() < 1e-9, "to the stock's left");
+
+    // The four holes: to their own box, then to the stock.
+    select(&mut h, &["i5", "i6", "i7", "i8"]);
+    let top = ["i5", "i6", "i7", "i8"]
+        .iter()
+        .map(|id| box_of(&h, id).max.y)
+        .fold(f64::MIN, f64::max);
+    h.get_by_role_and_label(Role::Button, "Align top").click();
+    h.run();
+    assert_eq!(h.state().app().undo_label(), Some("Align 4 shapes"));
+    for id in ["i5", "i6", "i7", "i8"] {
+        assert!((box_of(&h, id).max.y - top).abs() < 1e-9, "{id}");
+    }
+    h.get_by_role_and_label(Role::Switch, "To stock").click();
+    h.run();
+    assert!(h.state().app().prefs().adjust.align_to_stock);
+    h.get_by_role_and_label(Role::Button, "Align bottom")
+        .click();
+    h.run();
+    for id in ["i5", "i6", "i7", "i8"] {
+        assert!(box_of(&h, id).min.y.abs() < 1e-9, "{id}");
+    }
+
+    // Distribute, with three or more; and the Arrange menu's rows.
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Distribute vertically by centres")
+            .is_some()
+    );
+    h.get_by_role_and_label(Role::Button, "Arrange").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Distribute").click();
+    h.run_steps(8);
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Vertically by Centres")
+            .is_some()
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Arrange").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Align").click();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Right").click();
+    h.run_steps(8);
+    assert_eq!(h.state().app().undo_label(), Some("Align 4 shapes"));
+    for id in ["i5", "i6", "i7", "i8"] {
+        assert!((box_of(&h, id).max.x - 170.0).abs() < 1e-9, "{id}");
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -2689,8 +2689,9 @@ fn p5_editing_dir() -> PathBuf {
 /// The phase 5 editing set (`docs/phase-5-worklog.md`, slice 17): a path
 /// in the Edit nodes tool with a corner selected and the bar's buttons;
 /// the corner filleted; the Shape menu; Offset… in the tool bar with its
-/// preview; the Trim tool over the piece a click would take out; and
-/// (slice 18) the Viewport's context menu and the Edit menu. Dark
+/// preview; the Trim tool over the piece a click would take out;
+/// (slice 18) the Viewport's context menu and the Edit menu; and (slice
+/// 20) Align and Distribute in Properties. Dark
 /// and light at 1×, written to `docs/specs/phase-5/review/editing/`,
 /// where they are committed.
 ///
@@ -2808,6 +2809,30 @@ fn phase5_editing_screenshots() {
     // 07: the Edit menu, with Cut, Copy and Paste.
     click(&mut h, "Edit");
     shoot_in(&mut h, &out, "07-edit-menu", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // 08: three shapes selected: Align and Distribute in Properties
+    // (slice 20).
+    let first = h.state().app().project().instances[0].id.clone();
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::DuplicateInstances(vec![first]))
+        .unwrap();
+    let all: Vec<_> = h
+        .state()
+        .app()
+        .project()
+        .instances
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(all));
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "08-align-and-distribute", &looks);
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
 }
