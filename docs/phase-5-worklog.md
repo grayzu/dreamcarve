@@ -379,6 +379,26 @@ items. Each is tracked here.
 | An operation that cuts nothing is too quiet | Bug | Done: `operations::cuts_nothing`, the row's second line, the editor's banner |
 | Stretch one way in the UI | Bug | Done: `Grab::Side`, a handle at the middle of each side |
 
+Open, waiting for the maintainer's answer:
+
+- **An origin for an object.** Read as a reference point for a shape's
+  position: a nine-point chooser in Properties (corners, sides'
+  middles, centre) that X and Y are measured to and that a typed W, H
+  or rotation holds still, where today X and Y are always the box's
+  bottom-left corner and a resize or a turn is about its centre. If
+  what is meant is something else (the work origin on the Stock step,
+  or a shape's own zero for an operation), it is a different job.
+- **Start and stop points for an operation.** A Profile has **Start**
+  in its Strategy group (*Auto*, *First vertex*, *Near* a typed point).
+  Missing: picking the point on the Viewport, a start for the other
+  operations (a Pocket's entry, an Engrave's first path), and for an
+  open path which end it starts from. A closed outline's cut stops
+  where it starts, so "stop" is asked about: an open path's direction,
+  or where the bit lifts. This is CAM, phase 4's ground, and wants a
+  short spec before it is built.
+- **Folder and group as one thing**: a folder with a *Select together*
+  switch in place of a separate group. Offered, not done.
+
 Decisions taken with these, for the maintainer:
 
 - A side handle keeps the opposite side where it is; a corner handle
