@@ -110,13 +110,15 @@ capability 52); what a tool holds before it commits is not project data.
     | **Intersection** | where two outlines, or two parts of one, cross | on |
     | **On outline** | the nearest point of an outline | on |
     | **Perpendicular** | the foot of the perpendicular from the tool's last point to an outline | off |
-    | **Grid** | the nearest crossing of the grid's minor lines | on |
+    | **Grid** | the nearest point of the snap grid (82a) | on |
 
     The nearest candidate of the highest rank wins: endpoint, midpoint,
     centre and intersection first, then perpendicular, then on outline,
-    then grid. With no candidate in reach the point is the pointer's:
-    a click is never discarded (PureCutCNC discards it; that reads as a
-    dead mouse when zoomed in). The snapped point shows a marker shaped
+    then grid. The grid has no reach: with grid snapping on and nothing
+    better near, the point is on the grid (Graphite's rule). With no
+    candidate at all the point is the pointer's: a click is never
+    discarded (PureCutCNC discards it; that reads as a dead mouse when
+    zoomed in). The snapped point shows a marker shaped
     for its kind with the kind's name beside it, and a dashed guide from
     the pointer for *On outline* and from the last point for
     *Perpendicular*.
@@ -136,14 +138,17 @@ capability 52); what a tool holds before it commits is not project data.
     step phase 4's rotation handle uses; Graphite's Shift), and a snap
     candidate on that ray still wins. PureCutCNC's `Alt`-tap axis lock
     is not ported: a held `Shift` is what vector editors do.
-82a. **The grid.** The grid phase 4 draws is the grid that is snapped
-    to: its minor spacing follows the zoom (1, 2, 5, 10 mm …; ⅟₁₆, ⅛,
-    ¼ in …), so what snaps is what shows. **View ▸ Grid ▸ Spacing** pins
-    the minor spacing to a typed length instead, in the project's
-    units, until it is set back to *Automatic*; a pinned grid whose
-    lines would be closer than 4 px draws every second, fifth or tenth
-    line and still snaps to all of them. The grid's visibility is
-    phase 4's toggle; a hidden grid does not snap.
+82a. **The snap grid.** Its spacing follows the zoom: the smallest of
+    1, 2, 5, 10, 20, 50 mm … (0.01, 0.02, 0.05, 0.1 in … in an inch
+    project) that is at least 8 px on screen, so a point is never out of
+    a grid point's reach and a closer look snaps finer. Every line of the
+    grid phase 4 draws (1, 10 and 100 mm; 0.1, 1 and 10 in) is on it, and
+    the marker shows where a point between the drawn lines lands.
+    **View ▸ Grid ▸ Spacing** pins the spacing to a typed length instead,
+    in the project's units, until it is set back to *Automatic*. Held to
+    a `Shift` direction, the grid sets the length along it in whole
+    steps. The grid's visibility is phase 4's toggle; a hidden grid does
+    not snap.
 83. **Typed sizes** (PureCutCNC's `manualEntry.ts`, extended). Every
     step of every drawing tool can be typed in the tool bar instead of
     clicked. The bar shows the fields of the step in hand, filled from
@@ -622,9 +627,10 @@ saves. Tolerances are `EPS_MM` (1e-6 mm) unless stated.
      on a fixture of a rectangle, a circle and a crossing line; a kind
      turned off is not offered; with nothing in reach the pointer's own
      point is taken; `Ctrl`/`⌘` held takes the pointer's point; `Shift`
-     turns (30, 4) from (0, 0) into (30.27, 0), its length kept; the
-     grid snaps to the minor spacing shown at that zoom and to a pinned
-     spacing.
+     turns (30, 3) from (0, 0) into (30.15, 0), its length kept; the
+     grid's spacing is 2 mm at 5 px to the millimetre and 1 mm at 8,
+     a pinned spacing whatever the zoom, and a point with nothing else
+     near lands on it.
 114. **Typed sizes** (83). For each tool, the fields of each step are
      those capability 83 lists; a pinned width follows the pointer in
      height only; `1/4 in` in a millimetre project is 6.35; a refused

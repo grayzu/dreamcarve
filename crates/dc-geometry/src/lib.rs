@@ -16,6 +16,7 @@ mod contour;
 mod distance;
 mod fill;
 mod flatten;
+mod intersect;
 pub mod medial;
 mod merge;
 mod offset;
@@ -46,6 +47,7 @@ pub use fill::{
     FillRule, ink_outline, ink_without_spaces, merge_fills, resolve_fill, spaces_between,
 };
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, KURBO_FLATTEN_SAFETY, flatten};
+pub use intersect::{Crossing, crossings};
 pub use merge::{FilledHole, MergedParts, NearParts, merge_near_parts};
 pub use offset::{inset_is_empty, offset, offset_open, strip_ends};
 pub use path::{

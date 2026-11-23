@@ -61,7 +61,8 @@ use dc_geometry::{
 use dc_job::preview::{self, Marks};
 use dc_job::{EmitOp, MoveKind, RunLabel, Toolpath};
 use dc_project::{
-    Bitmap, BitmapId, Board, Grayscale, InstanceId, Operation, OperationId, Project, TabId,
+    Bitmap, BitmapId, Board, DefinitionId, Grayscale, InstanceId, Operation, OperationId, Project,
+    Shape as DrawnShape, TabId,
 };
 
 use crate::generation::{Fnv, Generation, SnapshotId};
@@ -79,6 +80,16 @@ pub struct Shape {
     pub name: String,
     /// Locked: drawn grey with a padlock, picked but not transformed.
     pub locked: bool,
+    /// Construction geometry (phase 5, capability 100): drawn dashed in
+    /// its own colour, snapped to, never cut.
+    pub construction: bool,
+    /// The definition it places, which a geometry edit writes.
+    pub definition: DefinitionId,
+    /// Where the origin of a parametric shape's own space is placed, mm:
+    /// the centre of a rectangle, circle, ellipse, polygon, slot or gear,
+    /// which the Centre snap offers (capability 82). `None` for a path,
+    /// a text and a plain outline, whose origin is no centre.
+    pub centre: Option<Point>,
     /// Its definition's profiles in project space, mm, arcs kept.
     pub outlines: Vec<Polyline>,
     /// `outlines` with every arc flattened to [`PICK_FLATTEN_MM`].
@@ -636,10 +647,24 @@ impl Scene {
             if let Some(b) = shape_bounds {
                 bounds = Some(join(bounds, b));
             }
+            let centred = matches!(
+                definition.shape,
+                Some(
+                    DrawnShape::Rectangle { .. }
+                        | DrawnShape::Circle { .. }
+                        | DrawnShape::Ellipse { .. }
+                        | DrawnShape::Polygon { .. }
+                        | DrawnShape::Slot { .. }
+                        | DrawnShape::Gear { .. }
+                )
+            );
             shapes.push(Shape {
                 instance: instance.id.clone(),
                 name: instance.name.clone(),
                 locked: instance.locked,
+                construction: instance.construction,
+                definition: instance.definition.clone(),
+                centre: centred.then(|| instance.transform.apply(Point::new(0.0, 0.0))),
                 outlines,
                 flat,
                 bounds: shape_bounds,

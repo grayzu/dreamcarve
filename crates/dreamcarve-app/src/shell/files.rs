@@ -160,6 +160,22 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
             gui_prefs::LibraryUnits::In => dc_project::Units::Inch,
         }),
         sizes: file.sizes.clone(),
+        snap: dc_app::SnapSettings {
+            enabled: file.snap.enabled,
+            kinds: file
+                .snap
+                .kinds
+                .iter()
+                .filter_map(|kind| dc_app::SnapKind::from_key(kind))
+                .collect(),
+            radius_px: file.snap.radius_px,
+        }
+        .normalized(),
+        grid_spacing_mm: file
+            .drawing
+            .grid_spacing_mm
+            .filter(|spacing| spacing.is_finite() && *spacing > 0.0),
+        drawing_tool: dc_app::Drawing::from_key(&file.drawing.tool).unwrap_or_default(),
     }
 }
 
@@ -221,6 +237,20 @@ pub fn prefs_to_file(prefs: &Prefs) -> GuiPrefs {
             dc_project::Units::Inch => gui_prefs::LibraryUnits::In,
         }),
         sizes: prefs.sizes.clone(),
+        snap: gui_prefs::Snap {
+            enabled: prefs.snap.enabled,
+            kinds: prefs
+                .snap
+                .kinds
+                .iter()
+                .map(|kind| kind.key().to_owned())
+                .collect(),
+            radius_px: prefs.snap.radius_px,
+        },
+        drawing: gui_prefs::Drawing {
+            tool: prefs.drawing_tool.key().to_owned(),
+            grid_spacing_mm: prefs.grid_spacing_mm,
+        },
     }
 }
 
@@ -255,8 +285,35 @@ mod tests {
         prefs
             .export_dirs
             .insert(PathBuf::from("/a.dcv"), PathBuf::from("/out"));
+        prefs.snap.enabled = false;
+        prefs.snap.set(dc_app::SnapKind::Perpendicular, true);
+        prefs.snap.set(dc_app::SnapKind::Grid, false);
+        prefs.snap.radius_px = 20.0;
+        prefs.grid_spacing_mm = Some(6.35);
+        prefs.drawing_tool = dc_app::Drawing::Slot;
         assert_eq!(prefs_from_file(&prefs_to_file(&prefs)), prefs);
         assert_eq!(prefs_from_file(&GuiPrefs::default()), Prefs::default());
+    }
+
+    /// What `gui.toml` holds for snapping and drawing is held to what the
+    /// app can use: a snap kind or a tool this build does not know is
+    /// left out, a radius outside 6 to 32 px is held to it, and a grid
+    /// spacing that is no length is no pin.
+    #[test]
+    fn snap_and_drawing_from_a_file_are_held_to_what_the_app_can_use() {
+        let mut file = GuiPrefs::default();
+        file.snap.kinds = vec!["endpoint".to_owned(), "tangent".to_owned()];
+        file.snap.radius_px = 500.0;
+        file.drawing.tool = "pen".to_owned();
+        file.drawing.grid_spacing_mm = Some(-1.0);
+        let prefs = prefs_from_file(&file);
+        assert_eq!(
+            prefs.snap.kinds.iter().copied().collect::<Vec<_>>(),
+            [dc_app::SnapKind::Endpoint]
+        );
+        assert!((prefs.snap.radius_px - 32.0).abs() < 1e-9);
+        assert_eq!(prefs.drawing_tool, dc_app::Drawing::Rectangle);
+        assert_eq!(prefs.grid_spacing_mm, None);
     }
 
     #[test]

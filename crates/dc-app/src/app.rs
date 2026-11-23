@@ -53,6 +53,9 @@ pub struct App {
     /// Target editing, while it is on: the draft of one operation's
     /// targets (capability 67).
     target_edit: Option<Editing>,
+    /// The Viewport's tool in use and what it has begun (phase 5,
+    /// capability 81; `crate::tool`).
+    pub(crate) tool: crate::tool::Session,
     view: View,
     generation: Generation,
     strings: Strings,
@@ -125,6 +128,7 @@ impl App {
             editing: None,
             previewed: None,
             target_edit: None,
+            tool: crate::tool::Session::default(),
             view,
             generation,
             strings,

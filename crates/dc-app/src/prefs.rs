@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 use dc_project::{TabShape, Units};
 
+use crate::snap::SnapSettings;
+use crate::tool::Drawing;
 use crate::view::{ColourMode, Visibility};
 
 /// Everything the app remembers between sessions.
@@ -47,6 +49,15 @@ pub struct Prefs {
     /// the Tool Library table's columns (`library.column.type`). A name
     /// that is missing is the default.
     pub sizes: BTreeMap<String, f64>,
+    /// Snapping (phase 5, capability 82): the master switch, the kinds
+    /// that are on and the radius.
+    pub snap: SnapSettings,
+    /// The snap grid's spacing when the user has pinned one, mm
+    /// (capability 82a); `None` is automatic, following the zoom.
+    pub grid_spacing_mm: Option<f64>,
+    /// The drawing tool the Draw button holds: the last one armed
+    /// (capability 81).
+    pub drawing_tool: Drawing,
 }
 
 /// What a sheet keeps clear of the window's edges on each axis, px: 24

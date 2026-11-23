@@ -1951,8 +1951,8 @@ impl Shell {
 
 /// The part of `gui.toml`'s record only the user's own choices change:
 /// the appearance, what the Viewport draws and how it colours it, the
-/// last tab size, the Tool Library's units, where each project exports
-/// and the sizes dragged. The rest (the recent files, the window's place, the panels
+/// last tab size, the Tool Library's units, where each project exports,
+/// the sizes dragged, and the snapping and drawing-tool settings. The rest (the recent files, the window's place, the panels
 /// and the sections) the app also changes by itself.
 fn user_set(file: &GuiPrefs) -> impl PartialEq + '_ {
     (
@@ -1963,6 +1963,8 @@ fn user_set(file: &GuiPrefs) -> impl PartialEq + '_ {
         file.library_units,
         &file.export_dirs,
         &file.sizes,
+        &file.snap,
+        &file.drawing,
     )
 }
 

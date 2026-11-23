@@ -5,8 +5,9 @@
 //! (`docs/specs/phase-4/design.md`, "Preferences"; functional spec, open
 //! question 11): the window and panel layout, the toolpath display
 //! settings, the recent files, where each project last exported, the
-//! theme, the Tool Library's display units and the sizes the user dragged
-//! a sheet or a table's columns to. View state, never project state: nothing here changes a program
+//! theme, the Tool Library's display units, the sizes the user dragged
+//! a sheet or a table's columns to, and the snapping and drawing-tool
+//! settings. View state, never project state: nothing here changes a program
 //! or reaches the `.dcv`.
 //!
 //! Read at start and written on change and on exit. A missing file is the
@@ -60,6 +61,68 @@ pub struct GuiPrefs {
     /// name: a sheet that resizes (`library.width`) and the Tool Library
     /// table's columns (`library.column.type`).
     pub sizes: BTreeMap<String, f64>,
+    /// Snapping while drawing and editing (phase 5, capability 82).
+    pub snap: Snap,
+    /// What the drawing tools remember (phase 5, capabilities 81 and
+    /// 82a).
+    pub drawing: Drawing,
+}
+
+/// Snapping: the master switch, the kinds that are on, and how near the
+/// pointer a candidate must be.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Snap {
+    /// The master switch.
+    pub enabled: bool,
+    /// The kinds that are on, by name: `endpoint`, `midpoint`, `centre`,
+    /// `intersection`, `on_outline`, `perpendicular`, `grid`. A name this
+    /// build does not know is left out.
+    pub kinds: Vec<String>,
+    /// The snap radius, logical pixels.
+    pub radius_px: f64,
+}
+
+impl Default for Snap {
+    /// Every kind but `perpendicular`, at 14 px.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            kinds: [
+                "endpoint",
+                "midpoint",
+                "centre",
+                "intersection",
+                "on_outline",
+                "grid",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            radius_px: 14.0,
+        }
+    }
+}
+
+/// What the drawing tools remember between sessions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Drawing {
+    /// The drawing tool the Draw button holds, by name: `line`, `arc`,
+    /// `spline`, `rectangle`, `circle`, `ellipse`, `polygon`, `slot`,
+    /// `gear`, `text`. A name this build does not know is the default.
+    pub tool: String,
+    /// The snap grid's spacing when the user has pinned one, mm; missing
+    /// for a grid that follows the zoom.
+    pub grid_spacing_mm: Option<f64>,
+}
+
+impl Default for Drawing {
+    fn default() -> Self {
+        Self {
+            tool: "rectangle".to_owned(),
+            grid_spacing_mm: None,
+        }
+    }
 }
 
 /// The Tool Library's display units (phase 4, capability 64).
@@ -341,6 +404,8 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "tab",
         "library_units",
         "sizes",
+        "snap",
+        "drawing",
     ];
     const WINDOW: &[&str] = &["x", "y", "width", "height", "maximized"];
     const PANELS: &[&str] = &[
@@ -362,6 +427,8 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "only_selected",
     ];
     const TAB: &[&str] = &["width_mm", "height_mm", "shape"];
+    const SNAP: &[&str] = &["enabled", "kinds", "radius_px"];
+    const DRAWING: &[&str] = &["tool", "grid_spacing_mm"];
     let mut unknown = Vec::new();
     for (key, value) in table {
         if !TOP.contains(&key.as_str()) {
@@ -373,6 +440,8 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
             "panels" => PANELS,
             "visibility" => VISIBILITY,
             "tab" => TAB,
+            "snap" => SNAP,
+            "drawing" => DRAWING,
             _ => continue,
         };
         if let toml::Value::Table(inner) = value {
@@ -495,6 +564,15 @@ mod tests {
             },
             library_units: Some(LibraryUnits::In),
             sizes: [("library.width".to_owned(), 1240.0)].into_iter().collect(),
+            snap: Snap {
+                enabled: false,
+                kinds: vec!["endpoint".to_owned(), "perpendicular".to_owned()],
+                radius_px: 20.0,
+            },
+            drawing: Drawing {
+                tool: "slot".to_owned(),
+                grid_spacing_mm: Some(6.35),
+            },
         };
         save(&paths, &prefs).unwrap();
         let loaded = load(&paths);
@@ -503,6 +581,47 @@ mod tests {
         // And the text itself reads back to the same record.
         assert_eq!(parse(&to_toml(&prefs), &paths.gui_prefs_file).prefs, prefs);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Phase 5: a file from before the drawing tools has no `[snap]` and
+    /// no `[drawing]`, and reads as the defaults for both: every kind but
+    /// perpendicular at 14 px, the Rectangle tool, a grid that follows
+    /// the zoom. An unpinned grid is written as no key at all, and an
+    /// unknown key inside either table is noted like any other.
+    #[test]
+    fn snap_and_drawing_default_when_missing() {
+        let path = Path::new("/somewhere/gui.toml");
+        let loaded = parse("theme = \"light\"\n", path);
+        assert!(loaded.notes.is_empty(), "{:?}", loaded.notes);
+        assert!(loaded.prefs.snap.enabled);
+        assert_eq!(loaded.prefs.snap.kinds.len(), 6);
+        assert!(
+            !loaded
+                .prefs
+                .snap
+                .kinds
+                .contains(&"perpendicular".to_owned())
+        );
+        assert!((loaded.prefs.snap.radius_px - 14.0).abs() < 1e-9);
+        assert_eq!(loaded.prefs.drawing.tool, "rectangle");
+        assert_eq!(loaded.prefs.drawing.grid_spacing_mm, None);
+        let text = to_toml(&GuiPrefs::default());
+        assert!(text.contains("[snap]"), "{text}");
+        assert!(!text.contains("grid_spacing_mm"), "{text}");
+        let loaded = parse(
+            "[snap]\nenabled = false\nradius = 3\n\n[drawing]\ntool = \"gear\"\nsides = 6\n",
+            path,
+        );
+        assert!(!loaded.prefs.snap.enabled);
+        assert_eq!(loaded.prefs.drawing.tool, "gear");
+        assert_eq!(loaded.notes.len(), 2, "{:?}", loaded.notes);
+        for key in ["unknown key `snap.radius`", "unknown key `drawing.sides`"] {
+            assert!(
+                loaded.notes.iter().any(|note| note.contains(key)),
+                "{key}: {:?}",
+                loaded.notes
+            );
+        }
     }
 
     /// Design "Preferences": a key this build does not know (another

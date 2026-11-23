@@ -300,19 +300,31 @@ pub struct SizeRow { pub field: SizeField, pub text: String, pub pinned: bool, p
 ```rust
 pub enum SnapKind { Endpoint, Midpoint, Centre, Intersection, OnOutline, Perpendicular, Grid }
 pub struct SnapSettings { pub enabled: bool, pub kinds: BTreeSet<SnapKind>, pub radius_px: f64 }  // Prefs
+pub struct Pointer { pub at_mm: Point, pub shift: bool, pub alt: bool, pub command: bool }
+pub struct Targets<'a> { pub scene: &'a Scene, pub stock: &'a Stock, pub origin: Point, pub px_per_mm: f64,
+                         pub grid_step_mm: Option<f64>, pub skip: &'a [InstanceId] }
 pub struct Snapped { pub at_mm: Point, pub kind: Option<SnapKind>, pub guide: Option<(Point, Point)> }
-pub fn resolve(scene: &Scene, stock: &Stock, origin: Point, grid: Option<f64>, settings: &SnapSettings,
-               pointer: &Pointer, reference: Option<Point>, skip: &[InstanceId]) -> Snapped;
+pub fn resolve(targets: &Targets<'_>, settings: &SnapSettings, pointer: &Pointer, reference: Option<Point>) -> Snapped;
+pub fn grid_step_mm(px_per_mm: f64, units: Units, pinned_mm: Option<f64>) -> f64;
+pub fn constrain_angle(from: Point, at: Point) -> Point;
+impl App { pub fn snap_at(&self, pointer: &Pointer, reference: Option<Point>, skip: &[InstanceId]) -> Snapped;
+           pub fn grid_step_mm(&self) -> f64; }
 ```
 
 `Prefs` gains `snap: SnapSettings`, `grid_spacing_mm: Option<f64>`
-(`None`: automatic), and `drawing: DrawingPrefs` (the last drawing
-tool, corner style and size, polygon sides and measure, the text
-defaults), each mapped to `gui.toml` as `Prefs::tab` is.
+(`None`: automatic) and `drawing_tool: Drawing` (the Draw button's),
+and with the drawing tools their last-used options (corner style and
+size, polygon sides and measure, the text defaults). `gui.toml` holds
+them in two tables, `[snap]` (`enabled`, `kinds` by name, `radius_px`)
+and `[drawing]` (`tool` by name, `grid_spacing_mm`, the options); a
+name this build does not know is left out, a radius is held to 6–32 px,
+and changing any of them is a preference the user set
+(`shell::window::user_set`).
 
 `Selection` is unchanged; the nodes selected in Edit nodes are the
-tool's state. `Scene::Shape` gains `construction: bool` and the
-definition's id; `pick` skips a locked picture.
+tool's state. `Scene::Shape` gains `construction: bool`, the
+definition's id and `centre`, where a parametric shape's own origin is
+placed; `pick` skips a locked picture.
 
 ## Algorithms
 
@@ -447,17 +459,32 @@ DXF importer's stitch rule, moved to `dc-geometry` and called from both.
 ### Snapping
 
 `snap::resolve` gathers candidates within `radius_px / px_per_mm` of the
-pointer, from the flattened outlines the `Scene` already holds for
-picking, the stock rectangle and the origin, then takes the best by
-(rank, distance): rank 1 endpoint, midpoint, centre, intersection; 2
-perpendicular; 3 on outline; 4 grid. A box test on each shape's bounds
-skips shapes out of reach, and intersections are sought only between
-segments whose boxes hold the pointer's disc, as upstream does. `Centre`
-comes from arcs' centres and from `as_circle`; a parametric shape's
-instance origin is a centre too, and a slot's two end centres come from
-its arcs. `Shift` first projects the pointer onto the nearest ray at a
-multiple of 15° from `reference`; candidates are then kept only within
-half a pixel of that ray. `command` returns the pointer.
+pointer, from the outlines the `Scene` holds, the stock rectangle and
+the origin, then takes the best by (rank, distance): rank 1 endpoint,
+midpoint, centre, intersection; 2 perpendicular; 3 on outline; 4 grid. A
+box test on each shape's bounds skips shapes out of reach, and
+intersections (`dc_geometry::crossings`) are sought only between
+segments whose boxes are in reach, as upstream does; neighbours of one
+outline share their vertex, which is an endpoint and not a crossing.
+`Centre` comes from arcs' centres, from a parametric shape's placed
+origin, and from `as_circle` for a circle that came in as straight
+segments; a slot's two end centres are its arcs'. `Perpendicular` is the
+nearest point of a segment to `reference` where the line to it meets the
+segment square.
+
+The grid candidate is the pointer rounded to the grid step on each axis,
+with no reach test (Graphite), so it wins only when nothing else is in
+reach. `grid_step_mm` is the pinned spacing, or the smallest of 1, 2, 5
+× 10ⁿ project units whose spacing is at least 8 px: between 8 and 20 px
+apart, so no point is more than the default radius from a grid point,
+and a whole fraction of phase 4's drawn grid (1, 10, 100 mm; 0.1, 1,
+10 in), which stays as it is.
+
+`Shift` first turns the pointer onto the ray from `reference` at the
+nearest multiple of 15°, its distance kept; candidates are then kept
+only within half a pixel of that ray, and the grid sets the length
+along it in whole steps. `command` returns the pointer, turned onto the
+ray when `Shift` is down too.
 
 ### The tool state machines
 
@@ -651,15 +678,28 @@ three codes; `dc_geometry::path::a_polyline_round_trips_through_a_path`,
 The path geometry of slices 10 to 12 is here too; those slices add the
 tool that drives it.
 
-**Tool model and snapping (slice 4)** `dc_app::snap::` the ports of
-`snappingHelpers.test.ts` (5); `the_nearest_of_the_highest_rank_wins`,
-`each_kind_is_found_on_the_fixture`, `a_kind_turned_off_is_not_offered`,
-`nothing_in_reach_takes_the_pointer`, `command_suspends`,
-`shift_steps_the_angle_by_fifteen_degrees`,
-`the_grid_snaps_to_what_is_shown`, `a_dragged_shape_is_not_its_own_target`,
-`hidden_shapes_do_not_snap_construction_does` (acc 113);
-`tool::arming_drops_the_draft`, `tool::escape_steps_back`,
-`prefs::snap_settings_round_trip` (in `dreamcarve-shell` too).
+**Tool model and snapping (slice 4)** `dc_geometry::intersect::` the
+ports of `segmentIntersection.test.ts` but its four `rayA` cases, which
+serve Extend (`line_line_crossing`, `line_arc_two_hits`, `line_arc_tangent`,
+`arc_arc_two_hits`, `arc_arc_tangent`, …), and
+`a_clockwise_arc_counts_along_from_its_own_start`; `dc_app::snap` (in
+`tests/snap.rs`) the ports of `snappingHelpers.test.ts`
+(`line_line_intersection_snap`, `intersection_snap_respects_pixel_radius`,
+`point_snap_keeps_priority_at_shared_endpoint`, `stock_intersection_snap`,
+`every_kind_but_perpendicular_is_on_by_default`), and
+`the_nearest_of_the_highest_rank_wins`, `each_kind_is_found_on_the_fixture`,
+`perpendicular_needs_a_reference_point`, `a_kind_turned_off_is_not_offered`,
+`nothing_in_reach_takes_the_pointer`, `the_grid_takes_what_nothing_else_does`,
+`the_grid_follows_the_zoom_or_the_pin`, `shift_steps_the_angle_by_fifteen_degrees`,
+`what_is_and_is_not_a_target`, `centres_of_parametric_shapes_and_flattened_circles`,
+`the_radius_is_held_to_its_range` (acc 113); `tests/tool.rs`
+`arming_a_tool_makes_it_the_tool_in_use`,
+`escape_returns_to_select_and_arming_drops_the_draft`,
+`target_editing_keeps_the_drawing_to_itself`,
+`the_app_snaps_to_its_project_at_its_zoom`; `dreamcarve_shell::gui_prefs::`
+`round_trip`, `snap_and_drawing_default_when_missing`; the window's
+`files::prefs_round_trip_through_the_file_record`,
+`snap_and_drawing_from_a_file_are_held_to_what_the_app_can_use`.
 
 **Drawing tools (slices 5–7)** `dc_app::tool::` `rectangle_by_two_clicks`,
 `rectangle_by_a_drag`, `shift_squares_alt_centres`,
@@ -743,9 +783,11 @@ row in `docs/phase-5-worklog.md`. Tests first, as phase 4's.
    `Shape::outline`; `shape_outline_differs` and `invalid_shape`. [1]
 3. **Paths.** `dc_geometry::path`: nodes, spans, flattening, the arc
    and spline constructions; `Shape::Path`'s outline. [1]
-4. **Tool model and snapping.** `dc_app::tool` (the enum, events, the
-   draft, the bar), `snap`, the grid's snap spacing, `Prefs` and
-   `gui.toml`. The Tab tool becomes `Tool::Tab`. [—]
+4. **Tool model and snapping.** `dc_geometry::intersect` (brought
+   forward from slice 15, since the Intersection snap reads it);
+   `dc_app::tool` (the enum, events, the draft), `snap`, the snap
+   grid's spacing, `Prefs` and `gui.toml`. The window's Tab tool flag
+   becomes `Tool::Tab` in slice 9, with the rest of the pill. [—]
 5. **Box tools and Slot.** `AddShapes`; Rectangle, Circle, Ellipse,
    Polygon, Slot with typed sizes; naming. [2, 4]
 6. **Line, Arc, Spline.** The path draft and its modes. [3, 4]
