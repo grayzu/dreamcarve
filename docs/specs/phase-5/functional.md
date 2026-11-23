@@ -396,10 +396,16 @@ capability 52); what a tool holds before it commits is not project data.
     - **Break** (context menu, `B`): a closed outline opens at the node;
       an open one splits there into two shapes. **Delete segment**
       (select a segment, `Delete`): a closed outline opens there, an
-      open one splits in two.
+      open one splits in two. The second part is named as a copy is
+      (*Line (2)*); what cut the path cuts the first part, and its tabs
+      stay with the first part. A path that is one outline of several
+      in its shape, or that has linked copies, stays one shape with an
+      outline more, so its copies follow.
     - **Join ends**: dropping an open path's end node on its own other
-      end closes it; on another open path's end (within the snap
-      distance) joins the two into one shape.
+      end closes it; on another open path's end (within 14 px,
+      PureCutCNC's reach) joins the two into one shape, which keeps the
+      dragged path's name and what cut it. The other path must be
+      visible, unlocked and no linked copy.
     - **Segment kind** (context menu on a segment; Graphite's, absent
       from PureCutCNC): *Make Straight*; *Make Arc* (a curve becomes
       the arc through its middle point; a straight segment bows out by

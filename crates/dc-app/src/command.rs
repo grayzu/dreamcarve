@@ -273,6 +273,22 @@ pub enum Command {
     /// outlines, and so their linked copies (capability 84, **Convert to
     /// Path**). A shape that is a path already is left as it is.
     ConvertToPath(Vec<InstanceId>),
+    /// Shapes replaced by others, in their place in the Design Tree: a
+    /// path broken in two, two paths joined into one (capability 92), and
+    /// the shape-changing commands to come (offset without its original,
+    /// weld, subtract, intersect, trim, join). Refused when a shape to
+    /// remove is locked.
+    ReplaceShapes {
+        /// The shapes that go.
+        remove: Vec<InstanceId>,
+        /// The shapes that take their place; ids are `apply`'s.
+        add: Vec<NewShape>,
+        /// The removed shape whose operations, boundaries and tabs the
+        /// first new shape takes over.
+        inherit: Option<InstanceId>,
+        /// What was done, for the undo step's name.
+        what: Edit,
+    },
 }
 
 impl Command {
@@ -497,6 +513,12 @@ impl Command {
                 ..
             } => next = shapes::set_outline(project, instance, shape.as_ref(), profiles)?,
             Self::ConvertToPath(ids) => next = shapes::convert_to_path(project, ids)?,
+            Self::ReplaceShapes {
+                remove,
+                add,
+                inherit,
+                ..
+            } => next = shapes::replace(project, remove, add, inherit.as_ref())?,
             Self::CentreOnStock(ids) => next = instances::centre_on_stock(project, ids)?,
             Self::FitStockToShapes { margin_mm } => {
                 next = instances::fit_stock(project, *margin_mm)?;
@@ -701,13 +723,15 @@ impl Command {
                     .ok()
                     .and_then(|i| before.definitions.get(&i.definition))
                     .and_then(|definition| definition.shape.as_ref());
-                strings.fmt(
-                    StrKey::CommandLabelSetField,
-                    &[
-                        ("field", strings.get(crate::shape::edit_word(shape, *what))),
-                        ("subject", &subject_of(std::slice::from_ref(instance))),
-                    ],
+                shapes::edit_label(
+                    strings,
+                    *what,
+                    shape,
+                    &subject_of(std::slice::from_ref(instance)),
                 )
+            }
+            Self::ReplaceShapes { remove, what, .. } => {
+                shapes::edit_label(strings, *what, None, &subject_of(remove))
             }
             Self::ConvertToPath(ids) => match shapes::sized(before, ids).as_slice() {
                 [id] => with_subject(

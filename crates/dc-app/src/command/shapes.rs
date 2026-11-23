@@ -33,6 +33,68 @@ pub enum Edit {
     Root,
     /// The form of a gear's crest.
     Crest,
+    /// Nodes of a path moved (capability 92): by a drag, a nudge or
+    /// typed coordinates.
+    MoveNodes {
+        /// How many.
+        count: usize,
+    },
+    /// A curve's handle or an arc's middle dragged, or an arc's radius
+    /// typed: the outline between two nodes changed.
+    Reshape,
+    /// A node added on a span.
+    AddNode,
+    /// Nodes deleted, their neighbours joined.
+    DeleteNodes {
+        /// How many.
+        count: usize,
+    },
+    /// A path broken at a node.
+    Break,
+    /// A span deleted.
+    DeleteSegment,
+    /// An open path closed by its own two ends.
+    CloseEnds,
+    /// Two open paths joined at their ends into one.
+    JoinEnds,
+}
+
+/// The undo label of `what` done to `subject`, whose shape was `shape`.
+pub(super) fn edit_label(
+    strings: &crate::strings::Strings,
+    what: Edit,
+    shape: Option<&Shape>,
+    subject: &str,
+) -> String {
+    use crate::strings::StrKey;
+    let with = |key: StrKey| strings.fmt(key, &[("subject", subject)]);
+    let counted = |key: StrKey, count: usize| {
+        strings.fmt(key, &[("count", &count.to_string()), ("subject", subject)])
+    };
+    match what {
+        Edit::MoveNodes { count: 1 } => with(StrKey::CommandLabelMoveNode),
+        Edit::MoveNodes { count } => counted(StrKey::CommandLabelMoveNodes, count),
+        Edit::Reshape => with(StrKey::CommandLabelReshape),
+        Edit::AddNode => with(StrKey::CommandLabelAddNode),
+        Edit::DeleteNodes { count: 1 } => with(StrKey::CommandLabelDeleteNode),
+        Edit::DeleteNodes { count } => counted(StrKey::CommandLabelDeleteNodes, count),
+        Edit::Break => with(StrKey::CommandLabelBreakPath),
+        Edit::DeleteSegment => with(StrKey::CommandLabelDeleteSegment),
+        Edit::CloseEnds => with(StrKey::CommandLabelClosePath),
+        Edit::JoinEnds => with(StrKey::CommandLabelJoinPaths),
+        Edit::Size(_)
+        | Edit::Corners
+        | Edit::Measured
+        | Edit::Flanks
+        | Edit::Root
+        | Edit::Crest => strings.fmt(
+            StrKey::CommandLabelSetField,
+            &[
+                ("field", strings.get(crate::shape::edit_word(shape, what))),
+                ("subject", subject),
+            ],
+        ),
+    }
 }
 
 /// A shape to add: an instance and the definition it places.
@@ -285,4 +347,100 @@ pub(super) fn sized<'a>(project: &'a Project, ids: &'a [InstanceId]) -> Vec<&'a 
                 .is_some_and(keeps_sizes)
         })
         .collect()
+}
+
+/// `ReplaceShapes`: the instances `remove` go and the shapes `add` take
+/// their place in the Design Tree, each a new instance of a new
+/// definition. An operation that targeted `inherit`, and an Inlay that
+/// had it in its boundary, has the first new shape in its place; the
+/// other removed shapes leave every target list. The tabs on `inherit`
+/// move to the first new shape, re-seated on its outline (it is placed as
+/// `inherit` was); the tabs on the others go.
+///
+/// # Errors
+///
+/// [`CommandError::NothingSelected`] for nothing to remove,
+/// [`CommandError::NothingToDo`] for nothing to add,
+/// [`CommandError::Locked`] when a removed shape is locked, and
+/// [`add`]'s for a shape that cannot be.
+pub(super) fn replace(
+    project: &Project,
+    remove: &[InstanceId],
+    new: &[NewShape],
+    inherit: Option<&InstanceId>,
+) -> Result<Project, CommandError> {
+    if remove.is_empty() {
+        return Err(CommandError::NothingSelected);
+    }
+    let mut locked = Vec::new();
+    for id in remove {
+        let instance = find(project, id)?;
+        if instance.locked {
+            locked.push(instance.name.clone());
+        }
+    }
+    if !locked.is_empty() {
+        return Err(CommandError::Locked { names: locked });
+    }
+    let position = project
+        .instances
+        .iter()
+        .position(|i| remove.contains(&i.id))
+        .unwrap_or(project.instances.len());
+    let mut next = add(project, new)?;
+    let added: Vec<FeatureInstance> = next.instances.split_off(project.instances.len());
+    let first = added.first().map(|i| i.id.clone());
+    // What cut or bounded the inherited shape cuts or bounds the first
+    // new one.
+    let retarget = |targets: &mut Vec<InstanceId>| {
+        let mut kept = Vec::with_capacity(targets.len());
+        for target in targets.drain(..) {
+            if Some(&target) == inherit {
+                kept.extend(first.clone());
+            } else if !remove.contains(&target) {
+                kept.push(target);
+            }
+        }
+        *targets = kept;
+    };
+    for operation in &mut next.operations {
+        if let Some(targets) = super::operations::targets_mut(operation) {
+            retarget(targets);
+        }
+        if let dc_project::Operation::Inlay(inlay) = operation {
+            retarget(&mut inlay.boundary);
+        }
+    }
+    // The inherited shape's tabs go with its outline.
+    let old_profiles = inherit
+        .and_then(|id| find(project, id).ok())
+        .and_then(|instance| project.definitions.get(&instance.definition))
+        .map(|definition| definition.profiles.clone());
+    next.tabs
+        .retain(|tab| Some(&tab.instance) == inherit || !remove.contains(&tab.instance));
+    if let (Some(inherit), Some(first), Some(old), Some(shape)) =
+        (inherit, &first, old_profiles, new.first())
+    {
+        for tab in &mut next.tabs {
+            if &tab.instance == inherit {
+                tab.instance = first.clone();
+            }
+        }
+        reseat_tabs(
+            &mut next,
+            std::slice::from_ref(first),
+            &old,
+            &shape.profiles,
+        );
+    }
+    next.instances.retain(|i| !remove.contains(&i.id));
+    let at = position.min(next.instances.len());
+    next.instances.splice(at..at, added);
+    let used: Vec<DefinitionId> = next
+        .instances
+        .iter()
+        .map(|i| i.definition.clone())
+        .collect();
+    next.definitions.retain(|id, _| used.contains(id));
+    Ok(next)
 }

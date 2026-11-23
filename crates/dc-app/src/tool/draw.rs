@@ -122,7 +122,9 @@ impl App {
                 }
                 self.refresh_draft(drawing);
             }
-            Event::DoubleClick(_) => {}
+            // A double-click is two clicks here; the Edit nodes tool's
+            // actions are not this tool's.
+            Event::DoubleClick(_) | Event::Node(_) => {}
             Event::Key(Key::Enter) | Event::Done => return self.take_point(drawing),
             Event::Key(Key::Escape) => {
                 if self.tool.state == State::Idle {
@@ -234,6 +236,7 @@ impl App {
             prompt: strings.get(prompt).to_owned(),
             fields,
             choices,
+            actions: Vec::new(),
             note: None,
             can_finish: self.made(drawing).is_some(),
         }

@@ -64,6 +64,16 @@ update_tabs = "Edit {count} {count|tab|tabs}"
 # Phase 5: a shape drawn in the app (capability 90).
 draw = "Draw {subject}"
 add_shapes = "Add {count} {count|shape|shapes}"
+move_node = "Move node of {subject}"
+move_nodes = "Move {count} {count|node|nodes} of {subject}"
+reshape = "Reshape {subject}"
+add_node = "Add node to {subject}"
+delete_node = "Delete node of {subject}"
+delete_nodes = "Delete {count} {count|node|nodes} of {subject}"
+break_path = "Break {subject}"
+delete_segment = "Delete segment of {subject}"
+close_path = "Close {subject}"
+join_paths = "Join {subject}"
 convert_to_path = "Convert {subject} to a path"
 convert_to_paths = "Convert {count} {count|shape|shapes} to paths"
 delete_tab = "Delete tab"
@@ -1637,6 +1647,27 @@ intersection = "Intersection"
 on_outline = "On outline"
 perpendicular = "Perpendicular"
 grid = "Grid"
+
+# The Edit nodes tool (capability 92): its bar's prompt and buttons, and
+# why an edit was refused.
+[node]
+break = "Break"
+break_help = "Break the path at the selected node: a closed outline opens there, an open one splits in two (B)."
+convert_help = "Make the shape a plain path with the same outline, so its nodes can be edited. Its sizes are no longer kept."
+
+[node.prompt]
+pick = "Click a path to edit its nodes"
+sized = "“{name}” keeps its sizes: convert it to a path to edit its nodes"
+edit = "Drag a node or a handle; double-click a segment to add a node"
+
+[node.refused]
+too_few = "An outline keeps at least two nodes, three when it is closed."
+last_segment = "A path's only segment cannot be deleted; delete the shape instead."
+break_one = "Select the one node to break the path at."
+break_end = "A path cannot be broken at its end."
+
+[node.problem]
+radius = "an arc between these ends cannot have that radius: it is under half the distance between them"
 
 # Why a click was refused, shown in the status bar.
 [draw.refused]

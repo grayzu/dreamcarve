@@ -342,8 +342,20 @@ const fn row_label(shape: &Shape, field: SizeField) -> StrKey {
 }
 
 /// The word an undo label has for a change: *Set **width** of “Slot 1”*.
+///
+/// Only a size or a choice is worded this way; a node edit's label is its
+/// own sentence ([`crate::command::Command::label`]), and reads *size*
+/// here.
 pub(crate) const fn edit_word(shape: Option<&Shape>, edit: Edit) -> StrKey {
     match edit {
+        Edit::MoveNodes { .. }
+        | Edit::Reshape
+        | Edit::AddNode
+        | Edit::DeleteNodes { .. }
+        | Edit::Break
+        | Edit::DeleteSegment
+        | Edit::CloseEnds
+        | Edit::JoinEnds => StrKey::ShapeSizeSize,
         Edit::Size(field) => match field {
             SizeField::Width | SizeField::SlotWidth => StrKey::ShapeSizeWidth,
             SizeField::Height => StrKey::ShapeSizeHeight,

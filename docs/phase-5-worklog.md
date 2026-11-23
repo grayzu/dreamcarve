@@ -39,7 +39,7 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 9: 3,608.
+`0.5.0-alpha.1`. After slice 10: 3,622.
 
 ## Decisions waiting for the maintainer
 
@@ -118,6 +118,13 @@ Decisions made while building are added here.
   with the rest of construction geometry. The pill's Edit
   nodes, Trim and Measure buttons come with their tools. The diameter
   sign in size labels is `Ø`: the bundled Inter has no `⌀`.
+- Slice 10: the selected nodes and the edited shape are the tool's,
+  the shape being the app's one selected instance; there is no edit
+  session to apply or cancel (upstream's), each edit being its own undo
+  step. Breaking an open path makes two shapes only when the shape is
+  one path of its own with no linked copy; otherwise the definition
+  gains an outline. The context menu rows and the `B` key are the
+  window's (slice 17); the app core takes them as `NodeAction`s.
 
 ## Slices
 
@@ -143,7 +150,7 @@ The numbers are the design spec's.
 
 | Slice | What | Status |
 | --- | --- | --- |
-| 10 | Edit nodes | todo |
+| 10 | Edit nodes, in the app core (`dc_app::tool::node`): the one selected path's nodes, handles and arc middles; select by click, Shift and a box; drag a node, several, a straight side, a curve's handle (Alt for a corner), an arc's middle, each previewed and one undo step, through the instance's inverse transform so linked copies follow; a node's X and Y and an arc's radius typed; add a node (double-click, Ctrl-click), delete nodes or a segment, Break; an end dropped on an end closes the path or joins two shapes; a sized shape converted first; `ReplaceShapes`; `Path::transformed` and `Path::joined`. The window's side is slice 17. Gate: 3,622 tests | done |
 | 11 | Fillet and chamfer | todo |
 | 12 | Segment kinds | todo |
 | 13 | Offset | todo |

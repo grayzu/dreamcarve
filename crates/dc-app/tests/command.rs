@@ -152,6 +152,7 @@ fn kind(command: &Command) -> &'static str {
         Command::AddShapes(_) => "AddShapes",
         Command::SetOutline { .. } => "SetOutline",
         Command::ConvertToPath(_) => "ConvertToPath",
+        Command::ReplaceShapes { .. } => "ReplaceShapes",
     }
 }
 
@@ -407,7 +408,19 @@ fn every_command() -> Vec<(Project, Command)> {
         (plaque.clone(), Command::FitStockToShapes { margin_mm: 5.0 }),
         (plaque, Command::AddShapes(vec![new_slot("Slot 1")])),
         (drawing.clone(), wider_slot()),
-        (drawing, Command::ConvertToPath(vec![instance("i9")])),
+        (
+            drawing.clone(),
+            Command::ConvertToPath(vec![instance("i9")]),
+        ),
+        (
+            drawing,
+            Command::ReplaceShapes {
+                remove: vec![instance("i9")],
+                add: vec![new_slot("Slot 1"), new_slot("Slot 1 (2)")],
+                inherit: Some(instance("i9")),
+                what: dc_app::command::Edit::Break,
+            },
+        ),
     ]
 }
 
@@ -854,4 +867,85 @@ fn add_shapes_takes_the_next_ids_and_refuses_what_cannot_be() {
     assert_eq!(next_name(&before, "Slot"), "Slot 1");
     assert_eq!(next_name(&after, "Slot"), "Slot 3");
     assert_eq!(next_name(&after, "Circle"), "Circle 1");
+}
+
+/// `ReplaceShapes` (phase 5): the new shapes take the removed ones' place
+/// in the Design Tree; what cut the inherited shape cuts the first new
+/// one, its tabs go to that one's outline, the other removed shapes
+/// leave every target list, and a locked shape is not replaced.
+#[test]
+fn replace_shapes_hands_targets_and_tabs_to_the_first() {
+    use dc_app::CommandError;
+    use dc_app::command::Edit;
+    let before = plaque_with_tabs();
+    // The Cut out Profile targets the outline, `i1`, which has the tabs.
+    let cut_out = |project: &Project| match operation(project, "op4") {
+        Operation::Profile(profile) => profile.targets.clone(),
+        other => panic!("op4 is a Profile, not {}", other.kind()),
+    };
+    assert_eq!(cut_out(&before), [instance("i1")]);
+    assert!(before.tabs.iter().all(|tab| tab.instance == instance("i1")));
+    let at = before
+        .instances
+        .iter()
+        .position(|i| i.id == instance("i1"))
+        .unwrap();
+    let command = Command::ReplaceShapes {
+        remove: vec![instance("i1"), instance("i4")],
+        add: vec![new_slot("Slot 1"), new_slot("Slot 2")],
+        inherit: Some(instance("i1")),
+        what: Edit::JoinEnds,
+    };
+    let after = command.apply(&before).unwrap();
+    assert_eq!(after.instances.len(), before.instances.len());
+    let first = after.instances[at].id.clone();
+    assert_eq!(
+        after.instances[at].name, "Slot 1",
+        "in the removed one's place"
+    );
+    assert_eq!(after.instances[at + 1].name, "Slot 2");
+    assert!(!after.instances.iter().any(|i| i.id == instance("i1")));
+    assert_eq!(cut_out(&after), std::slice::from_ref(&first));
+    // Nothing targets a shape that is gone.
+    for operation in &after.operations {
+        let text = format!("{operation:?}");
+        assert!(
+            !text.contains("InstanceId(\"i4\")") && !text.contains("InstanceId(\"i1\")"),
+            "{}",
+            operation.name()
+        );
+    }
+    assert_eq!(after.tabs.len(), before.tabs.len());
+    let slot = &after.definitions[&after.instances[at].definition].profiles[0];
+    for tab in &after.tabs {
+        assert_eq!(tab.instance, first);
+        let on = dc_geometry::nearest_point(slot, dc_geometry::Point::new(tab.x_mm, tab.y_mm));
+        assert!(on.unwrap().gap_mm < 1e-9, "on the new outline");
+    }
+    assert!(
+        !after
+            .definitions
+            .contains_key(&before.instances[at].definition)
+    );
+    assert_eq!(
+        command.label(&Strings::default(), &before, &after),
+        "Join 2 shapes"
+    );
+
+    let mut locked = before.clone();
+    locked.instances[at].locked = true;
+    assert!(matches!(
+        command.apply(&locked),
+        Err(CommandError::Locked { .. })
+    ));
+    let nothing = Command::ReplaceShapes {
+        remove: Vec::new(),
+        add: vec![new_slot("Slot 1")],
+        inherit: None,
+        what: Edit::Break,
+    };
+    assert!(matches!(
+        nothing.apply(&before),
+        Err(CommandError::NothingSelected)
+    ));
 }

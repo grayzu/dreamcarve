@@ -17,6 +17,7 @@
 
 mod draw;
 mod gear;
+mod node;
 mod path;
 
 use std::collections::BTreeMap;
@@ -30,6 +31,10 @@ use crate::snap::{self, Pointer, Snapped, Targets};
 
 pub use draw::MIN_SIZE_MM;
 pub(crate) use draw::{field_label, parse_angle_deg, polygon_name, size_text};
+pub use node::{
+    BarAction, Control, HANDLE_HIT_PX, HandleMark, JOIN_PX, NODE_HIT_PX, NodeAction, NodeMark,
+    NodeRef,
+};
 
 /// What the Viewport's pointer does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -296,6 +301,9 @@ pub struct ToolBar {
     pub fields: Vec<SizeRow>,
     /// The tool's choices, each one of a few: a gear's forms.
     pub choices: Vec<Choice>,
+    /// The tool's buttons: the Edit nodes tool's *Break*, and *Convert to
+    /// Path* when the shape keeps its sizes.
+    pub actions: Vec<BarAction>,
     /// A line under the fields that is read, not typed: a gear's module.
     pub note: Option<String>,
     /// Whether **Done** would make a shape now: a box tool's shape with
@@ -408,6 +416,9 @@ pub enum Event {
     Option(ToolOption),
     /// The tool bar's **Done**: finish with the sizes as they read.
     Done,
+    /// Something asked of the Edit nodes tool: a key, a menu's row, a
+    /// button of its bar.
+    Node(NodeAction),
 }
 
 /// What an event did.
@@ -438,6 +449,14 @@ pub struct Draft {
     pub snap: Option<Snapped>,
     /// The sizes of the shape being drawn.
     pub labels: Vec<Label>,
+    /// The nodes of the path being edited (capability 92).
+    pub nodes: Vec<NodeMark>,
+    /// Its curves' handles and its arcs' middles.
+    pub handles: Vec<HandleMark>,
+    /// The selected span of it, to draw over the outline.
+    pub highlights: Vec<Polyline>,
+    /// The box being dragged round nodes: its two corners, mm.
+    pub marquee: Option<(Point, Point)>,
 }
 
 /// The tool in use and what it holds. Not project data.
@@ -451,6 +470,8 @@ pub(crate) struct Session {
     path: path::PathDraft,
     /// How far the Gear tool has got.
     gear: gear::GearDraft,
+    /// What the Edit nodes tool has selected and hold of.
+    node: node::NodeDraft,
     /// Where the pointer last was, with what was held.
     pointer: Option<Pointer>,
     /// Where the primary button went down, mm: a release far from it is
@@ -507,6 +528,9 @@ impl App {
         if let Tool::Draw(drawing) = tool {
             self.prefs_mut().drawing_tool = drawing;
         }
+        if tool == Tool::Nodes {
+            self.begin_nodes();
+        }
     }
 
     /// What the tool in use wants drawn.
@@ -528,6 +552,7 @@ impl App {
             (Tool::Draw(drawing), event) if gear::draws(drawing) => {
                 return self.gear_event(event);
             }
+            (Tool::Nodes, event) => return self.node_event(event),
             (_, Event::Move(pointer)) => {
                 self.tool.draft.snap = Some(self.snap_at(&pointer, None, &[]));
             }
@@ -546,6 +571,7 @@ impl App {
             Tool::Draw(drawing) if draw::draws(drawing) => Some(self.draw_bar(drawing)),
             Tool::Draw(drawing) if path::draws(drawing) => Some(self.path_bar(drawing)),
             Tool::Draw(drawing) if gear::draws(drawing) => Some(self.gear_bar()),
+            Tool::Nodes => Some(self.node_bar()),
             _ => None,
         }
     }

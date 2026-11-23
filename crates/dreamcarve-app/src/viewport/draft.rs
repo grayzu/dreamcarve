@@ -122,6 +122,7 @@ pub(super) fn paint(ui: &Ui, painter: &egui::Painter, pane: Rect, app: &App, cam
         outlines,
         snap,
         labels,
+        ..
     } = app.draft();
     let at = |p: Point| window_pos(pane, camera, p);
     let tolerance_mm = layers::tolerance_mm(layers::band(camera.px_per_mm));

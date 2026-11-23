@@ -174,7 +174,7 @@ impl App {
                 self.tool.pointer = Some(pointer);
                 self.path_point(drawing)
             }
-            Event::Release(_) => Reply::default(),
+            Event::Release(_) | Event::Node(_) => Reply::default(),
             // The first click of the pair added its point already.
             Event::DoubleClick(_) | Event::Done => self.finish_path(None),
             // With a size typed, Enter takes the point the fields give;
@@ -249,6 +249,7 @@ impl App {
             prompt: strings.get(prompt).to_owned(),
             fields,
             choices: Vec::new(),
+            actions: Vec::new(),
             note: None,
             can_finish: draft.points.len() >= 2,
         }

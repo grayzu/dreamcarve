@@ -85,7 +85,7 @@ impl App {
                 }
                 Reply::default()
             }
-            Event::DoubleClick(_) => Reply::default(),
+            Event::DoubleClick(_) | Event::Node(_) => Reply::default(),
             Event::Key(Key::Enter) | Event::Done => match self.tool.gear {
                 GearDraft::Sizes { centre, gear } => self.make_gear(centre, &gear),
                 _ => {
@@ -174,6 +174,7 @@ impl App {
                 prompt: strings.get(prompt).to_owned(),
                 fields,
                 choices: Vec::new(),
+                actions: Vec::new(),
                 note: None,
                 can_finish: false,
             };
@@ -209,6 +210,7 @@ impl App {
             prompt: strings.get(StrKey::DrawPromptGearSizes).to_owned(),
             fields,
             choices,
+            actions: Vec::new(),
             note,
             can_finish: problems.is_empty(),
         }

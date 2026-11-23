@@ -257,7 +257,9 @@ pub enum Command { /* phase 4's, and: */
 pub struct NewShape { pub name: String, pub shape: Option<Shape>, pub profiles: Vec<Polyline>,
                       pub transform: Transform, pub construction: bool, pub folder: Option<FolderId> }
 pub enum Edit { Size(SizeField), Corners, Measured, Flanks, Root, Crest,   // slice 8
-                MoveNodes, AddNode, DeleteNodes, Break, DeleteSegment, SegmentKind,
+                MoveNodes { count }, Reshape, AddNode, DeleteNodes { count }, Break, DeleteSegment,
+                CloseEnds, JoinEnds,                                      // slice 10
+                SegmentKind,
                 Fillet, Chamfer, Offset, Weld, Subtract, Intersect, Trim, Join, JoinEnds,
                 Align(Side), Distribute(Axis), Regenerate }   // the undo label's words
 ```
@@ -342,6 +344,14 @@ and `[drawing]` (`tool` by name, `grid_spacing_mm`, the options); a
 name this build does not know is left out, a radius is held to 6–32 px,
 and changing any of them is a preference the user set
 (`shell::window::user_set`).
+
+`ReplaceShapes` (slice 10, where a broken path first needs it) puts the
+new shapes where the first removed one was in the Design Tree. An
+operation's targets and an Inlay's boundary have the first new shape in
+`inherit`'s place and lose the other removed shapes; the tabs on
+`inherit` move to the first new shape and are re-seated on its outline
+(it is placed as `inherit` was, so their points are in the same space);
+the tabs on the others go. A locked shape is not replaced.
 
 `Selection` is unchanged; the nodes selected in Edit nodes are the
 tool's state. `Scene::Shape` gains `construction: bool`, the
@@ -551,6 +561,36 @@ answers `Field` events by pinning that size and recomputing the preview
 point from the fields (`manualEntry.ts`'s `computeDimensionEditPreviewPoint`),
 and `Key::Enter` by committing with the fields as they read. `Escape`
 steps back: an open field, then the draft, then the tool.
+
+**Edit nodes** (`tool/node.rs`). What is edited is the app's selection
+when it is one instance whose definition is a path: `shape` `None`
+(each profile read as a path, exactly) or `Shape::Path`. A shape that
+keeps its sizes shows the bar's *Convert to Path*
+(`NodeAction::Convert`). The tool holds the selected nodes
+(`NodeRef { path, node }`), the selected span, and what the pointer has
+hold of. A press hits, in order, the nearest node within 9 px, a
+curve's handle or an arc's middle within 7 px, a span within 9 px
+(`hitEditableControl`), all measured where the shape is placed; on
+nothing it starts a box, or takes the shape under the pointer to edit
+instead. A press that moves 4 px is a drag: the paths are recomputed
+from the snapshot each move (`dragged`), drawn as the draft, and
+committed on release as one `SetOutline`. The dragged point is the
+snapped pointer through the instance's inverse transform, so it lands
+under the pointer however the shape is placed (`editInPlace.test.ts`);
+the other selected nodes move as far the same way. The outline written
+is each path flattened at the project's tolerance, and `shape` is
+`Shape::Path` only when a path has a curve.
+
+A single open end dropped within 14 px of its own other end closes the
+path; within 14 px of an end of another shape that is one open path
+(visible, unlocked, not a linked copy), the two become one shape
+through `ReplaceShapes`, the other's path brought into this shape's
+space (`Path::transformed`, `Path::joined`). Break and Delete segment
+on an open path make two shapes the same way when the shape is one
+path of its own; a path of a shape with other outlines, or with linked
+copies, stays in its definition as two outlines, so the copies follow.
+`Draft` carries what the overlay paints: `nodes`, `handles`,
+`highlights` (the selected span) and `marquee`.
 
 A committed shape is `AddShapes` with the shape's outline in definition
 space and the instance transform that places it: a translation to the
@@ -875,12 +915,17 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `command::every_command_round_trips_through_the_file` and
 `labels_name_the_thing` gain every new command (acc 115).
 
-**Edit nodes (slices 10–12)** `dc_app::tool::node::` `a_click_selects_a_node`,
+**Edit nodes (slices 10–12)** `dc_app` `tests/nodes.rs`: `a_click_selects_a_node`,
 `a_box_selects_several`, `dragging_moves_one_vertex`,
 `editing_through_a_placed_copy_lands_under_the_pointer` (port:
 `editInPlace.test.ts`), `an_arc_handle_changes_the_bulge_only`,
 `a_smooth_handle_carries_its_twin_alt_does_not`, `add_and_delete_a_node`,
 `break_and_delete_segment`, `dropping_an_end_on_an_end_joins`,
+`tabs_follow_an_edited_outline`,
+`a_sized_shape_is_converted_and_the_tool_is_left`;
+`tests/command.rs` `replace_shapes_hands_targets_and_tabs_to_the_first`;
+`dc_geometry::path::edit` `a_path_follows_a_transform`,
+`open_paths_join_end_to_end`;
 `fillet_and_chamfer_a_corner`, `fillet_corners_of_a_shape`,
 `segment_kinds`, `tabs_follow_an_edited_outline`,
 `an_edit_regenerates_only_what_targets_it` (acc 117, 118, 127).
@@ -964,7 +1009,7 @@ row in `docs/phase-5-worklog.md`. Tests first, as phase 4's.
     re-seated. [3, 8]
 11. **Fillet and chamfer.** [10]
 12. **Segment kinds.** [10]
-13. **Offset.** `ReplaceShapes`. [8]
+13. **Offset.** On `ReplaceShapes`, which slice 10 brought. [8]
 14. **Weld, Subtract, Intersect.** [13]
 15. **Intersections and Trim.** [10]
 16. **Join.** The stitch moved to `dc-geometry`. [10]

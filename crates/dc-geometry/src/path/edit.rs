@@ -733,6 +733,92 @@ impl Path {
         }
         Some(Self::new(nodes, true))
     }
+    /// The path through `transform` (`transformProfileAffine`): its nodes
+    /// and handles where the transform puts them. An arc stays an arc
+    /// under a move, a turn, an even scale and a mirror, which turns it
+    /// the other way; `None` for a transform that is singular or not
+    /// finite, and for one that would make an arc an ellipse (an uneven
+    /// scale, a shear).
+    #[must_use]
+    pub fn transformed(&self, transform: crate::Transform) -> Option<Self> {
+        let [a, b, c, d, e, f] = transform.coeffs();
+        let det = a * d - b * c;
+        if ![a, b, c, d, e, f].iter().all(|v| v.is_finite()) || det.abs() < f64::MIN_POSITIVE {
+            return None;
+        }
+        let scale = a.abs().max(b.abs()).max(c.abs()).max(d.abs());
+        let near = |x: f64| x.abs() <= scale * 1e-9;
+        let conformal = if det > 0.0 {
+            near(a - d) && near(b + c)
+        } else {
+            near(a + d) && near(b - c)
+        };
+        let turn = if det > 0.0 { 1.0 } else { -1.0 };
+        let spans = if self.closed {
+            self.nodes.len()
+        } else {
+            self.nodes.len().saturating_sub(1)
+        };
+        let mut nodes = Vec::with_capacity(self.nodes.len());
+        for (index, node) in self.nodes.iter().enumerate() {
+            let at = transform.apply(node.point());
+            let span = match node.span {
+                Span::Line => Span::Line,
+                Span::Arc { bulge } => {
+                    if index < spans && !conformal {
+                        return None;
+                    }
+                    Span::Arc {
+                        bulge: bulge * turn,
+                    }
+                }
+                Span::Cubic {
+                    handle_out,
+                    handle_in,
+                } => Span::Cubic {
+                    handle_out: transform.apply(handle_out),
+                    handle_in: transform.apply(handle_in),
+                },
+            };
+            nodes.push(PathNode {
+                x: at.x,
+                y: at.y,
+                span,
+                smooth: node.smooth,
+            });
+        }
+        Some(Self::new(nodes, self.closed))
+    }
+
+    /// This open path with the open path `next` after it, as one open
+    /// path (`joinOpenProfiles`): where this one's end and `next`'s start
+    /// are within `tolerance_mm` they become one node, a corner; else a
+    /// straight span bridges the gap. `None` when either is closed or has
+    /// no span.
+    #[must_use]
+    pub fn joined(&self, next: &Self, tolerance_mm: f64) -> Option<Self> {
+        if self.closed || next.closed || self.span_count() == 0 || next.span_count() == 0 {
+            return None;
+        }
+        let mut nodes = self.nodes.clone();
+        let end = nodes.last()?.point();
+        let start = next.nodes.first()?.point();
+        if end.distance_to(start) <= tolerance_mm.max(EPS_MM) {
+            // One node where they meet, with the span that left `next`'s
+            // start.
+            nodes.pop();
+            let mut meeting = *next.nodes.first()?;
+            meeting.smooth = false;
+            nodes.push(meeting);
+            nodes.extend(next.nodes.iter().skip(1).copied());
+        } else {
+            let last = nodes.last_mut()?;
+            last.span = Span::Line;
+            last.smooth = false;
+            nodes.extend(next.nodes.iter().copied());
+        }
+        Some(Self::new(nodes, false))
+    }
 }
 
 /// A corner between two straight sides.
@@ -929,6 +1015,104 @@ mod tests {
 
     fn points(path: &Path) -> Vec<(f64, f64)> {
         path.nodes().iter().map(|n| (n.x, n.y)).collect()
+    }
+
+    /// A path goes where a transform puts it: an arc keeps its sweep
+    /// under a turn and an even scale, turns the other way under a
+    /// mirror, and cannot follow an uneven scale; lines and curves can.
+    #[test]
+    fn a_path_follows_a_transform() {
+        use crate::Transform;
+        let arc = Path::new(
+            vec![
+                PathNode {
+                    x: 0.0,
+                    y: 0.0,
+                    span: Span::Arc { bulge: 0.5 },
+                    smooth: false,
+                },
+                PathNode::line(10.0, 0.0),
+            ],
+            false,
+        );
+        let moved = arc
+            .transformed(Transform::scale(2.0, 2.0).then(Transform::translate(5.0, 1.0)))
+            .unwrap();
+        assert_nodes(&moved, &[(5.0, 1.0), (25.0, 1.0)]);
+        assert_eq!(moved.nodes()[0].span, Span::Arc { bulge: 0.5 });
+        let mirrored = arc.transformed(Transform::scale(-1.0, 1.0)).unwrap();
+        assert_eq!(mirrored.nodes()[0].span, Span::Arc { bulge: -0.5 });
+        assert_eq!(arc.transformed(Transform::scale(2.0, 1.0)), None);
+        assert_eq!(arc.transformed(Transform::scale(0.0, 0.0)), None);
+        // A square has no arc to lose.
+        let stretched = square().transformed(Transform::scale(2.0, 1.0)).unwrap();
+        assert_nodes(
+            &stretched,
+            &[(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 10.0)],
+        );
+        assert!(stretched.is_closed());
+        // A curve's handles go with it.
+        let curve = Path::spline(
+            &[
+                Point::new(0.0, 0.0),
+                Point::new(10.0, 5.0),
+                Point::new(20.0, 0.0),
+            ],
+            false,
+        );
+        let shifted = curve.transformed(Transform::translate(1.0, 2.0)).unwrap();
+        let (
+            Span::Cubic {
+                handle_out: was, ..
+            },
+            Span::Cubic { handle_out: is, .. },
+        ) = (curve.nodes()[0].span, shifted.nodes()[0].span)
+        else {
+            panic!("cubics");
+        };
+        assert_approx_eq!(is.x, was.x + 1.0, 1e-12);
+        assert_approx_eq!(is.y, was.y + 2.0, 1e-12);
+    }
+
+    /// Two open paths end to end are one: where they meet they share a
+    /// node, and a gap is bridged by a straight span.
+    #[test]
+    fn open_paths_join_end_to_end() {
+        let first = elbow();
+        let meeting = Path::new(
+            vec![PathNode::line(10.0, 10.0), PathNode::line(0.0, 10.0)],
+            false,
+        );
+        let joined = first.joined(&meeting, 1e-6).unwrap();
+        assert_nodes(
+            &joined,
+            &[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+        );
+        assert!(!joined.is_closed());
+        let apart = Path::new(
+            vec![PathNode::line(10.0, 12.0), PathNode::line(0.0, 12.0)],
+            false,
+        );
+        let bridged = first.joined(&apart, 1e-6).unwrap();
+        assert_nodes(
+            &bridged,
+            &[
+                (0.0, 0.0),
+                (10.0, 0.0),
+                (10.0, 10.0),
+                (10.0, 12.0),
+                (0.0, 12.0),
+            ],
+        );
+        assert_eq!(bridged.span_count(), 4);
+        // Within the tolerance the two ends are one node.
+        assert_eq!(first.joined(&apart, 2.5).unwrap().nodes().len(), 4);
+        assert_eq!(
+            square().joined(&apart, 1e-6),
+            None,
+            "a closed path has no end"
+        );
+        assert_eq!(first.joined(&square(), 1e-6), None);
     }
 
     /// Asserts the path's nodes are at `expected`, within a nanometre.
