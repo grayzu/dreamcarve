@@ -4,7 +4,7 @@ The **Measure** tool reads a distance between two points, and the length
 and area of a shape. Use it to check a drawing before you cut: a hole
 spacing, the gap between two parts, the width left beside a slot.
 
-Choose **Measure** from the Draw button's list, or press **K**.
+Click **Measure** in the tool strip, or press **K**.
 
 ![The Measure tool on the hook plate: a dashed tape between two screw holes with its distance beside it, and the tool bar reading Distance, ΔX, ΔY and Angle, then the Length and Area of the selected plate](figures/app/draw-measure.png)
 

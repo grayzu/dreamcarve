@@ -127,10 +127,19 @@ pub fn draw(h: &mut H, row: &[String], stage: &mut dyn FnMut(&mut H, Stage<'_>))
     };
     let shape = design_steps::names(shape).remove(0);
     let before = h.state().app().project().instances.len();
-    // The tool, from the Draw button's popover.
-    h.get_by_role_and_label(Role::Button, "Drawing tools")
-        .click();
-    h.run_steps(SETTLE);
+    // The tool, from the tool strip: its group's button, then its row
+    // in the list beside it; Text has a button of its own.
+    let strings = dc_app::Strings::english();
+    let group = dc_app::Drawing::ALL
+        .into_iter()
+        .find(|drawing| strings.get(drawing.name()) == tool)
+        .unwrap_or_else(|| panic!("{CHAPTER}: there is no drawing tool `{tool}`"))
+        .group();
+    if let Some(group) = group {
+        h.get_by_role_and_label(Role::Button, strings.get(group.name()))
+            .click();
+        h.run_steps(SETTLE);
+    }
     h.get_by_role_and_label(Role::Button, tool).click();
     h.run_steps(SETTLE);
     park(h);

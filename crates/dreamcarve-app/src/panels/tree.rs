@@ -1249,6 +1249,7 @@ pub(crate) fn context_menu(
             MenuItem::Copy => StrKey::AppMenuCopy,
             MenuItem::Paste => StrKey::AppMenuPaste,
             MenuItem::Duplicate => StrKey::TreeDuplicate,
+            MenuItem::Array => StrKey::ArrangeMenuArray,
             MenuItem::Delete => StrKey::TreeDelete,
             MenuItem::NewFolder => StrKey::TreeNewFolder,
             MenuItem::Group => StrKey::AppMenuGroup,
@@ -1308,6 +1309,10 @@ pub(crate) fn context_menu(
                 MenuItem::Cut => out.push(Action::Cut),
                 MenuItem::Copy => out.push(Action::Copy),
                 MenuItem::Paste => out.push(Action::Paste(paste)),
+                // Array… takes its values in the tool bar.
+                MenuItem::Array => out.push(Action::Arm(dc_app::Tool::Adjust(
+                    dc_app::tool::Adjust::Array,
+                ))),
                 _ => {
                     if let Some(command) = dc_app::tree::menu_command(project, item, ids) {
                         out.push(Action::Run(Box::new(command)));
@@ -1580,6 +1585,7 @@ fn picture_menu(
             MenuItem::AddOperation => StrKey::TreeAddOperation,
             // A picture's menu has none of these.
             MenuItem::Duplicate
+            | MenuItem::Array
             | MenuItem::Construction
             | MenuItem::NotConstruction
             | MenuItem::NewFolder

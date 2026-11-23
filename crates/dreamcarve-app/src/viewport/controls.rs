@@ -33,6 +33,7 @@
 //! the wheel remain.
 
 use dc_app::StrKey;
+use dc_app::tool::ToolGroup;
 use dc_app::view::ColourMode;
 use dc_app::viewport::camera::{Camera, Insets};
 use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
@@ -53,9 +54,20 @@ const CONTROL_PX: f32 = 28.0;
 const READOUT_PX: f32 = 28.0;
 /// The gap between a pill's controls, px.
 const GAP_PX: f32 = 2.0;
-/// The Draw button's chevron, px wide: the least a control can be for
-/// its focus ring.
-const CHEVRON_PX: f32 = 24.0;
+/// The tool strip's buttons: two that select and edit, the three groups
+/// and Text, three that act on what is drawn, and Snapping.
+const STRIP_BUTTONS: f32 = 10.0;
+/// The rules that divide the strip into its four segments.
+const STRIP_RULES: f32 = 3.0;
+/// The tool strip's height, px: its buttons, the gaps between what it
+/// holds, its rules, and the pill round them.
+const STRIP_PX: f32 = PILL_PX - CONTROL_PX
+    + STRIP_BUTTONS * CONTROL_PX
+    + STRIP_RULES * RULE_PX
+    + (STRIP_BUTTONS + STRIP_RULES - 1.0) * GAP_PX;
+/// What the tool strip takes of the pane's left, px: its inset, itself,
+/// and the same inset again. The tool bar and Fit keep clear of it.
+pub(super) const STRIP_CLEAR_PX: f32 = INSET_PX + PILL_PX + INSET_PX;
 /// The drawing tools' popover, px wide.
 const DRAW_MENU_PX: f32 = 200.0;
 /// A row of the drawing tools' popover, px high.
@@ -91,7 +103,8 @@ pub(super) const ORIGIN_LABEL_OFFSET_PX: f32 = 4.0;
 /// label, and at each side the origin's label and a locked shape's
 /// padlock.
 pub const FIT_INSETS: Insets = Insets {
-    left_px: 40.0,
+    // The tool strip, with its inset at each side.
+    left_px: 60.0,
     // The inset, a pill, the inset.
     top_px: 60.0,
     right_px: 40.0,
@@ -273,18 +286,15 @@ impl Fit {
         fit
     }
 
-    /// The top-left pill's width, px.
+    /// The top-left pill's width, px: Fit, and with the zoom controls a
+    /// rule and them. The tools are in the strip under it.
     fn tools_px(&self) -> f32 {
         let padding = PILL_PX - CONTROL_PX;
-        // Select, Edit nodes, Draw and its chevron, the Tab tool, the
-        // rule, Fit. Trim and Measure are in the chevron's popover: a
-        // sixth button would cost the zoom buttons at the Viewport's
-        // least width.
-        let tools = 5.0 * CONTROL_PX + CHEVRON_PX + RULE_PX + 6.0 * GAP_PX;
+        let zoom = RULE_PX + 2.0 * CONTROL_PX + 3.0 * GAP_PX;
         match (self.zoom, self.level) {
-            (true, true) => padding + tools + 2.0 * CONTROL_PX + self.zoom_px + 3.0 * GAP_PX,
-            (true, false) => padding + tools + 2.0 * CONTROL_PX + 2.0 * GAP_PX,
-            (false, _) => padding + tools,
+            (true, true) => padding + CONTROL_PX + zoom + self.zoom_px + GAP_PX,
+            (true, false) => padding + CONTROL_PX + zoom,
+            (false, _) => padding + CONTROL_PX,
         }
     }
 
@@ -337,12 +347,21 @@ pub(crate) fn held_drawing(app: &dc_app::App) -> dc_app::Drawing {
     }
 }
 
-/// The drawing tools' popover's id, which the chevron toggles.
-fn draw_menu_id() -> Id {
-    Id::unique("dc.viewport.draw.popover")
+/// The id of group `group`'s list of tools, which its button toggles.
+fn flyout_id(group: ToolGroup) -> Id {
+    Id::unique(("dc.viewport.tools.flyout", group))
 }
 
-/// One drawing tool's row in the popover: its icon and its name at the
+/// Whether a group's list of tools is open. It is no menu to dismiss: a
+/// press on the Viewport while it shows is the tool's, and a tool's key
+/// still arms it.
+pub(crate) fn flyout_open(ctx: &egui::Context) -> bool {
+    ToolGroup::ALL
+        .into_iter()
+        .any(|group| egui::Popup::is_id_open(ctx, flyout_id(group)))
+}
+
+/// One drawing tool's row in a group's list: its icon and its name at the
 /// left, its key at the right, the tool in use on the selected surface.
 fn draw_row(ui: &mut Ui, icon: Icon, name: &str, keys: &str, chosen: bool) -> egui::Response {
     let palette = Palette::current(ui);
@@ -390,63 +409,285 @@ fn draw_row(ui: &mut Ui, icon: Icon, name: &str, keys: &str, chosen: bool) -> eg
     response
 }
 
-/// The drawing tools under the Draw button's `chevron`: a row each, with
-/// its icon, its name and its key; the one in use ticked by its wash.
-fn draw_menu(ui: &Ui, chevron: &egui::Response, state: &FrameState<'_>, out: &mut Vec<Action>) {
+/// A segment's rule across the tool strip: what separates the tools that
+/// select and edit, those that draw, those that act on what is drawn,
+/// and snapping.
+fn strip_rule(ui: &mut Ui) {
+    let palette = Palette::current(ui);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(CONTROL_PX, RULE_PX), Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        Stroke::new(1.5, palette.border_strong),
+    );
+}
+
+/// One group of drawing tools in the strip: a button that shows the tool
+/// of the group last used and arms it, a mark at its corner that it
+/// holds more, and beside it the list of the group's tools, each with
+/// its icon, name and key. A click arms the tool and opens the list; a
+/// row arms that tool and closes it.
+fn group_button(
+    ui: &mut Ui,
+    group: ToolGroup,
+    state: &FrameState<'_>,
+    enabled: bool,
+    out: &mut Vec<Action>,
+) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
-    let armed = match state.app.tool() {
-        dc_app::Tool::Draw(drawing) => Some(drawing),
+    let held = state.app.held(group);
+    let in_use = match state.app.tool() {
+        dc_app::Tool::Draw(drawing) if drawing.group() == Some(group) => Some(drawing),
         _ => None,
     };
-    egui::Popup::from_toggle_button_response(chevron)
-        .id(draw_menu_id())
-        .align(egui::RectAlign::BOTTOM_START)
-        .gap(8.0)
+    let name = strings.get(group.name());
+    let held_name = strings.get(held.name());
+    let keys = drawing_keys(ui.ctx(), held);
+    let others: Vec<&str> = group
+        .tools()
+        .iter()
+        .filter(|tool| **tool != held)
+        .map(|tool| strings.get(tool.name()))
+        .collect();
+    let help = strings.fmt(
+        StrKey::AppViewportGroupHelp,
+        &[("tool", held_name), ("others", &others.join(", "))],
+    );
+    let tip = if keys.is_empty() {
+        help
+    } else {
+        format!("{help} ({keys})")
+    };
+    let spec = ButtonSpec::new(Kind::Quiet, "")
+        .icon(drawing_icon(held), theme::ICON_SMALL_PX)
+        .width(CONTROL_PX)
+        .height(CONTROL_PX)
+        .named(name)
+        .tooltip(&tip)
+        .pressed(in_use.is_some())
+        .enabled(enabled);
+    let response = button(ui, spec);
+    // The mark that the button holds more than one tool.
+    let corner = response.rect.right_bottom() - egui::vec2(3.0, 3.0);
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            corner,
+            corner - egui::vec2(5.0, 0.0),
+            corner - egui::vec2(0.0, 5.0),
+        ],
+        palette.text_secondary,
+        Stroke::NONE,
+    ));
+    if response.clicked() {
+        out.push(Action::Arm(dc_app::Tool::Draw(held)));
+    }
+    egui::Popup::from_toggle_button_response(&response)
+        .id(flyout_id(group))
+        .align(egui::RectAlign::RIGHT_START)
+        .gap(10.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
         .width(DRAW_MENU_PX)
         .frame(theme::popover(palette, 6))
         .show(|ui| {
             ui.set_width(DRAW_MENU_PX - 12.0);
             ui.spacing_mut().item_spacing.y = 2.0;
-            for drawing in dc_app::Drawing::ALL
-                .into_iter()
-                .filter(|drawing| drawing.is_ready())
-            {
-                let name = strings.get(drawing.name());
+            for drawing in group.tools().iter().copied() {
                 let keys = drawing_keys(ui.ctx(), drawing);
-                let chosen = armed == Some(drawing);
+                let name = strings.get(drawing.name());
+                let chosen = in_use == Some(drawing);
                 if draw_row(ui, drawing_icon(drawing), name, &keys, chosen).clicked() {
                     out.push(Action::Arm(dc_app::Tool::Draw(drawing)));
                 }
             }
-            // Trim: a tool on outlines already drawn.
-            ui.separator();
-            let trimming = state.app.tool() == dc_app::Tool::Trim;
-            let trim = strings.get(StrKey::AppViewportTrim);
-            let row = draw_row(ui, Icon::Scissors, trim, "", trimming)
-                .on_hover_text(strings.get(StrKey::AppViewportTrimHelp));
-            if row.clicked() {
-                out.push(Action::Arm(dc_app::Tool::Trim));
-            }
-            // Measure: a tool that draws nothing.
-            let measuring = state.app.tool() == dc_app::Tool::Measure;
-            let measure = strings.get(StrKey::AppViewportMeasure);
-            let keys = keyboard::binding(Shortcut::Measure)
-                .map_or_else(String::new, |(modifiers, key)| {
-                    crate::shell::window::shortcut_text(ui.ctx(), modifiers, key)
-                });
-            let row = draw_row(ui, Icon::Ruler, measure, &keys, measuring)
-                .on_hover_text(strings.get(StrKey::AppViewportMeasureHelp));
-            if row.clicked() {
-                out.push(Action::Arm(dc_app::Tool::Measure));
-            }
         });
 }
 
-/// The top-left pill: *Select*, *Draw* and the *Tab tool*, then *Fit* and, where
-/// there is room (`fit`), *Zoom out*, the zoom and *Zoom in*. `top` is
-/// the pane's top edge less whatever lies across it. Returns the camera
+/// The snapping button's list: the master switch, then a tick per kind,
+/// as View ▸ Snapping and View ▸ Snap To have them.
+fn snap_menu(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let strings = state.app.strings();
+    let snap = &state.prefs.snap;
+    let all = crate::shell::menu::checked_item(
+        ui,
+        strings.get(StrKey::AppViewportSnapping),
+        snap.enabled,
+    );
+    if all.clicked() {
+        let mut next = snap.clone();
+        next.enabled = !snap.enabled;
+        out.push(Action::SetSnap(next));
+        ui.close();
+    }
+    ui.separator();
+    crate::shell::menu::snap_to(ui, state, out);
+}
+
+/// The tool strip, down the Viewport's left edge under the top-left
+/// pill (review feedback, 2026-11-23; Affinity's tools are laid out so):
+/// the tool in use shows pressed, and rules divide it into what selects
+/// and edits (*Select*, *Edit nodes*), what draws (the three groups and
+/// *Text*), what acts on what is drawn (*Trim*, *Measure*, the *Tab
+/// tool*), and *Snapping*. Returns the strip's rectangle.
+fn strip(
+    ui: &mut Ui,
+    (pane, top): (Rect, f32),
+    state: &FrameState<'_>,
+    opacity: f32,
+    out: &mut Vec<Action>,
+) -> Rect {
+    let strings = state.app.strings();
+    let editing_targets = state.app.target_editing().is_some();
+    let rect = Rect::from_min_size(
+        egui::pos2(
+            pane.left() + INSET_PX,
+            top + INSET_PX + PILL_PX + BETWEEN_PX,
+        ),
+        egui::vec2(PILL_PX, STRIP_PX),
+    );
+    let palette = Palette::current(ui);
+    // It takes the pointer and not the focus, as a pill does.
+    ui.interact(
+        rect,
+        Id::unique(("dc.viewport.float", "strip")),
+        Sense::CLICK | Sense::DRAG,
+    );
+    let padding = (PILL_PX - CONTROL_PX) / 2.0;
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(("dc.viewport.float.ui", "strip"))
+            .max_rect(rect.shrink(padding))
+            .layout(egui::Layout::top_down(egui::Align::Center)),
+    );
+    child.set_opacity(opacity);
+    let radius = theme::pill(rect.width());
+    child
+        .painter()
+        .add(theme::shadow(palette).as_shape(rect, radius));
+    child.painter().rect(
+        rect,
+        radius,
+        palette.surface_raised,
+        Stroke::new(1.0, palette.border_default),
+        egui::StrokeKind::Inside,
+    );
+    child.spacing_mut().item_spacing.y = GAP_PX;
+    let ui = &mut child;
+    let in_use = state.app.tool();
+    let arm = |ui: &mut Ui,
+               (key, help, icon): (StrKey, StrKey, Icon),
+               shortcut: Option<Shortcut>,
+               tool: dc_app::Tool,
+               out: &mut Vec<Action>| {
+        let tip = shortcut.map_or_else(
+            || strings.get(help).to_owned(),
+            |shortcut| with_keys(ui, strings.get(help), shortcut),
+        );
+        let pressed = in_use == tool && !editing_targets;
+        let spec = self::tool(strings, key, icon)
+            .tooltip(&tip)
+            .pressed(pressed)
+            .enabled(!editing_targets);
+        if button(ui, spec).clicked() {
+            out.push(Action::Arm(tool));
+        }
+    };
+    // What selects and edits.
+    arm(
+        ui,
+        (
+            StrKey::AppViewportSelect,
+            StrKey::AppViewportSelectHelp,
+            Icon::MousePointer,
+        ),
+        Some(Shortcut::SelectTool),
+        dc_app::Tool::Select,
+        out,
+    );
+    arm(
+        ui,
+        (
+            StrKey::AppViewportNodes,
+            StrKey::AppViewportNodesHelp,
+            Icon::Waypoints,
+        ),
+        Some(Shortcut::EditNodes),
+        dc_app::Tool::Nodes,
+        out,
+    );
+    strip_rule(ui);
+    // What draws: the three groups, and Text.
+    for group in ToolGroup::ALL {
+        group_button(ui, group, state, !editing_targets, out);
+    }
+    arm(
+        ui,
+        (
+            StrKey::DrawNameText,
+            StrKey::AppViewportTextHelp,
+            Icon::Type,
+        ),
+        keyboard::command_of(dc_app::Drawing::Text),
+        dc_app::Tool::Draw(dc_app::Drawing::Text),
+        out,
+    );
+    strip_rule(ui);
+    // What acts on what is drawn.
+    arm(
+        ui,
+        (
+            StrKey::AppViewportTrim,
+            StrKey::AppViewportTrimHelp,
+            Icon::Scissors,
+        ),
+        None,
+        dc_app::Tool::Trim,
+        out,
+    );
+    arm(
+        ui,
+        (
+            StrKey::AppViewportMeasure,
+            StrKey::AppViewportMeasureHelp,
+            Icon::Ruler,
+        ),
+        Some(Shortcut::Measure),
+        dc_app::Tool::Measure,
+        out,
+    );
+    let tab_armed = in_use == dc_app::Tool::Tab;
+    let tab = tool(strings, StrKey::AppViewportTabTool, Icon::BookmarkPlus)
+        .tooltip(strings.get(StrKey::AppViewportTabToolHelp))
+        .pressed(tab_armed)
+        .enabled(!editing_targets);
+    if button(ui, tab).clicked() {
+        out.push(Action::Arm(if tab_armed {
+            dc_app::Tool::Select
+        } else {
+            dc_app::Tool::Tab
+        }));
+    }
+    strip_rule(ui);
+    // Snapping: pressed while it is on; its list has the kinds.
+    let snap_tip = with_keys(
+        ui,
+        strings.get(StrKey::AppViewportSnappingHelp),
+        Shortcut::ToggleSnapping,
+    );
+    let snap = tool(strings, StrKey::AppViewportSnapping, Icon::Magnet)
+        .tooltip(&snap_tip)
+        .pressed(state.prefs.snap.enabled);
+    let snap = button(ui, snap);
+    egui::Popup::menu(&snap)
+        .align(egui::RectAlign::RIGHT_START)
+        .gap(10.0)
+        .show(|ui| snap_menu(ui, state, out));
+    rect
+}
+
+/// The top-left pill: *Fit* and, where there is room (`fit`), *Zoom
+/// out*, the zoom and *Zoom in*. `top` is the pane's top edge less
+/// whatever lies across it. Returns the pill's rectangle and the camera
 /// a zoom control set.
 fn tools(
     ui: &mut Ui,
@@ -458,7 +699,6 @@ fn tools(
     out: &mut Vec<Action>,
 ) -> (Rect, Option<Camera>) {
     let strings = state.app.strings();
-    let editing_targets = state.app.target_editing().is_some();
     let zoom = zoom_text(strings, camera);
     let zoom_px = fit.zoom_px;
     let rect = Rect::from_min_size(
@@ -467,90 +707,6 @@ fn tools(
     );
     let mut zoomed = None;
     pill(ui, rect, "tools", opacity, |ui| {
-        // The tools (#546; phase 5, capability 81): the one in use
-        // shows as pressed. Target editing has the drawing to itself.
-        let in_use = state.app.tool();
-        let select_tip = with_keys(
-            ui,
-            strings.get(StrKey::AppViewportSelectHelp),
-            Shortcut::SelectTool,
-        );
-        let select = tool(strings, StrKey::AppViewportSelect, Icon::MousePointer)
-            .tooltip(&select_tip)
-            .pressed(in_use == dc_app::Tool::Select && !editing_targets)
-            .enabled(!editing_targets);
-        if button(ui, select).clicked() {
-            out.push(Action::Arm(dc_app::Tool::Select));
-        }
-        let nodes_tip = with_keys(
-            ui,
-            strings.get(StrKey::AppViewportNodesHelp),
-            Shortcut::EditNodes,
-        );
-        let nodes = tool(strings, StrKey::AppViewportNodes, Icon::Waypoints)
-            .tooltip(&nodes_tip)
-            .pressed(in_use == dc_app::Tool::Nodes)
-            .enabled(!editing_targets);
-        if button(ui, nodes).clicked() {
-            out.push(Action::Arm(dc_app::Tool::Nodes));
-        }
-        // Draw: the drawing tool last used, and the chevron to the rest.
-        let held = held_drawing(state.app);
-        let drawing = matches!(in_use, dc_app::Tool::Draw(_));
-        let keys = drawing_keys(ui.ctx(), held);
-        let held_name = strings.get(held.name());
-        let draw_name = strings.fmt(StrKey::AppViewportDraw, &[("tool", held_name)]);
-        let draw_tip = if keys.is_empty() {
-            strings.fmt(StrKey::AppViewportDrawHelp, &[("tool", held_name)])
-        } else {
-            let help = strings.fmt(StrKey::AppViewportDrawHelp, &[("tool", held_name)]);
-            format!("{help} ({keys})")
-        };
-        // While Trim or Measure is armed, from the popover, the button
-        // shows it.
-        let trimming = in_use == dc_app::Tool::Trim;
-        let measuring = in_use == dc_app::Tool::Measure;
-        let draw_icon = if trimming {
-            Icon::Scissors
-        } else if measuring {
-            Icon::Ruler
-        } else {
-            drawing_icon(held)
-        };
-        let draw = ButtonSpec::new(Kind::Quiet, "")
-            .icon(draw_icon, theme::ICON_SMALL_PX)
-            .width(CONTROL_PX)
-            .height(CONTROL_PX)
-            .named(&draw_name)
-            .tooltip(&draw_tip)
-            .pressed(drawing || trimming || measuring)
-            .enabled(!editing_targets);
-        if button(ui, draw).clicked() {
-            out.push(Action::Arm(dc_app::Tool::Draw(held)));
-        }
-        let chevron = ButtonSpec::new(Kind::Quiet, "")
-            .icon(Icon::ChevronDown, theme::ICON_SMALL_PX)
-            .width(CHEVRON_PX)
-            .height(CONTROL_PX)
-            .named(strings.get(StrKey::AppViewportDrawTools))
-            .tooltip(strings.get(StrKey::AppViewportDrawTools))
-            .pressed(egui::Popup::is_id_open(ui.ctx(), draw_menu_id()))
-            .enabled(!editing_targets);
-        let chevron = button(ui, chevron);
-        draw_menu(ui, &chevron, state, out);
-        let tab_armed = in_use == dc_app::Tool::Tab;
-        let tab = tool(strings, StrKey::AppViewportTabTool, Icon::BookmarkPlus)
-            .tooltip(strings.get(StrKey::AppViewportTabToolHelp))
-            .pressed(tab_armed)
-            .enabled(!editing_targets);
-        if button(ui, tab).clicked() {
-            out.push(Action::Arm(if tab_armed {
-                dc_app::Tool::Select
-            } else {
-                dc_app::Tool::Tab
-            }));
-        }
-        rule(ui);
         let fit_tip = with_keys(ui, strings.get(StrKey::AppViewportFit), Shortcut::FitView);
         let fit_button = tool(strings, StrKey::AppViewportFit, Icon::Maximize).tooltip(&fit_tip);
         if button(ui, fit_button).clicked() {
@@ -559,6 +715,7 @@ fn tools(
         if !fit.zoom {
             return;
         }
+        rule(ui);
         let stepped = |factor: f64| {
             let mut next = *camera;
             next.zoom_by(factor);
@@ -730,6 +887,8 @@ fn readout(
 pub(super) struct Shown {
     /// The top-left pill.
     pub tools: Rect,
+    /// The tool strip under it.
+    pub strip: Rect,
     /// The top-right pill, when the project has a toolpath: the legend
     /// hangs under it.
     pub view: Option<Rect>,
@@ -742,7 +901,8 @@ pub(super) struct Shown {
 impl Shown {
     /// The rectangles the controls cover.
     pub(super) fn rects(&self) -> Vec<Rect> {
-        std::iter::once(self.tools)
+        [self.tools, self.strip]
+            .into_iter()
             .chain(self.view)
             .chain(self.readout)
             .collect()
@@ -800,10 +960,12 @@ pub(super) fn show(
     let room = right - pane.left() - 2.0 * INSET_PX;
     let fit = Fit::of(room, zoom_px, layers_px, with_view);
     let (tools, zoomed) = tools(ui, (pane, top), fit, state, camera, opacity, out);
+    let strip = strip(ui, (pane, top), state, opacity, out);
     let view = with_view.then(|| view(ui, (top, right), fit, state, opacity, out));
     let readout = readout(ui, (pane.left(), bottom), state, cursor_mm, opacity);
     Shown {
         tools,
+        strip,
         view,
         readout,
         camera: zoomed,
@@ -830,32 +992,43 @@ mod tests {
         );
     }
 
-    /// In a wide pane both top pills show whole; in a narrower one
-    /// *Layers* is its icon alone; at the Viewport's least width, 520 px,
-    /// the zoom percentage goes too, since the Draw button took its room
-    /// (phase 5), and Zoom in and Zoom out stay; narrower still they go;
-    /// and the pills never overlap while they fit at all.
+    /// With the tools in the strip, the top-left pill is Fit and the
+    /// zoom, and both top pills show whole down to the Viewport's least
+    /// width, 520 px. Narrower than the Viewport ever is, *Layers* is its
+    /// icon alone, then the zoom percentage goes, then the two zoom
+    /// buttons; and the pills never overlap while they fit at all.
     #[test]
     fn narrow_panes_drop_the_label_then_the_zoom() {
         let (zoom_px, layers_px) = (ZOOM_PX, 88.0);
         let wide = Fit::of(900.0 - 24.0, zoom_px, layers_px, true);
         assert!(wide.zoom && wide.level && wide.label);
-        let narrower = Fit::of(580.0 - 24.0, zoom_px, layers_px, true);
+        let least = Fit::of(theme::VIEWPORT_MIN_PX - 24.0, zoom_px, layers_px, true);
+        assert!(least.zoom && least.level && least.label, "{least:?}");
+        assert!(least.tools_px() + BETWEEN_PX + least.view_px() <= theme::VIEWPORT_MIN_PX - 24.0);
+        let narrower = Fit::of(440.0, zoom_px, layers_px, true);
         assert!(
             narrower.zoom && narrower.level && !narrower.label,
             "{narrower:?}"
         );
-        let least = Fit::of(theme::VIEWPORT_MIN_PX - 24.0, zoom_px, layers_px, true);
-        assert!(least.zoom && !least.level && !least.label, "{least:?}");
-        assert!(least.tools_px() + BETWEEN_PX + least.view_px() <= theme::VIEWPORT_MIN_PX - 24.0);
-        // Narrower than the Viewport ever is, the zoom buttons go; the
-        // two pills still clear each other down to 427 px of room.
-        let narrow = Fit::of(440.0, zoom_px, layers_px, true);
-        assert!(!narrow.zoom && !narrow.label, "{narrow:?}");
-        assert!(narrow.tools_px() + BETWEEN_PX + narrow.view_px() <= 440.0);
+        let narrow = Fit::of(380.0, zoom_px, layers_px, true);
+        assert!(narrow.zoom && !narrow.level && !narrow.label, "{narrow:?}");
+        let narrowest = Fit::of(330.0, zoom_px, layers_px, true);
+        assert!(!narrowest.zoom && !narrowest.label, "{narrowest:?}");
+        assert!(narrowest.tools_px() + BETWEEN_PX + narrowest.view_px() <= 330.0);
         // With no toolpath there is one pill, which keeps its zoom.
-        let alone = Fit::of(400.0, zoom_px, layers_px, false);
+        let alone = Fit::of(200.0, zoom_px, layers_px, false);
         assert!(alone.zoom && alone.level);
+    }
+
+    /// The tool strip holds its ten buttons and three rules, and Fit
+    /// leaves its width clear at the pane's left.
+    #[test]
+    fn the_strip_has_room_for_its_tools() {
+        let inside = STRIP_PX - (PILL_PX - CONTROL_PX);
+        let held = STRIP_BUTTONS * CONTROL_PX + STRIP_RULES * RULE_PX;
+        let gaps = (STRIP_BUTTONS + STRIP_RULES - 1.0) * GAP_PX;
+        assert!((inside - held - gaps).abs() < 1e-3);
+        assert!(FIT_INSETS.left_px >= f64::from(STRIP_CLEAR_PX));
     }
 
     /// With the legend hung at the top right, Fit may stand beside it or

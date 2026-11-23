@@ -483,9 +483,12 @@ trim = "Trim"
 trim_help = "Click the part of an outline to trim away, between two crossings; Escape ends"
 measure = "Measure"
 measure_help = "Measure between two points, and read the length and area of the selected shape; Escape ends"
-draw = "Draw: {tool}"
-draw_help = "Draw with the {tool} tool: the drawing tool last used"
-draw_tools = "Drawing tools"
+# The tool strip's groups of drawing tools (review feedback, 2026-11-23):
+# a group's button holds its tool last used, and lists the others.
+group_help = "Draw with the {tool} tool; the list beside it also has {others}"
+text_help = "Click where the text starts, then type its words"
+snapping = "Snapping"
+snapping_help = "Snapping on or off, and what a point snaps to"
 tab_tool = "Tab tool"
 tab_tool_help = "Click an outline to add a tab with the last-used size (T); Escape ends"
 zoom_out = "Zoom out"
@@ -1959,6 +1962,13 @@ radius = "an arc between these ends cannot have that radius: it is under half th
 no_arc = "No arc passes through three points in a line. Click a point to one side of the two ends."
 
 # The sizes written beside a shape being drawn (capability 83a).
+# The groups of drawing tools in the Viewport's tool strip (review
+# feedback, 2026-11-23): each is a button that holds its tool last used.
+[draw.group]
+lines = "Line tools"
+shapes = "Shape tools"
+special = "Slot and gear tools"
+
 [draw.label]
 box = "{width} × {height}"
 diameter = "Ø {diameter}"

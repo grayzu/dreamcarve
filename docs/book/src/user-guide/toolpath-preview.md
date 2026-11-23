@@ -44,9 +44,9 @@ colour and the others fade.
 
 ## Moving round
 
-The controls at the Viewport's top left are, in order: **Select**, the
-**Tab tool** (click an outline to add a tab there), **Fit**, **Zoom out**,
-the zoom as a percentage, and **Zoom in**.
+The pill at the Viewport's top left has **Fit**, **Zoom out**, the zoom
+as a percentage, and **Zoom in**. The tools are in the strip under it
+([Drawing shapes](drawing-shapes.md#the-tools)).
 
 | To | Do |
 | --- | --- |

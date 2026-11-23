@@ -62,7 +62,7 @@ letters imported as separate outlines carve as one once they are welded.
 
 ## Trim
 
-Choose **Trim** from the Draw button's list. Move the pointer over an
+Click **Trim** in the tool strip. Move the pointer over an
 outline: the part under the pointer, between the two nearest crossings,
 is highlighted. Click to remove it.
 

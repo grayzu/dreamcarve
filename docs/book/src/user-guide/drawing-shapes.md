@@ -12,22 +12,35 @@ machine. An operation cuts the outline you see.
 
 ## The tools
 
-The Viewport has one tool in hand at a time, shown pressed in the pill
-at its top left:
+The Viewport has one tool in hand at a time, shown pressed in the
+**tool strip** down its left side. Rules divide the strip into four
+parts:
 
-| Tool | Key | What it does |
+| Part | Tools | What they do |
 | --- | --- | --- |
-| **Select** | V | Selects, moves, resizes and turns shapes |
-| **Edit nodes** | N | Reshapes a path ([Editing nodes](editing-nodes.md)) |
-| **Draw** | | Holds the drawing tool you used last |
-| **Tab tool** | T | Places a tab on an outline ([Tabs](tabs.md)) |
+| Select and edit | **Select** (V), **Edit nodes** (N) | Select, move, resize and turn shapes; reshape a path ([Editing nodes](editing-nodes.md)) |
+| Draw | The **line tools**, the **shape tools**, the **slot and gear tools**, **Text** (Shift+T) | Draw new shapes |
+| Work on what is drawn | **Trim**, **Measure** (K), the **Tab tool** (T) | Cut an outline at a crossing ([Changing shapes](changing-shapes.md#trim)); read a distance ([Measuring](measuring.md)); place a tab ([Tabs](tabs.md)) |
+| Snapping | **Snapping** (Shift+S) | Turn snapping on or off, and choose what a point snaps to ([Snapping and the grid](snapping.md)) |
 
-The arrow beside the Draw button opens the list of drawing tools, with
-**Trim** ([Changing shapes](changing-shapes.md#trim)) and **Measure**
-([Measuring](measuring.md)) under them. The **Draw** menu in the menu
-bar lists the drawing tools too.
+Three of the drawing buttons are **groups**, marked with a small
+triangle at the corner. A group's button shows the tool of the group
+you used last. Click it to take that tool; a list opens beside it with
+the group's other tools, each with its key. Choose one there to take it
+instead, or ignore the list and start drawing: it goes when you click
+on the Viewport.
 
-![The list under the Draw button: Line, Arc, Spline, Rectangle, Circle, Ellipse, Polygon, Slot, Gear and Text with their keys, and under a rule Trim and Measure](figures/app/draw-tools.png)
+![The tool strip down the left of the Viewport, the shape tools' button pressed and its list open beside it: Rectangle, Circle, Ellipse and Polygon, each with its key](figures/app/draw-tools.png)
+
+| Group | Tools |
+| --- | --- |
+| **Line tools** | Line, Arc, Spline |
+| **Shape tools** | Rectangle, Circle, Ellipse, Polygon |
+| **Slot and gear tools** | Slot, Gear |
+
+The **Draw** menu in the menu bar lists every drawing tool too, and
+above the strip a separate pill has the view's controls: **Fit** and
+the zoom.
 
 | Tool | Key | You give it |
 | --- | --- | --- |

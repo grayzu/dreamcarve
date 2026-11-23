@@ -5,7 +5,7 @@ shape: a V-Carve, a Pocket or an Engrave cuts it as it cuts any outline.
 
 ## Making a text
 
-1. Choose **Text** from the Draw button's list, or press **Shift+T**.
+1. Click **Text** in the tool strip, or press **Shift+T**.
 2. Set the **Font** and the **Height** in the tool bar.
 3. Click where the text starts. The click sets the left end of the
    first line's baseline, the line the letters sit on. A second click

@@ -590,7 +590,13 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     if ctx.text_edit_focused() {
         return Vec::new();
     }
-    let popup_open = egui::Popup::is_any_open(ctx);
+    // A group's list of tools is no menu to dismiss: a tool's key still
+    // arms it while one shows.
+    let popup_open = egui::Popup::is_any_open(ctx) && !controls::flyout_open(ctx);
+    // Escape with a group's list showing closes the list, and no more:
+    // the tool stays in hand. (Read here: the context is locked while the
+    // keys are read.)
+    let closes_a_list = controls::flyout_open(ctx);
     let arrows_free = focus::keys_free(ctx);
     let escape_left_widget = focus::escape_left_widget(ctx);
     let selected = app.selection().instances().to_vec();
@@ -711,7 +717,11 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
                 }
             }
         }
-        if !popup_open && keyboard::consume(input, Shortcut::Escape) > 0 && !escape_left_widget {
+        if !popup_open
+            && !closes_a_list
+            && keyboard::consume(input, Shortcut::Escape) > 0
+            && !escape_left_widget
+        {
             if drawing {
                 // Out of what the tool has begun, then out of the tool.
                 actions.push(Action::Tool(dc_app::tool::Event::Key(
@@ -1322,7 +1332,7 @@ fn tool_gestures(
     }
     // A click that closes a list or a menu is that list's, and takes no
     // point.
-    let closes_a_popup = egui::Popup::is_any_open(ui.ctx());
+    let closes_a_popup = egui::Popup::is_any_open(ui.ctx()) && !controls::flyout_open(ui.ctx());
     if pressed && response.hovered() && view.drag.is_none() && !closes_a_popup {
         view.drag = Some(Drag::Tool);
         out.push(Action::Tool(Event::Press(pointer)));

@@ -2602,9 +2602,8 @@ fn phase5_drawing_screenshots() {
 
     // 02: the Draw popover, on the empty stock.
     click(&mut h, "Draw from scratch");
-    h.get_by_role_and_label(Role::Button, "Drawing tools")
-        .click();
-    h.run();
+    h.get_by_role_and_label(Role::Button, "Shape tools").click();
+    h.run_steps(8);
     shoot_in(&mut h, &out, "02-draw-popover", &looks);
     h.key_press(egui::Key::Escape);
     h.run();
@@ -3209,9 +3208,7 @@ fn phase5_measure_screenshots() {
     h.state_mut().app_mut().select(dc_app::Selection::Nothing);
     h.run_steps(8);
 
-    // 01: the Draw popover, with Trim and Measure under the rule.
-    h.get_by_label("Drawing tools").click();
-    h.run_steps(8);
+    // 01: the tool strip, with Trim and Measure in its third segment.
     shoot_in(&mut h, &out, "01-draw-popover-with-measure", &looks);
     h.get_by_role_and_label(Role::Button, "Measure").click();
     h.run_steps(8);
@@ -3313,6 +3310,24 @@ fn phase5_feedback_screenshots() {
     h.run_steps(8);
     park_pointer(&mut h);
     shoot_in(&mut h, &out, "01-side-handles", &looks);
+
+    // 03: the tool strip, with the shapes' list open beside its button.
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.key_press(egui::Key::F);
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Shape tools").click();
+    h.run_steps(8);
+    shoot_in(&mut h, &out, "03-tool-strip-shapes", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(8);
+    h.key_press(egui::Key::V);
+    h.run_steps(8);
+    // 04: the snapping button's list.
+    h.get_by_role_and_label(Role::Button, "Snapping").click();
+    h.run_steps(8);
+    shoot_in(&mut h, &out, "04-snapping-list", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(8);
 
     // 02: an operation its tool leaves with nothing to cut.
     {

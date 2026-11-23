@@ -93,27 +93,24 @@ fn labels(h: &Harness<'_, Shell>, role: Role) -> Vec<String> {
         .collect()
 }
 
-/// Capability 81: the pill's Draw button holds the drawing tool last
-/// used and arms it; its chevron opens the drawing tools, each with its
-/// name and key, and a row arms that tool and makes it the button's.
+/// Capability 81, as the review of 2026-11-23 regrouped it: the tool
+/// strip down the Viewport's left has a button for each group of drawing
+/// tools. A click arms the tool the group holds and opens the group's
+/// list beside it, each tool with its name and key; a row arms that tool
+/// and makes it the one the group holds. Text, Trim and Measure have
+/// buttons of their own, and Snapping lists what a point snaps to.
 #[test]
-fn the_draw_popover_lists_the_tools() {
-    let (mut h, dir) = plaque("draw-popover");
+fn the_tool_strip_groups_the_drawing_tools() {
+    use dc_app::tool::ToolGroup;
+    let (mut h, dir) = plaque("tool-strip");
     assert_eq!(tool(&h), Tool::Select);
-    // The first offered is the Rectangle.
-    h.get_by_role_and_label(Role::Button, "Draw: Rectangle")
-        .click();
-    h.run();
-    assert_eq!(tool(&h), Tool::Draw(Drawing::Rectangle));
-    h.get_by_role_and_label(Role::Button, "Select").click();
-    h.run();
-    assert_eq!(tool(&h), Tool::Select);
-
-    h.get_by_role_and_label(Role::Button, "Drawing tools")
-        .click();
-    h.run();
-    // Every drawing tool, in the popover's order.
-    let rows: Vec<String> = [
+    let listed = |h: &Harness<'_, Shell>, names: &[&str]| -> Vec<String> {
+        labels(h, Role::Button)
+            .into_iter()
+            .filter(|label| names.contains(&label.as_str()))
+            .collect()
+    };
+    let every = [
         "Line",
         "Arc",
         "Spline",
@@ -123,26 +120,88 @@ fn the_draw_popover_lists_the_tools() {
         "Polygon",
         "Slot",
         "Gear",
-        "Text",
-    ]
-    .iter()
-    .map(|name| (*name).to_owned())
-    .collect();
-    let listed: Vec<String> = labels(&h, Role::Button)
-        .into_iter()
-        .filter(|label| rows.contains(label))
-        .collect();
-    assert_eq!(listed, rows);
-    h.get_by_role_and_label(Role::Button, "Slot").click();
-    h.run();
-    assert_eq!(tool(&h), Tool::Draw(Drawing::Slot));
-    assert_eq!(h.state().app().prefs().drawing_tool, Drawing::Slot);
-    // The popover closed, and the button is the Slot's now.
-    assert!(h.query_by_role_and_label(Role::Button, "Gear").is_none());
-    assert!(
-        h.query_by_role_and_label(Role::Button, "Draw: Slot")
-            .is_some()
+    ];
+    assert!(listed(&h, &every).is_empty(), "no list is open");
+
+    // The shapes: the Rectangle first, then the one picked from the list.
+    h.get_by_role_and_label(Role::Button, "Shape tools").click();
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Draw(Drawing::Rectangle));
+    assert_eq!(
+        listed(&h, &every),
+        ["Rectangle", "Circle", "Ellipse", "Polygon"]
     );
+    h.get_by_role_and_label(Role::Button, "Ellipse").click();
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Draw(Drawing::Ellipse));
+    assert_eq!(h.state().app().held(ToolGroup::Shapes), Drawing::Ellipse);
+    assert!(listed(&h, &every).is_empty(), "the list closed");
+
+    // The lines, and the special ones.
+    h.get_by_role_and_label(Role::Button, "Line tools").click();
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Draw(Drawing::Line));
+    assert_eq!(listed(&h, &every), ["Line", "Arc", "Spline"]);
+    // Escape with the list showing closes the list and keeps the tool.
+    key(&mut h, egui::Key::Escape);
+    assert!(listed(&h, &every).is_empty());
+    assert_eq!(tool(&h), Tool::Draw(Drawing::Line));
+    h.get_by_role_and_label(Role::Button, "Line tools").click();
+    h.run_steps(8);
+    assert_eq!(listed(&h, &every), ["Line", "Arc", "Spline"]);
+    // A press on the Viewport with the list showing is the tool's: the
+    // list is no menu to dismiss first.
+    click_mm(&mut h, 120.0, 20.0);
+    assert!(listed(&h, &every).is_empty());
+    let prompt = h.state().app().tool_bar().map(|bar| bar.prompt);
+    assert!(
+        prompt
+            .as_deref()
+            .is_some_and(|prompt| prompt.starts_with("Click the next point")),
+        "the first point was taken: {prompt:?}"
+    );
+    key(&mut h, egui::Key::Escape);
+    key(&mut h, egui::Key::Escape);
+    h.get_by_role_and_label(Role::Button, "Slot and gear tools")
+        .click();
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Draw(Drawing::Slot));
+    assert_eq!(listed(&h, &every), ["Slot", "Gear"]);
+    h.get_by_role_and_label(Role::Button, "Gear").click();
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Draw(Drawing::Gear));
+    assert_eq!(h.state().app().prefs().drawing_tool, Drawing::Gear);
+
+    // Text, Trim and Measure each have a button.
+    for (name, armed) in [
+        ("Text", Tool::Draw(Drawing::Text)),
+        ("Trim", Tool::Trim),
+        ("Measure", Tool::Measure),
+        ("Select", Tool::Select),
+    ] {
+        h.get_by_role_and_label(Role::Button, name).click();
+        h.run_steps(8);
+        assert_eq!(tool(&h), armed, "{name}");
+    }
+
+    // Snapping: the master switch and a tick for each kind.
+    assert!(h.state().app().prefs().snap.enabled);
+    let button = h.get_by_role_and_label(Role::Button, "Snapping").rect();
+    h.get_by_role_and_label(Role::Button, "Snapping").click();
+    h.run_steps(8);
+    for kind in ["Endpoint", "Midpoint", "Centre", "Grid"] {
+        assert!(
+            h.query_all_by_label(kind).next().is_some(),
+            "the list has {kind}"
+        );
+    }
+    // The list's own Snapping row, which is not the strip's button.
+    h.query_all_by_label("Snapping")
+        .find(|node| node.rect() != button)
+        .expect("the list's Snapping row")
+        .click();
+    h.run_steps(8);
+    assert!(!h.state().app().prefs().snap.enabled, "switched off there");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -502,9 +561,9 @@ fn the_gear_tool_shows_its_sizes() {
     h.get_by_role_and_label(Role::Button, "Draw from scratch")
         .click();
     h.run();
-    h.get_by_role_and_label(Role::Button, "Drawing tools")
+    h.get_by_role_and_label(Role::Button, "Slot and gear tools")
         .click();
-    h.run();
+    h.run_steps(8);
     h.get_by_role_and_label(Role::Button, "Gear").click();
     h.run();
     assert_eq!(tool(&h), Tool::Draw(Drawing::Gear));

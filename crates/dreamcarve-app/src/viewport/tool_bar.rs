@@ -404,7 +404,8 @@ pub(super) fn show(
     let bar = app.tool_bar()?;
     let palette = Palette::current(ui);
     let strings = app.strings();
-    let room = pane.width() - 2.0 * theme::FLOAT_INSET_PX;
+    // Centred in the pane, and clear of the tool strip at its left.
+    let room = pane.width() - 2.0 * super::controls::STRIP_CLEAR_PX;
     let inner_room = room - 2.0 * PADDING_PX;
     // The bar is as large as what it held in the last frame.
     let last = ui

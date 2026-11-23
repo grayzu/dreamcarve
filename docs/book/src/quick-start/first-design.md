@@ -42,17 +42,21 @@ Start `dreamcarve-app`:
 Click **Draw from scratch**. DreamCarve makes a blank project and opens
 the **Design** step with a drawing tool already in hand:
 
-![A blank project on the Design step: an empty 100 × 100 mm stock in the Viewport, the Rectangle tool pressed in the pill at its top left, and the tool bar under the pill saying "Click the first corner", with its Corners and Construction choices and X and Y fields](figures/app/design-02-draw-from-scratch.png)
+![A blank project on the Design step: an empty 100 × 100 mm stock in the Viewport, the tool strip down its left side with the shapes' button pressed, and the tool bar at the top saying "Click the first corner", with its Corners and Construction choices and X and Y fields](figures/app/design-02-draw-from-scratch.png)
 
 Two things are new if you have only imported drawings before:
 
-- The **pill** at the top left of the Viewport holds the tools:
-  **Select**, **Edit nodes**, one **Draw** button with a small arrow
-  beside it, and the **Tab tool**. The Draw button shows the drawing
-  tool you last used. Its arrow opens the list of them all.
-- The **tool bar** appears under the pill while a tool is in hand. It
-  says what the next click does, and holds the fields and choices of the
-  shape you are drawing.
+- The **tool strip** down the left of the Viewport holds the tools, in
+  four parts: **Select** and **Edit nodes**; the tools that draw;
+  **Trim**, **Measure** and the **Tab tool**; and **Snapping**. The
+  drawing tools are three buttons, each a group: the **line tools**
+  (Line, Arc, Spline), the **shape tools** (Rectangle, Circle, Ellipse,
+  Polygon) and the **slot and gear tools**, then **Text**. A group's
+  button shows the tool of the group you last used. Click it to take
+  that tool; the list that opens beside it has the group's other tools.
+- The **tool bar** appears at the top of the Viewport while a tool is
+  in hand. It says what the next click does, and holds the fields and
+  choices of the shape you are drawing.
 
 A tool stays in hand after each shape, so you can draw several. **V**, or
 **Escape** with nothing begun, puts it down and gives you Select back.
@@ -100,8 +104,8 @@ This table has a row for each shape. Read it with the steps under it.
 For the first row:
 
 1. The **Rectangle** tool is in hand already. Any other time, click the
-   arrow beside the Draw button and choose **Rectangle**, or press
-   **M**.
+   shape tools' button in the tool strip and choose **Rectangle** from
+   the list beside it, or press **M**.
 2. In the tool bar, click **Rounded** beside **Corners**. A **Corner
    size** field appears. Click in it, type `8` and press Enter.
 

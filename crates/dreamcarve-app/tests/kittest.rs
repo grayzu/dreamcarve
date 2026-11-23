@@ -871,18 +871,10 @@ fn floating_tools_select_fit_and_zoom() {
     let rect = |h: &Harness<'_, dreamcarve_app::Shell>, label: &str| {
         h.get_by_role_and_label(Role::Button, label).rect()
     };
-    // One row at the pane's top left, in reading order.
-    // Phase 5 put Draw and its chevron between Select and the Tab tool.
-    let order = [
-        "Select",
-        "Edit nodes",
-        "Draw: Rectangle",
-        "Drawing tools",
-        "Tab tool",
-        "Fit",
-        "Zoom out",
-        "Zoom in",
-    ];
+    // The view's pill at the pane's top left, in reading order: Fit and
+    // the zoom. The tools are in the strip under it (review feedback,
+    // 2026-11-23).
+    let order = ["Fit", "Zoom out", "Zoom in"];
     let rects: Vec<egui::Rect> = order.iter().map(|label| rect(&h, label)).collect();
     for (label, r) in order.iter().zip(&rects) {
         assert!(
@@ -897,7 +889,34 @@ fn floating_tools_select_fit_and_zoom() {
         "in order: {rects:?}"
     );
     let level = h.get_by_label_contains("Zoom level").rect();
-    assert!(rects[6].right() <= level.left() && level.right() <= rects[7].left());
+    assert!(rects[1].right() <= level.left() && level.right() <= rects[2].left());
+    // The tool strip down the pane's left, top to bottom: what selects
+    // and edits, what draws, what acts on what is drawn, and Snapping.
+    let strip = [
+        "Select",
+        "Edit nodes",
+        "Line tools",
+        "Shape tools",
+        "Slot and gear tools",
+        "Text",
+        "Trim",
+        "Measure",
+        "Tab tool",
+        "Snapping",
+    ];
+    let column: Vec<egui::Rect> = strip.iter().map(|label| rect(&h, label)).collect();
+    for (label, r) in strip.iter().zip(&column) {
+        assert!(
+            pane.contains_rect(*r) && r.left() < pane.left() + 24.0 && r.top() > rects[0].bottom(),
+            "{label} is in the strip at the left, under the pill: {r:?}"
+        );
+    }
+    assert!(
+        column
+            .windows(2)
+            .all(|pair| pair[0].bottom() <= pair[1].top()),
+        "top to bottom: {column:?}"
+    );
     let status_top = 800.0 - STATUS_BAR_PX;
     assert!(
         h.query_all_by_label_contains("Zoom")
@@ -6060,7 +6079,7 @@ fn keyboard_shortcuts_reach_their_commands() {
     h.run();
     // K takes up the Measure tool; Escape puts it down.
     h.key_press(egui::Key::K);
-    h.run();
+    h.run_steps(12);
     assert_eq!(h.state().app().tool(), dc_app::Tool::Measure, "K");
     reached.insert(Key::Measure);
     h.key_press(egui::Key::Escape);

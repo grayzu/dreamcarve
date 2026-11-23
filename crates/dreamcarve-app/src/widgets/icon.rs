@@ -159,6 +159,8 @@ pub enum Icon {
     Scissors,
     /// `ruler`: the Measure tool.
     Ruler,
+    /// `magnet`: snapping.
+    Magnet,
     /// `align-start-vertical`: Align left.
     AlignStartVertical,
     /// `align-center-vertical`: Align centre.
@@ -266,6 +268,7 @@ impl Icon {
             Self::Waypoints => "waypoints",
             Self::Scissors => "scissors",
             Self::Ruler => "ruler",
+            Self::Magnet => "magnet",
             Self::AlignStartVertical => "align-start-vertical",
             Self::AlignCenterVertical => "align-center-vertical",
             Self::AlignEndVertical => "align-end-vertical",
@@ -358,6 +361,7 @@ impl Icon {
             Self::Waypoints => '\u{e542}',
             Self::Scissors => '\u{e14e}',
             Self::Ruler => '\u{e14b}',
+            Self::Magnet => '\u{e2b5}',
             Self::AlignStartVertical => '\u{e271}',
             Self::AlignCenterVertical => '\u{e26d}',
             Self::AlignEndVertical => '\u{e26f}',
@@ -377,7 +381,7 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 85] = [
+    pub const ALL: [Self; 86] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -449,6 +453,7 @@ impl Icon {
         Self::Waypoints,
         Self::Scissors,
         Self::Ruler,
+        Self::Magnet,
         Self::AlignStartVertical,
         Self::AlignCenterVertical,
         Self::AlignEndVertical,

@@ -33,9 +33,13 @@ not snap.
 
 ## Turning it on and off
 
-- **View ▸ Snapping** turns all of it on or off. **Shift+S** does the
-  same.
-- **View ▸ Snap To** has a tick for each kind.
+- The **Snapping** button, the last in the tool strip at the Viewport's
+  left, is pressed while snapping is on. Click it for a list with
+  **Snapping**, which turns all of it on or off, and a tick for each
+  kind.
+- **View ▸ Snapping** and **View ▸ Snap To** in the menu bar are the
+  same switch and the same ticks. **Shift+S** turns all of it on or
+  off.
 - Hold **Ctrl** (**⌘** on a Mac) while you move the pointer to switch
   snapping off for as long as you hold it.
 

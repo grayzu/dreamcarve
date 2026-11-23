@@ -1203,6 +1203,52 @@ the tool bar of slice 9 is its form.
 - `dc_project::validate`: an open profile of a definition that only
   construction instances place is not an `OpenProfile` problem.
 
+### The maintainer's review of 2026-11-23
+
+- **The tool strip.** `dc_app::tool::ToolGroup { Lines, Shapes,
+  Special }` with `tools()`, `name()`, `Drawing::group()`;
+  `HeldTools` (in `Prefs::held_tools`, kept while the app runs) is the
+  tool each group last armed, `App::held(group)`. In the window
+  `viewport::controls::strip` draws the strip (`STRIP_PX` high, four
+  segments, `strip_rule` between them); `group_button` is a group's
+  button and its list (`egui::Popup::from_toggle_button_response`,
+  to the button's right), `flyout_open` says whether one shows, and
+  the Viewport's press and key rules pass a press and a tool's key
+  through while one does. The top-left pill is `Fit` and the zoom
+  (`Fit::tools_px`). `FIT_INSETS.left_px` is 60 and the tool bar's room
+  is the pane less `STRIP_CLEAR_PX` at each side, so nothing is fitted
+  or laid out under the strip. The Snapping button's list is
+  `snap_menu`: the master switch and `menu::snap_to`.
+- **Side handles.** `viewport::handles::Side`, `Grab::Side`,
+  `Handles::side(side)` and `Handles::sides(camera)` (a side under
+  `MIN_SIDE_PX`, 28 px, on screen carries none, nor does a box with no
+  width or no height). `drag_delta` for a side is a scale of one axis
+  about the centre followed by a move of half the growth, which keeps
+  the opposite side where it is; `uniform` is not read.
+- **A tool added from a picker.** `Command::AddToolForOperation { tool,
+  operation }` adds the tool and replaces the operation in one step;
+  `editor::add_from_library_for(project, lib, selected, op, key)`
+  builds it when one tool is ticked and the picker would offer it, else
+  `AddTools`. The Tool Library sheet remembers the picker it was opened
+  from (`Sheet::choosing_for`, `Action::OpenLibraryFor`).
+- **Cuts nothing.** `operations::cuts_nothing(app, id)`: enabled,
+  current, and no feed move and no hole in any run. `ListRow` carries
+  it, with *Cuts nothing* for its detail's kind, a warning status and
+  the note first among its messages; the editor opens with
+  `widgets::row::warning_banner`. No new warning code.
+- **Array… in the menu.** `tree::MenuItem::Array`, after Duplicate; the
+  window arms `Adjust::Array`.
+- Tests: `dc-app` `handles::a_side_handle_stretches_one_way_and_keeps_the_far_side`,
+  `a_short_side_has_no_handle`, `tools::a_tool_added_from_an_operations_picker_is_chosen_for_it`,
+  `operations::an_operation_that_cuts_nothing_says_so`,
+  `tool::the_drawing_tools_are_in_three_groups`; in the window
+  `drawing::the_tool_strip_groups_the_drawing_tools`,
+  `editing::a_side_handle_stretches_a_shape_one_way`,
+  `an_operation_that_cuts_nothing_is_announced`,
+  `library::a_tool_added_from_an_operations_picker_is_chosen`,
+  `kittest::floating_tools_select_fit_and_zoom`;
+  `review::phase5_feedback_screenshots`.
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the

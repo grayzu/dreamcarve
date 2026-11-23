@@ -80,20 +80,26 @@ opens on Export.
 
 ## Tools
 
-The pill at the top left of the Viewport holds the **tools**. One is in
-hand at a time, and it decides what a click on the Viewport does:
+The **tool strip** down the left of the Viewport holds the tools. One is
+in hand at a time, and it decides what a click on the Viewport does.
+Rules divide the strip into four parts:
 
-- **Select** (V) is the tool for everything in this chapter: it selects,
-  moves, resizes and turns.
-- **Edit nodes** (N) reshapes a path ([Editing nodes](editing-nodes.md)).
-- The **Draw** button holds a drawing tool, and the arrow beside it
-  lists them all, with **Trim** and **Measure**
-  ([Drawing shapes](drawing-shapes.md)). The **Draw** menu lists the
-  drawing tools too.
-- The **Tab tool** (T) places tabs ([Tabs](tabs.md)).
+- **Select** (V), the tool for everything in this chapter: it selects,
+  moves, resizes and turns; and **Edit nodes** (N), which reshapes a
+  path ([Editing nodes](editing-nodes.md)).
+- The tools that draw: three groups (line tools, shape tools, slot and
+  gear tools), each a button with a list beside it, and **Text**
+  ([Drawing shapes](drawing-shapes.md#the-tools)). The **Draw** menu
+  lists them too.
+- **Trim**, **Measure** (K) and the **Tab tool** (T), which work on
+  what is already drawn ([Tabs](tabs.md)).
+- **Snapping**, which turns snapping on and off and lists what a point
+  snaps to ([Snapping and the grid](snapping.md)).
 
-While any tool but Select is in hand, a **tool bar** under the pill
-says what the next click does and holds the tool's fields, and the
+The pill above the strip is the view's: **Fit** and the zoom.
+
+While any tool but Select is in hand, a **tool bar** at the top of the
+Viewport says what the next click does and holds the tool's fields, and the
 Inspector stays closed. Some menu commands take their values in the
 same bar: **Shape ▸ Offset…**, **Fillet Corners…** and **Join…**, and
 **Arrange ▸ Array…**. **V**, or **Escape**, gives you Select back.

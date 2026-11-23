@@ -44,8 +44,9 @@ list, with Cut, Copy, Paste, Duplicate and Delete in it.
 
 ## Arrays
 
-**Arrange ▸ Array…** makes copies in a pattern. Select what to copy,
-choose the command, set the values in the tool bar, and click **Done**.
+**Arrange ▸ Array…** makes copies in a pattern. It is also in the menu
+a right-click on a shape opens. Select what to copy, choose the
+command, set the values in the tool bar, and click **Done**.
 The copies are previewed as you type.
 
 ![Arrange ▸ Array… on a screw hole: Kind Grid, Columns 2, Rows 2, Spacing Pitch, Spacing X 144, Spacing Y 64, and the three copies previewed at the plate's other corners](../quick-start/figures/app/design-13-array-holes.png)

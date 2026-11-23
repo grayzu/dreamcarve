@@ -202,9 +202,6 @@ fn trim_from_the_popover() {
     draw_line(&mut h, (10.0, 6.0), (60.0, 6.0));
     draw_line(&mut h, (40.0, 2.0), (40.0, 12.0));
     let before = names(&h);
-    h.get_by_role_and_label(Role::Button, "Drawing tools")
-        .click();
-    h.run_steps(8);
     h.get_by_role_and_label(Role::Button, "Trim").click();
     h.run_steps(8);
     assert_eq!(tool(&h), Tool::Trim);
@@ -517,9 +514,9 @@ fn the_viewport_has_a_context_menu() {
     assert!(h.state().app().can_paste());
     assert!(h.query_by_role_and_label(Role::Button, "Copy").is_none());
 
-    // On nothing: the plaque's outline holds the whole stock, so beside
-    // it.
-    let at_mm = Point::new(-6.0, 60.0);
+    // On nothing: the plaque's outline holds the whole stock, so above
+    // it, clear of the tool strip at the pane's left.
+    let at_mm = Point::new(85.0, 126.0);
     let bare = on_screen(&h, at_mm);
     assert!(h.state().layout().viewport.contains(bare));
     right_click(&mut h, bare);
@@ -1397,8 +1394,6 @@ fn measure_reads_a_tape_and_the_selected_shape() {
     h.state_mut()
         .app_mut()
         .select(Selection::Instances(vec![first.clone()]));
-    h.get_by_label("Drawing tools").click();
-    h.run_steps(8);
     h.get_by_role_and_label(Role::Button, "Measure").click();
     h.run_steps(8);
     assert_eq!(tool(&h), Tool::Measure);

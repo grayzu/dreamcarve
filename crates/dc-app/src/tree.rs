@@ -571,6 +571,10 @@ pub enum MenuItem {
     Paste,
     /// Linked copies (capability 59).
     Duplicate,
+    /// **Array…** (capability 98): copies in a grid or round a centre,
+    /// which the window takes in the tool bar (`Tool::Adjust`), so it has
+    /// no command of its own here.
+    Array,
     /// Delete, with the targets and tabs that go with it (capability 59).
     Delete,
     /// **New Folder** (capability 99): a folder holding the rows.
@@ -659,7 +663,12 @@ pub fn menu(
     if can_paste {
         items.push(MenuItem::Paste);
     }
-    items.extend([MenuItem::Duplicate, MenuItem::Delete, MenuItem::NewFolder]);
+    items.extend([
+        MenuItem::Duplicate,
+        MenuItem::Array,
+        MenuItem::Delete,
+        MenuItem::NewFolder,
+    ]);
     if ids.len() > 1 {
         items.push(MenuItem::Group);
     }
@@ -738,6 +747,8 @@ pub fn menu_command(project: &Project, item: MenuItem, ids: &[InstanceId]) -> Op
         MenuItem::Lock => Some(flags(None, Some(true))),
         MenuItem::Unlock => Some(flags(None, Some(false))),
         MenuItem::Duplicate => Some(Command::DuplicateInstances(ids)),
+        // The window arms Array… as a tool.
+        MenuItem::Array => None,
         MenuItem::Delete => Some(Command::DeleteInstances(ids)),
         MenuItem::MakeUnique => Some(Command::MakeUnique(ids)),
         MenuItem::ConvertToPath => Some(Command::ConvertToPath(ids)),
@@ -872,6 +883,7 @@ pub fn bitmap_menu_command(project: &Project, item: MenuItem, ids: &[BitmapId]) 
         | MenuItem::Group
         | MenuItem::Ungroup
         | MenuItem::Duplicate
+        | MenuItem::Array
         | MenuItem::AddOperation
         | MenuItem::AddTo
         | MenuItem::RemoveFrom => None,

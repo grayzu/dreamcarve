@@ -89,8 +89,9 @@ step and its tabs go with it.
 
 ### The Tab tool
 
-The **Tab tool** adds one tab at a time, where you click. It is the
-second button at the Viewport's top left, and the T key.
+The **Tab tool** adds one tab at a time, where you click. It is in the
+tool strip at the Viewport's left, beside Trim and Measure, and the T
+key.
 
 1. Click the **Tab tool**, or press T.
 2. Click an outline where you want a tab. Each click adds one, *Undo Add

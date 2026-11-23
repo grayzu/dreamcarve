@@ -871,13 +871,15 @@ fn drawing_guide_screenshots() {
         h.run_steps(12);
     };
 
-    // The Draw button's list: the drawing tools, then Trim and Measure.
-    h.get_by_role_and_label(Role::Button, "Drawing tools")
-        .click();
+    // The tool strip, with the shapes' list open beside its button.
+    h.get_by_role_and_label(Role::Button, "Shape tools").click();
     h.run_steps(12);
     steady(&mut h);
     capture(&mut h, &out, "draw-tools", Crop::Window);
-    h.get_by_role_and_label(Role::Button, "Line").click();
+    // The Line tool, for the next picture: its key closes the list.
+    h.key_press(egui::Key::Escape);
+    h.run_steps(12);
+    h.key_press(egui::Key::P);
     h.run_steps(12);
 
     // A point about to be taken, snapped to the centre of a hole.
@@ -1286,7 +1288,9 @@ fn placing_shapes_screenshots() {
     for _ in 0..3 {
         undo(&mut h);
     }
-    let (from, to) = (at_mm(&h, 70.0, 33.0), at_mm(&h, 60.0, 38.0));
+    // By its edge, a quarter of the way up: the middle of a side is the
+    // handle that stretches it.
+    let (from, to) = (at_mm(&h, 70.0, 25.5), at_mm(&h, 60.0, 30.5));
     drag_with(&mut h, from, to, egui::Modifiers::NONE);
     assert_eq!(size(&h), ["60", "23", "30", "30"], "dragged by its edge");
     assert_eq!(undo_label(&h), "Move “square”");

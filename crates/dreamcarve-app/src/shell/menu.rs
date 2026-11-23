@@ -646,7 +646,7 @@ fn shape(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 
 /// View ▸ Snap To (capability 82): a tick per kind of snap. The master
 /// switch is View ▸ Snapping, a row of the View menu with its key.
-fn snap_to(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+pub(crate) fn snap_to(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
     let snap = &state.prefs.snap;
     for kind in dc_app::SnapKind::ALL {

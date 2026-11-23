@@ -113,7 +113,108 @@ pub enum Drawing {
     Text,
 }
 
+/// A group of drawing tools: one button of the Viewport's tool strip,
+/// which holds the tool of the group last used and lists the others
+/// beside it (review feedback, 2026-11-23). Text is in none: it has a
+/// button of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolGroup {
+    /// What draws a path piece by piece: Line, Arc, Spline.
+    Lines,
+    /// The closed basic shapes: Rectangle, Circle, Ellipse, Polygon.
+    Shapes,
+    /// The special ones: Slot, Gear.
+    Special,
+}
+
+impl ToolGroup {
+    /// The three, in the strip's order.
+    pub const ALL: [Self; 3] = [Self::Lines, Self::Shapes, Self::Special];
+
+    /// The group's tools, in the order its list shows them; the first is
+    /// the one it holds until another is used.
+    #[must_use]
+    pub const fn tools(self) -> &'static [Drawing] {
+        match self {
+            Self::Lines => &[Drawing::Line, Drawing::Arc, Drawing::Spline],
+            Self::Shapes => &[
+                Drawing::Rectangle,
+                Drawing::Circle,
+                Drawing::Ellipse,
+                Drawing::Polygon,
+            ],
+            Self::Special => &[Drawing::Slot, Drawing::Gear],
+        }
+    }
+
+    /// The group's name: its button's.
+    #[must_use]
+    pub const fn name(self) -> crate::StrKey {
+        match self {
+            Self::Lines => crate::StrKey::DrawGroupLines,
+            Self::Shapes => crate::StrKey::DrawGroupShapes,
+            Self::Special => crate::StrKey::DrawGroupSpecial,
+        }
+    }
+}
+
+/// The tool each group holds: the one of it last armed. Kept while the
+/// app runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeldTools {
+    lines: Drawing,
+    shapes: Drawing,
+    special: Drawing,
+}
+
+impl Default for HeldTools {
+    /// Each group's first tool.
+    fn default() -> Self {
+        Self {
+            lines: Drawing::Line,
+            shapes: Drawing::Rectangle,
+            special: Drawing::Slot,
+        }
+    }
+}
+
+impl HeldTools {
+    /// The tool `group` holds.
+    #[must_use]
+    pub const fn of(&self, group: ToolGroup) -> Drawing {
+        match group {
+            ToolGroup::Lines => self.lines,
+            ToolGroup::Shapes => self.shapes,
+            ToolGroup::Special => self.special,
+        }
+    }
+
+    /// Makes `drawing` the tool its group holds; Text has no group.
+    pub const fn hold(&mut self, drawing: Drawing) {
+        match drawing.group() {
+            Some(ToolGroup::Lines) => self.lines = drawing,
+            Some(ToolGroup::Shapes) => self.shapes = drawing,
+            Some(ToolGroup::Special) => self.special = drawing,
+            None => {}
+        }
+    }
+}
+
 impl Drawing {
+    /// The group the tool's button is in; `None` for Text, which has a
+    /// button of its own.
+    #[must_use]
+    pub const fn group(self) -> Option<ToolGroup> {
+        match self {
+            Self::Line | Self::Arc | Self::Spline => Some(ToolGroup::Lines),
+            Self::Rectangle | Self::Circle | Self::Ellipse | Self::Polygon => {
+                Some(ToolGroup::Shapes)
+            }
+            Self::Slot | Self::Gear => Some(ToolGroup::Special),
+            Self::Text => None,
+        }
+    }
+
     /// Every drawing tool, in the Draw popover's order.
     pub const ALL: [Self; 10] = [
         Self::Line,
@@ -655,6 +756,7 @@ impl App {
         }
         if let Tool::Draw(drawing) = tool {
             self.prefs_mut().drawing_tool = drawing;
+            self.prefs_mut().held_tools.hold(drawing);
         }
         if tool == Tool::Nodes {
             self.begin_nodes();
@@ -662,6 +764,13 @@ impl App {
         if let Tool::Adjust(adjust) = tool {
             self.refresh_adjust_draft(adjust);
         }
+    }
+
+    /// The drawing tool `group`'s button holds: the one of the group
+    /// last armed.
+    #[must_use]
+    pub fn held(&self, group: ToolGroup) -> Drawing {
+        self.prefs().held_tools.of(group)
     }
 
     /// What the tool in use wants drawn.

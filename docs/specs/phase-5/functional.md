@@ -73,18 +73,27 @@ capability 52); what a tool holds before it commits is not project data.
 ### Tools and the Viewport
 
 81. **Tools.** The Viewport has one tool in use at a time, shown pressed
-    in its top-left pill: **Select** (`V`), **Edit nodes** (`N`, 92),
-    one **Draw** button and the **Tab tool** (`T`, phase 4). The Draw
-    button holds the drawing tool
-    last used and arms it; its chevron opens a popover of the drawing
-    tools, each with its icon, name and key: **Line** (`P`), **Arc**
-    (`A`), **Spline** (`S`), **Rectangle** (`M`), **Circle** (`C`),
-    **Ellipse** (`E`), **Polygon** (`G`), **Slot** (`O`), **Gear** and
-    **Text** (`⇧T`), and under a rule **Trim** (96) and **Measure**
-    (`K`, 103), each of which the Draw button shows pressed while it is
-    armed. So the pill grows by three
-    buttons, not fifteen (`redesign.md`, principle 1), and keeps its
-    zoom buttons in the narrowest Viewport the window allows.
+    in the **tool strip** down its left edge, under the top-left pill
+    (the maintainer's review of 2026-11-23; the first build had one
+    Draw button with every tool in its popover, which hid them). Rules
+    divide the strip into four segments:
+    - **Select** (`V`) and **Edit nodes** (`N`, 92);
+    - the tools that draw: three **groups**, the **line tools** (Line
+      `P`, Arc `A`, Spline `S`), the **shape tools** (Rectangle `M`,
+      Circle `C`, Ellipse `E`, Polygon `G`) and the **slot and gear
+      tools** (Slot `O`, Gear), then **Text** (`⇧T`);
+    - what works on what is drawn: **Trim** (96), **Measure** (`K`, 103)
+      and the **Tab tool** (`T`, phase 4);
+    - **Snapping** (82).
+
+    A group's button shows the tool of the group last used, with a mark
+    at its corner that it holds more. A click arms that tool and opens
+    the group's list beside the button, each tool with its icon, name
+    and key; a row arms that tool, which the button then holds. The
+    list is no menu to dismiss: a press on the Viewport while it shows
+    is the tool's, and a tool's key still arms it. The top-left pill
+    keeps the view's controls, **Fit** and the zoom, and with the tools
+    out of it both top pills show whole at the Viewport's least width.
 
     A drawing tool **stays armed** after each shape (PureCutCNC's sticky
     tools), with the options last used; `Escape` with nothing begun, or
@@ -92,10 +101,10 @@ capability 52); what a tool holds before it commits is not project data.
     tool other than Select is armed, clicks belong to it: nothing is
     selected, moved or resized by a click, and the selection handles are
     not drawn. The Draw menu (79a's menu bar gains **Draw**) lists the
-    same tools with their keys.
+    drawing tools with their keys.
 
     While a tool is armed a **tool bar** floats at the Viewport's top
-    centre, under the pills: the tool's name, one line saying what the
+    centre, under the pills and clear of the tool strip: the tool's name, one line saying what the
     next click does (*Click the first corner*), the tool's options, the
     fields of capability 83, and **Done** where a shape can be finished
     early. A bar with more than fits across the Viewport (the Gear's
@@ -117,10 +126,9 @@ capability 52); what a tool holds before it commits is not project data.
     tool bar (Offset…, Fillet Corners…, Join…, Array…), whose preview
     is of the selection as it is.
 
-    In a Viewport too narrow for its two top pills, *Layers* loses its
-    label first, then the zoom percentage goes, then the two zoom
-    buttons (phase 4 dropped the label, then all three): the Draw
-    button took their room.
+    In a Viewport too narrow for its two top pills, which it never is
+    at the window's least size, *Layers* loses its label first, then
+    the zoom percentage goes, then the two zoom buttons.
 82. **Snapping** (ported from PureCutCNC's `resolveSketchSnap`). Every
     point a tool takes, and every node or shape dragged, snaps when a
     candidate lies within 14 screen pixels of the pointer. The kinds,
@@ -156,7 +164,9 @@ capability 52); what a tool holds before it commits is not project data.
 
     **View ▸ Snapping** is the master switch (`⇧S` toggles it), a row
     of the View menu so that its key shows beside it, and **View ▸ Snap
-    To** has one tick per kind; holding `Ctrl`/`⌘` while moving the pointer suspends
+    To** has one tick per kind. The tool strip's **Snapping** button is
+    pressed while snapping is on, and its list has the same switch and
+    the same ticks; holding `Ctrl`/`⌘` while moving the pointer suspends
     snapping for as long as it is held. The settings are app
     preferences (`gui.toml`), not project data. Holding `Shift`
     constrains the point to 15° steps about the tool's last point (the
@@ -557,9 +567,9 @@ capability 52); what a tool holds before it commits is not project data.
       Paste and Select All. In the Edit nodes tool it is the tool
       bar's buttons for the node or segment under the pointer, with
       Delete and Select All.
-    - **Array…** (**Arrange ▸ Array…**; PureCutCNC's feature
-      distribution, grid and radial), which takes its values in the
-      tool bar (81). **Grid**: Columns, Rows (2 and 1 at first), and
+    - **Array…** (**Arrange ▸ Array…**, and a shape's context menu;
+      PureCutCNC's feature distribution, grid and radial), which takes
+      its values in the tool bar (81). **Grid**: Columns, Rows (2 and 1 at first), and
       the Spacing between copies along X and along Y, measured as a gap
       (the default; 20 mm or 2 in at first) or as a pitch; a spacing
       below nothing goes the other way. **Circular**: Count (the

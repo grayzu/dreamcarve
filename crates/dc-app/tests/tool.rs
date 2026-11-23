@@ -148,3 +148,59 @@ fn the_app_snaps_to_its_project_at_its_zoom() {
     let off = app.snap_at(&Pointer::at(Point::new(0.4, -0.3)), None, &[]);
     assert_eq!(off.kind, None);
 }
+
+/// Review feedback, 2026-11-23: the drawing tools are in three groups,
+/// each a button of the Viewport's tool strip that holds the tool of the
+/// group last used: the lines (Line, Arc, Spline), the closed shapes
+/// (Rectangle, Circle, Ellipse, Polygon) and the special ones (Slot,
+/// Gear). Text stands alone.
+#[test]
+fn the_drawing_tools_are_in_three_groups() {
+    use dc_app::tool::ToolGroup;
+    let grouped: Vec<Drawing> = ToolGroup::ALL
+        .into_iter()
+        .flat_map(|group| group.tools().iter().copied())
+        .collect();
+    let mut expected: Vec<Drawing> = Drawing::ALL
+        .into_iter()
+        .filter(|drawing| *drawing != Drawing::Text)
+        .collect();
+    assert_eq!(grouped, expected, "every tool but Text, once, in order");
+    expected.clear();
+    assert_eq!(
+        ToolGroup::Lines.tools(),
+        [Drawing::Line, Drawing::Arc, Drawing::Spline]
+    );
+    assert_eq!(
+        ToolGroup::Shapes.tools(),
+        [
+            Drawing::Rectangle,
+            Drawing::Circle,
+            Drawing::Ellipse,
+            Drawing::Polygon
+        ]
+    );
+    assert_eq!(ToolGroup::Special.tools(), [Drawing::Slot, Drawing::Gear]);
+    assert_eq!(Drawing::Text.group(), None);
+    assert_eq!(Drawing::Ellipse.group(), Some(ToolGroup::Shapes));
+    let strings = dc_app::Strings::english();
+    assert_eq!(strings.get(ToolGroup::Lines.name()), "Line tools");
+    assert_eq!(strings.get(ToolGroup::Shapes.name()), "Shape tools");
+    assert_eq!(
+        strings.get(ToolGroup::Special.name()),
+        "Slot and gear tools"
+    );
+
+    // Each group holds its first tool until another of it is used.
+    let mut app = plaque().app;
+    assert_eq!(app.held(ToolGroup::Lines), Drawing::Line);
+    assert_eq!(app.held(ToolGroup::Shapes), Drawing::Rectangle);
+    assert_eq!(app.held(ToolGroup::Special), Drawing::Slot);
+    app.arm(Tool::Draw(Drawing::Arc));
+    app.arm(Tool::Draw(Drawing::Ellipse));
+    app.arm(Tool::Draw(Drawing::Text));
+    app.arm(Tool::Select);
+    assert_eq!(app.held(ToolGroup::Lines), Drawing::Arc);
+    assert_eq!(app.held(ToolGroup::Shapes), Drawing::Ellipse);
+    assert_eq!(app.held(ToolGroup::Special), Drawing::Slot, "untouched");
+}

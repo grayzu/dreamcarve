@@ -366,12 +366,12 @@ items. Each is tracked here.
 
 | Item | Kind | Where it stands |
 | --- | --- | --- |
-| How to make an array | Question | Answered (Arrange ▸ Array…). Also to be offered from a shape's menu and Properties: FEEDBACK_ARRAY |
-| Group the drawing tools as Affinity does | Change | FEEDBACK_TOOLS |
+| How to make an array | Question | Answered (Arrange ▸ Array…), and Array… is now in a shape's right-click menu |
+| Group the drawing tools as Affinity does | Change | Done: the tool strip, with three groups and Text, Trim and Measure as buttons |
 | Join open shapes into a closed one | Question | Answered (Shape ▸ Join…; Edit nodes, an end dragged onto an end) |
 | What the Tab tool on Design is for | Question | Answered; the tool moves beside Trim and Measure in the regrouping |
-| A more prominent division of the tool bar | Change | FEEDBACK_TOOLS |
-| Control of snapping | Feature | Exists in View ▸ Snapping and Snap To; a button on the Viewport: FEEDBACK_SNAP |
+| A more prominent division of the tool bar | Change | Done: the view's controls keep the top pill; the strip under it has a rule between each of its four segments |
+| Control of snapping | Feature | Exists in View ▸ Snapping and Snap To; now also the strip's Snapping button, with the switch and a tick per kind |
 | An origin for an object | Feature | Waits for the maintainer: which origin is meant (below) |
 | Folder and group | Question | Answered; one concept with a *Select together* switch is offered, not done |
 | A tool added in an operation should be chosen | Bug | Done: `Command::AddToolForOperation`, `editor::add_from_library_for` |
@@ -391,6 +391,18 @@ Decisions taken with these, for the maintainer:
   warning code, so `dreamcarve check` prints what it printed.
 - With several tools ticked, *Add from library…* adds them all and
   chooses none.
+- The tools are a vertical strip, not a wider top pill: ten buttons and
+  three lists do not fit across the Viewport beside the *By operation /
+  By depth* pill, and Affinity's tools run down the side. The picture
+  the maintainer attached did not arrive, so the layout is from the
+  written grouping.
+- A click on a group's button arms the tool it holds and opens the
+  group's list. The list does not have to be dismissed: a press on the
+  Viewport, or a tool's key, goes through.
+- The Tab tool stays in the strip, with Trim and Measure, since it
+  works on shapes on the Design step; it is not a drawing tool.
+- Every picture in the book shows the strip, so all of them were taken
+  again.
 
 ## Slices
 
