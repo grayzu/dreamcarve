@@ -473,7 +473,10 @@ before that; its changes are those under Unreleased.
   one shape, which closes when its ends are brought together, so an
   outline can be drawn a piece at a time with nothing to join after.
   The shape keeps the name, the place and the operations of the path
-  it was drawn from. One undo step, *Extend* or *Close*.
+  it was drawn from. One undo step, *Extend* or *Close*. An arc and a
+  line across its two ends close too, into a shape of two points, in
+  one drawing or two, and by dragging an end onto the other in Edit
+  nodes.
 - **Horizontal or vertical** is a new kind of snap, on at first: a
   point within 8 px of level with, or upright from, the tool's last
   point is put there, with a guide, and where that line crosses an

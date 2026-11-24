@@ -714,22 +714,27 @@ impl Path {
 
     /// An open path closed (`closeOpenProfile`): by a straight line from
     /// its end to its start, or, when the two are within `tolerance_mm`,
-    /// by making them one node. `None` for a path that is closed already
-    /// or has fewer than two spans.
+    /// by making them one node. `None` for a path that is closed already,
+    /// and for one that would enclose nothing: fewer than two nodes left,
+    /// or two with only straight spans between them. Two nodes do close
+    /// when a span between them bends: an arc and the line across its
+    /// ends, as a circle is two arcs (upstream needs three points, having
+    /// no arc that is a span of its own).
     #[must_use]
     pub fn closed_up(&self, tolerance_mm: f64) -> Option<Self> {
-        if self.closed || self.span_count() < 2 {
+        if self.closed || self.span_count() == 0 {
             return None;
         }
         let mut nodes = self.nodes.clone();
         let (first, last) = (nodes.first()?.point(), nodes.last()?.point());
         if first.distance_to(last) <= tolerance_mm.max(EPS_MM) {
             nodes.pop();
-            if nodes.len() < 3 {
-                return None;
-            }
         } else {
             nodes.last_mut()?.span = Span::Line;
+        }
+        let bends = nodes.iter().any(|node| !matches!(node.span, Span::Line));
+        if nodes.len() < 2 || (nodes.len() == 2 && !bends) {
+            return None;
         }
         Some(Self::new(nodes, true))
     }
@@ -1285,6 +1290,60 @@ mod tests {
         let near = Path::new(nodes, false);
         assert_eq!(near.closed_up(0.1).unwrap().nodes().len(), 4);
         assert_eq!(near.closed_up(0.0).unwrap().nodes().len(), 5);
+    }
+
+    /// Two nodes close when a span between them bends (the maintainer's
+    /// report, 2026-11-24: an arc and a line drawn across its ends were
+    /// left open): an arc and the line back across it is a D, as a circle
+    /// is two arcs. Two straight spans back and forth enclose nothing.
+    #[test]
+    fn two_nodes_close_when_a_span_bends() {
+        let arc = |x: f64, y: f64| PathNode {
+            x,
+            y,
+            span: Span::Arc { bulge: 1.0 },
+            smooth: false,
+        };
+        // An arc, then a line back onto its start: the repeat goes.
+        let d = Path::new(
+            vec![
+                arc(0.0, 0.0),
+                PathNode::line(4.0, 0.0),
+                PathNode::line(0.0, 0.0),
+            ],
+            false,
+        );
+        let closed = d.closed_up(0.0).unwrap();
+        assert!(closed.is_closed());
+        assert_eq!(points(&closed), [(0.0, 0.0), (4.0, 0.0)]);
+        assert_eq!(closed.span_count(), 2);
+        // A lone arc: the straight side is added.
+        let lone = Path::new(vec![arc(0.0, 0.0), PathNode::line(4.0, 0.0)], false);
+        let closed = lone.closed_up(0.0).unwrap();
+        assert!(closed.is_closed());
+        assert_eq!(closed.span_count(), 2);
+        assert!(matches!(closed.nodes()[1].span, Span::Line));
+        // Two arcs: a circle.
+        let circle = Path::new(
+            vec![arc(0.0, 0.0), arc(4.0, 0.0), PathNode::line(0.0, 0.0)],
+            false,
+        );
+        assert_eq!(circle.closed_up(0.0).unwrap().span_count(), 2);
+        // Straight there and back, and a lone line: nothing to close.
+        let back = Path::new(
+            vec![
+                PathNode::line(0.0, 0.0),
+                PathNode::line(4.0, 0.0),
+                PathNode::line(0.0, 0.0),
+            ],
+            false,
+        );
+        assert_eq!(back.closed_up(0.0), None);
+        let line = Path::new(
+            vec![PathNode::line(0.0, 0.0), PathNode::line(4.0, 0.0)],
+            false,
+        );
+        assert_eq!(line.closed_up(0.0), None);
     }
 
     /// `testApplyLineCornerFillet`: a 2 mm fillet at (10,0) trims the

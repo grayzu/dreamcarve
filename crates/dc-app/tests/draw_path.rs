@@ -677,3 +677,112 @@ fn a_path_joins_only_an_open_end_of_its_own_kind() {
     );
     assert_eq!(app.project().instances.len(), 5);
 }
+
+/// Draws a lone arc from `from` to `to` through `through`, with the Arc
+/// tool, and finishes it; the tool in hand before is armed again.
+fn draw_arc(
+    app: &mut App,
+    from: (f64, f64),
+    to: (f64, f64),
+    through: (f64, f64),
+) -> Option<String> {
+    let before = app.tool();
+    app.arm(Tool::Draw(Drawing::Arc));
+    for (x, y) in [from, to, through] {
+        assert_eq!(click(app, pt(x, y)), None);
+    }
+    let label = enter(app);
+    app.arm(before);
+    label
+}
+
+/// The maintainer's report of 2026-11-24: an arc and a line drawn end to
+/// end were left two shapes, where a line and a spline joined. An arc is
+/// carried on by a line and a line by an arc, and a line across an arc's
+/// two ends closes it: a D, of two nodes, an arc and a straight side.
+#[test]
+fn an_arc_and_a_line_are_carried_on_and_closed() {
+    // An arc, then a line from its end.
+    let mut app = armed(Drawing::Line);
+    assert_eq!(
+        draw_arc(&mut app, (0.0, 0.0), (40.0, 0.0), (20.0, 20.0)).as_deref(),
+        Some("Draw “Arc 1”")
+    );
+    let label = draw(&mut app, &[(40.0, 0.0), (60.0, -10.0)]);
+    assert_eq!(label.as_deref(), Some("Extend “Arc 1”"));
+    assert_eq!(app.project().instances.len(), 1);
+    assert_eq!(outline(&app).vertices().len(), 3);
+
+    // A line, then an arc from its end.
+    let mut app = armed(Drawing::Line);
+    draw(&mut app, &[(0.0, 0.0), (40.0, 0.0)]);
+    let label = draw_arc(&mut app, (40.0, 0.0), (80.0, 0.0), (60.0, 20.0));
+    assert_eq!(label.as_deref(), Some("Extend “Line 1”"));
+    assert_eq!(app.project().instances.len(), 1);
+
+    // An arc, then a line across its two ends: a closed D.
+    let mut app = armed(Drawing::Line);
+    draw_arc(&mut app, (0.0, 0.0), (40.0, 0.0), (20.0, 20.0));
+    let label = draw(&mut app, &[(40.0, 0.0), (0.0, 0.0)]);
+    assert_eq!(label.as_deref(), Some("Close “Arc 1”"));
+    assert_eq!(app.project().instances.len(), 1);
+    assert!(outline(&app).is_closed());
+    assert_eq!(outline(&app).vertices().len(), 2);
+    // Half a disc of radius 20.
+    let area = outline(&app).signed_area_mm2().abs();
+    assert!((area - std::f64::consts::PI * 200.0).abs() < 1e-6, "{area}");
+    assert_eq!(outline_problems(&app), 0);
+
+    // A line, then an arc across its two ends: the same D.
+    let mut app = armed(Drawing::Line);
+    draw(&mut app, &[(0.0, 0.0), (40.0, 0.0)]);
+    let label = draw_arc(&mut app, (40.0, 0.0), (0.0, 0.0), (20.0, 20.0));
+    assert_eq!(label.as_deref(), Some("Close “Line 1”"));
+    assert_eq!(app.project().instances.len(), 1);
+    assert!(outline(&app).is_closed());
+
+    // Two arcs end to end, and closed: a circle of two arcs.
+    let mut app = armed(Drawing::Line);
+    draw_arc(&mut app, (0.0, 0.0), (40.0, 0.0), (20.0, 20.0));
+    let label = draw_arc(&mut app, (40.0, 0.0), (0.0, 0.0), (20.0, -20.0));
+    assert_eq!(label.as_deref(), Some("Close “Arc 1”"));
+    assert_eq!(app.project().instances.len(), 1);
+    assert!(outline(&app).is_closed());
+}
+
+/// The same within one drawing: an arc, then a click back on the first
+/// point with the Line tool, closes a D of two points; and a line, then
+/// an arc that ends on the first point. Two points joined by straight
+/// spans alone still close nothing.
+#[test]
+fn an_arc_and_a_line_close_in_one_drawing() {
+    let mut app = armed(Drawing::Arc);
+    click(&mut app, pt(0.0, 0.0));
+    click(&mut app, pt(40.0, 0.0));
+    assert_eq!(click(&mut app, pt(20.0, 20.0)), None);
+    app.arm(Tool::Draw(Drawing::Line));
+    let label = click(&mut app, pt(0.0, 0.0));
+    assert_eq!(label.as_deref(), Some("Draw “Path 1”"));
+    assert!(outline(&app).is_closed());
+    assert_eq!(outline(&app).vertices().len(), 2);
+    let area = outline(&app).signed_area_mm2().abs();
+    assert!((area - std::f64::consts::PI * 200.0).abs() < 1e-6, "{area}");
+
+    // A line, then an arc back to its start.
+    let mut app = armed(Drawing::Line);
+    click(&mut app, pt(0.0, 50.0));
+    click(&mut app, pt(40.0, 50.0));
+    app.arm(Tool::Draw(Drawing::Arc));
+    assert_eq!(click(&mut app, pt(0.0, 50.0)), None, "the arc's end");
+    let label = click(&mut app, pt(20.0, 70.0));
+    assert_eq!(label.as_deref(), Some("Draw “Path 1”"));
+    assert!(outline(&app).is_closed());
+    assert_eq!(outline(&app).vertices().len(), 2);
+
+    // Two points and straight spans: a click on the first is no close.
+    let mut app = armed(Drawing::Line);
+    click(&mut app, pt(0.0, 0.0));
+    click(&mut app, pt(40.0, 0.0));
+    assert_eq!(click(&mut app, pt(0.0, 0.0)), None);
+    assert!(app.project().instances.is_empty());
+}

@@ -447,6 +447,7 @@ Five more items from the maintainer's work with the drawing tools.
 | Two open shapes drawn end to end should be one closed shape | Bug | Done: a path drawn from or to the end of an open path carries it on, and closes it when the ends meet (capability 90a; `tool::path::carried_on`) |
 | Deleting every shape goes back to the start screen | Bug | Done: the start screen is for a project with no step to undo or redo (`steps::untouched`) |
 | Snap a line or an object to vertical or horizontal | Feature | Done: the snap kind **Horizontal or vertical** (`SnapKind::Axis`), a dragged node held level with its neighbours, and Shift holding a move level or upright (`handles::straight`). Shift already held a drawn point to 15° steps |
+| An arc and a line would not join (2026-11-24) | Bug | Done: they joined end to end, but a line across an arc's two ends was refused, since closing needed three nodes. `Path::closed_up` closes two nodes when a span between them bends; the Line and Arc tools close on the first point the same way |
 | A line needs a width | Bug | The maintainer's picture showed it: H 0 was refused. Done: H 0 lays a line level, W 0 stands it upright (`properties::straighten`) |
 
 Decisions taken with these, for the maintainer:

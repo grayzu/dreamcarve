@@ -160,7 +160,8 @@ adds a point.
 To finish:
 
 - Click the first point again to **close** the outline. That needs
-  three points or more.
+  three points or more, or two when one of the pieces between them is
+  an arc: an arc and the line back across it.
 - Press **Enter**, click **Done**, or double-click to finish it
   **open**.
 - **Backspace** takes back the last point. **Escape** throws the whole

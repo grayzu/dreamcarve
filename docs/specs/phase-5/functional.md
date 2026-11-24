@@ -347,7 +347,9 @@ capability 52); what a tool holds before it commits is not project data.
     radius, then to the centre.
 87. **Line** (`P`; PureCutCNC's polygon and composite tools as one).
     Each click adds a point joined to the last by a straight segment.
-    A click on the first point (within 12 px, three points or more)
+    A click on the first point (within 12 px, three points or more, or
+    two when a span between them is an arc: an arc and the line across
+    its ends enclose a D, as two arcs make a circle)
     closes the outline; `Enter`, **Done** or a double-click finishes it
     open; `Backspace` takes back the last point; `Escape` discards the
     draft. While a **Length** or an **Angle** is typed, `Enter` takes
@@ -394,8 +396,11 @@ capability 52); what a tool holds before it commits is not project data.
     their curves kept, and every further open path met at the chain's
     ends joins too. The shape is the path the drawn one starts on, or
     else the one it ends on: its name, its place in the Design Tree,
-    its group, its placement and the operations that cut it. Where the chain's two ends come together it
-    closes. The step is one for Undo, named *Extend “name”*, or
+    its group, its placement and the operations that cut it. Where the
+    chain's two ends come together it closes, also when that leaves two
+    nodes with an arc or a curve between them (an arc and the line
+    drawn across its ends: the maintainer's report, 2026-11-24). The
+    step is one for Undo, named *Extend “name”*, or
     *Close “name”* when it closes. Only a shape that is one open path
     of its own is carried on, visible, unlocked, with no linked copy;
     and construction geometry only by a path drawn as construction

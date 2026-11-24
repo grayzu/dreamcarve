@@ -391,11 +391,17 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Whether the pointer is on the first point, to close the path: three
-    /// points or more, within 12 px (`isLoopCloseCandidate`).
-    fn closes(&self, at: Point) -> bool {
+    /// Whether the pointer is on the first point, to close the path by
+    /// `closing`: within 12 px, with three points or more
+    /// (`isLoopCloseCandidate`), or with two when one of the two spans
+    /// between them would be an arc, which encloses something: an arc
+    /// and the line back across it.
+    fn closes(&self, at: Point, closing: DraftSpan) -> bool {
         let draft = &self.tool.path;
-        draft.points.len() >= 3
+        let bends = |span: &DraftSpan| matches!(span, DraftSpan::Arc { .. });
+        let encloses = draft.points.len() >= 3
+            || (draft.points.len() == 2 && (bends(&closing) || draft.spans.iter().any(bends)));
+        encloses
             && draft.points.first().is_some_and(|first| {
                 first.distance_to(at) * self.view().camera.px_per_mm <= CLOSE_PX
             })
@@ -435,7 +441,7 @@ impl App {
             self.tool.path.arc_end = None;
             self.clear_path_step();
             // An arc that ends on the first point closes the path.
-            if self.closes(end) {
+            if self.closes(end, DraftSpan::Arc { bulge }) {
                 return self.finish_path(Some(DraftSpan::Arc { bulge }));
             }
             self.tool.path.points.push(end);
@@ -447,7 +453,7 @@ impl App {
         } else {
             DraftSpan::Line
         };
-        if self.closes(at) {
+        if self.closes(at, span) {
             return self.finish_path(Some(span));
         }
         // A second click in the same place adds nothing.

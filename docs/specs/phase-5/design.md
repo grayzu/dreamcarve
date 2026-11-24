@@ -1315,7 +1315,10 @@ The names here are today's.
   unlocked, unlinked, of the drawn path's construction flag), each as
   placed; the chain grows at its start, then at its end, by
   `Path::joined` and `Path::reversed`, until nothing more meets or its
-  own ends do (`MEET_MM`, 1e-6); `Path::closed_up` then. The result is
+  own ends do (`MEET_MM`, 1e-6); `Path::closed_up` then, which closes
+  two nodes when a span between them is an arc or a curve (a D; the
+  report of 2026-11-24), as `tool::path::closes` does for a click on
+  the first point. The result is
   one `ReplaceShapes`, the chain in the first path's own space,
   inheriting that path's operations, with `Edit::Extend` or
   `Edit::CloseEnds`; the label names the path that stays.
