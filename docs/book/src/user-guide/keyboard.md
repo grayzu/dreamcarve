@@ -46,7 +46,7 @@ except in an open sheet.
 | Ctrl+3 | ⌘3 | Open the Tools step | View ▸ Go to Tools |
 | Ctrl+4 | ⌘4 | Open the Operations step | View ▸ Go to Operations |
 | Ctrl+5 | ⌘5 | Open the Export step | View ▸ Go to Export |
-| T | T | Turn the Tab tool on or off: a click on a shape's outline adds a tab | — |
+| T | T | Turn the Tab tool on or off: a click on a shape's outline adds a tab | Shape ▸ Tab Tool |
 | V | V | Take up the Select tool, putting down the tool in use | — |
 | N | N | Edit the nodes of the selected path; a double-click on a path does the same | — |
 | B | B | While editing nodes, break the path at the selected node | — |

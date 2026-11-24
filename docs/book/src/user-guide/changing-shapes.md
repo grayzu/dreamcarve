@@ -4,6 +4,10 @@ The **Shape** menu makes new outlines from the ones you have: a border
 round a shape, two shapes made one, a hole taken out of another shape.
 The **Trim** tool cuts outlines where they cross.
 
+**Trim**, **Join**, **Weld**, **Subtract** and **Intersect** are also
+buttons in the tool strip at the Viewport's left, greyed until enough
+is selected for them to act on.
+
 The commands that need a value, **Offset…**, **Fillet Corners…** and
 **Join…**, take it in the [tool bar](drawing-shapes.md#the-tool-bar):
 select the shapes, choose the command, set the value, and click **Done**

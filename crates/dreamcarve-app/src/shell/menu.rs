@@ -642,6 +642,26 @@ fn shape(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         Action::Arm(dc_app::Tool::Adjust(Adjust::Join)),
         out,
     );
+    // The Tab tool, ticked while it is in hand: a click on an outline
+    // adds a tab. It is here and on its key, not in the tool strip,
+    // since tabs are mostly placed by a Profile's own request.
+    ui.separator();
+    let tab_armed = app.tool() == dc_app::Tool::Tab;
+    let tab = checked_item_with(
+        ui,
+        strings.get(StrKey::AppMenuTabTool),
+        tab_armed,
+        keyboard::binding(Shortcut::TabTool),
+        app.target_editing().is_none(),
+    );
+    if tab.clicked() {
+        out.push(Action::Arm(if tab_armed {
+            dc_app::Tool::Select
+        } else {
+            dc_app::Tool::Tab
+        }));
+        ui.close();
+    }
 }
 
 /// View ▸ Snap To (capability 82): a tick per kind of snap. The master

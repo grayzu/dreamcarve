@@ -20,8 +20,15 @@ parts:
 | --- | --- | --- |
 | Select and edit | **Select** (V), **Edit nodes** (N) | Select, move, resize and turn shapes; reshape a path ([Editing nodes](editing-nodes.md)) |
 | Draw | The **line tools**, the **shape tools**, the **slot and gear tools**, **Text** (Shift+T) | Draw new shapes |
-| Work on what is drawn | **Trim**, **Array**, **Measure** (K), the **Tab tool** (T) | Cut an outline at a crossing ([Changing shapes](changing-shapes.md#trim)); copy the selection in a pattern ([Copies, arrays and alignment](copies-and-arrays.md#arrays)); read a distance ([Measuring](measuring.md)); place a tab ([Tabs](tabs.md)) |
-| Snapping | **Snapping** (Shift+S) | Turn snapping on or off, and choose what a point snaps to ([Snapping and the grid](snapping.md)) |
+| Change what is drawn | **Trim**, **Join**, **Weld**, **Subtract**, **Intersect**, **Array** | Cut an outline at a crossing, make one path of several, combine closed shapes ([Changing shapes](changing-shapes.md)); copy the selection in a pattern ([Copies, arrays and alignment](copies-and-arrays.md#arrays)) |
+| Measure and snap | **Measure** (K), **Snapping** (Shift+S) | Read a distance ([Measuring](measuring.md)); turn snapping on or off, and choose what a point snaps to ([Snapping and the grid](snapping.md)) |
+
+**Join**, **Weld**, **Subtract**, **Intersect** and **Array** act on
+the selection, so each is greyed until enough is selected: one shape
+for Array, two for the others. Its tooltip says what it needs.
+
+The **Tab tool** is not in the strip. It is **Shape ▸ Tab Tool**, and
+the T key ([Tabs](tabs.md#the-tab-tool)).
 
 Three of the drawing buttons are **groups**, marked with a small
 triangle at the corner. A group's button shows the tool of the group

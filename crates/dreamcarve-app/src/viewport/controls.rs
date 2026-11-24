@@ -55,8 +55,8 @@ const READOUT_PX: f32 = 28.0;
 /// The gap between a pill's controls, px.
 const GAP_PX: f32 = 2.0;
 /// The tool strip's buttons: two that select and edit, the three groups
-/// and Text, four that act on what is drawn, and Snapping.
-const STRIP_BUTTONS: f32 = 11.0;
+/// and Text, six that change what is drawn, and Measure and Snapping.
+const STRIP_BUTTONS: f32 = 14.0;
 /// The rules that divide the strip into its four segments.
 const STRIP_RULES: f32 = 3.0;
 /// The tool strip's height, px: its buttons, the gaps between what it
@@ -527,8 +527,10 @@ fn snap_menu(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 /// pill (review feedback, 2026-11-23; Affinity's tools are laid out so):
 /// the tool in use shows pressed, and rules divide it into what selects
 /// and edits (*Select*, *Edit nodes*), what draws (the three groups and
-/// *Text*), what acts on what is drawn (*Trim*, *Array*, *Measure*, the
-/// *Tab tool*), and *Snapping*. Returns the strip's rectangle.
+/// *Text*), what changes what is drawn (*Trim*, *Join*, *Weld*,
+/// *Subtract*, *Intersect*, *Array*), and what helps with any of it
+/// (*Measure*, *Snapping*). The Tab tool is in the Shape menu and on
+/// its key: it is seldom wanted. Returns the strip's rectangle.
 fn strip(
     ui: &mut Ui,
     (pane, top): (Rect, f32),
@@ -644,22 +646,86 @@ fn strip(
         dc_app::Tool::Trim,
         out,
     );
-    // Array copies the selection, so it is off until there is one; its
-    // tooltip says so.
+    // The Shape menu's commands on shapes already drawn. Each acts on
+    // the selection, so each is off until there is one to act on, and
+    // its tooltip says what it needs.
+    let selected = state.app.selection().instances();
+    let several = selected.len() > 1 && !editing_targets;
+    let needs = |help: StrKey, enabled: bool, missing: StrKey| {
+        if enabled {
+            strings.get(help).to_owned()
+        } else {
+            format!("{} {}", strings.get(help), strings.get(missing))
+        }
+    };
+    // Join… takes its tolerance in the tool bar.
+    let join_tool = dc_app::Tool::Adjust(dc_app::tool::Adjust::Join);
+    let join_tip = with_keys(
+        ui,
+        &needs(
+            StrKey::AppViewportJoinHelp,
+            several,
+            StrKey::AppViewportNeedsTwo,
+        ),
+        Shortcut::Join,
+    );
+    let join = tool(strings, StrKey::AdjustNameJoin, Icon::Merge)
+        .tooltip(&join_tip)
+        .pressed(in_use == join_tool)
+        .enabled(several);
+    if button(ui, join).clicked() {
+        out.push(Action::Arm(join_tool));
+    }
+    // Weld, Subtract and Intersect act at once; one that cannot says
+    // why in the status bar, as its row of the Shape menu does.
+    for (name, help, icon, op) in [
+        (
+            StrKey::AppMenuWeld,
+            StrKey::AppViewportWeldHelp,
+            Icon::SquaresUnite,
+            dc_app::edit::Boolean::Weld,
+        ),
+        (
+            StrKey::AppMenuSubtract,
+            StrKey::AppViewportSubtractHelp,
+            Icon::SquaresSubtract,
+            dc_app::edit::Boolean::Subtract,
+        ),
+        (
+            StrKey::AppMenuIntersect,
+            StrKey::AppViewportIntersectHelp,
+            Icon::SquaresIntersect,
+            dc_app::edit::Boolean::Intersect,
+        ),
+    ] {
+        let tip = needs(help, several, StrKey::AppViewportNeedsTwo);
+        let spec = tool(strings, name, icon).tooltip(&tip).enabled(several);
+        if button(ui, spec).clicked() {
+            out.push(
+                match dc_app::edit::boolean(state.app.project(), strings, selected, op) {
+                    Ok(command) => Action::run(command),
+                    Err(e) => Action::Refused(e.to_string()),
+                },
+            );
+        }
+    }
+    // Array copies the selection.
     let array_tool = dc_app::Tool::Adjust(dc_app::tool::Adjust::Array);
-    let can_array = !state.app.selection().instances().is_empty() && !editing_targets;
-    let array_tip = strings.get(if can_array {
-        StrKey::AppViewportArrayHelp
-    } else {
-        StrKey::AppViewportArrayHelpSelect
-    });
+    let can_array = !selected.is_empty() && !editing_targets;
+    let array_tip = needs(
+        StrKey::AppViewportArrayHelp,
+        can_array,
+        StrKey::AppViewportNeedsOne,
+    );
     let array = tool(strings, StrKey::AdjustNameArray, Icon::LayoutGrid)
-        .tooltip(array_tip)
+        .tooltip(&array_tip)
         .pressed(in_use == array_tool)
         .enabled(can_array);
     if button(ui, array).clicked() {
         out.push(Action::Arm(array_tool));
     }
+    strip_rule(ui);
+    // What helps with any of it: Measure and Snapping.
     arm(
         ui,
         (
@@ -671,19 +737,6 @@ fn strip(
         dc_app::Tool::Measure,
         out,
     );
-    let tab_armed = in_use == dc_app::Tool::Tab;
-    let tab = tool(strings, StrKey::AppViewportTabTool, Icon::BookmarkPlus)
-        .tooltip(strings.get(StrKey::AppViewportTabToolHelp))
-        .pressed(tab_armed)
-        .enabled(!editing_targets);
-    if button(ui, tab).clicked() {
-        out.push(Action::Arm(if tab_armed {
-            dc_app::Tool::Select
-        } else {
-            dc_app::Tool::Tab
-        }));
-    }
-    strip_rule(ui);
     // Snapping: pressed while it is on; its list has the kinds.
     let snap_tip = with_keys(
         ui,

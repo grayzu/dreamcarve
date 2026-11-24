@@ -207,7 +207,10 @@ fn the_tool_strip_groups_the_drawing_tools() {
         Tool::Adjust(dc_app::tool::Adjust::Array),
         "the strip's Array"
     );
-    assert_eq!(h.state().app().selection().instances(), [square]);
+    assert_eq!(
+        h.state().app().selection().instances(),
+        std::slice::from_ref(&square)
+    );
     assert!(
         h.query_by_role_and_label(Role::TextInput, "Columns")
             .is_some(),
@@ -215,6 +218,40 @@ fn the_tool_strip_groups_the_drawing_tools() {
     );
     key(&mut h, egui::Key::Escape);
     assert_eq!(tool(&h), Tool::Select);
+
+    // Join, Weld, Subtract and Intersect are buttons of the strip, off
+    // until two shapes are selected. Weld acts at once; Join takes its
+    // tolerance in the tool bar; one that cannot act says why.
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![square.clone()]));
+    h.run_steps(8);
+    for name in ["Join", "Weld", "Subtract", "Intersect"] {
+        assert!(
+            h.get_by_role_and_label(Role::Button, name)
+                .accesskit_node()
+                .is_disabled(),
+            "{name} needs two shapes"
+        );
+    }
+    // Two closed shapes that overlap: the square and the pocket's island.
+    let both = vec![square.clone(), dc_project::InstanceId::new("i2")];
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(both));
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Join").click();
+    h.run_steps(8);
+    assert_eq!(tool(&h), Tool::Adjust(dc_app::tool::Adjust::Join));
+    key(&mut h, egui::Key::Escape);
+    let steps = h.state().app().undo_label().map(str::to_owned);
+    h.get_by_role_and_label(Role::Button, "Intersect").click();
+    h.run_steps(8);
+    let after = h.state().app().undo_label().map(str::to_owned);
+    assert!(
+        after != steps || h.state().message().is_some(),
+        "Intersect acted, or said why not"
+    );
 
     // Snapping: the master switch and a tick for each kind.
     assert!(h.state().app().prefs().snap.enabled);

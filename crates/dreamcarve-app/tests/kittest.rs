@@ -900,9 +900,12 @@ fn floating_tools_select_fit_and_zoom() {
         "Slot and gear tools",
         "Text",
         "Trim",
+        "Join",
+        "Weld",
+        "Subtract",
+        "Intersect",
         "Array",
         "Measure",
-        "Tab tool",
         "Snapping",
     ];
     let column: Vec<egui::Rect> = strip.iter().map(|label| rect(&h, label)).collect();
@@ -925,7 +928,15 @@ fn floating_tools_select_fit_and_zoom() {
         "no zoom in the status bar"
     );
 
-    // Select is the tool in use; the Tab tool takes over and gives back.
+    // Select is the tool in use; Trim takes over and gives back. (The
+    // Tab tool is in the Shape menu, not the strip.)
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Tab tool")
+            .is_none()
+            && h.query_by_role_and_label(Role::Button, "Tab Tool")
+                .is_none(),
+        "no Tab tool in the strip"
+    );
     let pressed = |h: &Harness<'_, dreamcarve_app::Shell>, at: egui::Rect| {
         // The pressed wash is a filled rounded rectangle on the button.
         h.output().shapes.iter().any(|clipped| {
@@ -934,16 +945,13 @@ fn floating_tools_select_fit_and_zoom() {
         })
     };
     assert!(pressed(&h, rect(&h, "Select")), "Select shows pressed");
-    assert!(!pressed(&h, rect(&h, "Tab tool")));
+    assert!(!pressed(&h, rect(&h, "Trim")));
     // Arming a tool opens the Design step, which may move the pane: the
     // buttons are looked up again.
-    h.get_by_role_and_label(Role::Button, "Tab tool").click();
-    h.run();
+    h.get_by_role_and_label(Role::Button, "Trim").click();
+    h.run_steps(8);
     assert_eq!(h.state().step(), dc_app::steps::Step::Design);
-    assert!(
-        pressed(&h, rect(&h, "Tab tool")),
-        "the Tab tool shows pressed"
-    );
+    assert!(pressed(&h, rect(&h, "Trim")), "Trim shows pressed");
     assert!(!pressed(&h, rect(&h, "Select")));
     h.get_by_role_and_label(Role::Button, "Select").click();
     h.run();
@@ -1038,7 +1046,7 @@ fn floating_controls_never_cover_the_stock_at_fit() {
         )
     };
     let controls = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<(String, egui::Rect)> {
-        ["Select", "Tab tool", "Fit", "Zoom out", "Zoom in", "Layers"]
+        ["Select", "Measure", "Fit", "Zoom out", "Zoom in", "Layers"]
             .iter()
             .map(|label| {
                 (
@@ -6292,7 +6300,8 @@ fn tab_tool_click_adds_a_tab() {
         800.0,
     );
     let before = h.state().app().project().tabs.clone();
-    h.get_by_label("Tab tool").click();
+    // The Tab tool is on its key and in the Shape menu.
+    h.key_press(egui::Key::T);
     h.run();
 
     // The square's left edge (x 70, y 18–48 in project space).

@@ -26,8 +26,6 @@ pub enum Icon {
     Image,
     /// `maximize`: Fit.
     Maximize,
-    /// `bookmark-plus`: the Tab tool.
-    BookmarkPlus,
     /// `download`: Export.
     Download,
     /// `x`: close.
@@ -163,6 +161,14 @@ pub enum Icon {
     Magnet,
     /// `layout-grid`: Array, copies of the selection in a pattern.
     LayoutGrid,
+    /// `merge`: Join, open paths made one.
+    Merge,
+    /// `squares-unite`: Weld.
+    SquaresUnite,
+    /// `squares-subtract`: Subtract.
+    SquaresSubtract,
+    /// `squares-intersect`: Intersect.
+    SquaresIntersect,
     /// `align-start-vertical`: Align left.
     AlignStartVertical,
     /// `align-center-vertical`: Align centre.
@@ -202,7 +208,6 @@ impl Icon {
             Self::ImagePlus => "image-plus",
             Self::Image => "image",
             Self::Maximize => "maximize",
-            Self::BookmarkPlus => "bookmark-plus",
             Self::Download => "download",
             Self::X => "x",
             Self::CircleX => "circle-x",
@@ -268,6 +273,10 @@ impl Icon {
             Self::Ruler => "ruler",
             Self::Magnet => "magnet",
             Self::LayoutGrid => "layout-grid",
+            Self::Merge => "merge",
+            Self::SquaresUnite => "squares-unite",
+            Self::SquaresSubtract => "squares-subtract",
+            Self::SquaresIntersect => "squares-intersect",
             Self::AlignStartVertical => "align-start-vertical",
             Self::AlignCenterVertical => "align-center-vertical",
             Self::AlignEndVertical => "align-end-vertical",
@@ -294,7 +303,6 @@ impl Icon {
             Self::ImagePlus => '\u{e1f7}',
             Self::Image => '\u{e0f6}',
             Self::Maximize => '\u{e112}',
-            Self::BookmarkPlus => '\u{e23d}',
             Self::Download => '\u{e0b2}',
             Self::X => '\u{e1b2}',
             Self::CircleX => '\u{e084}',
@@ -360,6 +368,10 @@ impl Icon {
             Self::Ruler => '\u{e14b}',
             Self::Magnet => '\u{e2b5}',
             Self::LayoutGrid => '\u{e0ff}',
+            Self::Merge => '\u{e43f}',
+            Self::SquaresUnite => '\u{e65a}',
+            Self::SquaresSubtract => '\u{e659}',
+            Self::SquaresIntersect => '\u{e658}',
             Self::AlignStartVertical => '\u{e271}',
             Self::AlignCenterVertical => '\u{e26d}',
             Self::AlignEndVertical => '\u{e26f}',
@@ -377,7 +389,7 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 85] = [
+    pub const ALL: [Self; 88] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -385,7 +397,6 @@ impl Icon {
         Self::ImagePlus,
         Self::Image,
         Self::Maximize,
-        Self::BookmarkPlus,
         Self::Download,
         Self::X,
         Self::CircleX,
@@ -451,6 +462,10 @@ impl Icon {
         Self::Ruler,
         Self::Magnet,
         Self::LayoutGrid,
+        Self::Merge,
+        Self::SquaresUnite,
+        Self::SquaresSubtract,
+        Self::SquaresIntersect,
         Self::AlignStartVertical,
         Self::AlignCenterVertical,
         Self::AlignEndVertical,

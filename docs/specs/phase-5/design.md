@@ -1273,6 +1273,13 @@ thing, a group: see "The maintainer's review of 2026-11-23", below.
   carry the one `group` glyph, and the row's menu has *Select Together*
   as a tick. Tests: `dc-app` `tests/groups.rs` (was `folders.rs`),
   `editing::groups_in_the_design_tree`, `groups_drag_and_drop`.
+- **The strip's modify segment.** After Trim the strip has *Join*
+  (arms `Adjust::Join`), *Weld*, *Subtract* and *Intersect*
+  (`edit::boolean`, run at once or refused in the status bar, as the
+  Shape menu's rows) and *Array*; each is enabled as its menu row is.
+  *Measure* moved to a last segment with *Snapping*, and the Tab tool
+  left the strip for **Shape ▸ Tab Tool** (`keyboard.rs`: `TabTool` is
+  a row of the Shape menu) and its key. `STRIP_BUTTONS` is 14.
 - **Array… in the menu and the strip.** `tree::MenuItem::Array`, after
   Duplicate; the window arms `Adjust::Array`. The strip has an *Array*
   button after Trim (`STRIP_BUTTONS` is 11), enabled while a shape is

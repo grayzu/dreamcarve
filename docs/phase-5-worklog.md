@@ -368,8 +368,8 @@ items. Each is tracked here.
 | --- | --- | --- |
 | How to make an array | Question | Answered (Arrange ▸ Array…); Array… is now in a shape's right-click menu and, at the maintainer's second word, a button of the tool strip beside Trim |
 | Group the drawing tools as Affinity does | Change | Done: the tool strip, with three groups and Text, Trim and Measure as buttons |
-| Join open shapes into a closed one | Question | Answered (Shape ▸ Join…; Edit nodes, an end dragged onto an end) |
-| What the Tab tool on Design is for | Question | Answered; the tool moves beside Trim and Measure in the regrouping |
+| Join open shapes into a closed one | Question | Answered (Shape ▸ Join…; Edit nodes, an end dragged onto an end); at the maintainer's word Join, Weld, Subtract and Intersect are buttons of the strip |
+| What the Tab tool on Design is for | Question | Answered; at the maintainer's word the tool left the strip and is **Shape ▸ Tab Tool** and the T key |
 | A more prominent division of the tool bar | Change | Done: the view's controls keep the top pill; the strip under it has a rule between each of its four segments |
 | Control of snapping | Feature | Exists in View ▸ Snapping and Snap To; now also the strip's Snapping button, with the switch and a tick per kind |
 | An origin for an object | Feature | Done, as the maintainer answered: the point a resize, a turn and a flip are made about. `dc_app::origin`, the Origin row in Properties, the mark on the selection |

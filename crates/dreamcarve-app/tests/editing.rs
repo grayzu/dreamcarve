@@ -236,15 +236,21 @@ fn offset_and_weld_from_the_shape_menu() {
     select(&mut h, &["i4"]);
     h.get_by_role_and_label(Role::Button, "Shape").click();
     h.run();
-    for row in [
-        "Convert to Path",
-        "Fillet Corners…",
-        "Weld",
-        "Subtract",
-        "Intersect",
-    ] {
+    for row in ["Convert to Path", "Fillet Corners…", "Tab Tool"] {
         assert!(
-            h.query_by_role_and_label(Role::Button, row).is_some(),
+            h.query_all_by_role(Role::Button).any(|node| node
+                .accesskit_node()
+                .label()
+                .is_some_and(|label| label.starts_with(row))),
+            "{row}"
+        );
+    }
+    // Weld, Subtract and Intersect are rows of the menu and buttons of
+    // the tool strip.
+    for row in ["Weld", "Subtract", "Intersect"] {
+        assert_eq!(
+            h.query_all_by_role_and_label(Role::Button, row).count(),
+            2,
             "{row}"
         );
     }
@@ -284,9 +290,14 @@ fn offset_and_weld_from_the_shape_menu() {
         .id
         .clone();
     select(&mut h, &["i4", made.as_str()]);
+    // The menu's row, which is not the strip's button of the same name.
+    let in_strip = h.get_by_role_and_label(Role::Button, "Weld").rect();
     h.get_by_role_and_label(Role::Button, "Shape").click();
     h.run();
-    h.get_by_role_and_label(Role::Button, "Weld").click();
+    h.query_all_by_role_and_label(Role::Button, "Weld")
+        .find(|node| node.rect() != in_strip)
+        .expect("Shape has Weld")
+        .click();
     h.run();
     assert_eq!(h.state().app().undo_label(), Some("Weld 2 shapes"));
     assert_eq!(h.state().app().project().instances.len(), count);

@@ -465,6 +465,10 @@ before that; its changes are those under Unreleased.
   Together**, ticked when it is made; unticked, the group only files
   its shapes. A group goes with its last shape. The project file keeps
   its names (`folders`, `folder`, `group`).
+- **Join, Weld, Subtract and Intersect are in the tool strip**, beside
+  Trim and Array, each greyed until enough is selected. **The Tab tool
+  is in the Shape menu** (and still on T), no longer a button on the
+  Viewport.
 - **A side handle stretches a shape one way.** A selected shape has a
   handle at the middle of each side as well as at each corner. Dragging
   one moves that side and leaves the opposite side where it is.

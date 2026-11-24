@@ -48,7 +48,8 @@ Two things are new if you have only imported drawings before:
 
 - The **tool strip** down the left of the Viewport holds the tools, in
   four parts: **Select** and **Edit nodes**; the tools that draw;
-  **Trim**, **Array**, **Measure** and the **Tab tool**; and
+  the tools that change what is drawn (**Trim**, **Join**, **Weld**,
+  **Subtract**, **Intersect**, **Array**); and **Measure** and
   **Snapping**. The
   drawing tools are three buttons, each a group: the **line tools**
   (Line, Arc, Spline), the **shape tools** (Rectangle, Circle, Ellipse,

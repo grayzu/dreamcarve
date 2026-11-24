@@ -544,11 +544,14 @@ pub const SHORTCUTS: &[Shortcut] = &[
         "Open the Export step",
         Scope::Anywhere,
     ),
-    key_only(
+    menu_row(
         Command::TabTool,
         NONE,
         &[Key::T],
+        Menu::Shape,
+        StrKey::AppMenuTabTool,
         "Turn the Tab tool on or off: a click on a shape's outline adds a tab",
+        Scope::OutsideFields,
     ),
     key_only(
         Command::SelectTool,

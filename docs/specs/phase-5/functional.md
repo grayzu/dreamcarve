@@ -82,10 +82,19 @@ capability 52); what a tool holds before it commits is not project data.
       `P`, Arc `A`, Spline `S`), the **shape tools** (Rectangle `M`,
       Circle `C`, Ellipse `E`, Polygon `G`) and the **slot and gear
       tools** (Slot `O`, Gear), then **Text** (`⇧T`);
-    - what works on what is drawn: **Trim** (96), **Array** (98, off
-      until a shape is selected), **Measure** (`K`, 103) and the **Tab
-      tool** (`T`, phase 4);
-    - **Snapping** (82).
+    - what changes what is drawn: **Trim** (96), **Join** (97),
+      **Weld**, **Subtract** and **Intersect** (95), and **Array**
+      (98). All but Trim act on the selection and are off until there
+      is enough of one, two shapes or one for Array, the tooltip saying
+      so; Join and Array take their values in the tool bar, and the
+      three that combine act at once, saying why in the status bar
+      when they cannot;
+    - what helps with any of it: **Measure** (`K`, 103) and
+      **Snapping** (82).
+
+    The **Tab tool** (`T`, phase 4) is not in the strip: it is **Shape ▸
+    Tab Tool**, ticked while it is in hand, and its key. A Profile's
+    own request places most tabs, so the tool is seldom wanted.
 
     A group's button shows the tool of the group last used, with a mark
     at its corner that it holds more. A click arms that tool and opens
