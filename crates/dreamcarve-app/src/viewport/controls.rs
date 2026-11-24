@@ -55,8 +55,8 @@ const READOUT_PX: f32 = 28.0;
 /// The gap between a pill's controls, px.
 const GAP_PX: f32 = 2.0;
 /// The tool strip's buttons: two that select and edit, the three groups
-/// and Text, six that change what is drawn, and Measure and Snapping.
-const STRIP_BUTTONS: f32 = 14.0;
+/// and Text, seven that change what is drawn, and Measure and Snapping.
+const STRIP_BUTTONS: f32 = 15.0;
 /// The rules that divide the strip into its four segments.
 const STRIP_RULES: f32 = 3.0;
 /// The tool strip's height, px: its buttons, the gaps between what it
@@ -658,6 +658,25 @@ fn strip(
             format!("{} {}", strings.get(help), strings.get(missing))
         }
     };
+    // Offset… takes its distance and side in the tool bar.
+    let offset_tool = dc_app::Tool::Adjust(dc_app::tool::Adjust::Offset);
+    let can_offset = !selected.is_empty() && !editing_targets;
+    let offset_tip = with_keys(
+        ui,
+        &needs(
+            StrKey::AppViewportOffsetHelp,
+            can_offset,
+            StrKey::AppViewportNeedsOne,
+        ),
+        Shortcut::Offset,
+    );
+    let offset = tool(strings, StrKey::AdjustNameOffset, Icon::SquareSquare)
+        .tooltip(&offset_tip)
+        .pressed(in_use == offset_tool)
+        .enabled(can_offset);
+    if button(ui, offset).clicked() {
+        out.push(Action::Arm(offset_tool));
+    }
     // Join… takes its tolerance in the tool bar.
     let join_tool = dc_app::Tool::Adjust(dc_app::tool::Adjust::Join);
     let join_tip = with_keys(

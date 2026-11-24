@@ -19,9 +19,11 @@ A point snaps when a candidate is within 14 pixels of the pointer.
 | **On outline** | The nearest point of an outline | On |
 | **Perpendicular** | The foot of the perpendicular from the last point to an outline | Off |
 | **Grid** | The nearest point of the grid | On |
+| **Horizontal or vertical** | A point level with the last point, or straight above or below it | On |
 
 When several are in reach, an endpoint, midpoint, centre or intersection
-wins, then a perpendicular, then a point on an outline, then the grid.
+wins, then a perpendicular, then horizontal or vertical, then a point on
+an outline, then the grid.
 With nothing in reach the point is where the pointer is: a click is
 never thrown away.
 
@@ -45,11 +47,32 @@ not snap.
 
 These are settings of the app, not of the project.
 
+## Level and upright
+
+**Horizontal or vertical** keeps a line level or upright without a key
+held. Once a tool has a point, a pointer within 8 pixels of the
+horizontal or the vertical through it is put on it, and a dashed guide
+runs from that point.
+
+- Where that line crosses an outline near the pointer, the point is on
+  both: a level line that ends exactly on another shape.
+- An endpoint, midpoint, centre or intersection in reach still wins.
+- With the grid snapping, the point is also on a grid line along the
+  way. It reaches no further than half a grid step, so the next grid
+  line up can still be had; a slightly sloping line is drawn by moving
+  further off, or with **Ctrl** (**⌘**) held.
+- In [Edit nodes](editing-nodes.md), a node you drag is held level
+  with, or upright from, the nodes either side of it. That is how a
+  line drawn askew is put right: drag one end until the guide shows.
+
 ## Holding a direction
 
 Hold **Shift** while you draw, and the point is held to steps of 15°
 about the last point: straight along, straight up, 45° and so on. A
 snap candidate on that line still wins.
+
+Hold **Shift** while you **move** shapes with the Select tool, and they
+go level or upright only, whichever way you have dragged further.
 
 ## The grid
 

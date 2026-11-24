@@ -63,6 +63,12 @@ pub enum Edit {
     CloseEnds,
     /// Two open paths joined at their ends into one.
     JoinEnds,
+    /// An open path carried on by one drawn from or to its end.
+    Extend,
+    /// A line laid level: a height of 0 typed in Properties.
+    Level,
+    /// A line stood upright: a width of 0 typed in Properties.
+    Upright,
     /// Shapes offset: copies a distance outside or inside their outlines
     /// (capability 94).
     Offset,
@@ -115,6 +121,9 @@ pub(super) fn edit_label(
         Edit::DeleteSegment => with(StrKey::CommandLabelDeleteSegment),
         Edit::CloseEnds => with(StrKey::CommandLabelClosePath),
         Edit::JoinEnds => with(StrKey::CommandLabelJoinPaths),
+        Edit::Extend => with(StrKey::CommandLabelExtendPath),
+        Edit::Level => with(StrKey::CommandLabelMakeLevel),
+        Edit::Upright => with(StrKey::CommandLabelMakeUpright),
         Edit::Offset => with(StrKey::CommandLabelOffset),
         Edit::Weld => with(StrKey::CommandLabelWeld),
         Edit::Subtract => with(StrKey::CommandLabelSubtract),

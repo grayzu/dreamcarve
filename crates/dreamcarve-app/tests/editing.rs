@@ -311,9 +311,34 @@ fn offset_and_weld_from_the_shape_menu() {
 #[test]
 fn join_from_the_shape_menu() {
     let (mut h, dir) = plaque("join-menu");
-    // Two lines that share an end, below the plaque's shapes.
+    // Two lines that share an end, below the plaque's shapes. The first
+    // is locked while the second is drawn: drawn from the end of an
+    // unlocked one, the second would carry it on, with nothing left to
+    // join (capability 90a).
     draw_line(&mut h, (10.0, 6.0), (40.0, 6.0));
+    let first = h
+        .state()
+        .app()
+        .project()
+        .instances
+        .last()
+        .unwrap()
+        .id
+        .clone();
+    let lock = |h: &mut Harness<'_, Shell>, locked: bool| {
+        h.state_mut()
+            .app_mut()
+            .run(dc_app::Command::SetInstanceFlags {
+                ids: vec![first.clone()],
+                visible: None,
+                locked: Some(locked),
+            })
+            .unwrap();
+        h.run();
+    };
+    lock(&mut h, true);
     draw_line(&mut h, (40.0, 6.0), (60.0, 10.0));
+    lock(&mut h, false);
     let lines: Vec<InstanceId> = h
         .state()
         .app()
@@ -634,6 +659,83 @@ fn alt_drag_copies_and_make_unique_unlinks() {
             .accesskit_node()
             .is_disabled()
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The maintainer's review of 2026-11-23: a drag with Shift held moves
+/// the selection level or upright only, whichever way the pointer has
+/// gone further.
+#[test]
+fn shift_drag_moves_level_or_upright() {
+    let (mut h, dir) = plaque("shift-drag");
+    select(&mut h, &["i4"]);
+    let before = box_of(&h, "i4");
+    let from_mm = square_middle(&h);
+    let from = on_screen(&h, from_mm);
+    // Further along than up: level.
+    let to = on_screen(&h, Point::new(from_mm.x + 20.0, from_mm.y - 6.0));
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run();
+    let level = box_of(&h, "i4");
+    assert!((level.min.x - before.min.x - 20.0).abs() < 0.5, "{level:?}");
+    assert_eq!(
+        level.min.y.to_bits(),
+        before.min.y.to_bits(),
+        "it did not leave its line: {level:?}"
+    );
+    // Further down than along: upright.
+    let from_mm = square_middle(&h);
+    let from = on_screen(&h, from_mm);
+    let to = on_screen(&h, Point::new(from_mm.x + 3.0, from_mm.y - 12.0));
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run();
+    let upright = box_of(&h, "i4");
+    assert_eq!(
+        upright.min.x.to_bits(),
+        level.min.x.to_bits(),
+        "{upright:?}"
+    );
+    assert!(
+        (upright.min.y - level.min.y + 12.0).abs() < 0.5,
+        "{upright:?}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The maintainer's review of 2026-11-23: a line drawn askew is laid
+/// level by typing 0 into H in Properties, its width as it was; a closed
+/// shape refuses 0 and stays as it is.
+#[test]
+fn zero_height_lays_a_drawn_line_level() {
+    let (mut h, dir) = plaque("level-line");
+    draw_line(&mut h, (10.0, 4.0), (60.0, 8.0));
+    let line = h.state().app().project().instances.last().unwrap().clone();
+    assert!(line.name.starts_with("Line"));
+    select(&mut h, &[line.id.as_str()]);
+    h.run_steps(8);
+    let before = box_of(&h, line.id.as_str());
+    assert!(before.height_mm() > 1.0, "askew: {before:?}");
+    retype(&mut h, "H", "0");
+    let after = box_of(&h, line.id.as_str());
+    assert!(after.height_mm().abs() < 1e-9, "{after:?}");
+    assert!(
+        (after.width_mm() - before.width_mm()).abs() < 1e-9,
+        "{after:?}"
+    );
+    assert_eq!(
+        h.state().app().undo_label().map(str::to_owned),
+        Some(format!("Make “{}” level", line.name))
+    );
+    // The square has an inside to keep.
+    select(&mut h, &["i4"]);
+    h.run_steps(8);
+    let square = box_of(&h, "i4");
+    retype(&mut h, "H", "0");
+    assert_eq!(box_of(&h, "i4"), square);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

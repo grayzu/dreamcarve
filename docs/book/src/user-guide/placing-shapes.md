@@ -109,6 +109,12 @@ box, unless you chose another point.
 - Type **W** or **H**. With the link closed, typing 20 into W makes the
   30 mm square 20 × 20 mm, at X 75, Y 23. With the link open, typing 40
   into H leaves W at 30.
+- **Type 0 into H to lay a line level**, or into **W** to stand it
+  upright. A line drawn a little askew has a small height; 0 puts its
+  ends on one horizontal, through the origin, and leaves its width as
+  it was, whatever the link says. This is for one open path of straight
+  pieces at a time: a closed shape cannot have no height, and a line
+  that would be left with no length is refused.
 - **Drag a corner handle.** The shape keeps its proportions while the
   link is closed. Hold Alt (⌥) while you drag to stretch it freely. The
   origin stays where it is; a corner that is itself the origin resizes

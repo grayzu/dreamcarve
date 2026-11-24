@@ -141,8 +141,31 @@ fn snap_with(
         px_per_mm: 1.0,
         grid_step_mm,
         skip,
+        level_with: &[],
     };
     snap::resolve(&targets, settings, pointer, reference)
+}
+
+/// The snap of a pointer at `at` with the tool's last point at `from`,
+/// beside the points `level_with`.
+fn level_snap(
+    scene: &Scene,
+    settings: &SnapSettings,
+    at: Point,
+    from: Option<Point>,
+    level_with: &[Point],
+    grid_step_mm: Option<f64>,
+) -> Snapped {
+    let targets = Targets {
+        scene,
+        stock: &STOCK,
+        origin: pt(0.0, 0.0),
+        px_per_mm: 1.0,
+        grid_step_mm,
+        skip: &[],
+        level_with,
+    };
+    snap::resolve(&targets, settings, &Pointer::at(at), from)
 }
 
 #[track_caller]
@@ -694,4 +717,133 @@ fn the_radius_is_held_to_its_range() {
         assert_eq!(SnapKind::from_key(kind.key()), Some(kind));
     }
     assert_eq!(SnapKind::from_key("tangent"), None);
+}
+
+/// The maintainer's review of 2026-11-23: a point near the horizontal or
+/// the vertical through the tool's last point is put on it, with a guide
+/// from that point, so a line is drawn level or upright without a key
+/// held. It reaches 8 px, less than the other kinds, so a shallow line
+/// can still be drawn; the nearer of the two wins beside the last point.
+#[test]
+fn a_point_is_held_level_with_the_last() {
+    let scene = scene_of(project(vec![]));
+    let settings = only(&[SnapKind::Axis], 14.0);
+    let from = pt(30.0, 40.0);
+    let at = |x: f64, y: f64| level_snap(&scene, &settings, pt(x, y), Some(from), &[], None);
+    // Level: Y is the last point's, X the pointer's.
+    let level = at(62.0, 43.0);
+    assert_at(&level, Some(SnapKind::Axis), 62.0, 40.0);
+    assert_eq!(level.guide, Some((from, pt(62.0, 40.0))));
+    // Upright, below it.
+    assert_at(&at(24.5, 12.0), Some(SnapKind::Axis), 30.0, 12.0);
+    // 8 px reaches; 9 does not.
+    assert_at(&at(62.0, 48.0), Some(SnapKind::Axis), 62.0, 40.0);
+    assert_at(&at(62.0, 49.0), None, 62.0, 49.0);
+    // Beside the last point both are in reach: the nearer.
+    assert_at(&at(33.0, 45.0), Some(SnapKind::Axis), 30.0, 45.0);
+    assert_at(&at(35.0, 43.0), Some(SnapKind::Axis), 35.0, 40.0);
+    // On the last point itself there is no line to hold.
+    assert_at(&at(30.0, 40.0), None, 30.0, 40.0);
+    // No last point, no axis; the kind off, none; a smaller radius is
+    // its reach.
+    let free = level_snap(&scene, &settings, pt(62.0, 43.0), None, &[], None);
+    assert_at(&free, None, 62.0, 43.0);
+    let off = only(&[SnapKind::Endpoint], 14.0);
+    let none = level_snap(&scene, &off, pt(62.0, 43.0), Some(from), &[], None);
+    assert_at(&none, None, 62.0, 43.0);
+    let tight = only(&[SnapKind::Axis], 6.0);
+    let out = level_snap(&scene, &tight, pt(62.0, 47.0), Some(from), &[], None);
+    assert_at(&out, None, 62.0, 47.0);
+    // It is on by default.
+    assert!(SnapSettings::default().offers(SnapKind::Axis));
+}
+
+/// What the axis gives way to and what it takes: an endpoint in reach
+/// wins; where the axis crosses an outline in reach the point is there,
+/// on both; with the grid on, the point along the axis is on a grid
+/// line, and the axis reaches no further than half a grid step, so the
+/// next grid line can still be had.
+#[test]
+fn the_axis_among_the_other_kinds() {
+    // A long upright line at X 60, to the right of the last point.
+    let scene = scene_of(project(vec![drawn(
+        "upright",
+        line(pt(60.0, 10.0), pt(60.0, 90.0)),
+    )]));
+    let settings = SnapSettings::default();
+    let from = pt(30.0, 70.0);
+    // Near the line and near the axis: where they cross.
+    let crossing = level_snap(&scene, &settings, pt(58.0, 72.0), Some(from), &[], None);
+    assert_at(&crossing, Some(SnapKind::Axis), 60.0, 70.0);
+    assert_eq!(crossing.guide, Some((from, pt(60.0, 70.0))));
+    // The line's end in reach wins over the axis.
+    let end = level_snap(
+        &scene,
+        &settings,
+        pt(58.0, 13.0),
+        Some(pt(30.0, 14.0)),
+        &[],
+        None,
+    );
+    assert_at(&end, Some(SnapKind::Endpoint), 60.0, 10.0);
+    // The grid at 5: along the axis the point is on a grid line, though
+    // the last point's Y is on none.
+    let from = pt(30.0, 41.5);
+    let on_grid = level_snap(
+        &scene,
+        &settings,
+        pt(41.0, 43.0),
+        Some(from),
+        &[],
+        Some(5.0),
+    );
+    assert_at(&on_grid, Some(SnapKind::Axis), 40.0, 41.5);
+    // Half a grid step from the axis and further, the grid has it.
+    let grid = level_snap(
+        &scene,
+        &settings,
+        pt(41.0, 44.5),
+        Some(from),
+        &[],
+        Some(5.0),
+    );
+    assert_at(&grid, Some(SnapKind::Grid), 40.0, 45.0);
+    // Shift holds a direction of its own: the axis stands aside.
+    let held = Pointer {
+        shift: true,
+        ..Pointer::at(pt(50.0, 52.0))
+    };
+    let targets = Targets {
+        scene: &scene,
+        stock: &STOCK,
+        origin: pt(0.0, 0.0),
+        px_per_mm: 1.0,
+        grid_step_mm: None,
+        skip: &[],
+        level_with: &[],
+    };
+    let only_axis = only(&[SnapKind::Axis], 14.0);
+    let turned = snap::resolve(&targets, &only_axis, &held, Some(pt(30.0, 40.0)));
+    assert_eq!(turned.kind, None, "{turned:?}");
+}
+
+/// A node being dragged is held level with its neighbours, which is how
+/// a line drawn askew is made level or upright afterwards: level with
+/// one, upright with the other, or both at once, a square corner.
+#[test]
+fn a_point_is_held_level_with_other_points() {
+    let scene = scene_of(project(vec![]));
+    let settings = only(&[SnapKind::Axis], 14.0);
+    let (before, after) = (pt(10.0, 20.0), pt(50.0, 60.0));
+    let at = |x: f64, y: f64| level_snap(&scene, &settings, pt(x, y), None, &[before, after], None);
+    // Level with the one before.
+    assert_at(&at(30.0, 22.0), Some(SnapKind::Axis), 30.0, 20.0);
+    // Upright under the one after.
+    assert_at(&at(48.0, 40.0), Some(SnapKind::Axis), 50.0, 40.0);
+    // Both: the corner.
+    let corner = at(47.0, 23.0);
+    assert_at(&corner, Some(SnapKind::Axis), 50.0, 20.0);
+    assert_eq!(corner.guide, Some((before, pt(50.0, 20.0))));
+    // Neither in reach.
+    assert_at(&at(30.0, 40.0), None, 30.0, 40.0);
 }

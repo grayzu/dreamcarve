@@ -82,13 +82,13 @@ capability 52); what a tool holds before it commits is not project data.
       `P`, Arc `A`, Spline `S`), the **shape tools** (Rectangle `M`,
       Circle `C`, Ellipse `E`, Polygon `G`) and the **slot and gear
       tools** (Slot `O`, Gear), then **Text** (`⇧T`);
-    - what changes what is drawn: **Trim** (96), **Join** (97),
-      **Weld**, **Subtract** and **Intersect** (95), and **Array**
-      (98). All but Trim act on the selection and are off until there
-      is enough of one, two shapes or one for Array, the tooltip saying
-      so; Join and Array take their values in the tool bar, and the
-      three that combine act at once, saying why in the status bar
-      when they cannot;
+    - what changes what is drawn: **Trim** (96), **Offset** (94),
+      **Join** (97), **Weld**, **Subtract** and **Intersect** (95), and
+      **Array** (98). All but Trim act on the selection and are off
+      until there is enough of one, two shapes or one for Offset and
+      Array, the tooltip saying so; Offset, Join and Array take their
+      values in the tool bar, and the three that combine act at once,
+      saying why in the status bar when they cannot;
     - what helps with any of it: **Measure** (`K`, 103) and
       **Snapping** (82).
 
@@ -153,17 +153,35 @@ capability 52); what a tool holds before it commits is not project data.
     | **On outline** | the nearest point of an outline | on |
     | **Perpendicular** | the foot of the perpendicular from the tool's last point to an outline | off |
     | **Grid** | the nearest point of the snap grid (82a) | on |
+    | **Horizontal or vertical** | the point level with, or upright from, the tool's last point | on |
 
     The nearest candidate of the highest rank wins: endpoint, midpoint,
-    centre and intersection first, then perpendicular, then on outline,
-    then grid. The grid has no reach: with grid snapping on and nothing
+    centre and intersection first, then perpendicular, then horizontal
+    or vertical, then on outline, then grid. The grid has no reach: with grid snapping on and nothing
     better near, the point is on the grid (Graphite's rule). With no
     candidate at all the point is the pointer's: a click is never
     discarded (PureCutCNC discards it; that reads as a dead mouse when
     zoomed in). The snapped point shows a marker shaped
     for its kind with the kind's name beside it, and a dashed guide from
     the pointer for *On outline* and from the last point for
-    *Perpendicular*.
+    *Perpendicular* and for *Horizontal or vertical*.
+
+    **Horizontal or vertical** (the maintainer's review, 2026-11-23:
+    "a way to make a line or object snap to vertical or horizontal")
+    puts a pointer within 8 px of the horizontal or the vertical
+    through the tool's last point on it; beside that point, where both
+    are in reach, the nearer. Its reach is the snap radius where that
+    is less, and half a grid step while the grid snaps, so the next
+    grid line can still be had. Along the line the point is the
+    pointer's, on a grid line while the grid snaps; where the line
+    crosses an outline within the snap radius the point is the
+    crossing, which ranks with a perpendicular. A node dragged in Edit
+    nodes (92) is held the same way to the nodes either side of it that
+    are not dragged with it, to both at once where a square corner is
+    in reach. `Shift` holds a direction of its own, and this kind
+    stands aside for it. It is PureCutCNC's axis lock offered as a snap
+    instead of a mode. In `gui.toml` it is `[snap] axis`, apart from
+    `kinds`, so preferences saved before it was there have it on.
 
     Snap targets are the outlines as drawn, so a slot's arc centres, a
     rounded rectangle's corners and a letter's nodes all snap
@@ -182,7 +200,10 @@ capability 52); what a tool holds before it commits is not project data.
     constrains the point to 15° steps about the tool's last point (the
     step phase 4's rotation handle uses; Graphite's Shift), and a snap
     candidate on that ray still wins. PureCutCNC's `Alt`-tap axis lock
-    is not ported: a held `Shift` is what vector editors do.
+    is not ported as a mode: a held `Shift` is what vector editors do,
+    and *Horizontal or vertical* above is the lock as a snap. `Shift`
+    held while shapes are moved with the Select tool holds the move
+    level or upright, whichever the pointer has gone further along.
 82a. **The snap grid.** Its spacing follows the zoom: the smallest of
     1, 2, 5, 10, 20, 50 mm … (0.01, 0.02, 0.05, 0.1 in … in an inch
     project) that is at least 8 px on screen, so a point is never out of
@@ -365,6 +386,22 @@ capability 52); what a tool holds before it commits is not project data.
     shapes that follow construction geometry until it is turned off. A
     shape too small to be one (under 0.01 mm across, PureCutCNC's
     minimum) is not made, and the tool stays as it was.
+90a. **A path carried on** (the maintainer's review, 2026-11-23: two
+    open shapes drawn end to end are one shape, with no trip through
+    Edit nodes). A path finished open (87 to 89) with an end on the end
+    of another open path, within 1e-6 mm as a snap to that end or a
+    typed point puts it, is not a new shape: the paths become one,
+    their curves kept, and every further open path met at the chain's
+    ends joins too. The shape is the path the drawn one starts on, or
+    else the one it ends on: its name, its place in the Design Tree,
+    its group, its placement and the operations that cut it. Where the chain's two ends come together it
+    closes. The step is one for Undo, named *Extend “name”*, or
+    *Close “name”* when it closes. Only a shape that is one open path
+    of its own is carried on, visible, unlocked, with no linked copy;
+    and construction geometry only by a path drawn as construction
+    geometry, a path to be cut only by one that is. A closed shape's
+    corner and the middle of a path are not ends. Paths already apart
+    are joined by Join (97), which takes a tolerance.
 91. **Text** (`⇧T`). A click sets where the text's baseline starts
     (a second click moves it); the tool bar's **Words** field then
     takes the keyboard and the words, previewed as they are typed, and
@@ -716,6 +753,12 @@ capability 52); what a tool holds before it commits is not project data.
     Design step with the Draw popover open. The Design step's panel has
     **Draw** beside *Add drawing* and *Add picture*, opening the same
     popover, and its empty tree says *Draw a shape, or add a drawing*.
+    The start screen is for a project nothing has been done to: one
+    with no shape, picture or operation and no step to undo or redo
+    (the maintainer's review, 2026-11-23). Deleting every shape of a
+    drawing leaves the empty stock in view, to draw on again, with
+    Undo to bring the shapes back; it does not go back to the start
+    screen.
 103. **Measure** (`K`; PureCutCNC's tape measure). Two clicks, each
     snapping as any point does, show the distance between them, its ΔX
     and ΔY, and its angle from +X, in the tool bar and beside a dashed

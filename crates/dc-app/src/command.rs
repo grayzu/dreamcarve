@@ -957,8 +957,23 @@ impl Command {
                     &subject_of(std::slice::from_ref(instance)),
                 )
             }
-            Self::ReplaceShapes { from, what, .. } => {
-                shapes::edit_label(strings, *what, None, &subject_of(from))
+            Self::ReplaceShapes {
+                from,
+                inherit,
+                what,
+                ..
+            } => {
+                // A path carried on by one drawn from its end is named
+                // for the path that stays, however many it met.
+                let kept = match what {
+                    Edit::Extend | Edit::CloseEnds => inherit.first().map(|(id, _)| id.clone()),
+                    _ => None,
+                };
+                let subject = match &kept {
+                    Some(id) => subject_of(std::slice::from_ref(id)),
+                    None => subject_of(from),
+                };
+                shapes::edit_label(strings, *what, None, &subject)
             }
             Self::SetConstruction { ids, construction } => {
                 let key = if *construction {

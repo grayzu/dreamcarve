@@ -20,12 +20,13 @@ parts:
 | --- | --- | --- |
 | Select and edit | **Select** (V), **Edit nodes** (N) | Select, move, resize and turn shapes; reshape a path ([Editing nodes](editing-nodes.md)) |
 | Draw | The **line tools**, the **shape tools**, the **slot and gear tools**, **Text** (Shift+T) | Draw new shapes |
-| Change what is drawn | **Trim**, **Join**, **Weld**, **Subtract**, **Intersect**, **Array** | Cut an outline at a crossing, make one path of several, combine closed shapes ([Changing shapes](changing-shapes.md)); copy the selection in a pattern ([Copies, arrays and alignment](copies-and-arrays.md#arrays)) |
+| Change what is drawn | **Trim**, **Offset** (Shift+O), **Join**, **Weld**, **Subtract**, **Intersect**, **Array** | Cut an outline at a crossing, make an outline a set distance from another, make one path of several, combine closed shapes ([Changing shapes](changing-shapes.md)); copy the selection in a pattern ([Copies, arrays and alignment](copies-and-arrays.md#arrays)) |
 | Measure and snap | **Measure** (K), **Snapping** (Shift+S) | Read a distance ([Measuring](measuring.md)); turn snapping on or off, and choose what a point snaps to ([Snapping and the grid](snapping.md)) |
 
-**Join**, **Weld**, **Subtract**, **Intersect** and **Array** act on
-the selection, so each is greyed until enough is selected: one shape
-for Array, two for the others. Its tooltip says what it needs.
+**Offset**, **Join**, **Weld**, **Subtract**, **Intersect** and
+**Array** act on the selection, so each is greyed until enough is
+selected: one shape for Offset and Array, two for the others. Its
+tooltip says what it needs.
 
 The **Tab tool** is not in the strip. It is **Shape ▸ Tab Tool**, and
 the T key ([Tabs](tabs.md#the-tab-tool)).
@@ -167,6 +168,29 @@ To finish:
 
 An open path is drawn dashed. A Profile set to **On line** or an
 Engrave cuts it; a Pocket or an Outside Profile needs a closed outline.
+
+### Carrying a path on
+
+Start or end a path on the **end of an open path** and the two are one
+shape: the path you had, carried on. Bring its two ends together that
+way and it **closes**. So an outline can be drawn a piece at a time,
+with different tools, in any order: a line, later an arc from its end,
+later a line back to its start. Nothing has to be joined afterwards.
+
+- The end has to be hit exactly, which snapping to its **Endpoint**
+  does, and so does typing its X and Y.
+- The shape keeps the name, the place in the Shapes list and the
+  operations of the path you started on, or, when you started in the
+  open, of the one you ended on.
+- It is one step for Undo, which takes the new piece away and leaves
+  the path as it was.
+- A closed shape, the middle of a path, a locked or hidden path and a
+  linked copy are not carried on, and
+  [construction geometry](groups-and-construction.md) is only by a path
+  drawn as construction geometry.
+
+To make one path of pieces already drawn apart, use
+[Join](changing-shapes.md#join).
 
 ## Gears
 

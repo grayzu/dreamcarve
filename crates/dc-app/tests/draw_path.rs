@@ -159,11 +159,12 @@ fn line_open_and_closed() {
     assert_eq!(last(&app).1.shape, None);
     assert_eq!(app.project().instances.len(), 2);
 
-    // 13 px off the first point is a point of its own.
-    click(&mut app, pt(0.0, 0.0));
-    click(&mut app, pt(40.0, 0.0));
-    click(&mut app, pt(40.0, 30.0));
-    assert_eq!(click(&mut app, pt(13.0 / px_per_mm, 0.0)), None);
+    // 13 px off the first point is a point of its own. (Drawn clear of
+    // the open Line 1, whose end it would otherwise carry on.)
+    click(&mut app, pt(0.0, 50.0));
+    click(&mut app, pt(40.0, 50.0));
+    click(&mut app, pt(40.0, 80.0));
+    assert_eq!(click(&mut app, pt(13.0 / px_per_mm, 50.0)), None);
     assert!(enter(&mut app).is_some());
     assert_eq!(outline(&app).vertices().len(), 4);
     assert!(!outline(&app).is_closed());
@@ -527,4 +528,152 @@ fn a_line_can_go_on_as_a_curve() {
     app.arm(Tool::Draw(Drawing::Line));
     assert_eq!(fields(&app), [SizeField::X, SizeField::Y]);
     assert_eq!(app.project().instances.len(), 1);
+}
+
+/// Draws an open path through `points` and finishes it with `Enter`.
+fn draw(app: &mut App, points: &[(f64, f64)]) -> Option<String> {
+    for (x, y) in points {
+        assert_eq!(click(app, pt(*x, *y)), None);
+    }
+    enter(app)
+}
+
+/// The maintainer's review of 2026-11-23: a path drawn from or to the end
+/// of an open path is that path, carried on; one that brings the ends
+/// together closes it. Nothing has to be joined afterwards with Edit
+/// nodes. Each drawing is still one undo step.
+#[test]
+fn a_path_drawn_from_an_end_carries_the_path_on() {
+    let mut app = armed(Drawing::Line);
+    assert_eq!(
+        draw(&mut app, &[(0.0, 0.0), (40.0, 0.0)]).as_deref(),
+        Some("Draw “Line 1”")
+    );
+    // From its end: the same shape, one point longer.
+    let label = draw(&mut app, &[(40.0, 0.0), (40.0, 30.0)]);
+    assert_eq!(label.as_deref(), Some("Extend “Line 1”"));
+    assert_eq!(app.project().instances.len(), 1);
+    assert_eq!(app.project().definitions.len(), 1);
+    assert_eq!(last(&app).0.name, "Line 1");
+    assert!(!outline(&app).is_closed());
+    assert_vertices(
+        outline(&app),
+        &[(0.0, 0.0, 0.0), (40.0, 0.0, 0.0), (40.0, 30.0, 0.0)],
+    );
+    // To its start, drawn the other way: still the one shape.
+    let label = draw(&mut app, &[(-20.0, 10.0), (0.0, 0.0)]);
+    assert_eq!(label.as_deref(), Some("Extend “Line 1”"));
+    assert_eq!(app.project().instances.len(), 1);
+    assert_eq!(outline(&app).vertices().len(), 4);
+    assert!(!outline(&app).is_closed());
+    // From one end to the other: the shape closes.
+    let label = draw(&mut app, &[(40.0, 30.0), (-20.0, 10.0)]);
+    assert_eq!(label.as_deref(), Some("Close “Line 1”"));
+    assert_eq!(app.project().instances.len(), 1);
+    assert!(outline(&app).is_closed());
+    assert_eq!(outline(&app).vertices().len(), 4);
+    assert_eq!(outline_problems(&app), 0);
+    // One undo step for the drawing and the joining of it.
+    app.undo();
+    assert_eq!(app.project().instances.len(), 1);
+    assert!(!outline(&app).is_closed());
+    assert_eq!(outline(&app).vertices().len(), 4);
+    // The file holds it.
+    app.redo();
+    let saved = app.serialize().unwrap();
+    assert_eq!(
+        &dc_project::load(saved.as_bytes()).unwrap().project,
+        app.project()
+    );
+}
+
+/// A path drawn between the ends of two open paths makes the three one
+/// shape, named and listed as the one its first point was put on.
+#[test]
+fn a_path_drawn_between_two_ends_joins_them() {
+    let mut app = armed(Drawing::Line);
+    draw(&mut app, &[(0.0, 0.0), (40.0, 0.0)]);
+    draw(&mut app, &[(40.0, 30.0), (0.0, 30.0)]);
+    assert_eq!(app.project().instances.len(), 2);
+    let label = draw(&mut app, &[(40.0, 30.0), (40.0, 0.0)]);
+    assert_eq!(label.as_deref(), Some("Extend “Line 2”"));
+    assert_eq!(app.project().instances.len(), 1);
+    assert_eq!(last(&app).0.name, "Line 2");
+    assert_eq!(outline(&app).vertices().len(), 4);
+    assert!(!outline(&app).is_closed());
+    // And the last side closes the four.
+    let label = draw(&mut app, &[(0.0, 0.0), (0.0, 30.0)]);
+    assert_eq!(label.as_deref(), Some("Close “Line 2”"));
+    assert!(outline(&app).is_closed());
+    assert_eq!(outline(&app).vertices().len(), 4);
+    assert!((outline(&app).signed_area_mm2().abs() - 1200.0).abs() < 1e-9);
+}
+
+/// A curve carried on keeps its curves: the shape is still a path with
+/// cubic spans, and its outline is the one they give.
+#[test]
+fn a_spline_carried_on_keeps_its_curves() {
+    let mut app = armed(Drawing::Spline);
+    draw(&mut app, &[(0.0, 0.0), (20.0, 15.0), (40.0, 0.0)]);
+    app.arm(Tool::Draw(Drawing::Line));
+    let label = draw(&mut app, &[(40.0, 0.0), (60.0, 0.0)]);
+    assert_eq!(label.as_deref(), Some("Extend “Spline 1”"));
+    assert_eq!(app.project().instances.len(), 1);
+    let (_, definition) = last(&app);
+    let Some(Shape::Path { paths }) = &definition.shape else {
+        panic!("the curves are kept: {:?}", definition.shape);
+    };
+    assert_eq!(paths.len(), 1);
+    assert!(paths[0].has_curves());
+    assert!(!paths[0].is_closed());
+    assert_eq!(outline_problems(&app), 0);
+}
+
+/// What a drawn path leaves alone: a closed shape whose corner it starts
+/// on, the middle of an open path, a locked path, and a path that is
+/// construction geometry when the drawn one is not (and the other way).
+#[test]
+fn a_path_joins_only_an_open_end_of_its_own_kind() {
+    let mut app = armed(Drawing::Line);
+    // A closed triangle.
+    click(&mut app, pt(0.0, 0.0));
+    click(&mut app, pt(40.0, 0.0));
+    click(&mut app, pt(40.0, 30.0));
+    assert!(click(&mut app, pt(0.0, 0.0)).is_some());
+    assert_eq!(
+        draw(&mut app, &[(40.0, 0.0), (80.0, 0.0)]).as_deref(),
+        Some("Draw “Line 2”"),
+        "a closed shape's corner is no end"
+    );
+    // The middle of the open line.
+    assert_eq!(
+        draw(&mut app, &[(60.0, 0.0), (60.0, 20.0)]).as_deref(),
+        Some("Draw “Line 3”")
+    );
+    assert_eq!(app.project().instances.len(), 3);
+    // A locked path's end.
+    let line = app.project().instances[1].id.clone();
+    app.run(dc_app::Command::SetInstanceFlags {
+        ids: vec![line.clone()],
+        visible: None,
+        locked: Some(true),
+    })
+    .unwrap();
+    assert_eq!(
+        draw(&mut app, &[(80.0, 0.0), (90.0, 10.0)]).as_deref(),
+        Some("Draw “Line 4”")
+    );
+    app.run(dc_app::Command::SetInstanceFlags {
+        ids: vec![line],
+        visible: None,
+        locked: Some(false),
+    })
+    .unwrap();
+    // Construction geometry is not carried on by a line to be cut.
+    app.tool_event(Event::Option(dc_app::tool::ToolOption::Construction(true)));
+    assert_eq!(
+        draw(&mut app, &[(60.0, 20.0), (70.0, 30.0)]).as_deref(),
+        Some("Draw “Line 5”")
+    );
+    assert_eq!(app.project().instances.len(), 5);
 }

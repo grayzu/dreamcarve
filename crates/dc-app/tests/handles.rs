@@ -380,3 +380,29 @@ fn a_short_side_has_no_handle() {
     flat.bounds.max.y = flat.bounds.min.y;
     assert!(flat.sides(&camera()).is_empty());
 }
+
+/// The maintainer's review of 2026-11-23: with `Shift` held a move goes
+/// level or upright, whichever the pointer has gone further along, so a
+/// shape is slid along a line without drifting off it.
+#[test]
+fn shift_holds_a_move_level_or_upright() {
+    let from = Point::new(10.0, 20.0);
+    let level = handles::straight(from, Point::new(42.0, 23.5));
+    assert_eq!(
+        (level.x.to_bits(), level.y.to_bits()),
+        (42f64.to_bits(), 20f64.to_bits())
+    );
+    let upright = handles::straight(from, Point::new(7.0, -31.0));
+    assert_eq!(
+        (upright.x.to_bits(), upright.y.to_bits()),
+        (10f64.to_bits(), (-31f64).to_bits())
+    );
+    // As far each way: level.
+    let even = handles::straight(from, Point::new(15.0, 25.0));
+    assert_eq!(
+        (even.x.to_bits(), even.y.to_bits()),
+        (15f64.to_bits(), 20f64.to_bits())
+    );
+    // Nowhere yet: where it is.
+    assert_eq!(handles::straight(from, from), from);
+}

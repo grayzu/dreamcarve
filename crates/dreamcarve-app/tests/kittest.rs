@@ -900,6 +900,7 @@ fn floating_tools_select_fit_and_zoom() {
         "Slot and gear tools",
         "Text",
         "Trim",
+        "Offset",
         "Join",
         "Weld",
         "Subtract",

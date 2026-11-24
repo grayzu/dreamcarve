@@ -501,6 +501,35 @@ impl App {
         Reply::default()
     }
 
+    /// The nodes beside `node` on its path that are not selected, and so
+    /// stay while it is dragged, as they are placed.
+    fn neighbours(&self, edited: &Edited, node: NodeRef) -> Vec<Point> {
+        let Some(path) = edited.paths.get(node.path) else {
+            return Vec::new();
+        };
+        let count = path.nodes().len();
+        let before = match node.node.checked_sub(1) {
+            Some(before) => Some(before),
+            None => path.is_closed().then(|| count.saturating_sub(1)),
+        };
+        let after = if node.node + 1 < count {
+            Some(node.node + 1)
+        } else {
+            path.is_closed().then_some(0)
+        };
+        [before, after]
+            .into_iter()
+            .flatten()
+            .filter(|index| *index != node.node)
+            .map(|index| NodeRef {
+                path: node.path,
+                node: index,
+            })
+            .filter(|beside| !self.tool.node.selected.contains(beside))
+            .filter_map(|beside| Some(edited.placed(edited.node(beside)?)))
+            .collect()
+    }
+
     /// The paths as the drag in hand has them now, with where the dragged
     /// point snapped, and what the drag is for its undo step.
     fn dragged(
@@ -510,7 +539,19 @@ impl App {
         pressed_mm: Point,
         pointer: &Pointer,
     ) -> Option<(Vec<Path>, Snapped, Edit)> {
-        let snapped = self.snap_at(pointer, None, std::slice::from_ref(&edited.instance.id));
+        // A node is held level with the nodes beside it that stay where
+        // they are, which is how a span drawn askew is made level or
+        // upright.
+        let level_with: Vec<Point> = match control {
+            Control::Node(grabbed) => self.neighbours(edited, grabbed),
+            _ => Vec::new(),
+        };
+        let snapped = self.snap_level(
+            pointer,
+            None,
+            std::slice::from_ref(&edited.instance.id),
+            &level_with,
+        );
         let to = edited.to_definition.apply(snapped.at_mm);
         let mut paths = edited.paths.clone();
         let what = match control {

@@ -15,9 +15,11 @@
 //! [`resolve`] gathers the candidates within the snap radius of the
 //! pointer and takes the best by rank, then by distance: an endpoint, a
 //! midpoint, a centre and an intersection first; then a perpendicular
-//! foot; then the nearest point of an outline; then the grid. The grid
-//! has no reach test (Graphite's rule): with grid snapping on and
-//! nothing better in reach, the point is on the grid.
+//! foot and where the horizontal or the vertical through the last point
+//! crosses an outline; then a point on that horizontal or vertical; then
+//! the nearest point of an outline; then the grid. The grid has no reach
+//! test (Graphite's rule): with grid snapping on and nothing better in
+//! reach, the point is on the grid.
 //!
 //! Changed from upstream:
 //!
@@ -30,6 +32,12 @@
 //!   point. `Shift` holds the point to 15° steps about the reference
 //!   point (Graphite; upstream cycles an axis lock on an `Alt` tap), and
 //!   a candidate on that ray still wins.
+//! - **Level and upright without a key.** [`SnapKind::Axis`] puts a point
+//!   near the horizontal or the vertical through the tool's last point
+//!   on it (the maintainer's review, 2026-11-23): what upstream's axis
+//!   lock is switched on for, offered as a snap, so it shows its marker
+//!   and guide and gives way to an endpoint. A node being dragged is
+//!   held level with its neighbours the same way.
 //! - **The grid's spacing follows the zoom**, or is the user's; upstream
 //!   snaps to a fixed increment of the project.
 //! - Intersection is on by default (the roadmap lists it among the
@@ -69,6 +77,12 @@ const MIN_GRID_SPACING_PX: f64 = 8.0;
 /// logical pixels.
 const ON_RAY_PX: f64 = 0.5;
 
+/// How near the horizontal or the vertical through a point the pointer
+/// is to be put on it, logical pixels, where the snap radius is not
+/// less: nearer than the other kinds reach, so a shallow line can still
+/// be drawn beside a level one.
+pub const AXIS_PX: f64 = 8.0;
+
 /// How round a closed outline of straight segments must be for its
 /// centre to snap, mm ([`as_circle`]'s tolerance): a circle flattened at
 /// import.
@@ -92,11 +106,14 @@ pub enum SnapKind {
     Perpendicular,
     /// A point of the grid.
     Grid,
+    /// Level with or upright from the tool's last point: on the
+    /// horizontal or the vertical through it.
+    Axis,
 }
 
 impl SnapKind {
     /// Every kind, in menu order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Endpoint,
         Self::Midpoint,
         Self::Centre,
@@ -104,6 +121,7 @@ impl SnapKind {
         Self::OnOutline,
         Self::Perpendicular,
         Self::Grid,
+        Self::Axis,
     ];
 
     /// The kind's name in `gui.toml`.
@@ -117,6 +135,7 @@ impl SnapKind {
             Self::OnOutline => "on_outline",
             Self::Perpendicular => "perpendicular",
             Self::Grid => "grid",
+            Self::Axis => "axis",
         }
     }
 
@@ -131,11 +150,16 @@ impl SnapKind {
         match self {
             Self::Endpoint | Self::Midpoint | Self::Centre | Self::Intersection => 1,
             Self::Perpendicular => 2,
-            Self::OnOutline => 3,
-            Self::Grid => 4,
+            Self::Axis => 3,
+            Self::OnOutline => 4,
+            Self::Grid => 5,
         }
     }
 }
+
+/// The rank of a point where an axis crosses an outline: a
+/// perpendicular foot's, above a point that is only on the axis.
+const AXIS_CROSSING_RANK: u8 = 2;
 
 /// The snapping preferences (`SnapSettings`): an app preference, never
 /// project data.
@@ -238,6 +262,10 @@ pub struct Targets<'a> {
     pub grid_step_mm: Option<f64>,
     /// Shapes that are no target: the one being dragged or edited.
     pub skip: &'a [InstanceId],
+    /// Points to be level with, beside the tool's last point: the
+    /// horizontal and the vertical through each snap as
+    /// [`SnapKind::Axis`]. The neighbours of a node being dragged.
+    pub level_with: &'a [Point],
 }
 
 /// The point a tool takes.
@@ -250,7 +278,8 @@ pub struct Snapped {
     pub kind: Option<SnapKind>,
     /// A dashed line to draw with the marker: from the pointer to the
     /// outline for [`SnapKind::OnOutline`], from the reference point to
-    /// the foot for [`SnapKind::Perpendicular`].
+    /// the foot for [`SnapKind::Perpendicular`], from the point it is
+    /// level with for [`SnapKind::Axis`].
     pub guide: Option<(Point, Point)>,
 }
 
@@ -270,6 +299,9 @@ impl Snapped {
 #[derive(Debug, Clone, Copy)]
 struct Candidate {
     kind: SnapKind,
+    /// Which candidates it beats: its kind's, but for an axis where it
+    /// crosses an outline.
+    rank: u8,
     at: Point,
     distance_mm: f64,
     guide: Option<(Point, Point)>,
@@ -305,6 +337,7 @@ pub fn resolve(
         if distance_mm <= radius_mm && on_ray {
             candidates.push(Candidate {
                 kind,
+                rank: kind.rank(),
                 at,
                 distance_mm,
                 guide,
@@ -393,6 +426,91 @@ pub fn resolve(
     }
     drop(offer);
 
+    // Level with the last point, or with a point given: on the
+    // horizontal or the vertical through it. `Shift` holds a direction
+    // of its own, so the axes stand aside for it.
+    let grid_step_mm = targets
+        .grid_step_mm
+        .filter(|s| s.is_finite() && *s > 0.0 && settings.kinds.contains(&SnapKind::Grid));
+    if settings.kinds.contains(&SnapKind::Axis) && ray.is_none() {
+        // Within half a grid step, so the next grid line can be had.
+        let reach_mm = grid_step_mm
+            .map_or(f64::INFINITY, |step| step / 2.0)
+            .min(settings.radius_px.min(AXIS_PX) / targets.px_per_mm);
+        let anchors = || reference.iter().chain(targets.level_with).copied();
+        let nearest = |off: fn(Point, Point) -> f64| {
+            anchors()
+                .map(|anchor| (off(anchor, raw), anchor))
+                .filter(|(off, _)| *off <= reach_mm)
+                .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        };
+        let mut level = nearest(|anchor, p| (p.y - anchor.y).abs());
+        let mut upright = nearest(|anchor, p| (p.x - anchor.x).abs());
+        // Both through one point meet on it: the nearer axis alone.
+        if let (Some((off_level, a)), Some((off_upright, b))) = (level, upright)
+            && a == b
+        {
+            if off_level <= off_upright {
+                upright = None;
+            } else {
+                level = None;
+            }
+        }
+        // Along an axis the point is on a grid line, when the grid snaps.
+        let on_grid = |v: f64| grid_step_mm.map_or(v, |step| (v / step).round() * step);
+        let held = match (level, upright) {
+            (Some((_, a)), Some((_, b))) => Some((Point::new(b.x, a.y), a, None)),
+            (Some((_, a)), None) => Some((
+                Point::new(on_grid(raw.x), a.y),
+                a,
+                Some(Point::new(raw.x, a.y)),
+            )),
+            (None, Some((_, b))) => Some((
+                Point::new(b.x, on_grid(raw.y)),
+                b,
+                Some(Point::new(b.x, raw.y)),
+            )),
+            (None, None) => None,
+        };
+        if let Some((at, anchor, foot)) = held
+            && at.distance_to(anchor) > 0.0
+        {
+            // Where the one axis crosses an outline in reach, the point
+            // is on both: while points on outlines are offered.
+            if let Some(foot) = foot
+                && settings.kinds.contains(&SnapKind::OnOutline)
+                && let Some(along) = (foot - anchor).normalized()
+            {
+                let axis = Segment {
+                    start: foot + along * (-2.0 * radius_mm),
+                    end: foot + along * (2.0 * radius_mm),
+                    bulge: 0.0,
+                };
+                for &(_, _, _, segment) in &near_segments {
+                    for crossing in crossings(axis, segment) {
+                        let distance_mm = raw.distance_to(crossing.at);
+                        if distance_mm <= radius_mm {
+                            candidates.push(Candidate {
+                                kind: SnapKind::Axis,
+                                rank: AXIS_CROSSING_RANK,
+                                at: crossing.at,
+                                distance_mm,
+                                guide: Some((anchor, crossing.at)),
+                            });
+                        }
+                    }
+                }
+            }
+            candidates.push(Candidate {
+                kind: SnapKind::Axis,
+                rank: SnapKind::Axis.rank(),
+                at,
+                distance_mm: raw.distance_to(at),
+                guide: Some((anchor, at)),
+            });
+        }
+    }
+
     // The grid: no reach test, so with nothing better the point is on it.
     if settings.kinds.contains(&SnapKind::Grid)
         && let Some(step_mm) = targets.grid_step_mm.filter(|s| s.is_finite() && *s > 0.0)
@@ -410,6 +528,7 @@ pub fn resolve(
         };
         candidates.push(Candidate {
             kind: SnapKind::Grid,
+            rank: SnapKind::Grid.rank(),
             at,
             distance_mm: raw.distance_to(at),
             guide: None,
@@ -419,8 +538,8 @@ pub fn resolve(
     candidates
         .into_iter()
         .min_by(|a, b| {
-            (a.kind.rank(), a.distance_mm)
-                .partial_cmp(&(b.kind.rank(), b.distance_mm))
+            (a.rank, a.distance_mm)
+                .partial_cmp(&(b.rank, b.distance_mm))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .map_or(Snapped::free(raw), |best| Snapped {

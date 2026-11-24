@@ -189,10 +189,19 @@ pub fn step_of_field(path: &str) -> Step {
 }
 
 /// Whether `project` has nothing to cut yet: no shape, no picture and no
-/// operation. The Viewport shows the start screen for it.
+/// operation.
 #[must_use]
 pub fn blank(project: &Project) -> bool {
     project.instances.is_empty() && project.bitmaps.is_empty() && project.operations.is_empty()
+}
+
+/// Whether nothing has been done to `app`'s project: it is [`blank`] and
+/// has no step to undo or redo. The Viewport shows the start screen for
+/// it. A project whose last shape was deleted is blank and not this: its
+/// stock stays in view, to draw on again.
+#[must_use]
+pub fn untouched(app: &App) -> bool {
+    blank(app.project()) && !app.can_undo() && !app.can_redo()
 }
 
 /// Whether a visible shape reaches past the stock, by more than

@@ -36,7 +36,7 @@ use dc_project::Shape;
 
 use super::draw::{MIN_SIZE_MM, size_text};
 use super::{Draft, Drawing, Event, Key, Label, Reply, SizeField, SizeRow, ToolBar};
-use crate::command::{NewShape, next_name};
+use crate::command::{Edit, NewShape, next_name};
 use crate::snap::Snapped;
 use crate::strings::StrKey;
 use crate::{App, Command, Tool, units};
@@ -44,6 +44,9 @@ use crate::{App, Command, Tool, units};
 /// How near the first point a click closes the path, logical pixels
 /// (`POLYGON_CLOSE_RADIUS`).
 const CLOSE_PX: f64 = 12.0;
+/// How near the end of an open path an end of a drawn path is to carry
+/// that path on, mm: on it, as a snap to it or a typed point puts it.
+const MEET_MM: f64 = 1e-6;
 
 /// What a span of the path being drawn is.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -482,16 +485,20 @@ impl App {
             return Reply::default();
         }
         let name = draft.name(closing);
-        let shape = path.has_curves().then(|| Shape::Path { paths: vec![path] });
-        let command = Command::AddShapes(vec![NewShape {
-            name: next_name(self.project(), self.strings().get(name)),
-            shape,
-            profiles: vec![outline],
-            // Drawn where it lies, as an imported outline is.
-            transform: dc_geometry::Transform::IDENTITY,
-            construction: self.tool.construction,
-            group: self.selection_group(),
-        }]);
+        // Drawn from or to the end of an open path, it carries that
+        // path on; else it is a shape of its own.
+        let command = self.carried_on(&path).unwrap_or_else(|| {
+            let shape = path.has_curves().then(|| Shape::Path { paths: vec![path] });
+            Command::AddShapes(vec![NewShape {
+                name: next_name(self.project(), self.strings().get(name)),
+                shape,
+                profiles: vec![outline],
+                // Drawn where it lies, as an imported outline is.
+                transform: dc_geometry::Transform::IDENTITY,
+                construction: self.tool.construction,
+                group: self.selection_group(),
+            }])
+        });
         match self.run(command) {
             Ok(label) => {
                 self.tool.path = PathDraft::default();
@@ -506,6 +513,119 @@ impl App {
                 refused: Some(error.to_string()),
             },
         }
+    }
+
+    /// The command that makes the drawn open path `drawn` part of the
+    /// open paths its ends were put on (the maintainer's review,
+    /// 2026-11-23): the paths become one shape, end to end, named,
+    /// placed, filed and cut as the one the drawn path starts on, else
+    /// the one it ends on; the shape closes when that brings its two
+    /// ends together. `None` when
+    /// neither end is on the end of another open path.
+    ///
+    /// An end is met where it is within [`MEET_MM`], which a snap to it
+    /// or a typed point gives. Only a shape that is one open path of its
+    /// own takes part, visible, unlocked, with no linked copy, and
+    /// construction geometry only for a path drawn as construction
+    /// geometry.
+    fn carried_on(&self, drawn: &Path) -> Option<Command> {
+        if drawn.is_closed() || drawn.span_count() == 0 {
+            return None;
+        }
+        let project = self.project();
+        // The open paths there are to meet, each as it is placed.
+        let mut open: Vec<(&dc_project::FeatureInstance, Path)> = project
+            .instances
+            .iter()
+            .filter(|i| i.visible && !i.locked && i.construction == self.tool.construction)
+            .filter(|i| {
+                project
+                    .instances
+                    .iter()
+                    .filter(|other| other.definition == i.definition)
+                    .count()
+                    == 1
+            })
+            .filter_map(|instance| {
+                let definition = project.definitions.get(&instance.definition)?;
+                let paths = crate::edit::paths_of(definition)?;
+                let [path] = paths.as_slice() else {
+                    return None;
+                };
+                if path.is_closed() || path.span_count() == 0 {
+                    return None;
+                }
+                Some((instance, path.transformed(instance.transform)?))
+            })
+            .collect();
+        let ends =
+            |path: &Path| Some((path.nodes().first()?.point(), path.nodes().last()?.point()));
+        let meets = |a: Point, b: Point| a.distance_to(b) <= MEET_MM;
+        let mut chain = drawn.clone();
+        let mut met: Vec<&dc_project::FeatureInstance> = Vec::new();
+        loop {
+            let (start, end) = ends(&chain)?;
+            // The chain's own ends together: it closes, and is done.
+            if !met.is_empty() && meets(start, end) {
+                break;
+            }
+            // A path up to the chain's start, else one on from its end:
+            // the path the drawn one starts on is the first met.
+            let before = open.iter().enumerate().find_map(|(index, (_, path))| {
+                let (theirs_start, theirs_end) = ends(path)?;
+                if meets(start, theirs_end) {
+                    Some((index, path.joined(&chain, MEET_MM)?))
+                } else if meets(start, theirs_start) {
+                    Some((index, path.reversed().joined(&chain, MEET_MM)?))
+                } else {
+                    None
+                }
+            });
+            let after = || {
+                open.iter().enumerate().find_map(|(index, (_, path))| {
+                    let (theirs_start, theirs_end) = ends(path)?;
+                    if meets(end, theirs_start) {
+                        Some((index, chain.joined(path, MEET_MM)?))
+                    } else if meets(end, theirs_end) {
+                        Some((index, chain.joined(&path.reversed(), MEET_MM)?))
+                    } else {
+                        None
+                    }
+                })
+            };
+            let Some((index, joined)) = before.or_else(after) else {
+                break;
+            };
+            chain = joined;
+            met.push(open.remove(index).0);
+        }
+        let first = *met.first()?;
+        let (start, end) = ends(&chain)?;
+        let closes = meets(start, end);
+        if closes {
+            chain = chain.closed_up(MEET_MM)?;
+        }
+        // In the first path's own space, placed as that is.
+        let chain = chain.transformed(first.transform.inverse()?)?;
+        let (shape, profiles) = crate::edit::outline_of(vec![chain], project.flatten_tolerance_mm);
+        Some(Command::ReplaceShapes {
+            from: met.iter().map(|instance| instance.id.clone()).collect(),
+            keep: false,
+            add: vec![NewShape {
+                name: first.name.clone(),
+                shape,
+                profiles,
+                transform: first.transform,
+                construction: first.construction,
+                group: first.group.clone(),
+            }],
+            inherit: vec![(first.id.clone(), 0)],
+            what: if closes {
+                Edit::CloseEnds
+            } else {
+                Edit::Extend
+            },
+        })
     }
 
     /// Reads a typed size for the path's step.

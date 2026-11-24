@@ -162,11 +162,14 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
         sizes: file.sizes.clone(),
         snap: dc_app::SnapSettings {
             enabled: file.snap.enabled,
+            // Horizontal or vertical is its own switch in the file.
             kinds: file
                 .snap
                 .kinds
                 .iter()
                 .filter_map(|kind| dc_app::SnapKind::from_key(kind))
+                .filter(|kind| *kind != dc_app::SnapKind::Axis)
+                .chain(file.snap.axis.then_some(dc_app::SnapKind::Axis))
                 .collect(),
             radius_px: file.snap.radius_px,
         }
@@ -289,9 +292,11 @@ pub fn prefs_to_file(prefs: &Prefs) -> GuiPrefs {
                 .snap
                 .kinds
                 .iter()
+                .filter(|kind| **kind != dc_app::SnapKind::Axis)
                 .map(|kind| kind.key().to_owned())
                 .collect(),
             radius_px: prefs.snap.radius_px,
+            axis: prefs.snap.kinds.contains(&dc_app::SnapKind::Axis),
         },
         drawing: gui_prefs::Drawing {
             tool: prefs.drawing_tool.key().to_owned(),
@@ -401,9 +406,23 @@ mod tests {
                 ..dc_app::prefs::DrawingPrefs::default()
             }
         );
+        // Horizontal or vertical is on unless the file says not, so a
+        // file from before there was such a snap has it.
         assert_eq!(
             prefs.snap.kinds.iter().copied().collect::<Vec<_>>(),
-            [dc_app::SnapKind::Endpoint]
+            [dc_app::SnapKind::Endpoint, dc_app::SnapKind::Axis]
+        );
+        file.snap.axis = false;
+        file.snap.kinds.push("axis".to_owned());
+        assert_eq!(
+            prefs_from_file(&file)
+                .snap
+                .kinds
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            [dc_app::SnapKind::Endpoint],
+            "its own switch decides, not a name in the list"
         );
         assert!((prefs.snap.radius_px - 32.0).abs() < 1e-9);
         assert_eq!(prefs.drawing_tool, dc_app::Drawing::Rectangle);

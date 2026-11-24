@@ -161,6 +161,8 @@ pub enum Icon {
     Magnet,
     /// `layout-grid`: Array, copies of the selection in a pattern.
     LayoutGrid,
+    /// `square-square`: Offset, an outline a set distance from another.
+    SquareSquare,
     /// `merge`: Join, open paths made one.
     Merge,
     /// `squares-unite`: Weld.
@@ -273,6 +275,7 @@ impl Icon {
             Self::Ruler => "ruler",
             Self::Magnet => "magnet",
             Self::LayoutGrid => "layout-grid",
+            Self::SquareSquare => "square-square",
             Self::Merge => "merge",
             Self::SquaresUnite => "squares-unite",
             Self::SquaresSubtract => "squares-subtract",
@@ -368,6 +371,7 @@ impl Icon {
             Self::Ruler => '\u{e14b}',
             Self::Magnet => '\u{e2b5}',
             Self::LayoutGrid => '\u{e0ff}',
+            Self::SquareSquare => '\u{e60e}',
             Self::Merge => '\u{e43f}',
             Self::SquaresUnite => '\u{e65a}',
             Self::SquaresSubtract => '\u{e659}',
@@ -389,7 +393,7 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 88] = [
+    pub const ALL: [Self; 89] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -462,6 +466,7 @@ impl Icon {
         Self::Ruler,
         Self::Magnet,
         Self::LayoutGrid,
+        Self::SquareSquare,
         Self::Merge,
         Self::SquaresUnite,
         Self::SquaresSubtract,

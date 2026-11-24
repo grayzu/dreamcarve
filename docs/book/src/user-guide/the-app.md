@@ -254,7 +254,7 @@ on its background. The pictures in this book are of the dark appearance.
 - **Rail**: the column of step buttons at the window's left edge.
 - **Step panel**: the panel beside the rail that shows the open step.
 - **Inspector**: the panel at the right that edits what is selected.
-- **Start screen**: what an empty project shows in the Viewport's place.
+- **Start screen**: what a new project, with nothing done to it yet, shows in the Viewport's place.
 - **Design Tree**: the list of the project's shapes, tabs and pictures on
   the Design step.
 - **Viewport**: the view of the stock from above.

@@ -52,6 +52,7 @@ pub(crate) const fn kind_name(kind: SnapKind) -> StrKey {
         SnapKind::OnOutline => StrKey::SnapKindOnOutline,
         SnapKind::Perpendicular => StrKey::SnapKindPerpendicular,
         SnapKind::Grid => StrKey::SnapKindGrid,
+        SnapKind::Axis => StrKey::SnapKindAxis,
     }
 }
 
@@ -77,7 +78,8 @@ fn label(ui: &Ui, painter: &egui::Painter, at: Pos2, anchor: egui::Align2, text:
 /// for an endpoint, a triangle for a midpoint, a circle with a cross for
 /// a centre, a cross for an intersection, a circle for a point on an
 /// outline, a right-angle mark for a perpendicular's foot, a small plus
-/// for the grid.
+/// for the grid, a diamond for a point level with or upright from
+/// another.
 fn marker(painter: &egui::Painter, at: Pos2, kind: SnapKind, stroke: Stroke) {
     let r = MARKER_PX;
     let line = |a: egui::Vec2, b: egui::Vec2| painter.line_segment([at + a, at + b], stroke);
@@ -122,6 +124,17 @@ fn marker(painter: &egui::Painter, at: Pos2, kind: SnapKind, stroke: Stroke) {
             let r = r * 0.6;
             line(egui::vec2(-r, 0.0), egui::vec2(r, 0.0));
             line(egui::vec2(0.0, -r), egui::vec2(0.0, r));
+        }
+        SnapKind::Axis => {
+            painter.add(egui::Shape::closed_line(
+                vec![
+                    at + egui::vec2(0.0, -r),
+                    at + egui::vec2(r, 0.0),
+                    at + egui::vec2(0.0, r),
+                    at + egui::vec2(-r, 0.0),
+                ],
+                stroke,
+            ));
         }
     }
 }

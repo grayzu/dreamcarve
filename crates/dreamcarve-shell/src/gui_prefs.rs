@@ -116,6 +116,10 @@ pub struct Snap {
     pub kinds: Vec<String>,
     /// The snap radius, logical pixels.
     pub radius_px: f64,
+    /// Whether a point near the horizontal or the vertical through the
+    /// last is put on it. Apart from `kinds`, so a file saved before
+    /// there was such a snap has it on, as a new one does.
+    pub axis: bool,
 }
 
 impl Default for Snap {
@@ -134,6 +138,7 @@ impl Default for Snap {
             .map(str::to_owned)
             .to_vec(),
             radius_px: 14.0,
+            axis: true,
         }
     }
 }
@@ -476,7 +481,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "only_selected",
     ];
     const TAB: &[&str] = &["width_mm", "height_mm", "shape"];
-    const SNAP: &[&str] = &["enabled", "kinds", "radius_px"];
+    const SNAP: &[&str] = &["enabled", "kinds", "radius_px", "axis"];
     const DRAWING: &[&str] = &[
         "tool",
         "grid_spacing_mm",
@@ -633,6 +638,7 @@ mod tests {
                 enabled: false,
                 kinds: vec!["endpoint".to_owned(), "perpendicular".to_owned()],
                 radius_px: 20.0,
+                axis: false,
             },
             drawing: Drawing {
                 tool: "slot".to_owned(),

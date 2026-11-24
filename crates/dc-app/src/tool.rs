@@ -861,6 +861,19 @@ impl App {
         reference: Option<Point>,
         skip: &[InstanceId],
     ) -> Snapped {
+        self.snap_level(pointer, reference, skip, &[])
+    }
+
+    /// [`Self::snap_at`], with the points `level_with` to be level with
+    /// beside `reference`: the neighbours of a node being dragged.
+    #[must_use]
+    pub fn snap_level(
+        &self,
+        pointer: &Pointer,
+        reference: Option<Point>,
+        skip: &[InstanceId],
+        level_with: &[Point],
+    ) -> Snapped {
         let project = self.project();
         let targets = Targets {
             scene: self.scene(),
@@ -870,6 +883,7 @@ impl App {
             // A hidden grid does not snap.
             grid_step_mm: self.view().visibility.grid.then(|| self.grid_step_mm()),
             skip,
+            level_with,
         };
         snap::resolve(&targets, &self.prefs().snap, pointer, reference)
     }

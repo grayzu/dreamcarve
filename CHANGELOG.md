@@ -468,6 +468,23 @@ before that; its changes are those under Unreleased.
   for **Select Together**, with ids `g1`, `g2`, …. Format 29 changed in
   place for this, since no release has written it: a project saved by
   an earlier build of this branch no longer opens.
+- **A path drawn from the end of another carries it on.** Start or end
+  a Line, an Arc or a Spline on the end of an open path and the two are
+  one shape, which closes when its ends are brought together, so an
+  outline can be drawn a piece at a time with nothing to join after.
+  The shape keeps the name, the place and the operations of the path
+  it was drawn from. One undo step, *Extend* or *Close*.
+- **Horizontal or vertical** is a new kind of snap, on at first: a
+  point within 8 px of level with, or upright from, the tool's last
+  point is put there, with a guide, and where that line crosses an
+  outline the point is on both. A node dragged in Edit nodes is held
+  level with the nodes beside it. **Shift** held while shapes are moved
+  keeps the move level or upright. In `gui.toml` it is `[snap] axis`.
+- **0 for H lays a line level; 0 for W stands it upright.** Properties
+  refused a size of 0. For one open path of straight pieces it now puts
+  the points on one horizontal or vertical through the origin.
+- **Offset is in the tool strip**, beside Trim, as well as **Shape ▸
+  Offset…** (Shift+O).
 - **Join, Weld, Subtract and Intersect are in the tool strip**, beside
   Trim and Array, each greyed until enough is selected. **The Tab tool
   is in the Shape menu** (and still on T), no longer a button on the
@@ -599,6 +616,10 @@ before that; its changes are those under Unreleased.
 
 ### Fixed
 
+- **Deleting every shape no longer goes back to the start screen.**
+  The start screen is for a project nothing has been done to. Once
+  there is a step to undo or redo the empty stock stays in view, to
+  draw on again.
 - **A hidden layer is said to be left out.** `svg_hidden_object` told
   of a `display:none` layer that it "is imported and would be cut". It
   never was: nothing of such a layer is in the project. The warning now

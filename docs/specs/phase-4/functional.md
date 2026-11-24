@@ -429,7 +429,18 @@ folder are app preferences, kept outside the project.
     chain glyph spanning both rows, linked (the default) or broken.
     Typing X or Y moves the selection; typing W or H scales it about its
     bounding-box centre, the other following while the link is closed; a
-    selection of several moves as one. Rotation and mirroring are not
+    selection of several moves as one. An **H of 0** lays a line level
+    and a **W of 0** stands it upright (phase 5's review, 2026-11-23:
+    "I want to make this line horizontal but cannot by changing the H to
+    0"): with one shape selected that is one open path of straight
+    segments, its points are put on the horizontal, or the vertical,
+    through the Origin's point of its box as it is placed, the other
+    size unchanged whatever the link says. It changes the outline, for
+    every linked copy, since no placement gives a shape no size; one
+    undo step, *Make “name” level* or *upright*. A closed shape, a path
+    with an arc or a curve, several shapes at once, and a line that
+    would be left with no length are refused at the field with the
+    reason. Rotation and mirroring are not
     properties of a shape: they are actions on the selection (58a). On
     the Viewport the selection drags to move, its corner handles
     scale, its rotation handle rotates, and the arrow keys nudge (54).
@@ -1328,8 +1339,10 @@ folder are app preferences, kept outside the project.
 
 79. **Start screen** (`redesign.md`, "The start screen"; reworked by
     the review, 2026-11-10). While the project has no shape, picture or
-    operation and the Design step is open, the Viewport's card shows the
-    start screen in place of the empty stock: the heading *Start with a
+    operation, has no step to undo or redo (phase 5's review,
+    2026-11-23: deleting every shape of a drawing leaves the empty stock
+    in view, to draw on), and the Design step is open, the Viewport's
+    card shows the start screen in place of the empty stock: the heading *Start with a
     drawing* and one sentence, *Bring in an SVG or DXF drawing to make
     toolpaths from, or open an example to look round.* Under them:
     - Three ways in, in a row: the primary **New from drawing…** (SVG or

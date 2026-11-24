@@ -36,6 +36,40 @@ fn new_project() -> Harness {
     Harness::from_project(App::new_project().unwrap())
 }
 
+/// The start screen is for a project nothing has been done to: nothing
+/// to cut, and no step to undo or redo. Once a shape was drawn, deleting
+/// every shape leaves the empty stock in view, to draw on again (the
+/// maintainer's review, 2026-11-23).
+#[test]
+fn the_start_screen_is_for_a_project_nothing_was_done_to() {
+    let mut harness = new_project();
+    assert!(steps::untouched(&harness.app), "a new project");
+    harness
+        .run(Command::AddShapes(vec![dc_app::command::NewShape {
+            name: "Square".to_owned(),
+            shape: None,
+            profiles: vec![dc_geometry::Polyline::rect(
+                dc_geometry::Point::new(10.0, 10.0),
+                10.0,
+                10.0,
+            )],
+            transform: dc_geometry::Transform::IDENTITY,
+            construction: false,
+            group: None,
+        }]))
+        .unwrap();
+    assert!(!steps::untouched(&harness.app), "a shape");
+    let drawn = harness.app.project().instances[0].id.clone();
+    harness.run(Command::DeleteInstances(vec![drawn])).unwrap();
+    assert!(steps::blank(harness.app.project()), "nothing to cut again");
+    assert!(!steps::untouched(&harness.app), "but work was done on it");
+    // Undone to the start, the shape can still be brought back.
+    harness.app.undo();
+    harness.app.undo();
+    assert!(steps::blank(harness.app.project()));
+    assert!(!steps::untouched(&harness.app), "a step to redo");
+}
+
 /// The tool the project's first operation cuts with: one an enabled
 /// operation uses.
 fn used_tool(harness: &Harness) -> String {

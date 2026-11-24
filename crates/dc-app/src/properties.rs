@@ -331,7 +331,8 @@ fn factor(field: &'static str, typed_mm: f64, current_mm: f64) -> Result<f64, Co
 }
 
 /// The command `edit` makes for `ids`: one `TransformInstances`, about
-/// the selection's box centre.
+/// the selection's box centre; or, for a width or a height of 0, the one
+/// selected line stood upright or laid level (`straighten`).
 ///
 /// # Errors
 ///
@@ -374,6 +375,12 @@ pub fn edit_about(
     let delta = match edit {
         Edit::X { mm } => Transform::translate(moved(mm - b.min.x)?, 0.0),
         Edit::Y { mm } => Transform::translate(0.0, moved(mm - b.min.y)?),
+        // No width or no height is no scale of anything: it is a line
+        // stood upright or laid level.
+        Edit::W { mm, .. } if is_zero(mm) => {
+            return straighten(project, ids, Axis::Upright, origin);
+        }
+        Edit::H { mm, .. } if is_zero(mm) => return straighten(project, ids, Axis::Level, origin),
         Edit::W { mm, uniform } => {
             let s = scaled(factor("width", mm, b.width_mm())?)?;
             origin.about(b, Transform::scale(s, if uniform { s } else { 1.0 }))
@@ -386,6 +393,112 @@ pub fn edit_about(
     Ok(Command::TransformInstances {
         ids: ids.to_vec(),
         delta,
+    })
+}
+
+/// Whether a typed size is no size.
+fn is_zero(mm: f64) -> bool {
+    mm.abs() < MIN_EXTENT_MM
+}
+
+/// Which way a line is put by a size of zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    /// No height: on a horizontal.
+    Level,
+    /// No width: on a vertical.
+    Upright,
+}
+
+/// The command a typed height or width of 0 makes (the maintainer's
+/// review, 2026-11-23): the one selected line laid level, or stood
+/// upright, its points put on the horizontal or the vertical through
+/// `origin`'s point of its box, as it is placed. Its other size stays.
+/// It is a change to the outline, for every linked copy, since no
+/// placement gives a shape a size of nothing.
+///
+/// # Errors
+///
+/// [`CommandError::NotAQuantity`] with the reason for more than one
+/// shape, for a shape that is not one open path of straight lines, and
+/// for a line that would be left with no length;
+/// [`CommandError::NothingToDo`] for a line that lies that way already.
+fn straighten(
+    project: &Project,
+    ids: &[InstanceId],
+    axis: Axis,
+    origin: Origin,
+) -> Result<Command, CommandError> {
+    let size = match axis {
+        Axis::Level => "height",
+        Axis::Upright => "width",
+    };
+    let [id] = ids else {
+        return Err(refused(
+            "0",
+            format!("select one line to give it no {size}"),
+        ));
+    };
+    let instance = find_instance(project, id)?;
+    let not_a_line = || {
+        refused(
+            "0",
+            format!("only an open path of straight lines can have no {size}"),
+        )
+    };
+    let definition = project
+        .definitions
+        .get(&instance.definition)
+        .ok_or_else(not_a_line)?;
+    let curved = match &definition.shape {
+        None => false,
+        Some(dc_project::Shape::Path { paths }) => paths.iter().any(dc_geometry::Path::has_curves),
+        Some(_) => true,
+    };
+    let [outline] = definition.profiles.as_slice() else {
+        return Err(not_a_line());
+    };
+    if curved || outline.is_closed() || !outline.segments().all(|segment| segment.is_line()) {
+        return Err(not_a_line());
+    }
+    let to_definition = instance
+        .transform
+        .inverse()
+        .ok_or(CommandError::SingularTransform)?;
+    let pivot = origin.point(selection_bounds(project, ids)?);
+    let vertices: Vec<dc_geometry::Vertex> = outline
+        .vertices()
+        .iter()
+        .map(|vertex| {
+            let at = instance.transform.apply(vertex.point());
+            let put = match axis {
+                Axis::Level => dc_geometry::Point::new(at.x, pivot.y),
+                Axis::Upright => dc_geometry::Point::new(pivot.x, at.y),
+            };
+            let back = to_definition.apply(put);
+            dc_geometry::Vertex::line(back.x, back.y)
+        })
+        .collect();
+    let straight = dc_geometry::Polyline::new(vertices, false);
+    if straight.length_mm() < MIN_EXTENT_MM {
+        return Err(refused("0", "nothing would be left of the line"));
+    }
+    let moved = outline
+        .vertices()
+        .iter()
+        .zip(straight.vertices())
+        .any(|(was, is)| was.point().distance_to(is.point()) > NO_CHANGE_MM);
+    if !moved {
+        return Err(CommandError::NothingToDo);
+    }
+    Ok(Command::SetOutline {
+        instance: id.clone(),
+        shape: None,
+        profiles: vec![straight],
+        what: match axis {
+            Axis::Level => crate::command::Edit::Level,
+            Axis::Upright => crate::command::Edit::Upright,
+        },
     })
 }
 

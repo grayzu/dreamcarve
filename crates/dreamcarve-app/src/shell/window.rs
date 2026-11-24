@@ -2418,8 +2418,8 @@ pub(crate) struct FrameState<'a> {
     pub app: &'a App,
     pub prefs: &'a Prefs,
     pub display_name: String,
-    /// Whether the Viewport shows the start screen: the project has
-    /// nothing to cut and the Design step is open.
+    /// Whether the Viewport shows the start screen: nothing has been done
+    /// to the project (`steps::untouched`) and the Design step is open.
     pub show_empty: bool,
     /// The start screen's example cards, each with its thumbnail.
     pub examples: &'a [(Example, Thumbnail)],
@@ -2509,7 +2509,7 @@ impl eframe::App for Shell {
         let mut regions: Vec<(Region, Rect)> = Vec::new();
         // A drawing tool needs the stock to draw on: the start screen
         // stands aside for it.
-        let show_empty = steps::blank(self.app.project())
+        let show_empty = steps::untouched(&self.app)
             && self.step == Step::Design
             && self.app.tool() == dc_app::Tool::Select;
         if show_empty && self.thumbnails.is_empty() {

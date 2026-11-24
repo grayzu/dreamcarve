@@ -7,7 +7,8 @@
 //! for the grid, the stock's outline, the shapes, the hover and the
 //! selection, with the overlay egui's painter draws on top (the origin
 //! crosshair and its label, the park point, the padlocks, the marquee)
-//! and the start screen in its place while the project has nothing to cut.
+//! and the start screen in its place while nothing has been done to the
+//! project.
 //!
 //! Navigation: a middle-button drag, a Space-drag or a two-finger scroll
 //! pans; the wheel, Ctrl/⌘-scroll and a pinch zoom about the cursor
@@ -51,9 +52,9 @@
 //! `redesign.md`, "The Viewport's floating controls"): the tools and the
 //! zoom at its top left, the colour mode and *Layers* at its top right
 //! with the depth legend under them, the cursor's read-out at its bottom
-//! left. Fit keeps the stock clear of them. While the project has nothing
-//! to cut and the Design step is open, the card shows the start screen in
-//! place of the stock ([`crate::panels::empty`]).
+//! left. Fit keeps the stock clear of them. While nothing has been done to
+//! the project and the Design step is open, the card shows the start
+//! screen in place of the stock ([`crate::panels::empty`]).
 
 mod controls;
 mod draft;
@@ -1098,6 +1099,12 @@ fn gestures(
         let uniform = !properties::proportions_free(ui.ctx()) && !modifiers.alt;
         let from = camera.to_world(pane_pos(pane, *start));
         let to = camera.to_world(pane_pos(pane, pos));
+        // Shift holds a move level or upright.
+        let to = if matches!(grab, Grab::Move) && modifiers.shift {
+            handles::straight(from, to)
+        } else {
+            to
+        };
         let delta = handles::drag_delta(handles, grab, from, to, uniform);
         view.readout = Some(readout(state, grab, delta));
         view.preview = Some(Preview {

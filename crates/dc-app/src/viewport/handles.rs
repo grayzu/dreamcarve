@@ -302,6 +302,18 @@ fn fold(angle_rad: f64) -> f64 {
     }
 }
 
+/// `to` held level with or upright from `from`: on the horizontal or the
+/// vertical through it, whichever `to` has gone further along (level
+/// when as far each way). What `Shift` does to a move.
+#[must_use]
+pub fn straight(from: Point, to: Point) -> Point {
+    if (to.x - from.x).abs() >= (to.y - from.y).abs() {
+        Point::new(to.x, from.y)
+    } else {
+        Point::new(from.x, to.y)
+    }
+}
+
 /// The change a drag of `grab` from `from` to `to` (project mm) asks for,
 /// as `TransformInstances` takes it: about the selection's centre. A
 /// corner scales by the pointer's distance from the centre over the

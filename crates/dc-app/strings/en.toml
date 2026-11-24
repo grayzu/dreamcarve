@@ -111,6 +111,11 @@ intersect = "Intersect {subject}"
 trim = "Trim {subject}"
 close_path = "Close {subject}"
 join_paths = "Join {subject}"
+# A path drawn from or to the end of an open path carries it on.
+extend_path = "Extend {subject}"
+# A height or a width of 0 typed for a line in Properties.
+make_level = "Make {subject} level"
+make_upright = "Make {subject} upright"
 convert_to_path = "Convert {subject} to a path"
 convert_to_paths = "Convert {count} {count|shape|shapes} to paths"
 delete_tab = "Delete tab"
@@ -494,6 +499,7 @@ measure_help = "Measure between two points, and read the length and area of the 
 group_help = "Draw with the {tool} tool; the list beside it also has {others}"
 text_help = "Click where the text starts, then type its words"
 array_help = "Array: copies of the selected shapes in a grid or round a centre."
+offset_help = "Offset: a new outline a set distance outside or inside each selected shape, or to a side of an open path."
 join_help = "Join: the selected open paths made one where their ends meet; a chain whose ends meet is closed."
 weld_help = "Weld: one shape covering everything the selected closed shapes cover."
 subtract_help = "Subtract: the first shape selected, with the others taken out of it."
@@ -1352,8 +1358,8 @@ w = "W"
 h = "H"
 x_help = "Where the left edge of the selection's box is, measured from the origin: from -6000 to 6000 mm (236 in). Typing it moves the selection. Empty while the selected shapes differ."
 y_help = "Where the bottom edge of the selection's box is, measured from the origin, Y up: from -6000 to 6000 mm (236 in). Typing it moves the selection. Empty while the selected shapes differ."
-w_help = "The width of the selection's box, along X: above 0. Typing it scales the selection about its Origin, the middle of its box unless you choose another point, and the height with it while Keep proportions is on."
-h_help = "The height of the selection's box, along Y: above 0. Typing it scales the selection about its Origin, the middle of its box unless you choose another point, and the width with it while Keep proportions is on."
+w_help = "The width of the selection's box, along X. Typing it scales the selection about its Origin, the middle of its box unless you choose another point, and the height with it while Keep proportions is on. 0 stands a line upright."
+h_help = "The height of the selection's box, along Y. Typing it scales the selection about its Origin, the middle of its box unless you choose another point, and the width with it while Keep proportions is on. 0 lays a line level."
 keep_proportions = "Keep proportions"
 mixed = "Mixed"
 # Slice 25 (#617): a locked selection's fields are read-only under this.
@@ -1803,6 +1809,7 @@ intersection = "Intersection"
 on_outline = "On outline"
 perpendicular = "Perpendicular"
 grid = "Grid"
+axis = "Horizontal or vertical"
 
 # Shapes made from shapes (capabilities 94 and 95): what the result is
 # called, and why there is none.

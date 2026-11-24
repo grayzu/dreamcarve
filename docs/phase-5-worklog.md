@@ -437,6 +437,39 @@ Decisions taken with these, for the maintainer:
 - Every picture in the book shows the strip, so all of them were taken
   again.
 
+### Second round, 2026-11-23
+
+Five more items from the maintainer's work with the drawing tools.
+
+| Item | Kind | Where it stands |
+| --- | --- | --- |
+| Offset geometry | Feature | Existed as Shape ▸ Offset… (Shift+O); now also the strip's **Offset** button, beside Trim |
+| Two open shapes drawn end to end should be one closed shape | Bug | Done: a path drawn from or to the end of an open path carries it on, and closes it when the ends meet (capability 90a; `tool::path::carried_on`) |
+| Deleting every shape goes back to the start screen | Bug | Done: the start screen is for a project with no step to undo or redo (`steps::untouched`) |
+| Snap a line or an object to vertical or horizontal | Feature | Done: the snap kind **Horizontal or vertical** (`SnapKind::Axis`), a dragged node held level with its neighbours, and Shift holding a move level or upright (`handles::straight`). Shift already held a drawn point to 15° steps |
+| A line needs a width | Bug | The maintainer's picture showed it: H 0 was refused. Done: H 0 lays a line level, W 0 stands it upright (`properties::straighten`) |
+
+Decisions taken with these, for the maintainer:
+
+- A drawn path joins only an end it is exactly on (1e-6 mm), which a
+  snap to the end gives. There is no switch for it: two lines that
+  should stay two can be drawn with the first locked, or broken apart
+  again in Edit nodes. If that proves a nuisance it wants a preference.
+- The joined shape is the path the drawn one starts on, else the one
+  it ends on: its name, place, group and operations. Only paths of the
+  same kind join, cut with cut and construction with construction.
+- Horizontal or vertical reaches 8 px, not the 14 px of the other
+  kinds, and half a grid step while the grid snaps, so a shallow line
+  and the next grid line can still be had. It ranks under an endpoint
+  and over a point on an outline.
+- It is its own switch in `gui.toml` (`[snap] axis`), not a name in
+  `kinds`, so preferences saved before it have it on.
+- A size of 0 changes the line's outline, and so every linked copy of
+  it, since no placement can give a shape no size. It is for one shape
+  at a time, an open path of straight pieces.
+- The start screen still comes back after *Draw from scratch* and
+  Escape with nothing drawn: nothing was done to the project.
+
 ## Slices
 
 Status is one of: todo, doing, done, owner (waits for the maintainer).

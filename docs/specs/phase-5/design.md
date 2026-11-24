@@ -1304,6 +1304,54 @@ The names here are today's.
   `kittest::floating_tools_select_fit_and_zoom`;
   `review::phase5_feedback_screenshots`.
 
+### The second round, 2026-11-23
+
+- **Offset in the strip.** *Offset* after Trim (`Icon::SquareSquare`,
+  arms `Adjust::Offset`), enabled while a shape is selected.
+  `STRIP_BUTTONS` is 15.
+- **A path carried on** (capability 90a). `tool::path::carried_on(&Path)
+  -> Option<Command>`, asked by `finish_path` before `AddShapes`: the
+  open paths there are to meet (one open path of their own, visible,
+  unlocked, unlinked, of the drawn path's construction flag), each as
+  placed; the chain grows at its start, then at its end, by
+  `Path::joined` and `Path::reversed`, until nothing more meets or its
+  own ends do (`MEET_MM`, 1e-6); `Path::closed_up` then. The result is
+  one `ReplaceShapes`, the chain in the first path's own space,
+  inheriting that path's operations, with `Edit::Extend` or
+  `Edit::CloseEnds`; the label names the path that stays.
+- **Horizontal or vertical.** `SnapKind::Axis` (`"axis"`, rank under
+  Perpendicular and over OnOutline), `snap::AXIS_PX` (8), and
+  `Targets::level_with`, points to be level with beside the reference:
+  `resolve` takes the nearest horizontal and the nearest vertical among
+  them within reach (the nearer alone when both are through one point),
+  rounds the free coordinate to the grid while it snaps, and offers
+  where the one axis crosses a segment in reach at a perpendicular's
+  rank (`Candidate::rank`). `App::snap_level` passes the points;
+  `tool::node` gives a dragged node its unselected neighbours.
+  `gui_prefs::Snap::axis` is the kind's own switch in `gui.toml`. The
+  window draws a diamond for it.
+- **Shift on a move.** `viewport::handles::straight(from, to)`; the
+  window applies it to a `Grab::Move` while Shift is down.
+- **The start screen.** `steps::untouched(app)`: `blank` and no step to
+  undo or redo. The window shows the start screen for it.
+- **A size of 0.** `properties::edit_about` sends `Edit::W`/`H` of 0 to
+  `straighten`: one `SetOutline` with the line's points put on the
+  vertical or the horizontal through the origin's point, as placed
+  (`command::Edit::Upright`, `Level`).
+- Tests: `dc-app` `draw_path::a_path_drawn_from_an_end_carries_the_path_on`,
+  `a_path_drawn_between_two_ends_joins_them`,
+  `a_spline_carried_on_keeps_its_curves`,
+  `a_path_joins_only_an_open_end_of_its_own_kind`;
+  `snap::a_point_is_held_level_with_the_last`,
+  `the_axis_among_the_other_kinds`, `a_point_is_held_level_with_other_points`;
+  `handles::shift_holds_a_move_level_or_upright`;
+  `steps::the_start_screen_is_for_a_project_nothing_was_done_to`;
+  `properties::zero_height_lays_a_line_level_and_zero_width_stands_it_upright`,
+  `zero_is_refused_where_nothing_would_be_left`; in the window
+  `drawing::draw_from_scratch_opens_design`,
+  `the_tool_strip_groups_the_drawing_tools`,
+  `editing::shift_drag_moves_level_or_upright`.
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the

@@ -219,6 +219,36 @@ fn the_tool_strip_groups_the_drawing_tools() {
     key(&mut h, egui::Key::Escape);
     assert_eq!(tool(&h), Tool::Select);
 
+    // Offset is beside it (review, 2026-11-23): off with nothing
+    // selected, and with a shape selected it takes its distance in the
+    // tool bar, as Shape ▸ Offset… does.
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.run_steps(8);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Offset")
+            .accesskit_node()
+            .is_disabled(),
+        "nothing is selected to offset"
+    );
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![square.clone()]));
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Offset").click();
+    h.run_steps(8);
+    assert_eq!(
+        tool(&h),
+        Tool::Adjust(dc_app::tool::Adjust::Offset),
+        "the strip's Offset"
+    );
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Distance")
+            .is_some(),
+        "its distance is in the tool bar"
+    );
+    key(&mut h, egui::Key::Escape);
+    assert_eq!(tool(&h), Tool::Select);
+
     // Join, Weld, Subtract and Intersect are buttons of the strip, off
     // until two shapes are selected. Weld acts at once; Join takes its
     // tolerance in the tool bar; one that cannot act says why.
@@ -547,6 +577,19 @@ fn draw_from_scratch_opens_design() {
     // Put down, the tool leaves the drawing: the start screen stays gone.
     key(&mut h, egui::Key::V);
     assert!(h.query_by_label("Start with a drawing").is_none());
+    // Deleted again, the project has nothing in it, but it is no new
+    // project: the stock stays, to draw on (review, 2026-11-23).
+    let drawn = h.state().app().project().instances[0].id.clone();
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![drawn]));
+    h.run();
+    key(&mut h, egui::Key::Delete);
+    assert!(h.state().app().project().instances.is_empty());
+    assert!(
+        h.query_by_label("Start with a drawing").is_none(),
+        "deleting every shape does not go back to the start screen"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

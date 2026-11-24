@@ -349,3 +349,196 @@ fn multi_selection_shows_mixed_values() {
         "{shown} in for {x_mm} mm"
     );
 }
+
+/// A new project with one open path through `points`, placed by
+/// `transform`: instance `i1`.
+fn with_path(points: &[(f64, f64)], closed: bool, transform: Transform) -> Harness {
+    let mut harness = Harness::from_project(dc_app::App::new_project().unwrap());
+    harness
+        .run(Command::AddShapes(vec![dc_app::command::NewShape {
+            name: "Line".to_owned(),
+            shape: None,
+            profiles: vec![dc_geometry::Polyline::new(
+                points
+                    .iter()
+                    .map(|(x, y)| dc_geometry::Vertex::line(*x, *y))
+                    .collect(),
+                closed,
+            )],
+            transform,
+            construction: false,
+            group: None,
+        }]))
+        .unwrap();
+    harness
+}
+
+/// The one shape's outline as it is placed.
+fn placed(harness: &Harness) -> Vec<(f64, f64)> {
+    let project = harness.app.project();
+    let instance = &project.instances[0];
+    instance
+        .transform
+        .apply_polyline(&project.definitions[&instance.definition].profiles[0])
+        .unwrap()
+        .vertices()
+        .iter()
+        .map(|v| (v.x, v.y))
+        .collect()
+}
+
+#[track_caller]
+fn assert_points(got: &[(f64, f64)], want: &[(f64, f64)]) {
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for (g, w) in got.iter().zip(want) {
+        assert!(
+            (g.0 - w.0).abs() < 1e-9 && (g.1 - w.1).abs() < 1e-9,
+            "{got:?}"
+        );
+    }
+}
+
+/// The maintainer's review of 2026-11-23: a line is laid level by typing
+/// 0 for its height, and stood upright by 0 for its width. Its points go
+/// onto the horizontal, or the vertical, through the Origin; the other
+/// size stays, whatever Keep proportions says. One undo step, named for
+/// what it did.
+#[test]
+fn zero_height_lays_a_line_level_and_zero_width_stands_it_upright() {
+    let line = [(10.0, 20.0), (50.0, 28.0)];
+    let ids = [id("i1")];
+    // H 0, about the middle of its box.
+    let mut harness = with_path(&line, false, Transform::IDENTITY);
+    assert!(matches!(
+        type_into(&mut harness, &ids, Field::H, "0", true),
+        Ok(true)
+    ));
+    assert_points(&placed(&harness), &[(10.0, 24.0), (50.0, 24.0)]);
+    assert_eq!(harness.app.undo_label(), Some("Make “Line” level"));
+    let placement = placement_of(harness.app.project(), &ids);
+    assert_eq!(
+        properties::field_text(&placement, Field::H, Units::Mm),
+        "0",
+        "its box has no height now"
+    );
+    assert_eq!(
+        properties::field_text(&placement, Field::W, Units::Mm),
+        "40"
+    );
+    // Level already: nothing to do, and no step.
+    assert!(matches!(
+        type_into(&mut harness, &ids, Field::H, "0", true),
+        Ok(false)
+    ));
+    harness.app.undo();
+    assert_points(&placed(&harness), &line);
+
+    // W 0: upright, through the middle.
+    assert!(matches!(
+        type_into(&mut harness, &ids, Field::W, "0 mm", false),
+        Ok(true)
+    ));
+    assert_points(&placed(&harness), &[(30.0, 20.0), (30.0, 28.0)]);
+    assert_eq!(harness.app.undo_label(), Some("Make “Line” upright"));
+    harness.app.undo();
+
+    // About another origin: the bottom left stays, so the line lies along
+    // the bottom of the box it had.
+    let project = harness.app.project().clone();
+    let edit = properties::Edit::H {
+        mm: 0.0,
+        uniform: false,
+    };
+    let command =
+        properties::edit_about(&project, &ids, edit, dc_app::origin::Origin::BottomLeft).unwrap();
+    harness.run(command).unwrap();
+    assert_points(&placed(&harness), &[(10.0, 20.0), (50.0, 20.0)]);
+
+    // A line placed by a scale and a move is level as it is placed.
+    let mut harness = with_path(
+        &[(0.0, 0.0), (20.0, 4.0)],
+        false,
+        Transform::translate(5.0, 5.0).then(Transform::scale(2.0, 2.0)),
+    );
+    let before = placed(&harness);
+    assert!(matches!(
+        type_into(&mut harness, &ids, Field::H, "0", false),
+        Ok(true)
+    ));
+    let after = placed(&harness);
+    let middle = f64::midpoint(before[0].1, before[1].1);
+    assert_points(&after, &[(before[0].0, middle), (before[1].0, middle)]);
+
+    // A path of several straight pieces goes onto one level too.
+    let mut harness = with_path(
+        &[(0.0, 0.0), (10.0, 6.0), (30.0, 2.0)],
+        false,
+        Transform::IDENTITY,
+    );
+    assert!(matches!(
+        type_into(&mut harness, &ids, Field::H, "0", false),
+        Ok(true)
+    ));
+    assert_points(&placed(&harness), &[(0.0, 3.0), (10.0, 3.0), (30.0, 3.0)]);
+}
+
+/// What has no zero size: a closed shape, which would have no inside
+/// left; a line that would be left with no length; and several shapes at
+/// once. Each says why, and nothing changes.
+#[test]
+fn zero_is_refused_where_nothing_would_be_left() {
+    let ids = [id("i1")];
+    let reason = |result: Result<bool, CommandError>| match result {
+        Err(CommandError::NotAQuantity { reason, .. }) => reason,
+        other => panic!("refused with a reason: {other:?}"),
+    };
+    // A closed triangle.
+    let mut harness = with_path(
+        &[(0.0, 0.0), (40.0, 0.0), (40.0, 30.0)],
+        true,
+        Transform::IDENTITY,
+    );
+    let before = harness.app.project().clone();
+    assert_eq!(
+        reason(type_into(&mut harness, &ids, Field::H, "0", false)),
+        "only an open path of straight lines can have no height"
+    );
+    assert_eq!(
+        reason(type_into(&mut harness, &ids, Field::W, "0", false)),
+        "only an open path of straight lines can have no width"
+    );
+    assert_eq!(harness.app.project(), &before);
+    // An upright line laid level would be a point.
+    let mut harness = with_path(&[(10.0, 0.0), (10.0, 30.0)], false, Transform::IDENTITY);
+    assert_eq!(
+        reason(type_into(&mut harness, &ids, Field::H, "0", false)),
+        "nothing would be left of the line"
+    );
+    // Two lines at once.
+    let mut harness = with_path(&[(0.0, 0.0), (40.0, 5.0)], false, Transform::IDENTITY);
+    let first = harness.app.project().instances[0].clone();
+    harness
+        .run(Command::CopyInstances {
+            ids: vec![first.id],
+            placements: vec![Transform::translate(0.0, 20.0)],
+            group: None,
+        })
+        .unwrap();
+    let both: Vec<InstanceId> = harness
+        .app
+        .project()
+        .instances
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    assert_eq!(
+        reason(type_into(&mut harness, &both, Field::H, "0", false)),
+        "select one line to give it no height"
+    );
+    // A negative size is still no size.
+    let mut harness = with_path(&[(0.0, 0.0), (40.0, 5.0)], false, Transform::IDENTITY);
+    assert!(matches!(
+        type_into(&mut harness, &ids, Field::H, "-1", false),
+        Err(CommandError::InvalidValue { .. } | CommandError::NotAQuantity { .. })
+    ));
+}

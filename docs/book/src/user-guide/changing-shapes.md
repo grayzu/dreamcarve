@@ -4,8 +4,8 @@ The **Shape** menu makes new outlines from the ones you have: a border
 round a shape, two shapes made one, a hole taken out of another shape.
 The **Trim** tool cuts outlines where they cross.
 
-**Trim**, **Join**, **Weld**, **Subtract** and **Intersect** are also
-buttons in the tool strip at the Viewport's left, greyed until enough
+**Trim**, **Offset**, **Join**, **Weld**, **Subtract** and **Intersect**
+are also buttons in the tool strip at the Viewport's left, greyed until enough
 is selected for them to act on.
 
 The commands that need a value, **Offset…**, **Fillet Corners…** and
@@ -15,8 +15,8 @@ or press Enter. **Escape** leaves with nothing changed.
 
 ## Offset
 
-**Shape ▸ Offset…** (**Shift+O**) makes an outline a set distance from a
-shape: a border, a recess a little larger than a part, a line to engrave
+**Shape ▸ Offset…** (**Shift+O**, or **Offset** in the tool strip)
+makes an outline a set distance from a shape: a border, a recess a little larger than a part, a line to engrave
 beside an edge.
 
 ![Shape ▸ Offset… on the plate: Distance, Side with Inward chosen, Original with Keep chosen, and the offset outline previewed inside the plate](figures/app/draw-offset.png)
@@ -80,8 +80,10 @@ is highlighted. Click to remove it.
 
 ## Join
 
-**Shape ▸ Join…** (**Ctrl+J**, **⌘J**) makes one path of open paths
-whose ends meet. Ends within the **Tolerance**, 0.1 mm at first, are
+A path drawn from the end of another is joined to it as it is drawn
+([Carrying a path on](drawing-shapes.md#carrying-a-path-on)). For
+paths already apart, **Shape ▸ Join…** (**Ctrl+J**, **⌘J**) makes one
+path of open paths whose ends meet. Ends within the **Tolerance**, 0.1 mm at first, are
 joined, with a straight piece across any gap. A chain whose two ends
 meet becomes a closed outline.
 

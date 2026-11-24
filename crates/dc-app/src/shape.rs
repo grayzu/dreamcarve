@@ -360,6 +360,9 @@ pub(crate) const fn edit_word(shape: Option<&Shape>, edit: Edit) -> StrKey {
         | Edit::DeleteSegment
         | Edit::CloseEnds
         | Edit::JoinEnds
+        | Edit::Extend
+        | Edit::Level
+        | Edit::Upright
         | Edit::Offset
         | Edit::Weld
         | Edit::Subtract
