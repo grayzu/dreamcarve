@@ -346,7 +346,7 @@ fn check_prints_the_tapered_floor_ridge() {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

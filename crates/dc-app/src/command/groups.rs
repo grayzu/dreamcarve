@@ -5,44 +5,46 @@
 // Ported to Rust and modified from PureCutCNC:
 //   src/store/slices/featureSlice.ts
 
-//! The folder commands (functional spec, capability 99): a folder made
+//! The group commands (functional spec, capability 99): a group made
 //! round the selection, renamed, deleted with its shapes, dissolved, and
-//! rows moved within the Design Tree, into a folder and out of one
+//! rows moved within the Design Tree, into a group and out of one
 //! (`addFeatureFolder`, `groupSelectedFeaturesIntoNewFolder`,
 //! `moveFeatureTreeFeature`).
 //!
-//! Where it leaves PureCutCNC: there is no tree beside the shapes. A
-//! folder's rows are the instances that name it, and every command
+//! Where it leaves PureCutCNC: upstream has folders, some of them
+//! grouped; here there is one thing, a group, and *Select Together* is a
+//! switch on it. There is no tree beside the shapes. A
+//! group's rows are the instances that name it, and every command
 //! leaves them next to each other in the file, so the order listed is
-//! the order drawn and cut ([`gather`]). Deleting a folder deletes its
+//! the order drawn and cut ([`gather`]). Deleting a group deletes its
 //! shapes (upstream keeps them); *Ungroup* is what keeps them. A shape
 //! can be dragged out of a group, and a group left with no shape goes.
 
-use dc_project::{Folder, FolderId, InstanceId, Project};
+use dc_project::{Group, GroupId, InstanceId, Project};
 
 use super::instances::{delete, next_free_id, require_all};
 use crate::error::CommandError;
 
-/// The folder `id`.
-pub(super) fn find<'a>(project: &'a Project, id: &FolderId) -> Result<&'a Folder, CommandError> {
+/// The group `id`.
+pub(super) fn find<'a>(project: &'a Project, id: &GroupId) -> Result<&'a Group, CommandError> {
     project
-        .folders
+        .groups
         .iter()
-        .find(|folder| folder.id == *id)
-        .ok_or_else(|| CommandError::UnknownFolder(id.clone()))
+        .find(|group| group.id == *id)
+        .ok_or_else(|| CommandError::UnknownGroup(id.clone()))
 }
 
-/// The instances filed in folder `id`, in file order.
-pub(super) fn members(project: &Project, id: &FolderId) -> Vec<InstanceId> {
+/// The instances filed in group `id`, in file order.
+pub(super) fn members(project: &Project, id: &GroupId) -> Vec<InstanceId> {
     project
         .instances
         .iter()
-        .filter(|instance| instance.folder.as_ref() == Some(id))
+        .filter(|instance| instance.group.as_ref() == Some(id))
         .map(|instance| instance.id.clone())
         .collect()
 }
 
-/// Puts each folder's rows next to each other, after the first of them,
+/// Puts each group's rows next to each other, after the first of them,
 /// in the order they have ([`crate::tree::gathered`]).
 pub(super) fn gather(project: &mut Project) {
     let order = crate::tree::gathered(project);
@@ -60,12 +62,12 @@ pub(super) fn gather(project: &mut Project) {
         .collect();
 }
 
-/// The folders an instance of `project` is filed in.
-fn used(project: &Project) -> Vec<FolderId> {
+/// The groups an instance of `project` is filed in.
+fn used(project: &Project) -> Vec<GroupId> {
     project
         .instances
         .iter()
-        .filter_map(|instance| instance.folder.clone())
+        .filter_map(|instance| instance.group.clone())
         .collect()
 }
 
@@ -75,21 +77,21 @@ fn used(project: &Project) -> Vec<FolderId> {
 /// file) stays.
 pub(super) fn prune_emptied(before: &Project, next: &mut Project) {
     let (held, holds) = (used(before), used(next));
-    next.folders
-        .retain(|folder| holds.contains(&folder.id) || !held.contains(&folder.id));
+    next.groups
+        .retain(|group| holds.contains(&group.id) || !held.contains(&group.id));
 }
 
 /// What every command leaves of the groups: none it emptied, and each
 /// group's rows together. Run when a command changed which instances
 /// there are or where one is filed.
 pub(super) fn settle(project: &Project, next: &mut Project) {
-    if next.folders.is_empty() {
+    if next.groups.is_empty() {
         return;
     }
-    let layout = |p: &Project| -> Vec<(InstanceId, Option<FolderId>)> {
+    let layout = |p: &Project| -> Vec<(InstanceId, Option<GroupId>)> {
         p.instances
             .iter()
-            .map(|instance| (instance.id.clone(), instance.folder.clone()))
+            .map(|instance| (instance.id.clone(), instance.group.clone()))
             .collect()
     };
     if layout(project) != layout(next) {
@@ -98,14 +100,14 @@ pub(super) fn settle(project: &Project, next: &mut Project) {
     }
 }
 
-/// `NewFolder`: a group under the next free `f<n>`, holding `ids`, which
+/// `NewGroup`: a group under the next free `g<n>`, holding `ids`, which
 /// are gathered where the first of them is. It may hold one shape, or
 /// none, to be filled; a group it takes the last shape of goes.
-pub(super) fn new_folder(
+pub(super) fn new_group(
     project: &Project,
     name: &str,
     ids: &[InstanceId],
-    group: bool,
+    together: bool,
 ) -> Result<Project, CommandError> {
     let name = name.trim();
     if name.is_empty() {
@@ -115,16 +117,16 @@ pub(super) fn new_folder(
         require_all(project, ids)?;
     }
     let mut next = project.clone();
-    let taken: Vec<&str> = next.folders.iter().map(|f| f.id.as_str()).collect();
-    let id = FolderId::new(next_free_id(&taken, "f"));
-    next.folders.push(Folder {
+    let taken: Vec<&str> = next.groups.iter().map(|f| f.id.as_str()).collect();
+    let id = GroupId::new(next_free_id(&taken, "g"));
+    next.groups.push(Group {
         id: id.clone(),
         name: name.to_owned(),
-        group,
+        together,
     });
     for instance in &mut next.instances {
         if ids.contains(&instance.id) {
-            instance.folder = Some(id.clone());
+            instance.group = Some(id.clone());
         }
     }
     prune_emptied(project, &mut next);
@@ -136,42 +138,38 @@ pub(super) fn new_folder(
 /// the Viewport.
 pub(super) fn set_together(
     project: &Project,
-    id: &FolderId,
+    id: &GroupId,
     together: bool,
 ) -> Result<Project, CommandError> {
-    if find(project, id)?.group == together {
+    if find(project, id)?.together == together {
         return Err(CommandError::NothingToDo);
     }
     let mut next = project.clone();
-    for folder in &mut next.folders {
-        if folder.id == *id {
-            folder.group = together;
+    for group in &mut next.groups {
+        if group.id == *id {
+            group.together = together;
         }
     }
     Ok(next)
 }
 
-/// `RenameFolder`.
-pub(super) fn rename(
-    project: &Project,
-    id: &FolderId,
-    name: &str,
-) -> Result<Project, CommandError> {
+/// `RenameGroup`.
+pub(super) fn rename(project: &Project, id: &GroupId, name: &str) -> Result<Project, CommandError> {
     let name = name.trim();
     if name.is_empty() || find(project, id)?.name == name {
         return Err(CommandError::NothingToDo);
     }
     let mut next = project.clone();
-    for folder in &mut next.folders {
-        if folder.id == *id {
-            name.clone_into(&mut folder.name);
+    for group in &mut next.groups {
+        if group.id == *id {
+            name.clone_into(&mut group.name);
         }
     }
     Ok(next)
 }
 
-/// `DeleteFolder`: the folder and its shapes, each as Delete removes it.
-pub(super) fn delete_folder(project: &Project, id: &FolderId) -> Result<Project, CommandError> {
+/// `DeleteGroup`: the group and its shapes, each as Delete removes it.
+pub(super) fn delete_group(project: &Project, id: &GroupId) -> Result<Project, CommandError> {
     find(project, id)?;
     let ids = members(project, id);
     let mut next = if ids.is_empty() {
@@ -179,13 +177,13 @@ pub(super) fn delete_folder(project: &Project, id: &FolderId) -> Result<Project,
     } else {
         delete(project, &ids)?
     };
-    next.folders.retain(|folder| folder.id != *id);
+    next.groups.retain(|group| group.id != *id);
     Ok(next)
 }
 
-/// `Ungroup`: the folders go; their rows stay where they are, in no
-/// folder.
-pub(super) fn ungroup(project: &Project, ids: &[FolderId]) -> Result<Project, CommandError> {
+/// `Ungroup`: the groups go; their rows stay where they are, in no
+/// group.
+pub(super) fn ungroup(project: &Project, ids: &[GroupId]) -> Result<Project, CommandError> {
     if ids.is_empty() {
         return Err(CommandError::NothingToDo);
     }
@@ -194,26 +192,26 @@ pub(super) fn ungroup(project: &Project, ids: &[FolderId]) -> Result<Project, Co
     }
     let mut next = project.clone();
     for instance in &mut next.instances {
-        if instance.folder.as_ref().is_some_and(|id| ids.contains(id)) {
-            instance.folder = None;
+        if instance.group.as_ref().is_some_and(|id| ids.contains(id)) {
+            instance.group = None;
         }
     }
-    next.folders.retain(|folder| !ids.contains(&folder.id));
+    next.groups.retain(|group| !ids.contains(&group.id));
     Ok(next)
 }
 
-/// `MoveRows`: `ids`, in the order they have, are filed in `folder` and
-/// placed before row `before`; with no `before`, after the folder's
+/// `MoveRows`: `ids`, in the order they have, are filed in `group` and
+/// placed before row `before`; with no `before`, after the group's
 /// last row, or at the end of the file when they are filed in none.
 pub(super) fn move_rows(
     project: &Project,
     ids: &[InstanceId],
     before: Option<&InstanceId>,
-    folder: Option<&FolderId>,
+    group: Option<&GroupId>,
 ) -> Result<Project, CommandError> {
     require_all(project, ids)?;
-    if let Some(folder) = folder {
-        find(project, folder)?;
+    if let Some(group) = group {
+        find(project, group)?;
     }
     if let Some(before) = before {
         require_all(project, std::slice::from_ref(before))?;
@@ -223,7 +221,7 @@ pub(super) fn move_rows(
         .into_iter()
         .partition(|instance| ids.contains(&instance.id));
     for instance in &mut moved {
-        instance.folder = folder.cloned();
+        instance.group = group.cloned();
     }
     // A row cannot go before itself: before the next one that stays.
     let anchor = before.and_then(|before| {
@@ -235,11 +233,11 @@ pub(super) fn move_rows(
             .find(|instance| !ids.contains(&instance.id))
             .map(|instance| instance.id.clone())
     });
-    let at = match (&anchor, folder) {
+    let at = match (&anchor, group) {
         (Some(anchor), _) => rest.iter().position(|i| i.id == *anchor),
-        (None, Some(folder)) if before.is_none() => rest
+        (None, Some(group)) if before.is_none() => rest
             .iter()
-            .rposition(|i| i.folder.as_ref() == Some(folder))
+            .rposition(|i| i.group.as_ref() == Some(group))
             .map(|last| last.saturating_add(1)),
         _ => None,
     }

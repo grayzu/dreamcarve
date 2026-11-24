@@ -135,7 +135,7 @@
     }
   ],
   "tabs": [],
-  "folders": [],
+  "groups": [],
   "instances": [
     {
       "id": "i1",
@@ -152,7 +152,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -171,7 +171,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -190,7 +190,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     }

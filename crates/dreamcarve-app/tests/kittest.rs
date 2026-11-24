@@ -3877,7 +3877,7 @@ fn five_hundred_shapes() -> dc_project::Project {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: Some(12.0),
             z_bottom_mm: Some(0.0),
         });
@@ -5908,16 +5908,16 @@ fn keyboard_shortcuts_reach_their_commands() {
     command_key(&h, egui::Key::G);
     h.run();
     assert_eq!(
-        h.state().app().project().folders.len(),
+        h.state().app().project().groups.len(),
         1,
         "Ctrl G groups the selection"
     );
-    assert!(h.state().app().project().folders[0].group);
+    assert!(h.state().app().project().groups[0].together);
     reached.insert(Key::Group);
     shift_command_key(&h, egui::Key::G);
     h.run();
     assert!(
-        h.state().app().project().folders.is_empty(),
+        h.state().app().project().groups.is_empty(),
         "Shift Ctrl G ungroups it"
     );
     reached.insert(Key::Ungroup);

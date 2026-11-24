@@ -488,7 +488,7 @@ fn project_of(shapes: &[(&str, Vec<Polyline>)]) -> Project {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: Some(THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });

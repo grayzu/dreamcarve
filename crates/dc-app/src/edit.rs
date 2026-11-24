@@ -368,7 +368,7 @@ fn derived(instance: &FeatureInstance, name: String, profiles: Vec<Polyline>) ->
         profiles,
         transform: instance.transform,
         construction: instance.construction,
-        folder: instance.folder.clone(),
+        group: instance.group.clone(),
     }
 }
 

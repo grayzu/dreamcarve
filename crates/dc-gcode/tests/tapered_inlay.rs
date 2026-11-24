@@ -98,7 +98,7 @@ fn star_pair(bit: Tool, extras: bool) -> (Project, InlayOp) {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

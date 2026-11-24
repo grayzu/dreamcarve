@@ -70,7 +70,7 @@ are `docs/research/purecutcnc-drawing-digest.md` and
 | `dc-text::stroke` | `src/text/index.ts` (`GLYPHS`, `layoutGlyphs`) | The Simple Stroke table, flipped to Y-up. |
 | `dc-text::layout` | `src/text/index.ts` (`outlineProfilesFromFont`) | The steps (glyph outlines, advance, counters nested). Not ported: three.js typeface fonts, the fixed 0.18 spacing, the Clipper clean-up. Fonts are parsed by `skrifa`; curves are flattened by `dc_geometry::flatten`. |
 | `dc-app::command` (Make Unique, definitions) | `src/store/helpers/featureDefinitions.ts` (`makeUnique`, `gcOrphanedDefinitions`), `definitionEditing.test.ts` | Ported. |
-| `dc-app::tree` (folders) | `src/store/slices/` folder actions, `folderGroup.test.ts` | Flat folders and the grouped flag. |
+| `dc-app::tree` (groups) | `src/store/slices/` folder actions, `folderGroup.test.ts` | Flat folders and the grouped flag, as one thing, a group. |
 
 Not ported, by the functional spec's "Out of scope": the constraint
 solver and every call into it from the edit paths (digest §8), driving
@@ -164,25 +164,26 @@ impl Shape {
     pub fn outline_matches(&self, profiles: &[Polyline], flatten_tolerance_mm: f64) -> Option<bool>;
 }
 
-pub struct FeatureInstance { /* … */ pub construction: bool, pub folder: Option<FolderId>, /* z_top_mm, z_bottom_mm */ }
-pub struct Folder { pub id: FolderId, pub name: String, pub group: bool }   // ids `f<n>`
-pub struct Project { /* … tabs, */ pub folders: Vec<Folder>, /* instances, bitmaps, … */ }
+pub struct FeatureInstance { /* … */ pub construction: bool, pub group: Option<GroupId>, /* z_top_mm, z_bottom_mm */ }
+pub struct Group { pub id: GroupId, pub name: String, pub together: bool }   // ids `g<n>`
+pub struct Project { /* … tabs, */ pub groups: Vec<Group>, /* instances, bitmaps, … */ }
 pub struct Bitmap { /* … locked, */ pub opacity_fraction: f64, /* png_base64 */ }
 ```
 
 `v28_to_v29` adds `"shape": null` to every definition,
-`"construction": false` and `"folder": null` to every instance (after
-`locked`), `"folders": []` after `tabs`, and `"opacity_fraction": 1.0`
+`"construction": false` and `"group": null` to every instance (after
+`locked`), `"groups": []` after `tabs`, and `"opacity_fraction": 1.0`
 to every bitmap (after `locked`), and refuses a file that already has
 any of them. Fixtures: `dcv/v29/sample.dcv` and `drawing.dcv`
 (`test_support::drawing_project`: parametric shapes, a path with a
-curve, a folder, a group, a construction instance and a faded picture;
+curve, a group selected together and one not, a construction instance
+and a faded picture;
 it gains a definition of each kind as the slices that generate their
 outlines land).
 
-A folder's rows are its instances in file order, shown where its first
-instance is; an empty folder is shown after the shapes, in `folders`
-order. Whether a folder is collapsed is view state.
+A group's rows are its instances in file order, shown where its first
+instance is; an empty group is shown after the shapes, in `groups`
+order. Whether a group is collapsed is view state.
 
 New `Problem`s:
 
@@ -190,8 +191,8 @@ New `Problem`s:
 | --- | --- | --- |
 | `shape_outline_differs` | warning | `Shape::outline` at the project's tolerance does not equal `profiles` (count, closedness, each vertex within `EPS_MM`); not asked of text |
 | `construction_targeted` | error | an enabled operation's `targets`, or an Inlay's `boundary`, names a construction instance |
-| `dangling_folder` | error | an instance's `folder` names no folder |
-| `duplicate_folder_id` | error | two folders share an id |
+| `dangling_group` | error | an instance's `group` names no group |
+| `duplicate_group_id` | error | two groups share an id |
 
 A size that cannot be is phase 1's `out_of_range` (or `non_finite`) at
 its own field, `definitions[d2].shape.width_mm`, so the app marks the
@@ -254,25 +255,26 @@ pub enum Command { /* phase 4's, and: */
     ReplaceShapes { from: Vec<InstanceId>, keep: bool, add: Vec<NewShape>,
                     inherit: Vec<(InstanceId, usize)>, what: Edit },
     MakeUnique(Vec<InstanceId>),
-    /// Linked copies of `ids`, one set per transform; with `folder`, they and their sources are
+    /// Linked copies of `ids`, one set per transform; with `group`, they and their sources are
     /// filed in a new group of that name (an array).
-    CopyInstances { ids: Vec<InstanceId>, placements: Vec<Transform>, folder: Option<String> },
+    CopyInstances { ids: Vec<InstanceId>, placements: Vec<Transform>, group: Option<String> },
     /// Cut: `DeleteInstances` under its own name. Paste: each clip (a definition and the
     /// instance that placed it) a new instance of a new definition.
     CutInstances(Vec<InstanceId>), PasteShapes(Vec<clipboard::Clip>),
     /// One transform per instance: align, distribute.
     PlaceInstances { moves: Vec<(InstanceId, Transform)>, what: Placing },   // Align | Distribute
     SetConstruction { ids: Vec<InstanceId>, construction: bool },
-    NewFolder { name: String, ids: Vec<InstanceId>, group: bool },
-    RenameFolder { id: FolderId, name: String }, DeleteFolder(FolderId), Ungroup(Vec<FolderId>),
-    /// Rows moved before row `before` (or after the folder's last row, or to the end) and into
-    /// `folder`.
-    MoveRows { ids: Vec<InstanceId>, before: Option<InstanceId>, folder: Option<FolderId> },
+    NewGroup { name: String, ids: Vec<InstanceId>, together: bool },
+    SetGroupTogether { id: GroupId, together: bool },
+    RenameGroup { id: GroupId, name: String }, DeleteGroup(GroupId), Ungroup(Vec<GroupId>),
+    /// Rows moved before row `before` (or after the group's last row, or to the end) and into
+    /// `group`.
+    MoveRows { ids: Vec<InstanceId>, before: Option<InstanceId>, group: Option<GroupId> },
     SetBitmapOpacity { ids: Vec<BitmapId>, opacity_fraction: f64 },
     PlaceBitmap { id: BitmapId, x_mm: f64, y_mm: f64, width_mm: f64 },   // scale by two points
 }
 pub struct NewShape { pub name: String, pub shape: Option<Shape>, pub profiles: Vec<Polyline>,
-                      pub transform: Transform, pub construction: bool, pub folder: Option<FolderId> }
+                      pub transform: Transform, pub construction: bool, pub group: Option<GroupId> }
 pub enum Edit { Size(SizeField), Corners, Measured, Flanks, Root, Crest,   // slice 8
                 MoveNodes { count }, Reshape, AddNode, DeleteNodes { count }, Break, DeleteSegment,
                 CloseEnds, JoinEnds,                                      // slice 10
@@ -772,7 +774,7 @@ centre, total_deg, turn }`), `placements(array, bounds)` (one
 transform a copy, the source's cell left out, a grid's row by row),
 `ArrayError` (one cell, more than `MAX_COPIES` = 1000, no spacing, no
 angle, the centre on the selection, no centre yet; carried as
-`CommandError::Array`) and `command`, a `CopyInstances` whose `folder`
+`CommandError::Array`) and `command`, a `CopyInstances` whose `group`
 is `<name> array`. The Array mode is `Tool::Adjust(Adjust::Array)`
 (`tool::arrays`): `ArrayPrefs` in `AdjustPrefs` (kind, counts,
 spacings, total angle, turn; for the session), the circular centre in
@@ -792,7 +794,7 @@ one translation per instance from the instances' placed boxes, as
 crates/dc-geometry/src/{shapes.rs, shapes/gear.rs (port), path.rs, path/{edit.rs (port), spline.rs (port)},
                         intersect.rs (port), trim.rs, join.rs}
 crates/dc-project/src/{shape.rs (Shape, its outline, its checks), model.rs (the fields), migrate.rs (v28_to_v29),
-                       validate.rs (the six problems), ids.rs (FolderId)}
+                       validate.rs (the six problems), ids.rs (GroupId)}
 crates/dc-text/{Cargo.toml, README.md, fonts/ (the bundled files and their licences),
                 src/{lib.rs, font.rs, layout.rs, stroke.rs (port), bundled.rs}}
 crates/dc-job/src/checks.rs, project_from.rs            — skip construction instances
@@ -801,13 +803,13 @@ crates/dc-app/src/{tool.rs, tool/{draw.rs (box shapes, slot), gear.rs, path.rs (
                    fields.rs (typed sizes), bar.rs}, snap.rs, shape.rs (the Shape
                    section, sizes as placed, stretch), edit.rs (offset, weld, subtract, intersect, join, fillet
                    corners as commands), array.rs (port), fonts.rs (the fonts on hand), clipboard.rs,
-                   command/{shapes.rs, folders.rs}, arrange.rs (align, distribute), tree.rs (folders)}
+                   command/{shapes.rs, groups.rs}, arrange.rs (align, distribute), tree.rs (groups)}
 crates/dreamcarve-shell/src/fonts.rs                     — the user's fonts folder: list, add
 crates/dreamcarve-app/src/{viewport/{tools.rs (events to dc-app), tool_bar.rs, draw_menu.rs, draft.rs (the
                            overlay: preview, nodes, snap marker, labels)}, panels/{shape.rs (the Shape section),
                            array.rs (popover)}, shell/menu.rs (Draw, Shape), keyboard.rs}
 docs/book/src/{quick-start/first-design.md, user-guide/{drawing-shapes.md, snapping.md, text.md, editing-nodes.md,
-               changing-shapes.md, copies-and-arrays.md, folders-and-construction.md, tracing.md, measuring.md}}
+               changing-shapes.md, copies-and-arrays.md, groups-and-construction.md, tracing.md, measuring.md}}
 ```
 
 `dc-app`'s manifest gains `dc-text`; `dreamcarve-app`'s gains nothing.
@@ -928,7 +930,7 @@ the tool bar of slice 9 is its form.
   `copy` makes the copies of one placement in the Design Tree's order
   (upstream's `sourcesInAuthoredOrder`), unlocked; `paste` gives each
   clip the next free `d<n>` and `i<n>`, keeps a free name, and keeps
-  the clip's folder when this project has it.
+  the clip's group when this project has it.
 - `dc_app::clipboard`: `Clipboard` holds `Clip`s (definition and
   instance), their joint bounds as placed, and how many 10 mm offsets
   the next paste with no point lands from the originals (one after a
@@ -983,44 +985,46 @@ the tool bar of slice 9 is its form.
   `AdjustPrefs::align_to_stock`, for the session. Ten Lucide icons
   (`align-start-vertical` … `align-vertical-distribute-center`).
 
-### Folders and groups (slice 21)
+### Groups (slice 21)
 
-As first built. The maintainer's review of 2026-11-23 made the two one
-thing, a group: see "The maintainer's review of 2026-11-23", below.
+First built as two things, folders and groups. The maintainer's review
+of 2026-11-23 made them one, a group, and the file and the code were
+renamed to match: see "The maintainer's review of 2026-11-23", below.
+The names here are today's.
 
-- `dc_app::command::folders` (ported from `featureSlice.ts`'s folder
-  actions): `new_folder`, `rename`, `delete_folder` (its shapes go as
-  `DeleteInstances` removes them), `ungroup` (several folders in one
-  step), `move_rows`. There is no tree beside the shapes, as upstream
-  has: a folder's rows are the instances that name it, and `settle`,
-  run at the end of `Command::apply` whenever a command changed which
-  instances there are or where one is filed, removes a group left
-  empty (`prune_groups`) and puts each folder's rows together after
-  the first of them (`gather`, by `tree::gathered`). So a duplicate, a
-  paste or a drawn shape filed in a folder lands beside the folder's
-  rows, and the order listed is the order in the file.
-- `dc_app::tree`: `FolderRow { id, name, group, rows, visible, locked
-  }`, `ShapeRow::folder`, `Row::Folder` before a folder's first row
-  (an empty folder after the shapes), `Tree::folders`,
-  `next_folder_name`, `with_groups` (a shape of a group replaced by
-  the group's shapes) and `groups_of`. `menu` gains *New Folder*,
-  *Group* (two rows or more) and *Ungroup* (a row in a group).
-  `Tree::build` lists a file whose folder rows are apart as if they
+- `dc_app::command::groups` (ported from `featureSlice.ts`'s folder
+  actions): `new_group`, `set_together`, `rename`, `delete_group` (its
+  shapes go as `DeleteInstances` removes them), `ungroup` (several
+  groups in one step), `move_rows`. There is no tree beside the shapes,
+  as upstream has: a group's rows are the instances that name it, and
+  `settle`, run at the end of `Command::apply` whenever a command
+  changed which instances there are or where one is filed, removes a
+  group the command emptied (`prune_emptied`) and puts each group's
+  rows together after the first of them (`gather`, by
+  `tree::gathered`). So a duplicate, a paste or a drawn shape filed in
+  a group lands beside the group's rows, and the order listed is the
+  order in the file.
+- `dc_app::tree`: `GroupRow { id, name, together, rows, visible,
+  locked }`, `ShapeRow::group`, `Row::Group` before a group's first row
+  (an empty group after the shapes), `Tree::groups`,
+  `next_group_name`, `with_groups` (a shape of a group whose *Select
+  Together* is on replaced by the group's shapes) and `groups_of`.
+  `menu` gains *Group* (any rows) and *Ungroup* (a row in a group).
+  `Tree::build` lists a file whose group rows are apart as if they
   were together.
 - `Selection::clicked_in` and `boxed_in` are the Viewport's click and
   marquee: a shape of a group is its group, toggled as one. The tree's
   rows keep `clicked`. A drag that starts on a shape of a group not
   selected takes the group; a double-click selects the one shape and
   arms Edit nodes only for a shape in no group.
-- The window, `panels/tree.rs`: `folder_row` (eye, padlock, chevron,
-  folder or group glyph, name or rename field, count; a click selects
-  its rows; its menu is *Rename*, *Ungroup*, *Delete*); rows of a
-  folder set in 16 px; which folders are folded is egui's memory, for
-  the session; the Shapes header's *New Folder* button
-  (`folder-plus`). Rows sense drags: the rows dragged (the selection
+- The window, `panels/tree.rs`: `group_row` (eye, padlock, chevron,
+  the group glyph, name or rename field, count; a click selects
+  its rows; its menu is *Select Together*, *Rename*, *Ungroup*, *Delete*); rows
+  of a group set in 16 px; which groups are folded is egui's memory,
+  for the session; the Shapes header's *New group* button (`group`). Rows sense drags: the rows dragged (the selection
   with a selected row, else the one) are kept in egui's memory while
-  the button is down; each row and folder header says where a release
-  over it would put them (`DropAt`: before a row, into a folder, the
+  the button is down; each row and group header says where a release
+  over it would put them (`DropAt`: before a row, into a group, the
   Tabs header for the end), a 2 px `accent` line is drawn there, and
   the release runs one `MoveRows`, or nothing when it would change
   nothing.
@@ -1191,7 +1195,7 @@ thing, a group: see "The maintainer's review of 2026-11-23", below.
   fields with Tab between and Enter after, radio buttons and the Font
   list, the Design Tree's rows, the menu bar, Properties.
   `first_design.rs` holds the project the window leaves to
-  `design_steps::drawn` (names, folders, sizes; positions to 1e-6 mm,
+  `design_steps::drawn` (names, groups, sizes; positions to 1e-6 mm,
   since the Text tool's click is a whole pixel); `book.rs` takes the
   chapter's pictures at the stages the driver names.
 - `gui_equality::the_hook_plate_drawn_equals_the_cli` runs the part
@@ -1256,22 +1260,27 @@ thing, a group: see "The maintainer's review of 2026-11-23", below.
   draws the chooser (nine radio buttons named *Origin: Top left* …)
   and the selection's handles carry a ring at the pivot. Tests:
   `dc-app` `tests/origin.rs`; `editing::the_origin_is_chosen_and_changes_are_about_it`.
-- **One group.** Folders and groups are one thing to the user, a group
-  (capability 99). The file and the code keep their names: `Folder`,
-  `FolderId`, `Project::folders`, `FeatureInstance::folder`, and
-  `Folder::group`, which is now the group's *Select Together*.
-  `Command::NewFolder` no longer needs two shapes and is labelled
-  *Group …*, or *New group …* when it holds none;
-  `Command::SetGroupTogether { id, together }` is the switch.
-  `command::folders::prune_emptied(before, next)` replaces
-  `prune_groups`: a group that held a shape before the command and
-  holds none after it is removed, whatever its switch, and one that was
-  empty already stays. `tree::next_group_name`, `groups_of` (every
+- **One group.** Folders and groups are one thing, a group (capability
+  99), in the app, the file and the code. Format 29, which no release
+  has written, changed in place: `Project::groups` (was `folders`),
+  `FeatureInstance::group` (was `folder`), `Group { id, name, together
+  }` (was `Folder`, its flag `group`), `GroupId` with ids `g<n>` (was
+  `FolderId`, `f<n>`), and the problems `duplicate_group_id` and
+  `dangling_group`. `v28_to_v29` adds the new names; a file an earlier
+  build of this phase saved, with the old ones, is refused as any file
+  with an unknown field is. `Command::NewGroup` (was `NewFolder`) no
+  longer needs two shapes and is labelled *Group …*, or *New group …*
+  when it holds none; `Command::SetGroupTogether { id, together }` is
+  the switch; `RenameGroup` and `DeleteGroup` were `RenameFolder` and
+  `DeleteFolder`. `command::groups::prune_emptied(before, next)`
+  replaces `prune_groups`: a group that held a shape before the command
+  and holds none after it is removed, whatever its switch, and one that
+  was empty already stays. `tree::next_group_name`, `groups_of` (every
   group that holds one of the shapes, switch on or off) and
   `MenuItem::Group` for any number of rows; `MenuItem::NewFolder` is
   gone. In the window the Shapes header's button and every group's row
   carry the one `group` glyph, and the row's menu has *Select Together*
-  as a tick. Tests: `dc-app` `tests/groups.rs` (was `folders.rs`),
+  as a tick. Tests: `dc-app` `tests/groups.rs`,
   `editing::groups_in_the_design_tree`, `groups_drag_and_drop`.
 - **The strip's modify segment.** After Trim the strip has *Join*
   (arms `Adjust::Join`), *Weld*, *Subtract* and *Intersect*
@@ -1357,7 +1366,7 @@ under its upstream name; "(acc N)" the acceptance test it carries.
 `validate::a_drawing_project_is_valid`,
 `an_operation_targeting_construction_geometry_is_an_error`,
 `an_inlay_boundary_of_construction_geometry_is_an_error`,
-`a_folder_that_is_not_there_and_a_folder_id_used_twice_are_errors`,
+`a_group_that_is_not_there_and_a_group_id_used_twice_are_errors`,
 `a_shapes_sizes_are_checked_at_their_fields`,
 `a_texts_sizes_and_a_paths_nodes_are_checked`,
 `a_bitmaps_opacity_is_held_to_its_range`; the problem snapshot gains
@@ -1433,7 +1442,7 @@ serve Extend (`line_line_crossing`, `line_arc_two_hits`, `line_arc_tangent`,
 `circle`, `ellipse`, `polygon_sides_and_flats`, `slot_by_three_clicks`,
 `slot_by_typed_sizes`, `a_tool_stays_armed_with_its_options` (the cases of
 `stickyDrawing.test.ts`), `too_small_is_not_made_and_construction_is_marked`,
-`points_snap_and_sizes_are_shown`, `a_new_shape_joins_the_selections_folder`;
+`points_snap_and_sizes_are_shown`, `a_new_shape_joins_the_selections_group`;
 `tests/command.rs` `add_shapes_takes_the_next_ids_and_refuses_what_cannot_be`,
 with `AddShapes` in `every_command_round_trips_through_the_file` and
 `labels_name_the_thing`; for slice 6, in `tests/draw_path.rs`,
@@ -1501,11 +1510,11 @@ with `AddShapes` in `every_command_round_trips_through_the_file` and
 `featureLifecycleOps.test.ts`): `align_left_right_and_centre`, `top_is_the_greatest_y`, `to_stock`,
 `distribute_by_gaps_and_by_centres`, `a_locked_shape_stays_and_is_named`,
 `a_turned_shape_aligns_by_its_placed_box`, and in the window
-`editing::align_and_distribute_from_properties_and_the_menu`; `dc_app` `tests/folders.rs` (slice
-21; ports from `folderGroup.test.ts`): `a_new_folder_holds_the_selection`, `folders_file_rows`,
-`rows_reorder_the_file`, `a_group_selects_as_one`, `delete_and_rename_a_folder`,
-`a_group_goes_with_its_last_shape`, `the_row_menu_makes_folders_and_groups`, and in the window
-`editing::` `folders_in_the_design_tree`, `folders_drag_and_drop`, `a_group_is_selected_as_one`;
+`editing::align_and_distribute_from_properties_and_the_menu`; `dc_app` `tests/groups.rs` (slice
+21; ports from `folderGroup.test.ts`): `a_new_group_holds_the_selection`, `groups_file_rows`,
+`rows_reorder_the_file`, `a_group_selects_as_one`, `delete_and_rename_a_group`,
+`a_group_goes_with_its_last_shape`, `the_row_menu_groups_and_ungroups`, and in the window
+`editing::` `groups_in_the_design_tree`, `groups_drag_and_drop`, `a_group_is_selected_as_one`;
 `dc_app` `tests/construction.rs` (slice 22): `construction_leaves_every_operation`,
 `pickers_skip_construction`, `checks_and_fit_stock_pass_it_by`,
 `the_tree_marks_construction_rows`, `the_drawing_tools_have_a_construction_switch`,
@@ -1550,7 +1559,7 @@ extended; `review::phase5_drawing_screenshots` writes
 `offset_and_weld_from_the_shape_menu`, `join_from_the_shape_menu`, and
 `review::phase5_editing_screenshots` writing
 `docs/specs/phase-5/review/editing/`; later slices
-`folders_drag_and_drop`,
+`groups_drag_and_drop`,
 `the_text_tool_previews_as_typed` (acc 129, 130); `strings::` and
 `theme::` scans as phase 4. `gui_equality::the_hook_plate_drawn_equals_the_cli`
 and `drawn_equals_imported` (acc 128), on the part `design_steps` builds
@@ -1567,7 +1576,7 @@ Ordered; brackets are dependencies. Each ends with the gate green and a
 row in `docs/phase-5-worklog.md`. Tests first, as phase 4's.
 
 **5.1 Drawing**
-1. **Format 29.** The fields, `Shape` (data only), `FolderId`, the
+1. **Format 29.** The fields, `Shape` (data only), `GroupId`, the
    migration and fixtures, the problems that need no generator, every
    reader updated, the CLI's tests. [—]
 2. **Shape outlines.** `dc_geometry::shapes` with the ports;
@@ -1607,7 +1616,7 @@ row in `docs/phase-5-worklog.md`. Tests first, as phase 4's.
 18. **Make Unique, cut, copy, paste, Alt-drag.** [8]
 19. **Arrays.** [18, 21]
 20. **Align and distribute.** [—]
-21. **Folders and groups.** The model's commands, the tree, the
+21. **Groups.** The model's commands, the tree, the
     window's drag and drop. [1]
 22. **Construction geometry.** The flag's commands, the pickers, the
     checks, the renderer's style. [1]

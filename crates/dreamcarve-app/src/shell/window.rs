@@ -506,9 +506,9 @@ pub(crate) enum Action {
     Tool(dc_app::tool::Event),
     /// The snapping preferences (View ▸ Snapping, ⇧S; capability 82).
     SetSnap(dc_app::SnapSettings),
-    /// Turn a folder's name into a field in its Design Tree row (its
+    /// Turn a group's name into a field in its Design Tree row (its
     /// menu's *Rename*; capability 99).
-    RenameFolder(dc_project::FolderId),
+    RenameGroup(dc_project::GroupId),
     /// *Add font…* in a Font list (capability 91): asks for a `.ttf` or
     /// `.otf`, copies it to the user's fonts folder and sets the text in
     /// it.
@@ -1737,9 +1737,9 @@ impl Shell {
                 self.go_to(Step::Design);
                 panels::tree::start_rename_picture(ctx, self.app.project(), &id);
             }
-            Action::RenameFolder(id) => {
+            Action::RenameGroup(id) => {
                 self.go_to(Step::Design);
-                panels::tree::start_rename_folder(ctx, self.app.project(), &id);
+                panels::tree::start_rename_group(ctx, self.app.project(), &id);
             }
             Action::ShowProject => self.go_to(Step::Stock),
             Action::SetSection { name, open } => {

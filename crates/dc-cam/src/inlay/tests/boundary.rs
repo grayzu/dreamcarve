@@ -65,7 +65,7 @@ fn with_boundary(project: &Project, op: &InlayOp, shapes: Vec<Polyline>) -> (Pro
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

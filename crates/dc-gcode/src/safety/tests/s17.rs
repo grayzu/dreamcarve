@@ -351,7 +351,7 @@ fn constant_z_rings_take_the_segment_path() {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -516,7 +516,7 @@ pub(super) fn drawn(drawings: &[Drawing]) -> Project {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });
@@ -757,7 +757,7 @@ fn generated_v_carves_pass_s17() {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

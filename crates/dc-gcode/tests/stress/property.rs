@@ -220,7 +220,7 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

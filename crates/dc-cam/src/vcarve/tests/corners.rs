@@ -85,7 +85,7 @@ fn raised_letter(name: &str) -> (Project, VCarveOp) {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     };
@@ -184,7 +184,7 @@ fn females() -> Vec<(&'static str, Project, InlayOp)> {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

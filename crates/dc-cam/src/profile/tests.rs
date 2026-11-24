@@ -61,7 +61,7 @@ fn project(profiles: Vec<Polyline>, placements: &[(&str, Transform)]) -> Project
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: Some(THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         })
@@ -1295,7 +1295,7 @@ fn star_with_hole_project() -> Project {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: Some(12.0),
             z_bottom_mm: Some(0.0),
         })

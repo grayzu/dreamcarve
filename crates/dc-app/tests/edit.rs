@@ -38,7 +38,7 @@ fn rectangle(name: &str, (x, y): (f64, f64), (w, h): (f64, f64)) -> NewShape {
         profiles: vec![Polyline::rect(Point::new(x, y), w, h)],
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     }
 }
 
@@ -222,7 +222,7 @@ fn offset_of_an_open_path() {
         )],
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     };
     let mut frame = rectangle("Frame", (10.0, 40.0), (40.0, 40.0));
     frame
@@ -364,7 +364,7 @@ fn weld_subtract_intersect_areas() {
         shape: Some(circle),
         transform: Transform::translate(30.0, 30.0),
         construction: false,
-        folder: None,
+        group: None,
     };
     let mut app = app_with(vec![rectangle("A", (10.0, 10.0), (40.0, 40.0)), hole]);
     let command = edit::boolean(app.project(), app.strings(), &both, Boolean::Subtract).unwrap();
@@ -510,7 +510,7 @@ fn open_line(name: &str, points: &[(f64, f64)]) -> NewShape {
         )],
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     }
 }
 

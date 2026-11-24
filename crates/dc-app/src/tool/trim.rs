@@ -165,7 +165,7 @@ impl App {
                     profiles: vec![outline.clone()],
                     transform: instance.transform,
                     construction: instance.construction,
-                    folder: instance.folder.clone(),
+                    group: instance.group.clone(),
                 };
                 Command::ReplaceShapes {
                     from: vec![instance.id.clone()],

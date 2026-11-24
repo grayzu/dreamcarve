@@ -9,7 +9,7 @@
 
 use dc_geometry::{Point, Polyline, Rect, Transform, nearest_point};
 use dc_project::{
-    DefinitionId, FeatureDefinition, FeatureInstance, FolderId, InstanceId, Project, Shape,
+    DefinitionId, FeatureDefinition, FeatureInstance, GroupId, InstanceId, Project, Shape,
 };
 
 use super::instances::{bounds, find};
@@ -160,8 +160,8 @@ pub struct NewShape {
     pub transform: Transform,
     /// Construction geometry: drawn and snapped to, never cut.
     pub construction: bool,
-    /// The folder the instance is filed in.
-    pub folder: Option<FolderId>,
+    /// The group the instance is filed in.
+    pub group: Option<GroupId>,
 }
 
 /// `project` with `shapes` added, each a new instance at the end of the
@@ -173,8 +173,8 @@ pub struct NewShape {
 /// [`CommandError::NothingToDo`] for no shapes or a shape with no
 /// outline; [`CommandError::Geometry`] when the placed outline cannot be
 /// (a vertex that is not a number, a reach past the coordinate limit, an
-/// arc under an uneven scale); [`CommandError::UnknownFolder`] for a
-/// folder the project does not have.
+/// arc under an uneven scale); [`CommandError::UnknownGroup`] for a
+/// group the project does not have.
 pub(super) fn add(project: &Project, shapes: &[NewShape]) -> Result<Project, CommandError> {
     if shapes.is_empty() || shapes.iter().any(|shape| shape.profiles.is_empty()) {
         return Err(CommandError::NothingToDo);
@@ -185,10 +185,10 @@ pub(super) fn add(project: &Project, shapes: &[NewShape]) -> Result<Project, Com
         for profile in &shape.profiles {
             shape.transform.apply_polyline(profile)?;
         }
-        if let Some(folder) = &shape.folder
-            && !next.folders.iter().any(|f| &f.id == folder)
+        if let Some(group) = &shape.group
+            && !next.groups.iter().any(|f| &f.id == group)
         {
-            return Err(CommandError::UnknownFolder(folder.clone()));
+            return Err(CommandError::UnknownGroup(group.clone()));
         }
         let definitions: Vec<&str> = next.definitions.keys().map(DefinitionId::as_str).collect();
         let definition = DefinitionId::new(next_free_id(&definitions, "d"));
@@ -211,7 +211,7 @@ pub(super) fn add(project: &Project, shapes: &[NewShape]) -> Result<Project, Com
             visible: true,
             locked: false,
             construction: shape.construction,
-            folder: shape.folder.clone(),
+            group: shape.group.clone(),
             z_top_mm: None,
             z_bottom_mm: None,
         });

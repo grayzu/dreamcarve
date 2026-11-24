@@ -36,7 +36,7 @@ fn rectangle(name: &str, (x, y): (f64, f64), (w, h): (f64, f64)) -> NewShape {
         profiles: vec![Polyline::rect(Point::new(x, y), w, h)],
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     }
 }
 

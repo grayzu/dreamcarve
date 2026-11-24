@@ -771,16 +771,16 @@ fn points_snap_and_sizes_are_shown() {
     assert_box(&placed(&app), (0.0, 0.0), (50.8, 12.7));
 }
 
-/// A new shape goes in the folder that holds the selection (capability
-/// 90), after the folder's other rows; with nothing selected, in no
-/// folder and at the end of the Design Tree.
+/// A new shape goes in the group that holds the selection (capability
+/// 90), after the group's other rows; with nothing selected, in no
+/// group and at the end of the Design Tree.
 #[test]
-fn a_new_shape_joins_the_selections_folder() {
+fn a_new_shape_joins_the_selections_group() {
     let project = dc_project::test_support::drawing_project();
     let mut app = Harness::from_project(project).app;
     app.prefs_mut().snap.enabled = false;
-    let in_folder = dc_project::InstanceId::new("i2");
-    app.select(dc_app::Selection::Instances(vec![in_folder]));
+    let in_group = dc_project::InstanceId::new("i2");
+    app.select(dc_app::Selection::Instances(vec![in_group]));
     app.arm(Tool::Draw(Drawing::Circle));
     click(&mut app, pt(200.0, 50.0));
     click(&mut app, pt(205.0, 50.0));
@@ -794,17 +794,17 @@ fn a_new_shape_joins_the_selections_folder() {
             .unwrap()
             .clone()
     };
-    let f1 = Some(dc_project::FolderId::new("f1"));
+    let f1 = Some(dc_project::GroupId::new("g1"));
     let instance = drawn(&app);
-    assert_eq!(instance.folder, f1);
+    assert_eq!(instance.group, f1);
     assert_eq!(instance.name, "Circle 2", "the fixture has a Circle 1");
-    // It is the last of the folder's rows, which lie together.
+    // It is the last of the group's rows, which lie together.
     let filed: Vec<usize> = app
         .project()
         .instances
         .iter()
         .enumerate()
-        .filter(|(_, i)| i.folder == f1)
+        .filter(|(_, i)| i.group == f1)
         .map(|(at, _)| at)
         .collect();
     assert!(
@@ -815,15 +815,15 @@ fn a_new_shape_joins_the_selections_folder() {
         app.project().instances[*filed.last().unwrap()].id,
         instance.id
     );
-    // With the new circle selected, also in the folder, the next joins it
+    // With the new circle selected, also in the group, the next joins it
     // too; with nothing selected, none.
     click(&mut app, pt(220.0, 50.0));
     click(&mut app, pt(225.0, 50.0));
-    assert_eq!(drawn(&app).folder, f1);
+    assert_eq!(drawn(&app).group, f1);
     app.select(dc_app::Selection::Nothing);
     click(&mut app, pt(240.0, 50.0));
     click(&mut app, pt(245.0, 50.0));
-    assert_eq!(last(&app).0.folder, None);
+    assert_eq!(last(&app).0.group, None);
 }
 
 /// Capabilities 85 and 85b: the Rectangle's corners and their size, and

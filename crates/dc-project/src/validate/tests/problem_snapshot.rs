@@ -735,7 +735,7 @@ fn samples() -> Vec<Problem> {
             width_mm,
         });
     }
-    // Format 29: construction geometry and folders.
+    // Format 29: construction geometry and groups.
     for boundary in [false, true] {
         all.push(Problem::ConstructionTargeted {
             operation: op(),
@@ -750,12 +750,12 @@ fn samples() -> Vec<Problem> {
         name: "Slot 1".into(),
         kind: "slot",
     });
-    all.push(Problem::DuplicateFolderId {
-        id: FolderId::new("f1"),
+    all.push(Problem::DuplicateGroupId {
+        id: GroupId::new("g1"),
     });
-    all.push(Problem::DanglingFolder {
+    all.push(Problem::DanglingGroup {
         instance: instance(),
-        folder: FolderId::new("nope"),
+        group: GroupId::new("nope"),
     });
     all
 }

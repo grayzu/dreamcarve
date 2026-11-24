@@ -48,7 +48,7 @@ fn outline(name: &str, points: &[(f64, f64)], closed: bool) -> NewShape {
         )],
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     }
 }
 
@@ -468,7 +468,7 @@ fn a_smooth_handle_carries_its_twin_alt_does_not() {
         }),
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     };
     let mut app = editing(vec![curve]);
     let nodes = |app: &App| -> Vec<PathNode> {
@@ -776,7 +776,7 @@ fn a_sized_shape_is_converted_and_the_tool_is_left() {
         shape: Some(rectangle),
         transform: Transform::translate(30.0, 25.0),
         construction: false,
-        folder: None,
+        group: None,
     };
     let line = outline("Line", &[(60.0, 60.0), (90.0, 60.0)], false);
     let mut app = editing(vec![sized, line]);
@@ -1001,7 +1001,7 @@ fn fillet_corners_of_a_shape() {
         shape: Some(rectangle),
         transform: Transform::translate(30.0, 25.0),
         construction: false,
-        folder: None,
+        group: None,
     };
     let app = editing(vec![sized]);
     assert_eq!(

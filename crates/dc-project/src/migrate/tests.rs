@@ -91,11 +91,11 @@ fn at_current(root: &Value) -> Value {
 }
 
 /// Takes out of `root` what format 29 added, leaving it as a format 28
-/// file held it: `folders`, each definition's `shape`, each instance's
-/// `construction` and `folder`, each bitmap's `opacity_fraction`.
+/// file held it: `groups`, each definition's `shape`, each instance's
+/// `construction` and `group`, each bitmap's `opacity_fraction`.
 fn without_format_29(root: &mut Value) {
     let root = root.as_object_mut().unwrap();
-    root.shift_remove("folders");
+    root.shift_remove("groups");
     if let Some(definitions) = root.get_mut("definitions").and_then(Value::as_object_mut) {
         for definition in definitions.values_mut() {
             definition.as_object_mut().unwrap().shift_remove("shape");
@@ -105,7 +105,7 @@ fn without_format_29(root: &mut Value) {
         for instance in instances {
             let instance = instance.as_object_mut().unwrap();
             instance.shift_remove("construction");
-            instance.shift_remove("folder");
+            instance.shift_remove("group");
         }
     }
     if let Some(bitmaps) = root.get_mut("bitmaps").and_then(Value::as_array_mut) {
@@ -140,7 +140,7 @@ fn insert_after(
 /// key where a saved file has it. Written apart from the migration, so
 /// the two are checked against each other.
 fn with_format_29(root: &Value) -> Value {
-    let mut out = insert_after(root.as_object().unwrap(), "tabs", &[("folders", json!([]))]);
+    let mut out = insert_after(root.as_object().unwrap(), "tabs", &[("groups", json!([]))]);
     if let Some(Value::Object(definitions)) = out.get_mut("definitions") {
         for definition in definitions.values_mut() {
             let fields = insert_after(
@@ -153,7 +153,7 @@ fn with_format_29(root: &Value) -> Value {
     }
     if let Some(Value::Array(instances)) = out.get_mut("instances") {
         for instance in instances {
-            let added = [("construction", json!(false)), ("folder", Value::Null)];
+            let added = [("construction", json!(false)), ("group", Value::Null)];
             let fields = insert_after(instance.as_object().unwrap(), "locked", &added);
             *instance = Value::Object(fields);
         }
@@ -444,7 +444,7 @@ fn feature_fixtures_load_holding_what_their_format_added() {
                     visible: true,
                     locked: false,
                     construction: false,
-                    folder: None,
+                    group: None,
                     z_top_mm: Some(6.0),
                     z_bottom_mm: Some(0.0),
                 });
@@ -2866,7 +2866,7 @@ const V29_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v29/sample.d
 const V29_DRAWING_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v29/drawing.dcv");
 
 /// Format 29 adds a definition's `shape`, an instance's `construction`
-/// and `folder`, the root's `folders` and a bitmap's `opacity_fraction`,
+/// and `group`, the root's `groups` and a bitmap's `opacity_fraction`,
 /// each where a saved file has it, and changes nothing else: a project
 /// holding every kind a version 28 file can migrates to what this build
 /// writes for it, keys in order (phase 5 acceptance 107).
@@ -2877,16 +2877,16 @@ fn v28_to_v29_adds_the_drawing_fields() {
     project.operations.push(Operation::VCarve(sample_v_carve()));
     project.operations.push(Operation::Inlay(sample_inlay()));
     let expected = serde_json::to_value(&project).unwrap();
-    assert_eq!(expected["folders"], json!([]));
+    assert_eq!(expected["groups"], json!([]));
     assert_eq!(expected["definitions"]["d1"]["shape"], Value::Null);
     assert_eq!(expected["instances"][0]["construction"], json!(false));
-    assert_eq!(expected["instances"][0]["folder"], Value::Null);
+    assert_eq!(expected["instances"][0]["group"], Value::Null);
     assert_eq!(expected["bitmaps"][0]["opacity_fraction"], json!(1.0));
 
     let mut root = expected.clone();
     without_format_29(&mut root);
     root["version"] = json!(28);
-    assert!(root.get("folders").is_none());
+    assert!(root.get("groups").is_none());
     let (migrated, notes) = migrate_with_notes(root.clone(), 28).unwrap();
     assert_eq!(migrated, expected);
     assert_eq!(
@@ -2909,15 +2909,15 @@ fn a_file_claiming_28_with_a_format_29_field_is_refused() {
     let current = serde_json::to_value(crate::test_support::photo_project()).unwrap();
     type PutBack = fn(&mut Value);
     let cases: [(&str, PutBack); 5] = [
-        ("`folders`", |root| root["folders"] = json!([])),
+        ("`groups`", |root| root["groups"] = json!([])),
         ("`definitions[d1].shape`", |root| {
             root["definitions"]["d1"]["shape"] = Value::Null;
         }),
         ("`instances[0].construction`", |root| {
             root["instances"][0]["construction"] = json!(false);
         }),
-        ("`instances[0].folder`", |root| {
-            root["instances"][0]["folder"] = Value::Null;
+        ("`instances[0].group`", |root| {
+            root["instances"][0]["group"] = Value::Null;
         }),
         ("`bitmaps[0].opacity_fraction`", |root| {
             root["bitmaps"][0]["opacity_fraction"] = json!(1.0);
@@ -2964,8 +2964,8 @@ const UPDATE_V29: &str = "DC_PROJECT_UPDATE_V29_FIXTURES";
 
 /// The version 29 fixtures load as they are and save byte for byte: the
 /// plain sample, and a drawing with a shape of every kind but text, each
-/// with the outline its sizes give, a folder, a group, construction
-/// geometry and a faded picture.
+/// with the outline its sizes give, a group selected together and one
+/// not, construction geometry and a faded picture.
 #[test]
 fn version_29_fixtures_load() {
     use crate::test_support::drawing_project;
@@ -3000,8 +3000,8 @@ fn version_29_fixtures_load() {
         "\"flanks\": \"involute\"",
         "\"kind\": \"path\"",
         "\"construction\": true",
-        "\"folder\": \"f1\"",
-        "\"group\": true",
+        "\"group\": \"g1\"",
+        "\"together\": true",
         "\"opacity_fraction\": 0.4",
     ] {
         assert!(text.contains(key), "{key}");

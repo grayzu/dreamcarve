@@ -1126,7 +1126,7 @@ fn coaster_project() -> Project {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: Some(11.8),
         z_bottom_mm: Some(0.0),
     }];

@@ -4,11 +4,11 @@
 //! Fixture builders for tests in this crate and, with the `test-support`
 //! feature, in crates that depend on it (`docs/rust-guidelines.md`, "Tests").
 
-use crate::ids::{BitmapId, DefinitionId, FolderId, InstanceId, OperationId, TabId, ToolId};
+use crate::ids::{BitmapId, DefinitionId, GroupId, InstanceId, OperationId, TabId, ToolId};
 use crate::migrate::CURRENT_VERSION;
 use crate::model::{
     Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
-    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Folder, Heights, InlayOp,
+    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Group, Heights, InlayOp,
     MachineOrigin, MachiningOrder, MaleBoard, Operation, OriginXy, OriginZ, PhotoStrategy,
     PhotoVCarveOp, PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement,
     TabShape, TabSpec, Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
@@ -150,7 +150,7 @@ pub fn sample_project() -> Project {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: Some(6.0),
             z_bottom_mm: Some(0.0),
         }],
@@ -189,7 +189,7 @@ pub fn sample_project() -> Project {
         // No placed tabs: the Profile's tab request is placed by `dc-cam`
         // (#105), so the sample is a project as a format 10 file migrates.
         tabs: Vec::new(),
-        folders: Vec::new(),
+        groups: Vec::new(),
         post_processor: grbl_post_processor(),
     }
 }
@@ -487,8 +487,8 @@ pub fn photo_project() -> Project {
 ///
 /// | Definition | Shape | Instance |
 /// | --- | --- | --- |
-/// | `d2` | Rectangle 60 × 30, square corners | `i2` at (50, 60), in folder `f1` |
-/// | `d3` | Circle, diameter 20 | `i3` at (15, 88), in `f1` |
+/// | `d2` | Rectangle 60 × 30, square corners | `i2` at (50, 60), in group `g1` |
+/// | `d3` | Circle, diameter 20 | `i3` at (15, 88), in `g1` |
 /// | `d4` | a closed path with a curve and an arc | `i4` at (30, 90), construction geometry |
 /// | `d5` | Rectangle 60 × 30, corners rounded 5 | `i5` at (40, 130) |
 /// | `d6` | Rectangle 60 × 30, corners chamfered 5 | `i6` at (110, 130) |
@@ -497,7 +497,8 @@ pub fn photo_project() -> Project {
 /// | `d9` | Slot, length 40, width 12 | `i9` at (150, 175), turned 30° |
 /// | `d10` | Gear, 24 teeth on 40, bore 6 | `i10` at (40, 220) |
 ///
-/// Besides them: the folders `f1`, a group, and `f2`, empty; and
+/// Besides them: the groups `g1`, selected together, and `g2`, empty
+/// and selected one at a time; and
 /// [`sample_bitmap`] at 40 % opacity.
 pub fn drawing_project() -> Project {
     let mut project = sample_project();
@@ -531,7 +532,7 @@ pub fn drawing_project() -> Project {
     };
     let gear = dc_geometry::shapes::gear::Gear::with_defaults(20.0);
     let at = Transform::translate;
-    // (definition, instance, name, shape, placement, folder, construction)
+    // (definition, instance, name, shape, placement, group, construction)
     let drawn = [
         (
             "d2",
@@ -539,7 +540,7 @@ pub fn drawing_project() -> Project {
             "Rectangle 1",
             rectangle(Corner::Square),
             at(50.0, 60.0),
-            Some("f1"),
+            Some("g1"),
             false,
         ),
         (
@@ -548,7 +549,7 @@ pub fn drawing_project() -> Project {
             "Circle 1",
             Shape::Circle { diameter_mm: 20.0 },
             at(15.0, 88.0),
-            Some("f1"),
+            Some("g1"),
             false,
         ),
         (
@@ -636,7 +637,7 @@ pub fn drawing_project() -> Project {
             false,
         ),
     ];
-    for (definition, instance, name, shape, transform, folder, construction) in drawn {
+    for (definition, instance, name, shape, transform, group, construction) in drawn {
         // Every kind here has an outline, and these sizes give one; an
         // empty outline would fail the tests that load the fixture.
         let profiles = shape
@@ -661,21 +662,21 @@ pub fn drawing_project() -> Project {
             visible: true,
             locked: false,
             construction,
-            folder: folder.map(FolderId::new),
+            group: group.map(GroupId::new),
             z_top_mm: None,
             z_bottom_mm: None,
         });
     }
-    project.folders = vec![
-        Folder {
-            id: FolderId::new("f1"),
+    project.groups = vec![
+        Group {
+            id: GroupId::new("g1"),
             name: "Holes".into(),
-            group: true,
+            together: true,
         },
-        Folder {
-            id: FolderId::new("f2"),
+        Group {
+            id: GroupId::new("g2"),
             name: "Later".into(),
-            group: false,
+            together: false,
         },
     ];
     project.bitmaps.push(Bitmap {
@@ -836,7 +837,7 @@ pub fn line_art_project() -> Project {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

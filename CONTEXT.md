@@ -83,12 +83,12 @@ _PureCutCNC_: `construction` feature operation
 A named set of feature instances in the Design Tree, filed together in the
 list and, while its *Select Together* is on (as it is when made), selected
 together on the Viewport. Groups do not nest. The project file and the
-code call the record a folder (`folders`, an instance's `folder`, format
-29) and its *Select Together* `group`: the first build had folders and
-groups as two things, and the maintainer's review of 2026-11-23 made them
+code use the same word (`groups`, an instance's `group`, format 29), and
+call its *Select Together* `together`. The first build had folders and
+groups as two things; the maintainer's review of 2026-11-23 made them
 one, named for what the user sees.
-_Avoid_: Folder (in anything the user reads), layer (a DXF's, used only at
-import), compound, block
+_Avoid_: Folder (a folder is on disk: where a project or its programs
+are saved), layer (a DXF's, used only at import), compound, block
 _PureCutCNC_: FeatureFolder, a `grouped` folder
 
 **Snap**:

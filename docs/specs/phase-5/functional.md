@@ -20,7 +20,7 @@ drawn. Everything phases 1–4 do to an imported drawing they do to a drawn
 one, because a drawn shape is saved as the same outline an import makes.
 
 Nothing about toolpaths, warnings or G-code changes. The file gains
-format 29: the sizes a shape was drawn with, folders, construction
+format 29: the sizes a shape was drawn with, groups, construction
 geometry and a picture's opacity. Every safety rule S1–S20 holds; S21
 says a drawn shape is cut by its saved outline and nothing else.
 
@@ -360,8 +360,8 @@ capability 52); what a tool holds before it commits is not project data.
     is a *Line*, an *Arc* or a *Spline* when its segments are all of
     that kind, else a *Path*),
     selected when the tool is left, visible and unlocked. It goes at the
-    end of the Design Tree, or, when a folder holds the selection, in
-    that folder after its other rows. The tool bar's **Construction** switch (100) makes the
+    end of the Design Tree, or, when a group holds the selection, in
+    that group after its other rows. The tool bar's **Construction** switch (100) makes the
     shapes that follow construction geometry until it is turned off. A
     shape too small to be one (under 0.01 mm across, PureCutCNC's
     minimum) is not made, and the tool stays as it was.
@@ -664,9 +664,9 @@ capability 52); what a tool holds before it commits is not project data.
     stays until it is used, listed after the shapes. Text converted to
     paths and an array's copies arrive grouped.
 
-    The project file keeps the names it had: a group is an entry of
-    `folders`, a shape's group its `folder`, and *Select Together* the
-    entry's `group` (104).
+    The project file says the same: a group is an entry of `groups`, a
+    shape's group its `group`, and *Select Together* the entry's
+    `together` (104).
 100. **Construction geometry** (PureCutCNC's construction role). Any
     shape can be marked **Construction** (the switch in Properties, the
     ticked row of the context menu and of the Shape menu, the tool
@@ -733,7 +733,7 @@ capability 52); what a tool holds before it commits is not project data.
 104. **Format 29** (ADR-0002, ADR-0006). The project file gains, with a
     migration that fills each for an older file: `definitions[].shape`
     (`null`: a plain outline), `instances[].construction` (`false`),
-    `instances[].folder` (`null`), `folders` (empty) and
+    `instances[].group` (`null`), `groups` (empty) and
     `bitmaps[].opacity_fraction` (`1.0`). `dreamcarve check` and `export` read a
     format 29 file as they read any other; the command line gains no
     drawing commands.
@@ -767,7 +767,7 @@ capability 52); what a tool holds before it commits is not project data.
   remembered arrays that can be re-edited.
 - Booleans that keep arcs and curves as such (results are polygonal, as
   the engine's are).
-- Nested folders, layers with colours, per-shape line styles.
+- Nested groups, layers with colours, per-shape line styles.
 - Freehand drawing, a pen tool that places handles by dragging
   (Graphite's), B-splines, ellipse arcs, stars, three-point circles and
   rectangles.
@@ -788,10 +788,10 @@ millimetres, as the window drives it; "the file" is the `.dcv` the app
 saves. Tolerances are `EPS_MM` (1e-6 mm) unless stated.
 
 107. **Format 29** (104). Every format 28 fixture loads, migrated, with
-     `shape: null`, `construction: false`, `folder: null`, `folders: []`
+     `shape: null`, `construction: false`, `group: null`, `groups: []`
      and `opacity_fraction: 1.0`, and exports the programs it exported before; a
      format 29 file saved by the app round-trips byte for byte; a file
-     claiming 28 that already has `folders` is refused.
+     claiming 28 that already has `groups` is refused.
 108. **Rectangle** (85, 84). Drawing a Rectangle from (10, 10) to
      (70, 40) saves a definition with `shape` rectangle 60 × 30, square
      corners, and a closed, anticlockwise outline of four lines whose
@@ -906,8 +906,8 @@ saves. Tolerances are `EPS_MM` (1e-6 mm) unless stated.
      a new definition equal to the old; editing it leaves the other.
      Copy and Paste give unlinked shapes with equal outlines, in this
      project and in another opened after. A 3 × 2 grid array at pitch
-     20 × 15 makes five linked copies at those offsets in a grouped
-     folder; with gaps of 5 the pitch is the shape's size plus 5; a
+     20 × 15 makes five linked copies at those offsets in a group;
+     with gaps of 5 the pitch is the shape's size plus 5; a
      circular array of 6 over 360° about (50, 50) places the copies 60°
      apart, turned when asked (ports `featureDistribution.test.ts`).
 123. **Align and distribute** (98a). Three rectangles: Align Left gives
@@ -1021,8 +1021,8 @@ following the quick start, exported, and cut once.
   bar, typed sizes, what each shape's sizes are), **Snapping and the
   grid**, **Text and fonts**, **Editing nodes** (nodes, arcs, curves,
   fillet and chamfer), **Changing shapes** (offset, weld, subtract,
-  intersect, trim, join), **Copies, arrays and alignment**, **Folders,
-  groups and construction geometry**, **Tracing a picture**,
+  intersect, trim, join), **Copies, arrays and alignment**, **Groups
+  and construction geometry**, **Tracing a picture**,
   **Measuring**.
 - User guide, updated: The app (tools, the Draw menu, the tool bar),
   Placing shapes (linked copies and Make Unique, align and distribute),
@@ -1030,7 +1030,7 @@ following the quick start, exported, and cut once.
   Project file (format 29), Warnings (the two new codes), Overview and
   the README (drawing is no longer "planned").
 - `CONTEXT.md`: **Parametric Shape**, **Path**, **Node**, **Curve**,
-  **Construction Geometry**, **Folder**, **Group**, **Snap**, **Tool**
+  **Construction Geometry**, **Group**, **Snap**, **Tool**
   (the Viewport's, as against a cutting **Tool**: the term is **Drawing
   Tool**), **Tool Bar**, **Backdrop**; **Slot** and **Linked Copy**
   updated; **Feature Definition** gains its `shape`.

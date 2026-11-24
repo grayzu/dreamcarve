@@ -173,7 +173,7 @@ impl App {
             profiles: laid.outlines,
             transform: Transform::translate(at.x, at.y),
             construction: self.tool.construction,
-            folder: self.selection_folder(),
+            group: self.selection_group(),
         }]);
         match self.run(command) {
             Ok(label) => {

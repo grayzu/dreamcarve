@@ -91,7 +91,7 @@ fn project(shapes: Vec<Shape>) -> Project {
             visible: shape.visible,
             locked: shape.locked,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

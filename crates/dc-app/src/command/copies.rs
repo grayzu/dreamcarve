@@ -69,7 +69,7 @@ pub(super) fn make_unique(project: &Project, ids: &[InstanceId]) -> Result<Proje
 
 /// `CopyInstances`: for each of `placements`, a linked copy of each of
 /// `ids`, placed by the placement after the instance's own transform and
-/// named as a duplicate is; with `folder`, they and their sources are
+/// named as a duplicate is; with `group`, they and their sources are
 /// filed in a new group of that name. The copies of one placement are in the
 /// Design Tree's order, whatever order the selection was made in
 /// (`sourcesInAuthoredOrder`): the order shapes are listed in is the
@@ -78,7 +78,7 @@ pub(super) fn copy(
     project: &Project,
     ids: &[InstanceId],
     placements: &[Transform],
-    folder: Option<&str>,
+    group: Option<&str>,
 ) -> Result<Project, CommandError> {
     if ids.is_empty() {
         return Err(CommandError::NothingSelected);
@@ -115,7 +115,7 @@ pub(super) fn copy(
         }
     }
     // An array's copies and their sources are one group.
-    if let Some(name) = folder {
+    if let Some(name) = group {
         let made: Vec<InstanceId> = next
             .instances
             .iter()
@@ -124,7 +124,7 @@ pub(super) fn copy(
             .collect();
         let mut filed = ids.to_vec();
         filed.extend(made);
-        next = super::folders::new_folder(&next, name, &filed, true)?;
+        next = super::groups::new_group(&next, name, &filed, true)?;
     }
     Ok(next)
 }
@@ -132,7 +132,7 @@ pub(super) fn copy(
 /// `PasteShapes`: each clip a new instance of a new definition, at the
 /// clip's transform, visible and unlocked. A name the project already
 /// has becomes a copy's (`square (2)`); a free one is kept. A clip's
-/// folder is kept when this project has it.
+/// group is kept when this project has it.
 pub(super) fn paste(project: &Project, clips: &[Clip]) -> Result<Project, CommandError> {
     if clips.is_empty() {
         return Err(CommandError::NothingToDo);
@@ -155,11 +155,11 @@ pub(super) fn paste(project: &Project, clips: &[Clip]) -> Result<Project, Comman
         } else {
             clip.instance.name.clone()
         };
-        let folder = clip
+        let group = clip
             .instance
-            .folder
+            .group
             .clone()
-            .filter(|folder| next.folders.iter().any(|f| f.id == *folder));
+            .filter(|group| next.groups.iter().any(|f| f.id == *group));
         let mut pasted = clip.definition.clone();
         pasted.id = definition.clone();
         pasted.name.clone_from(&name);
@@ -170,7 +170,7 @@ pub(super) fn paste(project: &Project, clips: &[Clip]) -> Result<Project, Comman
             name,
             visible: true,
             locked: false,
-            folder,
+            group,
             ..clip.instance.clone()
         });
     }

@@ -140,7 +140,7 @@ The fields, in the order DreamCarve writes them:
 | `tools` | The tools. |
 | `operations` | The operations, in cutting order. |
 | `tabs` | The project's placed tabs. See [`tabs`](#tabs). |
-| `folders` | The Shapes list's groups (from format version 29; the file calls a group a folder). `[]` until you make one in the app. See [`folders`](#folders). |
+| `groups` | The Shapes list's groups (from format version 29). `[]` until you make one in the app. See [`groups`](#groups). |
 | `instances` | Placed copies of the shapes. |
 | `bitmaps` | Pictures placed on the stock, each stored in the file, for a Photo V-Carve to carve (from format version 27). `[]` in a project made from a drawing. See [`bitmaps`](#bitmaps). |
 | `post_processor` | Which bundled post-processor and version, and your settings for it. See [`post_processor`](#post_processor). |
@@ -328,7 +328,7 @@ polygon of two sides) is an error at that field.
 | `name` | Shown in messages. |
 | `visible`, `locked` | For the app: whether the shape is drawn, and whether it can be moved ([Placing shapes](placing-shapes.md#hiding-and-locking)). Neither changes a cut. |
 | `construction` | `true` for construction geometry: a shape drawn to snap to and measure from, never cut (from format version 29). An enabled operation that targets one is the error `construction_targeted`, and nothing is exported. `false` for every shape `init` makes. |
-| `folder` | The id of the group the shape is in, or `null` (from format version 29). See [`folders`](#folders). |
+| `group` | The id of the group the shape is in, or `null` (from format version 29). See [`groups`](#groups). |
 | `z_top_mm`, `z_bottom_mm` | The feature's top and bottom, mm above the material bottom, for future operations. `null` means not set, which is how `init` writes them. This build does not use them, but when both are set, `z_bottom_mm` above `z_top_mm` is an error. |
 
 To move a shape on the stock, change `e` and `f`. In the app, drag it or
@@ -557,27 +557,26 @@ a picture is read](images.md#how-a-picture-is-read)), so a bitmap they
 wrote passes every check; the codes above come from a hand edit, or a
 file damaged in transit.
 
-## `folders`
+## `groups`
 
 The groups of the Shapes list, made in the app (from format version 29);
-`[]` in a project made by `init`. The app calls each one a **group**
-([Groups and construction geometry](groups-and-construction.md#groups)).
-The file's word for it is a folder, from when the app had both:
+`[]` in a project made by `init`
+([Groups and construction geometry](groups-and-construction.md#groups)):
 
 ```json
-"folders": [
-  { "id": "f1", "name": "Holes", "group": true }
+"groups": [
+  { "id": "g1", "name": "Holes", "together": true }
 ]
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `id` | `"f1"`, `"f2"`, …, unique among the folders (`duplicate_folder_id`). An instance's `folder` names it (`dangling_folder` when none has it). |
+| `id` | `"g1"`, `"g2"`, …, unique among the groups (`duplicate_group_id`). An instance's `group` names it (`dangling_group` when none has it). |
 | `name` | Your name for it. |
-| `group` | The group's **Select Together**: `true` when a click on one of its shapes on the Viewport selects them all, as for every group the app makes until that is turned off; `false` for a group that only files its shapes in the list. |
+| `together` | The group's **Select Together**: `true` when a click on one of its shapes on the Viewport selects them all, as for every group the app makes until that is turned off; `false` for a group that only files its shapes in the list. |
 
 A group holds no list of its own: its shapes are the instances whose
-`folder` names it, in the order of `instances`. Groups do not nest, and
+`group` names it, in the order of `instances`. Groups do not nest, and
 nothing that is cut reads them.
 
 ## `post_processor`
@@ -644,7 +643,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 26 | Adds each Inlay's `boundary`, after its `outline_rounding_mm`, `[]` on upgrade (#449): the shapes that draw the male band's outer edge. Empty, the band is `margin_mm` and `outline_rounding_mm` as before, so a version 25 file exports the same programs, byte for byte. A male that lists one is cut inside it, mirrored with the design ([Inlay: the boundary](inlay.md#the-boundary)). |
 | 27 | Adds `bitmaps`, after `instances`, `[]` on upgrade (#644): the pictures a project holds, and with them the `"photo_v_carve"` operation kind that carves one ([Images](images.md), [Photo V-Carve](photo-v-carve.md)). A version 26 file holds neither, so it exports the same programs, byte for byte; an older DreamCarve refuses a version 27 file rather than misread a kind it does not know. A version 26 file that already holds `bitmaps` or a `"photo_v_carve"` is refused. |
 | 28 | Adds the `"tapered_ball_nose"` cutter (#677), with its `tip_diameter_mm`, `taper_angle_deg` (per side) and `flute_length_mm`. A version 27 file holds none, so the upgrade changes only the version and the file exports the same programs, byte for byte; an older DreamCarve refuses a version 28 file rather than misread a cutter it does not know. A version 27 file that already holds one is refused. |
-| 29 | Adds what drawing in the app saves: each definition's `shape`, after its `name`, `null` on upgrade (a plain outline, which every older shape is); each instance's `construction` (`false`) and `folder` (`null`), after its `locked`; `folders`, after `tabs`, `[]`; and each bitmap's `opacity_fraction`, after its `locked`, `1.0`. Nothing that is cut reads any of them, so a version 28 file exports the same programs, byte for byte; an older DreamCarve refuses a version 29 file rather than drop a shape's sizes. |
+| 29 | Adds what drawing in the app saves: each definition's `shape`, after its `name`, `null` on upgrade (a plain outline, which every older shape is); each instance's `construction` (`false`) and `group` (`null`), after its `locked`; `groups`, after `tabs`, `[]`; and each bitmap's `opacity_fraction`, after its `locked`, `1.0`. Nothing that is cut reads any of them, so a version 28 file exports the same programs, byte for byte; an older DreamCarve refuses a version 29 file rather than drop a shape's sizes. |
 
 ## What `check` reports
 
@@ -684,7 +683,7 @@ Errors stop export. Warnings do not.
 | A bitmap with an id used twice, a size in pixels of 0 or above 8192, a footprint not above 0 or not in the picture's proportions, an `opacity_fraction` outside 0.1 to 1, or a `png_base64` that is not an 8-bit grayscale PNG of its `width_px` by `height_px` (see [`bitmaps`](#bitmaps)) | |
 | An enabled operation that targets construction geometry, or an Inlay whose `boundary` lists it (`construction_targeted`) | |
 | A `shape` with a size that cannot be: not above 0, a corner past half the shorter side, a polygon's `sides` outside 3 to 50, a gear's `teeth` outside 6 to 200 or `pressure_angle_deg` outside 10 to 35, or gear sizes that cannot be together (teeth deeper than the gear's radius, flanks that cross below the crest, a root fillet or crest radius too large for the tooth spacing, a bore as wide as the roots) | A shape whose `profiles` are not the outline its sizes give (`shape_outline_differs`): the cut follows `profiles` |
-| A folder id used twice (`duplicate_folder_id`), or an instance whose `folder` names no folder (`dangling_folder`) | |
+| A group id used twice (`duplicate_group_id`), or an instance whose `group` names no group (`dangling_group`) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at
 enabled operations and the tools they use. See [Values that look

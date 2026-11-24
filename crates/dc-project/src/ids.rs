@@ -90,8 +90,8 @@ id_type!(
 );
 
 id_type!(
-    /// Identifies a [`crate::Folder`] (format 29): `f1`, `f2`, …
-    FolderId
+    /// Identifies a [`crate::Group`] (format 29): `g1`, `g2`, …
+    GroupId
 );
 
 #[cfg(test)]

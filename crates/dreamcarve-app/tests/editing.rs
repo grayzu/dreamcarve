@@ -727,17 +727,18 @@ fn align_and_distribute_from_properties_and_the_menu() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// The Shapes section as the tree lists it: a folder as `[name]`, a
-/// group as `{name}`, a row in a folder indented.
+/// The Shapes section as the tree lists it: a group as `{name}`, or as
+/// `[name]` when its shapes are selected one at a time; a row in a group
+/// indented.
 fn listed(h: &Harness<'_, Shell>) -> Vec<String> {
     use dc_app::tree::{Row, Tree};
     let tree = Tree::build(h.state().app().project());
     let mut out = Vec::new();
     for row in tree.rows() {
         match row {
-            Row::Folder(f) if f.group => out.push(format!("{{{}}}", f.name)),
-            Row::Folder(f) => out.push(format!("[{}]", f.name)),
-            Row::Shape(s) if s.folder.is_some() => out.push(format!("  {}", s.name)),
+            Row::Group(f) if f.together => out.push(format!("{{{}}}", f.name)),
+            Row::Group(f) => out.push(format!("[{}]", f.name)),
+            Row::Shape(s) if s.group.is_some() => out.push(format!("  {}", s.name)),
             Row::Shape(s) => out.push(s.name.clone()),
             _ => {}
         }
@@ -760,7 +761,7 @@ fn selected(h: &Harness<'_, Shell>) -> Vec<String> {
 /// place, and its menu ungroups or deletes it.
 #[test]
 fn groups_in_the_design_tree() {
-    let (mut h, dir) = plaque("folders");
+    let (mut h, dir) = plaque("groups");
     common::go_to(&mut h, "Design");
     select(&mut h, &["i5", "i6"]);
     h.get_by_role_and_label(
@@ -826,10 +827,10 @@ fn groups_in_the_design_tree() {
         Some("Select the shapes of “Feet” one at a time")
     );
     assert_eq!(listed(&h)[4], "[Feet]");
-    assert!(!h.state().app().project().folders[0].group);
+    assert!(!h.state().app().project().groups[0].together);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
     h.run();
-    assert!(h.state().app().project().folders[0].group);
+    assert!(h.state().app().project().groups[0].together);
 
     // Ungroup keeps the shapes; Delete takes them with the group.
     let count = h.state().app().project().instances.len();
@@ -838,7 +839,7 @@ fn groups_in_the_design_tree() {
     h.run_steps(8);
     h.get_by_role_and_label(Role::Button, "Ungroup").click();
     h.run_steps(8);
-    assert!(h.state().app().project().folders.is_empty());
+    assert!(h.state().app().project().groups.is_empty());
     assert_eq!(h.state().app().project().instances.len(), count);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
     h.run();
@@ -891,7 +892,7 @@ fn groups_drag_and_drop() {
     assert_eq!(h.state().app().undo_label(), Some("Reorder “island”"));
     assert_eq!(listed(&h)[..3], ["island", "outline", "pocket"]);
 
-    // Out of the folder, to the end: onto the Tabs header. A selected
+    // Out of the group, to the end: onto the Tabs header. A selected
     // row takes the selection with it, here both holes.
     assert_eq!(selected(&h), ["i5", "i6"]);
     let from = row(&h, "holes-1").center();
@@ -972,7 +973,7 @@ fn a_group_is_selected_as_one() {
     );
     h.run();
     assert_eq!(h.state().app().undo_label(), Some("Ungroup “Group 1”"));
-    assert!(h.state().app().project().folders.is_empty());
+    assert!(h.state().app().project().groups.is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

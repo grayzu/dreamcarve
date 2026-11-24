@@ -231,6 +231,6 @@ pub fn command(
     Ok(Command::CopyInstances {
         ids: ids.to_vec(),
         placements,
-        folder: Some(strings.fmt(StrKey::ArrayName, &[("name", name)])),
+        group: Some(strings.fmt(StrKey::ArrayName, &[("name", name)])),
     })
 }

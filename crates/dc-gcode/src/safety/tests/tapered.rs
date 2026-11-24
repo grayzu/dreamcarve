@@ -697,7 +697,7 @@ fn generated_tapered_carves_pass_s17() {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

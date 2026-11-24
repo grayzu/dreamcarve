@@ -373,7 +373,7 @@ items. Each is tracked here.
 | A more prominent division of the tool bar | Change | Done: the view's controls keep the top pill; the strip under it has a rule between each of its four segments |
 | Control of snapping | Feature | Exists in View ▸ Snapping and Snap To; now also the strip's Snapping button, with the switch and a tick per kind |
 | An origin for an object | Feature | Done, as the maintainer answered: the point a resize, a turn and a flip are made about. `dc_app::origin`, the Origin row in Properties, the mark on the selection |
-| Folder and group | Question | Answered, and merged at the maintainer's word: one thing, a **group**, with *Select Together* in its menu |
+| Folder and group | Question | Answered, and merged at the maintainer's word: one thing, a **group**, with *Select Together* in its menu; the project file and the code renamed to match (`groups`, `group`, `together`) |
 | A tool added in an operation should be chosen | Bug | Done: `Command::AddToolForOperation`, `editor::add_from_library_for` |
 | Start and stop points for an operation | Feature | Skipped for now, at the maintainer's word |
 | An operation that cuts nothing is too quiet | Bug | Done: `operations::cuts_nothing`, the row's second line, the editor's banner |
@@ -389,13 +389,16 @@ Open, waiting for the maintainer's answer:
   where it starts, so "stop" is asked about: an open path's direction,
   or where the bit lifts. This is CAM, phase 4's ground, and wants a
   short spec before it is built.
-- **The file's names for a group.** The app says group everywhere; the
-  project file still writes `folders`, an instance's `folder` and the
-  entry's `group` flag, and the code's types are named to match
-  (`Folder`, `FolderId`, `Command::NewFolder`). Renaming them in the
-  file is a change to format 29, to its migration, to eleven fixtures
-  and to the Project file chapter. Format 29 has not been released, so
-  it is cheapest now; it is not done without the maintainer's word.
+- **The file's names for a group.** Done at the maintainer's word of
+  2026-11-23: the project file writes `groups`, an instance's `group`
+  and a group's `together`, with ids `g1`, `g2`, …, and the code's types
+  are named to match (`Group`, `GroupId`, `Command::NewGroup`). Format
+  29 changed in place, since no release has written it, so a project
+  saved by an earlier build of this branch (which wrote `folders`) is
+  refused; in such a file, `folders` becomes `groups`, each instance's
+  `folder` `group`, and each entry's `group` `together`. X and Y stay
+  at the bottom-left corner whatever the origin, also at the
+  maintainer's word.
 
 Decisions taken with these, for the maintainer:
 

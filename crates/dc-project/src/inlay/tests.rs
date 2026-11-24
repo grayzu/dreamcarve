@@ -178,7 +178,7 @@ fn bounded(boundary: &[&str], shapes: &[[f64; 4]]) -> (Project, InlayOp) {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

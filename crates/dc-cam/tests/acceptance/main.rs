@@ -48,7 +48,7 @@ fn drawing_project(profiles: Vec<Polyline>, thickness_mm: f64) -> Project {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: Some(thickness_mm),
         z_bottom_mm: Some(0.0),
     }];

@@ -675,7 +675,7 @@ fn linked_copies_follow() {
     harness
         .run(Command::DuplicateInstances(vec![id("i2")]))
         .unwrap();
-    // The copy is filed in the rectangle's folder, beside it.
+    // The copy is filed in the rectangle's group, beside it.
     let copy = harness
         .app
         .project()

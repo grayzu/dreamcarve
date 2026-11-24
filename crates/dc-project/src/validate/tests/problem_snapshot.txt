@@ -773,13 +773,13 @@ severity: Warning
 field: definitions[d2].shape
 message: shape `Slot 1` (`d2`) has an outline that is not the one its slot sizes give; what is cut is the outline in `profiles`. Change a size of the shape in the app to make the outline again, or set `shape` to null to keep the outline as it is
 
-code: duplicate_folder_id
+code: duplicate_group_id
 severity: Error
 field: (none)
-message: folder id `f1` is used twice
+message: group id `g1` is used twice
 
-code: dangling_folder
+code: dangling_group
 severity: Error
-field: instances[i1].folder
-message: instance `i1` is in folder `nope`, which does not exist
+field: instances[i1].group
+message: instance `i1` is in group `nope`, which does not exist
 

@@ -2690,8 +2690,8 @@ fn p5_editing_dir() -> PathBuf {
 /// the corner filleted; the Shape menu; Offset… in the tool bar with its
 /// preview; the Trim tool over the piece a click would take out;
 /// (slice 18) the Viewport's context menu and the Edit menu; (slice 20)
-/// Align and Distribute in Properties; (slice 21) a group and a
-/// folder in the Design Tree; (slice 19) a grid and a circular array in
+/// Align and Distribute in Properties; (slice 21) two groups
+/// in the Design Tree; (slice 19) a grid and a circular array in
 /// the tool bar; and (slice 22) construction geometry. Dark
 /// and light at 1×, written to `docs/specs/phase-5/review/editing/`,
 /// where they are committed.
@@ -2835,7 +2835,8 @@ fn phase5_editing_screenshots() {
     park_pointer(&mut h);
     shoot_in(&mut h, &out, "08-align-and-distribute", &looks);
 
-    // 09: a group and a folder in the Design Tree (slice 21).
+    // 09: two groups in the Design Tree, one selected together and one
+    // not (slice 21).
     let ids: Vec<_> = h
         .state()
         .app()
@@ -2845,16 +2846,16 @@ fn phase5_editing_screenshots() {
         .map(|i| i.id.clone())
         .collect();
     let app = h.state_mut().app_mut();
-    app.run(dc_app::Command::NewFolder {
+    app.run(dc_app::Command::NewGroup {
         name: "Group 1".to_owned(),
         ids: vec![ids[0].clone(), ids[2].clone()],
-        group: true,
+        together: true,
     })
     .unwrap();
-    app.run(dc_app::Command::NewFolder {
+    app.run(dc_app::Command::NewGroup {
         name: "Guides".to_owned(),
         ids: vec![ids[1].clone()],
-        group: false,
+        together: false,
     })
     .unwrap();
     app.select(dc_app::Selection::Instances(vec![
@@ -2863,7 +2864,7 @@ fn phase5_editing_screenshots() {
     ]));
     h.run();
     park_pointer(&mut h);
-    shoot_in(&mut h, &out, "09-a-group-and-a-folder", &looks);
+    shoot_in(&mut h, &out, "09-groups", &looks);
     drop(h);
 
     // 10 and 11: Array… in the tool bar (slice 19): a grid of a small

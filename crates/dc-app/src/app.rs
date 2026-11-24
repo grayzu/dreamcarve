@@ -191,7 +191,7 @@ impl App {
             tools: Vec::new(),
             operations: Vec::new(),
             tabs: Vec::new(),
-            folders: Vec::new(),
+            groups: Vec::new(),
             instances: Vec::new(),
             bitmaps: Vec::new(),
             post_processor,

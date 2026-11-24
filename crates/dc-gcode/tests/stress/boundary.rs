@@ -177,7 +177,7 @@ pub fn boundary_case(base: &Case) -> Case {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

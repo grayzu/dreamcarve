@@ -723,7 +723,7 @@ impl App {
                     profiles,
                     transform: edited.instance.transform,
                     construction: edited.instance.construction,
-                    folder: edited.instance.folder.clone(),
+                    group: edited.instance.group.clone(),
                 }],
                 inherit: vec![(edited.instance.id.clone(), 0)],
                 what: Edit::JoinEnds,
@@ -868,7 +868,7 @@ impl App {
                 profiles,
                 transform: edited.instance.transform,
                 construction: edited.instance.construction,
-                folder: edited.instance.folder.clone(),
+                group: edited.instance.group.clone(),
             }
         };
         let command = Command::ReplaceShapes {

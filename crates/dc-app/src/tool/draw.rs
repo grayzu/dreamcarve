@@ -543,7 +543,7 @@ impl App {
             profiles,
             transform: made.transform,
             construction: self.tool.construction,
-            folder: self.selection_folder(),
+            group: self.selection_group(),
         }]);
         match self.run(command) {
             Ok(label) => {
@@ -560,20 +560,20 @@ impl App {
         }
     }
 
-    /// The folder a new shape goes in: the one that holds the selection,
+    /// The group a new shape goes in: the one that holds the selection,
     /// when the whole selection is in one (capability 90).
-    pub(super) fn selection_folder(&self) -> Option<dc_project::FolderId> {
+    pub(super) fn selection_group(&self) -> Option<dc_project::GroupId> {
         let selected = self.selection().instances();
-        let mut folders = selected.iter().map(|id| {
+        let mut groups = selected.iter().map(|id| {
             self.project()
                 .instances
                 .iter()
                 .find(|instance| &instance.id == id)
-                .and_then(|instance| instance.folder.clone())
+                .and_then(|instance| instance.group.clone())
         });
-        let first = folders.next()??;
-        folders
-            .all(|folder| folder.as_ref() == Some(&first))
+        let first = groups.next()??;
+        groups
+            .all(|group| group.as_ref() == Some(&first))
             .then_some(first)
     }
 

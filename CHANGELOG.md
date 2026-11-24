@@ -60,7 +60,7 @@ before that; its changes are those under Unreleased.
   that cuts reads `shape` (ADR-0006). An instance gains `construction`
   (construction geometry: drawn and snapped to, never cut, and an error,
   `construction_targeted`, when an enabled operation targets it) and
-  `folder`; the project gains `folders`; a bitmap gains
+  `group`; the project gains `groups`; a bitmap gains
   `opacity_fraction`. A version 28 project upgrades with each of these
   empty and exports the same programs, byte for byte; an older DreamCarve
   refuses a version 29 file.
@@ -463,8 +463,11 @@ before that; its changes are those under Unreleased.
   **Group** in a shape's menu and the **New group** button all make
   one, of any number of shapes or none. A group's menu has **Select
   Together**, ticked when it is made; unticked, the group only files
-  its shapes. A group goes with its last shape. The project file keeps
-  its names (`folders`, `folder`, `group`).
+  its shapes. A group goes with its last shape. The project file says
+  group too: `groups`, an instance's `group`, and a group's `together`
+  for **Select Together**, with ids `g1`, `g2`, …. Format 29 changed in
+  place for this, since no release has written it: a project saved by
+  an earlier build of this branch no longer opens.
 - **Join, Weld, Subtract and Intersect are in the tool strip**, beside
   Trim and Array, each greyed until enough is selected. **The Tab tool
   is in the Shape menu** (and still on T), no longer a button on the

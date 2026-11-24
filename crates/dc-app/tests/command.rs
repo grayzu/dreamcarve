@@ -162,10 +162,10 @@ fn kind(command: &Command) -> &'static str {
         Command::CopyInstances { .. } => "CopyInstances",
         Command::PlaceInstances { .. } => "PlaceInstances",
         Command::SetConstruction { .. } => "SetConstruction",
-        Command::NewFolder { .. } => "NewFolder",
+        Command::NewGroup { .. } => "NewGroup",
         Command::SetGroupTogether { .. } => "SetGroupTogether",
-        Command::RenameFolder { .. } => "RenameFolder",
-        Command::DeleteFolder(_) => "DeleteFolder",
+        Command::RenameGroup { .. } => "RenameGroup",
+        Command::DeleteGroup(_) => "DeleteGroup",
         Command::Ungroup(_) => "Ungroup",
         Command::MoveRows { .. } => "MoveRows",
     }
@@ -185,7 +185,7 @@ fn new_slot(name: &str) -> dc_app::command::NewShape {
         transform: Transform::rotate(std::f64::consts::FRAC_PI_6)
             .then(Transform::translate(60.0, 40.0)),
         construction: false,
-        folder: None,
+        group: None,
     }
 }
 
@@ -468,40 +468,40 @@ fn every_command() -> Vec<(Project, Command)> {
         ),
         (
             plaque.clone(),
-            Command::NewFolder {
+            Command::NewGroup {
                 name: "Group 1".into(),
                 ids: vec![instance("i4"), instance("i2")],
-                group: true,
+                together: true,
             },
         ),
         (
             drawing.clone(),
             Command::SetGroupTogether {
-                id: dc_project::FolderId::new("f1"),
+                id: dc_project::GroupId::new("g1"),
                 together: false,
             },
         ),
         (
             drawing.clone(),
-            Command::RenameFolder {
-                id: dc_project::FolderId::new("f1"),
+            Command::RenameGroup {
+                id: dc_project::GroupId::new("g1"),
                 name: "Feet".into(),
             },
         ),
         (
             drawing.clone(),
-            Command::DeleteFolder(dc_project::FolderId::new("f1")),
+            Command::DeleteGroup(dc_project::GroupId::new("g1")),
         ),
         (
             drawing.clone(),
-            Command::Ungroup(vec![dc_project::FolderId::new("f1")]),
+            Command::Ungroup(vec![dc_project::GroupId::new("g1")]),
         ),
         (
             plaque.clone(),
             Command::MoveRows {
                 ids: vec![instance("i4")],
                 before: Some(instance("i1")),
-                folder: None,
+                group: None,
             },
         ),
         (
@@ -516,7 +516,7 @@ fn every_command() -> Vec<(Project, Command)> {
             Command::CopyInstances {
                 ids: vec![instance("i4")],
                 placements: vec![Transform::translate(5.0, 0.0)],
-                folder: Some("square array".into()),
+                group: Some("square array".into()),
             },
         ),
         (drawing.clone(), wider_slot()),
@@ -934,7 +934,7 @@ fn remove_tool_in_use_is_refused_naming_operations() {
 /// Phase 5, capability 90: `AddShapes` gives each shape the next free
 /// definition and instance ids, at the end of the Design Tree, and
 /// refuses what no project can hold: no shape, a shape with no outline,
-/// an outline that is not a number, a folder that is not there.
+/// an outline that is not a number, a group that is not there.
 #[test]
 fn add_shapes_takes_the_next_ids_and_refuses_what_cannot_be() {
     use dc_app::CommandError;
@@ -954,7 +954,7 @@ fn add_shapes_takes_the_next_ids_and_refuses_what_cannot_be() {
     assert!(
         added
             .iter()
-            .all(|i| i.visible && !i.locked && i.folder.is_none())
+            .all(|i| i.visible && !i.locked && i.group.is_none())
     );
     assert_eq!(dc_project::validate(&after), dc_project::validate(&before));
 
@@ -970,10 +970,10 @@ fn add_shapes_takes_the_next_ids_and_refuses_what_cannot_be() {
     far.transform = Transform::translate(1e9, 0.0);
     assert!(matches!(refuse(vec![far]), Err(CommandError::Geometry(_))));
     let mut filed = new_slot("Slot 1");
-    filed.folder = Some(dc_project::FolderId::new("f9"));
+    filed.group = Some(dc_project::GroupId::new("g9"));
     assert!(matches!(
         refuse(vec![filed]),
-        Err(CommandError::UnknownFolder(_))
+        Err(CommandError::UnknownGroup(_))
     ));
 
     // The next free number, by the names in use.

@@ -58,7 +58,7 @@ pub(super) fn drawn(profiles: Vec<Polyline>, width_mm: f64, height_mm: f64) -> P
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

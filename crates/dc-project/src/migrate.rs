@@ -782,7 +782,7 @@ fn v27_to_v28(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
 /// dc-project"; ADR-0006): what drawing in the app saves. Every
 /// definition gains `"shape": null` after `name` (a plain outline, which
 /// every older one is); every instance `"construction": false` and
-/// `"folder": null` after `locked`; the root `"folders": []` after `tabs`;
+/// `"group": null` after `locked`; the root `"groups": []` after `tabs`;
 /// every bitmap `"opacity_fraction": 1.0` after `locked`. Nothing that is
 /// cut changes. Fails if any of them is already there: that is not a
 /// version 28 file.
@@ -791,7 +791,7 @@ fn v28_to_v29(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
         28,
         &mut root,
         Some("tabs"),
-        "folders",
+        "groups",
         Value::Array(Vec::new()),
         "",
     )?;
@@ -818,7 +818,7 @@ fn v28_to_v29(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
                 Value::Bool(false),
                 &at,
             )?;
-            add_field(28, fields, Some("construction"), "folder", Value::Null, &at)?;
+            add_field(28, fields, Some("construction"), "group", Value::Null, &at)?;
         }
     }
     if let Some(Value::Array(bitmaps)) = root.get_mut("bitmaps") {

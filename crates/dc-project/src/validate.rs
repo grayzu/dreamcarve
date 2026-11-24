@@ -25,7 +25,7 @@
 
 use crate::bitmap::{BitmapColour, BitmapError, MAX_BITMAP_SIDE_PX};
 use crate::countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
-use crate::ids::{BitmapId, DefinitionId, FolderId, InstanceId, OperationId, TabId, ToolId};
+use crate::ids::{BitmapId, DefinitionId, GroupId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
     Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp,
     EngraveOp, Entry, InlayOp, LastPass, Lead, Operation, OriginXy, PeckRetract, PhotoVCarveOp,
@@ -166,19 +166,19 @@ pub enum Problem {
         /// The shape's kind, as the file writes it.
         kind: &'static str,
     },
-    /// Two folders share an id (format 29).
-    #[error("folder id `{id}` is used twice")]
-    DuplicateFolderId {
+    /// Two groups share an id (format 29).
+    #[error("group id `{id}` is used twice")]
+    DuplicateGroupId {
         /// The repeated id.
-        id: FolderId,
+        id: GroupId,
     },
-    /// An instance is filed in a folder that does not exist (format 29).
-    #[error("instance `{instance}` is in folder `{folder}`, which does not exist")]
-    DanglingFolder {
+    /// An instance is filed in a group that does not exist (format 29).
+    #[error("instance `{instance}` is in group `{group}`, which does not exist")]
+    DanglingGroup {
         /// The instance holding the reference.
         instance: InstanceId,
-        /// The missing folder.
-        folder: FolderId,
+        /// The missing group.
+        group: GroupId,
     },
     /// Two placed tabs share an id.
     #[error("two tabs have the id `{id}`")]
@@ -1723,7 +1723,7 @@ problem_codes! {
     PhotoRetractPositive, PhotoUnknownBitmap, BitmapFootprintAspect,
     BitmapPixelsMismatch, BitmapNotGrayscale8, DuplicateBitmapId,
     BitmapEmpty, BitmapTooLarge, BitmapFootprintPositive, BitmapUnreadable,
-    StepOverTooFine, ConstructionTargeted, DuplicateFolderId, DanglingFolder,
+    StepOverTooFine, ConstructionTargeted, DuplicateGroupId, DanglingGroup,
     ShapeOutlineDiffers,
 }
 
@@ -1797,7 +1797,7 @@ impl Problem {
             Self::DanglingInstance { operation, .. } => {
                 Some(format!("operations[{operation}].targets"))
             }
-            Self::DuplicateTabId { .. } | Self::DuplicateFolderId { .. } => None,
+            Self::DuplicateTabId { .. } | Self::DuplicateGroupId { .. } => None,
             Self::ConstructionTargeted {
                 operation,
                 boundary,
@@ -1807,7 +1807,7 @@ impl Problem {
             } else {
                 format!("operations[{operation}].targets")
             }),
-            Self::DanglingFolder { instance, .. } => Some(format!("instances[{instance}].folder")),
+            Self::DanglingGroup { instance, .. } => Some(format!("instances[{instance}].group")),
             Self::ShapeOutlineDiffers { definition, .. } => {
                 Some(format!("definitions[{definition}].shape"))
             }
@@ -2641,10 +2641,10 @@ impl Validator {
         }
 
         let mut seen = BTreeSet::new();
-        for folder in &p.folders {
-            if !seen.insert(&folder.id) {
-                self.problems.push(Problem::DuplicateFolderId {
-                    id: folder.id.clone(),
+        for group in &p.groups {
+            if !seen.insert(&group.id) {
+                self.problems.push(Problem::DuplicateGroupId {
+                    id: group.id.clone(),
                 });
             }
         }
@@ -2662,12 +2662,12 @@ impl Validator {
                     definition: inst.definition.clone(),
                 });
             }
-            if let Some(folder) = &inst.folder
-                && !p.folders.iter().any(|f| &f.id == folder)
+            if let Some(group) = &inst.group
+                && !p.groups.iter().any(|f| &f.id == group)
             {
-                self.problems.push(Problem::DanglingFolder {
+                self.problems.push(Problem::DanglingGroup {
                     instance: inst.id.clone(),
-                    folder: folder.clone(),
+                    group: group.clone(),
                 });
             }
             let at = format!("instances[{}]", inst.id);

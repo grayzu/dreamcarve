@@ -7,7 +7,7 @@
 //! relief and tool numbers; `docs/specs/phase-3/design.md`, "Data model →
 //! dc-project" for the V-Carve, the Inlay, the bitmap and the Photo
 //! V-Carve; `docs/specs/phase-5/design.md`, "Data model → dc-project" for
-//! a definition's shape, folders, construction geometry and a bitmap's
+//! a definition's shape, groups, construction geometry and a bitmap's
 //! opacity). Every type here is persisted in a `.dcv` file, so each one
 //! denies unknown fields and serializes `Option` as `null`
 //! (`docs/rust-guidelines.md`, "Serialization"). `Option` fields are also
@@ -23,7 +23,7 @@
 //! Geometry is Y-up, Z-up, millimetres (ADR-0001). Stock occupies
 //! `[0, width] × [0, height] × [0, thickness]` in project space.
 
-use crate::ids::{BitmapId, DefinitionId, FolderId, InstanceId, OperationId, TabId, ToolId};
+use crate::ids::{BitmapId, DefinitionId, GroupId, InstanceId, OperationId, TabId, ToolId};
 use crate::post_processor::PostProcessorRef;
 use crate::shape::Shape;
 use crate::units_input;
@@ -72,10 +72,10 @@ pub struct Project {
     /// Holding tabs placed on the outlines of instances (ADR-0005).
     /// Every enabled Profile that cuts a tab's outline rises over it.
     pub tabs: Vec<PlacedTab>,
-    /// The Design Tree's folders (format 29; phase 5 functional spec,
-    /// capability 99). An instance names its folder; a folder holds no
+    /// The Design Tree's groups (format 29; phase 5 functional spec,
+    /// capability 99). An instance names its group; a group holds no
     /// list of its own. Empty for a migrated project.
-    pub folders: Vec<Folder>,
+    pub groups: Vec<Group>,
     /// Placed copies of definitions, in the Design Tree's order, which
     /// is also the drawing order.
     pub instances: Vec<FeatureInstance>,
@@ -278,10 +278,10 @@ pub struct FeatureInstance {
     /// capability 100): drawn and snapped to, never cut. Validation
     /// refuses a project whose operation names one.
     pub construction: bool,
-    /// The folder this instance is filed in (format 29), or `None` at
+    /// The group this instance is filed in (format 29), or `None` at
     /// the Design Tree's top level.
     #[serde(deserialize_with = "Option::deserialize")]
-    pub folder: Option<FolderId>,
+    pub group: Option<GroupId>,
     /// Top of the feature, millimetres above the material bottom. `None`
     /// until the user sets it; nothing reads it yet, so it is never
     /// guessed. Reserved: validation checks only its range and that
@@ -294,19 +294,19 @@ pub struct FeatureInstance {
     pub z_bottom_mm: Option<f64>,
 }
 
-/// A folder of the Design Tree (format 29; phase 5 functional spec,
-/// capability 99). Folders do not nest. Its rows are the instances that
+/// A group of the Design Tree (format 29; phase 5 functional spec,
+/// capability 99). Groups do not nest. Its rows are the instances that
 /// name it, in the project's order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Folder {
-    /// This folder's id, `f<n>`; unique in the project.
-    pub id: FolderId,
+pub struct Group {
+    /// This group's id, `g<n>`; unique in the project.
+    pub id: GroupId,
     /// Display name.
     pub name: String,
-    /// Whether the folder is a group (CONTEXT: Group): its shapes are
-    /// selected together.
-    pub group: bool,
+    /// Whether a click on one of its shapes on the Viewport selects them
+    /// all (CONTEXT: Group); `false` selects them one at a time.
+    pub together: bool,
 }
 
 /// A grayscale picture placed on the stock (format 27; functional spec,

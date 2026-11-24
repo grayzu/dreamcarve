@@ -209,7 +209,7 @@ fn default_project(
         tools,
         operations,
         tabs: Vec::new(),
-        folders: Vec::new(),
+        groups: Vec::new(),
         post_processor,
     }
 }
@@ -329,7 +329,7 @@ pub fn picture(
         tools: vec![tool],
         operations: vec![Operation::PhotoVCarve(photo)],
         tabs: Vec::new(),
-        folders: Vec::new(),
+        groups: Vec::new(),
         post_processor,
     })
 }

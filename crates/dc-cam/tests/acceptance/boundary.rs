@@ -83,7 +83,7 @@ fn instance(id: &str, name: &str) -> FeatureInstance {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }

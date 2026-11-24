@@ -490,7 +490,7 @@ impl App {
             // Drawn where it lies, as an imported outline is.
             transform: dc_geometry::Transform::IDENTITY,
             construction: self.tool.construction,
-            folder: self.selection_folder(),
+            group: self.selection_group(),
         }]);
         match self.run(command) {
             Ok(label) => {

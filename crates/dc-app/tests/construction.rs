@@ -191,7 +191,7 @@ fn checks_and_fit_stock_pass_it_by() {
         profiles: vec![Polyline::rect(Point::new(x, 10.0), 30.0, 30.0)],
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     };
     let mut app = Harness::from_project(App::new_project().unwrap()).app;
     app.run(Command::AddShapes(vec![

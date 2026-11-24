@@ -258,7 +258,7 @@ pub fn draw_all(h: &mut H, text: &str, stage: &mut dyn FnMut(&mut H, Stage<'_>))
 }
 
 /// Holds the project in the window to the one the chapter's steps build
-/// with no window: the same shapes by name, in the same folders, with
+/// with no window: the same shapes by name, in the same groups, with
 /// the same sizes, each where the other is to a millionth of a
 /// millimetre (a click on the Viewport is a whole pixel, and what is
 /// aligned after it is placed from there).
@@ -267,17 +267,17 @@ pub fn assert_same_drawing(window: &dc_project::Project, steps: &dc_project::Pro
         p.instances
             .iter()
             .map(|i| {
-                let folder = i.folder.as_ref().and_then(|id| {
-                    p.folders
+                let group = i.group.as_ref().and_then(|id| {
+                    p.groups
                         .iter()
                         .find(|f| f.id == *id)
                         .map(|f| f.name.clone())
                 });
-                (i.name.clone(), i.construction, folder)
+                (i.name.clone(), i.construction, group)
             })
             .collect()
     };
-    assert_eq!(names(window), names(steps), "the shapes and their folders");
+    assert_eq!(names(window), names(steps), "the shapes and their groups");
     assert_eq!(window.stock, steps.stock);
     for (a, b) in window.instances.iter().zip(&steps.instances) {
         let (in_window, in_steps) = (

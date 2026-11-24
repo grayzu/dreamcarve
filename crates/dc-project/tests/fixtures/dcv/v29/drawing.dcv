@@ -71,16 +71,16 @@
     }
   ],
   "tabs": [],
-  "folders": [
+  "groups": [
     {
-      "id": "f1",
+      "id": "g1",
       "name": "Holes",
-      "group": true
+      "together": true
     },
     {
-      "id": "f2",
+      "id": "g2",
       "name": "Later",
-      "group": false
+      "together": false
     }
   ],
   "instances": [
@@ -99,7 +99,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": 6.0,
       "z_bottom_mm": 0.0
     },
@@ -118,7 +118,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": "f1",
+      "group": "g1",
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -137,7 +137,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": "f1",
+      "group": "g1",
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -156,7 +156,7 @@
       "visible": true,
       "locked": false,
       "construction": true,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -175,7 +175,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -194,7 +194,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -213,7 +213,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -232,7 +232,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -251,7 +251,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     },
@@ -270,7 +270,7 @@
       "visible": true,
       "locked": false,
       "construction": false,
-      "folder": null,
+      "group": null,
       "z_top_mm": null,
       "z_bottom_mm": null
     }

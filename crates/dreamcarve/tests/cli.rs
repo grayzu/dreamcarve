@@ -937,7 +937,7 @@ fn coaster_with_holes(name: &str, post: &str, canned: bool) -> String {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: Some(MEASURED_THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });
@@ -1562,7 +1562,7 @@ fn inlay_exports_and_passes_safety() {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         }];
@@ -1702,7 +1702,7 @@ fn v_carve_exports(name: &str, strategy: dc_project::VCarveStrategy, deepest: &s
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -1803,7 +1803,7 @@ fn start_depth_coaster(dir: &Path, pocket_depth_mm: f64, pocket_enabled: bool) -
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });
@@ -1985,7 +1985,7 @@ fn v_carve_check_reports_the_floor_ridges() {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -2073,7 +2073,7 @@ fn preview_legend_names_clearing_runs() {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -2236,7 +2236,7 @@ fn pocket_rough_then_rest_exports_and_passes_safety() {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: Some(MEASURED_THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     });
@@ -2337,7 +2337,7 @@ fn pocket_dogbone_exports_and_passes_safety() {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: Some(MEASURED_THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     });
@@ -2638,7 +2638,7 @@ fn drill_exports_and_passes_safety() {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: Some(MEASURED_THICKNESS_MM),
         z_bottom_mm: Some(0.0),
     });
@@ -2738,7 +2738,7 @@ fn coaster_with_small_hole(dir: &Path) -> PathBuf {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: Some(MEASURED_THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });
@@ -2848,7 +2848,7 @@ fn coaster_with_bore_holes(dir: &Path) -> PathBuf {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: Some(MEASURED_THICKNESS_MM),
             z_bottom_mm: Some(0.0),
         });
@@ -7457,15 +7457,15 @@ fn programs_in(dir: &Path) -> Vec<String> {
 
 /// `text`, a project as this build saves it, without the lines format 29
 /// added (a definition's `shape`, an instance's `construction` and
-/// `folder`, the empty `folders`, a bitmap's `opacity_fraction`): the
+/// `group`, the empty `groups`, a bitmap's `opacity_fraction`): the
 /// text a format 28 build saved for it, its version aside. For a project
 /// with nothing drawn in it, where each of those is one line.
 fn before_format_29(text: &str) -> String {
     let added = [
         "\"shape\": null,",
         "\"construction\": false,",
-        "\"folder\": null,",
-        "\"folders\": [],",
+        "\"group\": null,",
+        "\"groups\": [],",
         "\"opacity_fraction\": 1.0,",
     ];
     let kept: Vec<&str> = text
@@ -7825,7 +7825,7 @@ fn v28_project_exports_the_same_programs() {
         let project = load_file(&path).project;
         assert_eq!(project.version, dc_project::CURRENT_VERSION);
         let current = save(&project).expect("project saves");
-        for added in ["\"shape\": null,", "\"folders\": [],", "\"folder\": null,"] {
+        for added in ["\"shape\": null,", "\"groups\": [],", "\"group\": null,"] {
             assert!(current.contains(added), "{stem}: {added}");
         }
         let v28 = before_format_29(&current).replacen(
@@ -7835,7 +7835,7 @@ fn v28_project_exports_the_same_programs() {
         );
         assert!(v28.contains("\"version\": 28,"), "{stem}: {v28}");
         // (A tab's own `shape` stays: `"shape": "rect"`.)
-        for added in ["\"shape\": null", "\"folder", "\"construction\""] {
+        for added in ["\"shape\": null", "\"group", "\"construction\""] {
             assert!(!v28.contains(added), "{stem}: {added}");
         }
         std::fs::write(dir.join("old.dcv"), &v28).expect("dcv written");
@@ -12904,7 +12904,7 @@ fn countersink_exports_as_plain_moves_with_canned_cycles() {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

@@ -651,7 +651,7 @@ fn with_pocket(mut project: Project, depth_mm: f64) -> Project {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

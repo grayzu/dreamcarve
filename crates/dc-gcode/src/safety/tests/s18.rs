@@ -71,7 +71,7 @@ fn holes_with(thickness_mm: f64, ops: Vec<Operation>) -> Project {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

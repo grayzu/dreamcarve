@@ -31,7 +31,7 @@ fn place_rect(project: &mut Project, id: &str, x: f64, y: f64, w: f64, h: f64) {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });
@@ -160,7 +160,7 @@ fn place_circle(project: &mut Project, id: &str, x: f64, y: f64, diameter_mm: f6
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     });

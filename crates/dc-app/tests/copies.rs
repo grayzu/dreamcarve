@@ -37,7 +37,7 @@ fn rectangle(name: &str, (x, y): (f64, f64), (w, h): (f64, f64)) -> NewShape {
         profiles: vec![Polyline::rect(Point::new(x, y), w, h)],
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     }
 }
 
@@ -301,7 +301,7 @@ fn copy_instances_places_linked_copies() {
         .run(Command::CopyInstances {
             ids: vec![id("i1")],
             placements: vec![Transform::translate(40.0, 5.0)],
-            folder: None,
+            group: None,
         })
         .unwrap();
     assert_eq!(label, "Copy “square”");
@@ -321,7 +321,7 @@ fn copy_instances_places_linked_copies() {
             Transform::translate(0.0, 30.0),
             Transform::translate(0.0, 60.0),
         ],
-        folder: None,
+        group: None,
     })
     .unwrap();
     assert_eq!(
@@ -336,7 +336,7 @@ fn copy_instances_places_linked_copies() {
         app.run(Command::CopyInstances {
             ids: vec![id("i1")],
             placements: Vec::new(),
-            folder: None,
+            group: None,
         }),
         Err(CommandError::NothingToDo)
     ));

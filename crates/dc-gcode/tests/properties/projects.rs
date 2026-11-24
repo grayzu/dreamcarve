@@ -367,7 +367,7 @@ fn project(setup: Setup, op: impl FnOnce(&Setup, Vec<InstanceId>) -> Operation) 
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: Some(setup.thickness_mm),
             z_bottom_mm: Some(0.0),
         });

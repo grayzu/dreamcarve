@@ -28,10 +28,10 @@
 //! their own ([`start_rename_picture`], `dc_app::tree::bitmap_menu`).
 
 use dc_app::tree::{
-    BitmapRow, FolderRow, MenuItem, Row, Section, ShapeGlyph, ShapeRow, TabRow, Tree,
+    BitmapRow, GroupRow, MenuItem, Row, Section, ShapeGlyph, ShapeRow, TabRow, Tree,
 };
 use dc_app::{ClickMode, Selection, StrKey, Strings};
-use dc_project::{BitmapId, FolderId, InstanceId, Project};
+use dc_project::{BitmapId, GroupId, InstanceId, Project};
 use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
 
 use crate::panels;
@@ -101,25 +101,22 @@ pub(crate) fn start_rename_picture(ctx: &egui::Context, project: &Project, id: &
     }
 }
 
-/// The folder whose name is a field, and the text typed so far.
-fn renaming_folder_id() -> Id {
-    Id::unique("design_tree_renaming_folder")
+/// The group whose name is a field, and the text typed so far.
+fn renaming_group_id() -> Id {
+    Id::unique("design_tree_renaming_group")
 }
 
-/// Turns folder `id`'s name into a field in place, the name selected, on
+/// Turns group `id`'s name into a field in place, the name selected, on
 /// the tree's next frame (its menu's *Rename*).
-pub(crate) fn start_rename_folder(ctx: &egui::Context, project: &Project, id: &FolderId) {
-    if let Some(folder) = project.folders.iter().find(|f| f.id == *id) {
+pub(crate) fn start_rename_group(ctx: &egui::Context, project: &Project, id: &GroupId) {
+    if let Some(group) = project.groups.iter().find(|f| f.id == *id) {
         ctx.data_mut(|d| {
-            d.insert_temp(
-                renaming_folder_id(),
-                (id.clone(), folder.name.clone(), true),
-            );
+            d.insert_temp(renaming_group_id(), (id.clone(), group.name.clone(), true));
         });
     }
 }
 
-/// The folders whose rows are folded away: view state, kept while the
+/// The groups whose rows are folded away: view state, kept while the
 /// app runs.
 fn collapsed_id() -> Id {
     Id::unique("design_tree_collapsed")
@@ -130,7 +127,7 @@ fn dragging_id() -> Id {
     Id::unique("design_tree_dragging")
 }
 
-/// How far a row filed in a folder is set in from the rows that are not.
+/// How far a row filed in a group is set in from the rows that are not.
 const INDENT_PX: f32 = 16.0;
 
 /// Where the rows being dragged would go if they were let go now
@@ -139,8 +136,8 @@ const INDENT_PX: f32 = 16.0;
 struct DropAt {
     /// The row they go before.
     before: Option<InstanceId>,
-    /// The folder they are filed in.
-    folder: Option<FolderId>,
+    /// The group they are filed in.
+    group: Option<GroupId>,
     /// The line: its height in the panel, and how far it is set in.
     line: (f32, f32),
 }
@@ -322,7 +319,7 @@ fn section(
         enabled,
     );
     // A button of the section's own, before the eye: the Shapes
-    // section's New Folder.
+    // section's New Group.
     let extra = extra.is_some_and(|(icon, name)| {
         icon_button(
             ui,
@@ -387,7 +384,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             ui.data_mut(|d| d.insert_temp(seen_pictures_id(), pictures));
             // Rows dragged within the tree (capability 99): where they
             // would go is read row by row, and a line drawn there.
-            let collapsed: Vec<FolderId> =
+            let collapsed: Vec<GroupId> =
                 ui.data(|d| d.get_temp(collapsed_id())).unwrap_or_default();
             let dragging: Option<Vec<InstanceId>> = ui.data(|d| d.get_temp(dragging_id()));
             let mut drop: Option<DropAt> = None;
@@ -395,7 +392,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             for line in tree.rows() {
                 match line {
                     Row::Header(Section::Shapes) => {
-                        let (eye, lock, new_folder) = section(
+                        let (eye, lock, new_group) = section(
                             ui,
                             strings,
                             strings.get(StrKey::TreeShapes),
@@ -403,12 +400,12 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                             (SHAPE_FLAGS, None),
                             Some((Icon::Group, strings.get(StrKey::TreeNewGroupHelp))),
                         );
-                        // New Folder holds the selection, or nothing.
-                        if new_folder && app.target_editing().is_none() {
-                            out.push(Action::run(dc_app::Command::NewFolder {
+                        // New Group holds the selection, or nothing.
+                        if new_group && app.target_editing().is_none() {
+                            out.push(Action::run(dc_app::Command::NewGroup {
                                 name: dc_app::tree::next_group_name(project),
                                 ids: app.selection().instances().to_vec(),
-                                group: true,
+                                together: true,
                             }));
                         }
                         let all = every_instance(project);
@@ -419,25 +416,25 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                             out.push(Action::Run(Box::new(command)));
                         }
                     }
-                    Row::Folder(row) => {
+                    Row::Group(row) => {
                         let folded = collapsed.contains(&row.id);
-                        let response = folder_row(ui, state, row, folded, out);
+                        let response = group_row(ui, state, row, folded, out);
                         let rect = surface_rect(response.rect);
                         // Dropped on its upper half, rows go before the
-                        // folder; on its lower, in it, first. A folder
+                        // group; on its lower, in it, first. A group
                         // folded away or empty takes them last.
                         match drop_half(ui, dragging.is_some(), rect) {
                             Some(_) if folded || row.rows.is_empty() => {
                                 drop = Some(DropAt {
                                     before: None,
-                                    folder: Some(row.id.clone()),
+                                    group: Some(row.id.clone()),
                                     line: (rect.bottom(), INDENT_PX),
                                 });
                             }
                             Some(upper) => {
                                 drop = Some(DropAt {
                                     before: row.rows.first().cloned(),
-                                    folder: (!upper).then(|| row.id.clone()),
+                                    group: (!upper).then(|| row.id.clone()),
                                     line: if upper {
                                         (rect.top(), 0.0)
                                     } else {
@@ -449,12 +446,12 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         }
                     }
                     Row::Shape(row) => {
-                        // A folded folder's rows are not listed, unless
+                        // A folded group's rows are not listed, unless
                         // one is to be revealed.
                         if row
-                            .folder
+                            .group
                             .as_ref()
-                            .is_some_and(|folder| collapsed.contains(folder))
+                            .is_some_and(|group| collapsed.contains(group))
                             && reveal.as_ref() != Some(&row.id)
                         {
                             continue;
@@ -476,18 +473,18 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                             response.scroll_to_me(None);
                         }
                         let rect = surface_rect(response.rect);
-                        let indent = if row.folder.is_some() { INDENT_PX } else { 0.0 };
+                        let indent = if row.group.is_some() { INDENT_PX } else { 0.0 };
                         match drop_half(ui, dragging.is_some(), rect) {
                             Some(true) => {
                                 drop = Some(DropAt {
                                     before: Some(row.id.clone()),
-                                    folder: row.folder.clone(),
+                                    group: row.group.clone(),
                                     line: (rect.top(), indent),
                                 });
                             }
-                            // After this row, in the folder it is in:
-                            // before the next row of that folder, or as
-                            // its last. A row in no folder is followed
+                            // After this row, in the group it is in:
+                            // before the next row of that group, or as
+                            // its last. A row in no group is followed
                             // by whatever row comes next.
                             Some(false) => {
                                 let next = tree
@@ -495,12 +492,11 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                                     .iter()
                                     .skip_while(|other| other.id != row.id)
                                     .nth(1);
-                                let beside = next.filter(|next| {
-                                    next.folder == row.folder || row.folder.is_none()
-                                });
+                                let beside = next
+                                    .filter(|next| next.group == row.group || row.group.is_none());
                                 drop = Some(DropAt {
                                     before: beside.map(|next| next.id.clone()),
-                                    folder: row.folder.clone(),
+                                    group: row.group.clone(),
                                     line: (rect.bottom(), indent),
                                 });
                             }
@@ -517,7 +513,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                             (SHAPE_FLAGS, Some(strings.get(StrKey::TreeTabsNoFlags))),
                             None,
                         );
-                        // Past the last shape: the end, in no folder.
+                        // Past the last shape: the end, in no group.
                         let header = Rect::from_min_max(
                             egui::pos2(ui.min_rect().left(), top),
                             egui::pos2(ui.min_rect().right(), top + SECTION_PX),
@@ -525,7 +521,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         if drop_half(ui, dragging.is_some(), header).is_some() {
                             drop = Some(DropAt {
                                 before: None,
-                                folder: None,
+                                group: None,
                                 line: (top, 0.0),
                             });
                         }
@@ -581,7 +577,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         let command = dc_app::Command::MoveRows {
                             ids,
                             before: at.before,
-                            folder: at.folder,
+                            group: at.group,
                         };
                         // Rows let go where they were change nothing,
                         // and say nothing.
@@ -812,8 +808,8 @@ fn shape_row(
     }
 
     // The shape glyph: what the shape is, never a word. A row filed in a
-    // folder is set in under the folder's.
-    let indent = if row.folder.is_some() { INDENT_PX } else { 0.0 };
+    // group is set in under the group's.
+    let indent = if row.group.is_some() { INDENT_PX } else { 0.0 };
     let glyph_rect = lock_rect.translate(egui::vec2(ICON_BOX_PX + 2.0 + indent, 0.0));
     let (shape_icon, shape_tip) = match row.glyph {
         // Construction geometry says so before it says what it is.
@@ -972,16 +968,16 @@ fn shape_row(
     response
 }
 
-/// A folder's row (capability 99): its eye and padlock, which act on
+/// A group's row (capability 99): its eye and padlock, which act on
 /// every row filed in it; the chevron that folds its rows away; its
-/// glyph, a folder's or a group's; its name, a field while it is
+/// glyph; its name, a field while it is
 /// renamed; and how many shapes it holds. A click selects its shapes, a
 /// double-click renames it, and its menu is *Rename*, *Ungroup* (the
-/// folder goes, its shapes stay) and *Delete* (its shapes go with it).
-fn folder_row(
+/// group goes, its shapes stay) and *Delete* (its shapes go with it).
+fn group_row(
     ui: &mut Ui,
     state: &FrameState<'_>,
-    row: &FolderRow,
+    row: &GroupRow,
     folded: bool,
     out: &mut Vec<Action>,
 ) -> egui::Response {
@@ -1002,7 +998,7 @@ fn folder_row(
     surface(ui, rect, false, response.hovered());
     focus_ring_round(ui, &response, rect, theme::CONTROL_RADIUS_PX);
 
-    // The eye and the padlock, for every row of the folder.
+    // The eye and the padlock, for every row of the group.
     let eye_rect = Rect::from_center_size(
         egui::pos2(rect.left() + 8.0 + ICON_BOX_PX / 2.0, rect.center().y),
         egui::vec2(ICON_BOX_PX, ICON_BOX_PX),
@@ -1026,7 +1022,7 @@ fn folder_row(
     let eye = icon_button(
         ui,
         eye_rect,
-        ui.make_persistent_id(("tree_folder_eye", row.id.as_str())),
+        ui.make_persistent_id(("tree_group_eye", row.id.as_str())),
         eye_icon,
         colour,
         strings.get(eye_key),
@@ -1040,7 +1036,7 @@ fn folder_row(
     let lock = icon_button(
         ui,
         lock_rect,
-        ui.make_persistent_id(("tree_folder_lock", row.id.as_str())),
+        ui.make_persistent_id(("tree_group_lock", row.id.as_str())),
         lock_icon,
         colour,
         strings.get(lock_key),
@@ -1052,7 +1048,7 @@ fn folder_row(
         out.push(Action::run(command));
     }
 
-    // The chevron folds the rows away; the glyph says folder or group.
+    // The chevron folds the rows away; the glyph says it is a group.
     let chevron_rect = lock_rect.translate(egui::vec2(ICON_BOX_PX + 2.0, 0.0));
     let (chevron_icon, chevron_key) = if folded {
         (Icon::ChevronRight, StrKey::TreeExpand)
@@ -1062,14 +1058,14 @@ fn folder_row(
     let chevron = icon_button(
         ui,
         chevron_rect,
-        ui.make_persistent_id(("tree_folder_chevron", row.id.as_str())),
+        ui.make_persistent_id(("tree_group_chevron", row.id.as_str())),
         chevron_icon,
         palette.text_secondary,
         &strings.fmt(chevron_key, &[("name", &row.name)]),
         true,
     );
     if chevron.clicked() {
-        let mut collapsed: Vec<FolderId> =
+        let mut collapsed: Vec<GroupId> =
             ui.data(|d| d.get_temp(collapsed_id())).unwrap_or_default();
         if folded {
             collapsed.retain(|id| *id != row.id);
@@ -1081,7 +1077,7 @@ fn folder_row(
     let glyph_rect = chevron_rect.translate(egui::vec2(ICON_BOX_PX, 0.0));
     // One glyph for a group; its tooltip says how its shapes are
     // selected.
-    let folder_tip = if row.group {
+    let group_tip = if row.together {
         StrKey::TreeGroup
     } else {
         StrKey::TreeGroupApart
@@ -1089,10 +1085,10 @@ fn folder_row(
     glyph(ui, glyph_rect, Icon::Group, palette.text_secondary);
     ui.interact(
         glyph_rect,
-        ui.make_persistent_id(("tree_folder_glyph", row.id.as_str())),
+        ui.make_persistent_id(("tree_group_glyph", row.id.as_str())),
         Sense::hover(),
     )
-    .on_hover_text(strings.get(folder_tip));
+    .on_hover_text(strings.get(group_tip));
 
     // How many shapes it holds, right.
     let count = row.rows.len().to_string();
@@ -1118,31 +1114,31 @@ fn folder_row(
     );
     ui.interact(
         count_rect,
-        ui.make_persistent_id(("tree_folder_count", row.id.as_str())),
+        ui.make_persistent_id(("tree_group_count", row.id.as_str())),
         Sense::hover(),
     )
-    .on_hover_text(strings.fmt(StrKey::TreeFolderRows, &[("count", &count)]));
+    .on_hover_text(strings.fmt(StrKey::TreeGroupRows, &[("count", &count)]));
 
     // The name, or the rename field.
     let name_rect = Rect::from_min_max(
         egui::pos2(glyph_rect.right() + 6.0, rect.top()),
         egui::pos2(count_rect.left() - 8.0, rect.bottom()),
     );
-    let renaming: Option<(FolderId, String, bool)> = ui.data(|d| d.get_temp(renaming_folder_id()));
+    let renaming: Option<(GroupId, String, bool)> = ui.data(|d| d.get_temp(renaming_group_id()));
     match renaming {
         Some((id, text, fresh)) if id == row.id => {
-            let label = strings.fmt(StrKey::TreeRenameFolder, &[("name", &row.name)]);
-            let field_id = ui.make_persistent_id(("tree_rename_folder", row.id.as_str()));
+            let label = strings.fmt(StrKey::TreeRenameGroup, &[("name", &row.name)]);
+            let field_id = ui.make_persistent_id(("tree_rename_group", row.id.as_str()));
             match rename_field(ui, name_rect, field_id, &label, text, fresh) {
                 Renamed::Typing(text) => {
-                    ui.data_mut(|d| d.insert_temp(renaming_folder_id(), (id, text, false)));
+                    ui.data_mut(|d| d.insert_temp(renaming_group_id(), (id, text, false)));
                 }
                 Renamed::Reverted => {
-                    ui.data_mut(|d| d.remove::<(FolderId, String, bool)>(renaming_folder_id()));
+                    ui.data_mut(|d| d.remove::<(GroupId, String, bool)>(renaming_group_id()));
                 }
                 Renamed::Committed(text) => {
-                    ui.data_mut(|d| d.remove::<(FolderId, String, bool)>(renaming_folder_id()));
-                    let command = dc_app::Command::RenameFolder {
+                    ui.data_mut(|d| d.remove::<(GroupId, String, bool)>(renaming_group_id()));
+                    let command = dc_app::Command::RenameGroup {
                         id: row.id.clone(),
                         name: text,
                     };
@@ -1175,7 +1171,7 @@ fn folder_row(
     if response.double_clicked() {
         ui.data_mut(|d| {
             d.insert_temp(
-                renaming_folder_id(),
+                renaming_group_id(),
                 (row.id.clone(), row.name.clone(), true),
             );
         });
@@ -1184,15 +1180,15 @@ fn folder_row(
     }
     response.context_menu(|ui| {
         if ui.button(strings.get(StrKey::TreeRenameItem)).clicked() {
-            out.push(Action::RenameFolder(row.id.clone()));
+            out.push(Action::RenameGroup(row.id.clone()));
             ui.close();
         }
         // Select Together: a tick, on for a group as it is made.
         let together = strings.get(StrKey::TreeSelectTogether);
-        if crate::shell::menu::checked_item(ui, together, row.group).clicked() {
+        if crate::shell::menu::checked_item(ui, together, row.together).clicked() {
             out.push(Action::run(dc_app::Command::SetGroupTogether {
                 id: row.id.clone(),
-                together: !row.group,
+                together: !row.together,
             }));
             ui.close();
         }
@@ -1202,7 +1198,7 @@ fn folder_row(
         }
         ui.separator();
         if ui.button(strings.get(StrKey::TreeDelete)).clicked() {
-            out.push(Action::run(dc_app::Command::DeleteFolder(row.id.clone())));
+            out.push(Action::run(dc_app::Command::DeleteGroup(row.id.clone())));
             ui.close();
         }
     });
@@ -1280,7 +1276,7 @@ pub(crate) fn context_menu(
             continue;
         }
         // Rename | Hide, Lock | Cut, Copy, Paste, Duplicate, Delete |
-        // New Folder, Group, Ungroup | Make Unique, Convert to Path |
+        // Group, Ungroup | Make Unique, Convert to Path |
         // Zoom to.
         let first_of_its_group = match item {
             MenuItem::Hide

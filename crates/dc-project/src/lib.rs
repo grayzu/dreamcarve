@@ -31,7 +31,7 @@ pub use bitmap::{BitmapColour, BitmapError, BitmapHeader, Grayscale, MAX_BITMAP_
 pub use countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 pub use dc_geometry::shapes::gear::{GearCrest, GearFlanks, GearProblem, GearRoot};
 pub use history::{History, MAX_UNDO_STEPS};
-pub use ids::{BitmapId, DefinitionId, FolderId, InstanceId, OperationId, TabId, ToolId};
+pub use ids::{BitmapId, DefinitionId, GroupId, InstanceId, OperationId, TabId, ToolId};
 pub use inlay::{
     BandEdge, BandSource, BitRounding, BoundaryInstance, BoundaryProblem, CornerKind,
     DrawnBoundary, EdgePass, GlueGapBelowBall, INLAY_MERGE_MM, MaleBand, NarrowestBand,
@@ -44,7 +44,7 @@ pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, MigrationNote, migrate, migrate_with_notes};
 pub use model::{
     Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
-    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Folder, Heights, InlayCutOut,
+    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Group, Heights, InlayCutOut,
     InlayOp, LastPass, Lead, MachineOrigin, MachiningOrder, MaleBoard, Operation, OriginXy,
     OriginZ, ParkXy, PeckRetract, PhotoStrategy, PhotoVCarveOp, PlacedTab, PocketOp, ProfileOp,
     Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,

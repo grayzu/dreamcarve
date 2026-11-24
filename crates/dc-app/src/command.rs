@@ -16,7 +16,7 @@
 
 mod bitmaps;
 mod copies;
-mod folders;
+mod groups;
 mod instances;
 mod operations;
 mod shapes;
@@ -38,7 +38,7 @@ use dc_geometry::{Polyline, Transform, approx_eq};
 use dc_job::Drawing;
 use dc_job::picture::PictureSize;
 use dc_project::{
-    BitmapId, FolderId, Grayscale, Heights, InstanceId, MachineOrigin, Operation, OperationId,
+    BitmapId, Grayscale, GroupId, Heights, InstanceId, MachineOrigin, Operation, OperationId,
     PlacedTab, PostProcessorRef, Project, Shape, Stock, TabId, Tool, ToolId, Units, switch_post,
 };
 
@@ -257,12 +257,10 @@ pub enum Command {
         /// Whether they are construction geometry.
         construction: bool,
     },
-    /// A group of the Design Tree under the next free `f<n>`, holding
+    /// A group of the Design Tree under the next free `g<n>`, holding
     /// `ids`, which are gathered where the first of them is (capability
-    /// 99). The file and this command call the record a folder: the
-    /// first build had folders and groups, which the maintainer's review
-    /// of 2026-11-23 made one thing.
-    NewFolder {
+    /// 99).
+    NewGroup {
         /// The group's name.
         name: String,
         /// The instances filed in it; none makes it empty, to be filled.
@@ -270,37 +268,37 @@ pub enum Command {
         /// Whether its shapes are selected together on the Viewport,
         /// as those of every group made in the app are until its
         /// *Select Together* is turned off.
-        group: bool,
+        together: bool,
     },
     /// Turn a group's *Select Together* on or off: whether a click on
     /// one of its shapes on the Viewport selects them all.
     SetGroupTogether {
         /// The group.
-        id: FolderId,
+        id: GroupId,
         /// Whether its shapes are selected together.
         together: bool,
     },
-    /// Rename a folder.
-    RenameFolder {
-        /// The folder.
-        id: FolderId,
+    /// Rename a group.
+    RenameGroup {
+        /// The group.
+        id: GroupId,
         /// Its new name.
         name: String,
     },
-    /// Remove a folder and its shapes, as Delete removes them.
-    DeleteFolder(FolderId),
-    /// Remove folders; their shapes stay where they are, in no folder.
-    Ungroup(Vec<FolderId>),
+    /// Remove a group and its shapes, as Delete removes them.
+    DeleteGroup(GroupId),
+    /// Remove groups; their shapes stay where they are, in no group.
+    Ungroup(Vec<GroupId>),
     /// Rows of the Design Tree moved: placed before row `before` (with
-    /// none, after the folder's last row, or at the end of the file)
-    /// and filed in `folder`.
+    /// none, after the group's last row, or at the end of the file)
+    /// and filed in `group`.
     MoveRows {
         /// The instances moved, which keep their order.
         ids: Vec<InstanceId>,
         /// The row they go before.
         before: Option<InstanceId>,
-        /// The folder they are filed in, if any.
-        folder: Option<FolderId>,
+        /// The group they are filed in, if any.
+        group: Option<GroupId>,
     },
     /// Each instance moved by its own transform, applied after the one
     /// it has: align and distribute (capability 98a). Refused when one
@@ -321,7 +319,7 @@ pub enum Command {
         placements: Vec<Transform>,
         /// The name of a new group that the copies and their sources
         /// are filed in: an array's (capability 98).
-        folder: Option<String>,
+        group: Option<String>,
     },
     /// Append an operation under an id the project does not have.
     AddOperation(Operation),
@@ -592,8 +590,8 @@ impl Command {
             Self::CopyInstances {
                 ids,
                 placements,
-                folder,
-            } => next = copies::copy(project, ids, placements, folder.as_deref())?,
+                group,
+            } => next = copies::copy(project, ids, placements, group.as_deref())?,
             Self::AddOperation(operation) => {
                 if next.operations.iter().any(|o| o.id() == operation.id()) {
                     return Err(CommandError::DuplicateId {
@@ -686,24 +684,26 @@ impl Command {
             Self::SetConstruction { ids, construction } => {
                 next = instances::set_construction(project, ids, *construction)?;
             }
-            Self::NewFolder { name, ids, group } => {
-                next = folders::new_folder(project, name, ids, *group)?;
+            Self::NewGroup {
+                name,
+                ids,
+                together,
+            } => {
+                next = groups::new_group(project, name, ids, *together)?;
             }
             Self::SetGroupTogether { id, together } => {
-                next = folders::set_together(project, id, *together)?;
+                next = groups::set_together(project, id, *together)?;
             }
-            Self::RenameFolder { id, name } => next = folders::rename(project, id, name)?,
-            Self::DeleteFolder(id) => next = folders::delete_folder(project, id)?,
-            Self::Ungroup(ids) => next = folders::ungroup(project, ids)?,
-            Self::MoveRows {
-                ids,
-                before,
-                folder,
-            } => next = folders::move_rows(project, ids, before.as_ref(), folder.as_ref())?,
+            Self::RenameGroup { id, name } => next = groups::rename(project, id, name)?,
+            Self::DeleteGroup(id) => next = groups::delete_group(project, id)?,
+            Self::Ungroup(ids) => next = groups::ungroup(project, ids)?,
+            Self::MoveRows { ids, before, group } => {
+                next = groups::move_rows(project, ids, before.as_ref(), group.as_ref())?
+            }
         }
-        // A copy is filed beside its folder's other rows, and a group
+        // A copy is filed beside its group's other rows, and a group
         // whose shapes are gone goes with them.
-        folders::settle(project, &mut next);
+        groups::settle(project, &mut next);
         Ok(next)
     }
 
@@ -719,8 +719,8 @@ impl Command {
         let op_subject = |id: &OperationId| operations::subject(strings, before, id);
         let plain = |key: StrKey| strings.get(key).to_owned();
         let with_subject = |key: StrKey, subject: &str| strings.fmt(key, &[("subject", subject)]);
-        let folder_subject = |id: &FolderId| {
-            let name = folders::find(before, id).map_or(id.as_str(), |folder| folder.name.as_str());
+        let group_subject = |id: &GroupId| {
+            let name = groups::find(before, id).map_or(id.as_str(), |group| group.name.as_str());
             one(strings, name)
         };
         match self {
@@ -852,8 +852,8 @@ impl Command {
                 with_subject(StrKey::CommandLabelPaste, &subject)
             }
             Self::MakeUnique(ids) => with_subject(StrKey::CommandLabelMakeUnique, &subject_of(ids)),
-            Self::CopyInstances { ids, folder, .. } => {
-                let key = if folder.is_some() {
+            Self::CopyInstances { ids, group, .. } => {
+                let key = if group.is_some() {
                     StrKey::CommandLabelArray
                 } else {
                     StrKey::CommandLabelCopy
@@ -970,47 +970,45 @@ impl Command {
             }
             // An empty group is named for itself; one that holds shapes,
             // for them.
-            Self::NewFolder { name, ids, .. } if ids.is_empty() => {
+            Self::NewGroup { name, ids, .. } if ids.is_empty() => {
                 with_subject(StrKey::CommandLabelNewGroup, &one(strings, name))
             }
-            Self::NewFolder { ids, .. } => {
-                with_subject(StrKey::CommandLabelGroup, &subject_of(ids))
-            }
+            Self::NewGroup { ids, .. } => with_subject(StrKey::CommandLabelGroup, &subject_of(ids)),
             Self::SetGroupTogether { id, together } => {
                 let key = if *together {
                     StrKey::CommandLabelSelectTogether
                 } else {
                     StrKey::CommandLabelSelectApart
                 };
-                with_subject(key, &folder_subject(id))
+                with_subject(key, &group_subject(id))
             }
-            Self::RenameFolder { id, .. } => {
-                with_subject(StrKey::CommandLabelRenameFolder, &folder_subject(id))
+            Self::RenameGroup { id, .. } => {
+                with_subject(StrKey::CommandLabelRenameGroup, &group_subject(id))
             }
-            Self::DeleteFolder(id) => {
-                with_subject(StrKey::CommandLabelDeleteFolder, &folder_subject(id))
+            Self::DeleteGroup(id) => {
+                with_subject(StrKey::CommandLabelDeleteGroup, &group_subject(id))
             }
             Self::Ungroup(ids) => match ids.as_slice() {
-                [id] => with_subject(StrKey::CommandLabelUngroup, &folder_subject(id)),
+                [id] => with_subject(StrKey::CommandLabelUngroup, &group_subject(id)),
                 many => strings.fmt(
                     StrKey::CommandLabelUngroupMany,
                     &[("count", &many.len().to_string())],
                 ),
             },
-            Self::MoveRows { ids, folder, .. } => {
-                // Named for the folder when a row enters it.
-                let entered = folder.as_ref().filter(|folder| {
+            Self::MoveRows { ids, group, .. } => {
+                // Named for the group when a row enters it.
+                let entered = group.as_ref().filter(|group| {
                     ids.iter().any(|id| {
                         instances::find(before, id)
-                            .is_ok_and(|instance| instance.folder.as_ref() != Some(*folder))
+                            .is_ok_and(|instance| instance.group.as_ref() != Some(*group))
                     })
                 });
                 match entered {
-                    Some(folder) => strings.fmt(
-                        StrKey::CommandLabelMoveToFolder,
+                    Some(group) => strings.fmt(
+                        StrKey::CommandLabelMoveToGroup,
                         &[
                             ("subject", &subject_of(ids)),
-                            ("folder", &folder_subject(folder)),
+                            ("group", &group_subject(group)),
                         ],
                     ),
                     None => with_subject(StrKey::CommandLabelReorderRows, &subject_of(ids)),

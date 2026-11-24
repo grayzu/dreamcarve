@@ -37,7 +37,7 @@ fn line(name: &str, points: &[(f64, f64)]) -> NewShape {
         )],
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     }
 }
 
@@ -156,7 +156,7 @@ fn a_circle_opens_and_becomes_a_path() {
         shape: Some(circle),
         transform: Transform::translate(50.0, 50.0),
         construction: false,
-        folder: None,
+        group: None,
     };
     let mut app = trimming(vec![disc, line("Chord", &[(10.0, 62.0), (90.0, 62.0)])]);
     // The cap above the chord, clicked at its top.

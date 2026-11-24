@@ -58,7 +58,7 @@ fn place(project: &mut Project, id: &str, instance: &str, profile: Polyline, x_m
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });

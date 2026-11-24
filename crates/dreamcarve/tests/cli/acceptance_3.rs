@@ -48,7 +48,7 @@ fn countersinks_in_a_pocket(dir: &Path, start_depth_mm: f64) -> PathBuf {
             visible: true,
             locked: false,
             construction: false,
-            folder: None,
+            group: None,
             z_top_mm: None,
             z_bottom_mm: None,
         });

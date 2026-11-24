@@ -17,12 +17,12 @@
 //!
 //! Behaviour read from PureCutCNC's `FeatureTree.tsx` (rows with a
 //! visibility eye and a lock, a context menu, double-click to rename, a
-//! section header acting on its rows); its folders, regions and
+//! section header acting on its rows); its groups, regions and
 //! construction rows have no counterpart here.
 
 use dc_geometry::{Transform, as_circle};
 use dc_project::{
-    BitmapId, FeatureDefinition, FolderId, InstanceId, Operation, OperationId, Project, TabId,
+    BitmapId, FeatureDefinition, GroupId, InstanceId, Operation, OperationId, Project, TabId,
 };
 
 use crate::command::Command;
@@ -84,9 +84,9 @@ pub struct ShapeRow {
     pub visible: bool,
     /// The padlock: refuses transforms.
     pub locked: bool,
-    /// The folder it is filed in (phase 5, capability 99): its row is
-    /// under the folder's.
-    pub folder: Option<FolderId>,
+    /// The group it is filed in (phase 5, capability 99): its row is
+    /// under the group's.
+    pub group: Option<GroupId>,
     /// Construction geometry (capability 100): never cut, and its glyph
     /// says so.
     pub construction: bool,
@@ -104,19 +104,19 @@ pub struct ShapeRow {
     pub target: Option<usize>,
 }
 
-/// A folder's row (phase 5, capability 99), over the rows filed in it.
+/// A group's row (phase 5, capability 99), over the rows filed in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FolderRow {
-    /// The folder.
-    pub id: FolderId,
+pub struct GroupRow {
+    /// The group.
+    pub id: GroupId,
     /// Its name.
     pub name: String,
     /// It is a group: its shapes are selected together on the Viewport.
-    pub group: bool,
+    pub together: bool,
     /// The instances filed in it, in row order.
     pub rows: Vec<InstanceId>,
     /// Its eye: every row shown (`Some(true)`), every row hidden, or
-    /// mixed (`None`, as for a folder with no rows).
+    /// mixed (`None`, as for a group with no rows).
     pub visible: Option<bool>,
     /// Its padlock, as its eye.
     pub locked: Option<bool>,
@@ -178,9 +178,9 @@ pub enum Section {
 pub enum Row<'a> {
     /// A section's header, drawn whether or not it has rows.
     Header(Section),
-    /// A folder's row, before the rows filed in it; a folder with no
+    /// A group's row, before the rows filed in it; a group with no
     /// rows comes after the shapes.
-    Folder(&'a FolderRow),
+    Group(&'a GroupRow),
     /// An instance's row.
     Shape(&'a ShapeRow),
     /// An outline's placed tabs.
@@ -203,11 +203,11 @@ pub struct SectionState {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Tree {
     /// The Shapes section: one row per instance, in file order, a
-    /// folder's rows together where the first of them is.
+    /// group's rows together where the first of them is.
     pub shapes: Vec<ShapeRow>,
-    /// The folders: those with rows in the order their first row has,
+    /// The groups: those with rows in the order their first row has,
     /// then the empty ones in the file's order.
-    pub folders: Vec<FolderRow>,
+    pub groups: Vec<GroupRow>,
     /// The Tabs section: one row per outline with placed tabs, in the
     /// order of the instances, then of the outlines.
     pub tabs: Vec<TabRow>,
@@ -230,11 +230,11 @@ impl Tree {
                     visible: instance.visible,
                     locked: instance.locked,
                     construction: instance.construction,
-                    // A folder the file does not have files nothing.
-                    folder: instance
-                        .folder
+                    // A group the file does not have files nothing.
+                    group: instance
+                        .group
                         .clone()
-                        .filter(|id| project.folders.iter().any(|f| f.id == *id)),
+                        .filter(|id| project.groups.iter().any(|f| f.id == *id)),
                     glyph: definition.map_or(ShapeGlyph::Closed, |d| {
                         ShapeGlyph::of(d, instance.transform, project.flatten_tolerance_mm)
                     }),
@@ -304,18 +304,18 @@ impl Tree {
             })
             .collect();
 
-        let mut folders: Vec<FolderRow> = project
-            .folders
+        let mut groups: Vec<GroupRow> = project
+            .groups
             .iter()
-            .map(|folder| {
+            .map(|group| {
                 let rows: Vec<&ShapeRow> = shapes
                     .iter()
-                    .filter(|row| row.folder.as_ref() == Some(&folder.id))
+                    .filter(|row| row.group.as_ref() == Some(&group.id))
                     .collect();
-                FolderRow {
-                    id: folder.id.clone(),
-                    name: folder.name.clone(),
-                    group: folder.group,
+                GroupRow {
+                    id: group.id.clone(),
+                    name: group.name.clone(),
+                    together: group.together,
                     visible: common_bool(&rows, |r| Some(r.visible)),
                     locked: common_bool(&rows, |r| Some(r.locked)),
                     rows: rows.iter().map(|row| row.id.clone()).collect(),
@@ -323,18 +323,18 @@ impl Tree {
             })
             .collect();
         // Those with rows where their first row is; the empty ones last.
-        let first = |folder: &FolderRow| {
-            folder
+        let first = |group: &GroupRow| {
+            group
                 .rows
                 .first()
                 .and_then(|id| shapes.iter().position(|row| row.id == *id))
                 .unwrap_or(usize::MAX)
         };
-        folders.sort_by_key(first);
+        groups.sort_by_key(first);
 
         Self {
             shapes,
-            folders,
+            groups,
             tabs,
             bitmaps,
         }
@@ -369,21 +369,21 @@ impl Tree {
             Vec::with_capacity(3 + self.shapes.len() + self.tabs.len() + self.bitmaps.len());
         rows.push(Row::Header(Section::Shapes));
         for shape in &self.shapes {
-            // A folder's row goes before the first row filed in it.
-            if let Some(folder) = self
-                .folders
+            // A group's row goes before the first row filed in it.
+            if let Some(group) = self
+                .groups
                 .iter()
-                .find(|folder| folder.rows.first() == Some(&shape.id))
+                .find(|group| group.rows.first() == Some(&shape.id))
             {
-                rows.push(Row::Folder(folder));
+                rows.push(Row::Group(group));
             }
             rows.push(Row::Shape(shape));
         }
         rows.extend(
-            self.folders
+            self.groups
                 .iter()
-                .filter(|folder| folder.rows.is_empty())
-                .map(Row::Folder),
+                .filter(|group| group.rows.is_empty())
+                .map(Row::Group),
         );
         rows.push(Row::Header(Section::Tabs));
         rows.extend(self.tabs.iter().map(Row::Tab));
@@ -442,8 +442,8 @@ impl Tree {
 }
 
 /// The instances of `project`, by index, in the order the Design Tree
-/// lists them (phase 5, capability 99): the file's, with each folder's
-/// rows together after the first of them. The folder commands leave the
+/// lists them (phase 5, capability 99): the file's, with each group's
+/// rows together after the first of them. The group commands leave the
 /// file in this order; a file written by hand may not be.
 #[must_use]
 pub fn gathered(project: &Project) -> Vec<usize> {
@@ -451,8 +451,8 @@ pub fn gathered(project: &Project) -> Vec<usize> {
         project
             .instances
             .get(index)
-            .and_then(|instance| instance.folder.as_ref())
-            .filter(|id| project.folders.iter().any(|folder| folder.id == **id))
+            .and_then(|instance| instance.group.as_ref())
+            .filter(|id| project.groups.iter().any(|group| group.id == **id))
     };
     let mut order = Vec::with_capacity(project.instances.len());
     for index in 0..project.instances.len() {
@@ -460,10 +460,10 @@ pub fn gathered(project: &Project) -> Vec<usize> {
             continue;
         }
         order.push(index);
-        if let Some(folder) = filed(index) {
+        if let Some(group) = filed(index) {
             order.extend(
                 (index.saturating_add(1)..project.instances.len())
-                    .filter(|other| filed(*other) == Some(folder)),
+                    .filter(|other| filed(*other) == Some(group)),
             );
         }
     }
@@ -476,7 +476,7 @@ pub fn gathered(project: &Project) -> Vec<usize> {
 pub fn next_group_name(project: &Project) -> String {
     (1u32..)
         .map(|n| format!("Group {n}"))
-        .find(|name| !project.folders.iter().any(|folder| folder.name == *name))
+        .find(|name| !project.groups.iter().any(|group| group.name == *name))
         .unwrap_or_else(|| "Group 1".to_owned())
 }
 
@@ -491,13 +491,13 @@ pub fn with_groups(project: &Project, ids: &[InstanceId]) -> Vec<InstanceId> {
             .instances
             .iter()
             .find(|instance| instance.id == *id)
-            .and_then(|instance| instance.folder.as_ref())
-            .filter(|folder| project.folders.iter().any(|f| f.id == **folder && f.group));
+            .and_then(|instance| instance.group.as_ref())
+            .filter(|group| project.groups.iter().any(|f| f.id == **group && f.together));
         let members: Vec<InstanceId> = match group {
             Some(group) => project
                 .instances
                 .iter()
-                .filter(|instance| instance.folder.as_ref() == Some(group))
+                .filter(|instance| instance.group.as_ref() == Some(group))
                 .map(|instance| instance.id.clone())
                 .collect(),
             None => vec![id.clone()],
@@ -514,17 +514,17 @@ pub fn with_groups(project: &Project, ids: &[InstanceId]) -> Vec<InstanceId> {
 /// The groups that hold one of `ids`, in the file's order: what
 /// *Ungroup* dissolves.
 #[must_use]
-pub fn groups_of(project: &Project, ids: &[InstanceId]) -> Vec<FolderId> {
+pub fn groups_of(project: &Project, ids: &[InstanceId]) -> Vec<GroupId> {
     project
-        .folders
+        .groups
         .iter()
-        .filter(|folder| {
+        .filter(|group| {
             // Whether or not its shapes are selected together.
             project.instances.iter().any(|instance| {
-                ids.contains(&instance.id) && instance.folder.as_ref() == Some(&folder.id)
+                ids.contains(&instance.id) && instance.group.as_ref() == Some(&group.id)
             })
         })
-        .map(|folder| folder.id.clone())
+        .map(|group| group.id.clone())
         .collect()
 }
 
@@ -614,8 +614,8 @@ fn all(project: &Project, ids: &[InstanceId]) -> (bool, bool) {
 
 /// The menu for `ids`, as the shell lists it: Rename, Hide or Show (Show
 /// when any is hidden), Lock or Unlock (Unlock when every one is locked),
-/// Cut, Copy, Paste while `can_paste`, Duplicate, Delete, New Folder,
-/// Group for two rows or more, Ungroup while one is in a group, Make
+/// Cut, Copy, Paste while `can_paste`, Duplicate, Delete, Group,
+/// Ungroup while one is in a group, Make
 /// Unique while one of `ids` is a linked copy, Convert to Path while one
 /// keeps its sizes, Zoom to, Add operation, and, while operation `op` is
 /// selected, *Add to* it when it lacks one of `ids` and *Remove from* it
@@ -754,10 +754,10 @@ pub fn menu_command(project: &Project, item: MenuItem, ids: &[InstanceId]) -> Op
             ids,
             construction: false,
         }),
-        MenuItem::Group => (!ids.is_empty()).then(|| Command::NewFolder {
+        MenuItem::Group => (!ids.is_empty()).then(|| Command::NewGroup {
             name: next_group_name(project),
             ids,
-            group: true,
+            together: true,
         }),
         MenuItem::Ungroup => {
             let groups = groups_of(project, &ids);

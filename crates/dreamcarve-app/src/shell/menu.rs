@@ -256,7 +256,7 @@ fn arrange(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui.close();
     }
     ui.separator();
-    // Group and Ungroup (capability 99): a group is a folder whose
+    // Group and Ungroup (capability 99): a group made here is one whose
     // shapes a click on the Viewport selects together.
     for (command, key) in [
         (Shortcut::Group, StrKey::AppMenuGroup),

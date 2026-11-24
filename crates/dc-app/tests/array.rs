@@ -162,7 +162,7 @@ fn square() -> NewShape {
         profiles: vec![Polyline::rect(Point::new(10.0, 10.0), 20.0, 20.0)],
         transform: Transform::IDENTITY,
         construction: false,
-        folder: None,
+        group: None,
     }
 }
 
@@ -207,20 +207,23 @@ fn copies_are_linked_and_grouped() {
     let names: Vec<&str> = project.instances.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(names, ["square", "square (2)", "square (3)"]);
     assert_eq!(project.definitions.len(), 1, "linked copies");
-    assert_eq!(project.folders.len(), 1);
-    let group = &project.folders[0];
-    assert_eq!((group.name.as_str(), group.group), ("square array", true));
+    assert_eq!(project.groups.len(), 1);
+    let group = &project.groups[0];
+    assert_eq!(
+        (group.name.as_str(), group.together),
+        ("square array", true)
+    );
     assert!(
         project
             .instances
             .iter()
-            .all(|i| i.folder.as_ref() == Some(&group.id)),
+            .all(|i| i.group.as_ref() == Some(&group.id)),
         "the source is of the group"
     );
     assert_eq!(bounds_of(&app, "i3").min.x, 70.0);
     assert!(app.undo().is_some());
     assert_eq!(app.project().instances.len(), 1);
-    assert!(app.project().folders.is_empty(), "one undo step");
+    assert!(app.project().groups.is_empty(), "one undo step");
 
     // Nothing selected, and an array that cannot be, are refused.
     assert!(matches!(

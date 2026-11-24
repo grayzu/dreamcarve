@@ -94,7 +94,7 @@ fn segment_quad_width_is_screen_constant() {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: None,
         z_bottom_mm: None,
     }];

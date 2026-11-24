@@ -2754,7 +2754,7 @@ fn carve_project(edit: impl FnOnce(&mut crate::model::VCarveOp)) -> Project {
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });
@@ -3387,7 +3387,7 @@ fn countersink_project(edit: impl FnOnce(&mut crate::model::DrillOp)) -> Project
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });
@@ -4608,7 +4608,7 @@ fn add_shape(p: &mut Project, id: &str, x: f64, y: f64, w: f64, h: f64, holes: &
         visible: true,
         locked: false,
         construction: false,
-        folder: None,
+        group: None,
         z_top_mm: Some(6.0),
         z_bottom_mm: Some(0.0),
     });
@@ -6243,7 +6243,8 @@ fn tapered_inlay_glue_gap_and_plug_depth_below_the_ball_warn() {
 // Format 29 (phase 5): what drawing in the app saves.
 
 /// The drawing fixture's project, with a shape of several kinds, a
-/// folder, a group, construction geometry and a faded picture, is valid:
+/// group selected together and one not, construction geometry and a
+/// faded picture, is valid:
 /// validation has nothing to say (phase 5 acceptance 107).
 #[test]
 fn a_drawing_project_is_valid() {
@@ -6312,25 +6313,25 @@ fn an_inlay_boundary_of_construction_geometry_is_an_error() {
 }
 
 #[test]
-fn a_folder_that_is_not_there_and_a_folder_id_used_twice_are_errors() {
+fn a_group_that_is_not_there_and_a_group_id_used_twice_are_errors() {
     let mut p = crate::test_support::drawing_project();
-    p.instances[1].folder = Some(FolderId::new("gone"));
-    p.folders[1].id = FolderId::new("f1");
+    p.instances[1].group = Some(GroupId::new("gone"));
+    p.groups[1].id = GroupId::new("g1");
     let problems = validate(&p);
     assert_eq!(
         problems,
         vec![
-            Problem::DuplicateFolderId {
-                id: FolderId::new("f1")
+            Problem::DuplicateGroupId {
+                id: GroupId::new("g1")
             },
-            Problem::DanglingFolder {
+            Problem::DanglingGroup {
                 instance: InstanceId::new("i2"),
-                folder: FolderId::new("gone"),
+                group: GroupId::new("gone"),
             },
         ]
     );
     assert!(problems.iter().all(Problem::is_error));
-    assert_eq!(problems[1].field().as_deref(), Some("instances[i2].folder"));
+    assert_eq!(problems[1].field().as_deref(), Some("instances[i2].group"));
 }
 
 /// A shape's sizes are held to what each can be, each reported at its

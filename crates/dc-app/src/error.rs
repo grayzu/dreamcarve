@@ -10,7 +10,7 @@
 use dc_geometry::GeometryError;
 use dc_job::JobError;
 use dc_project::{
-    BitmapId, FolderId, InstanceId, LoadError, OperationId, PostProcessorError, SaveError, TabId,
+    BitmapId, GroupId, InstanceId, LoadError, OperationId, PostProcessorError, SaveError, TabId,
     ToolId,
 };
 
@@ -122,9 +122,9 @@ pub enum CommandError {
         /// The id that was named.
         id: BitmapId,
     },
-    /// The project has no folder with this id.
-    #[error("the project has no folder `{0}`")]
-    UnknownFolder(FolderId),
+    /// The project has no group with this id.
+    #[error("the project has no group `{0}`")]
+    UnknownGroup(GroupId),
     /// Something was added under an id the project already uses.
     #[error("the project already has {kind} `{id}`")]
     DuplicateId {

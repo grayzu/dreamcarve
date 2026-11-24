@@ -34,7 +34,7 @@ fn shape(name: &str, profiles: Vec<Polyline>, transform: Transform) -> NewShape 
         profiles,
         transform,
         construction: false,
-        folder: None,
+        group: None,
     }
 }
 
