@@ -61,3 +61,28 @@ bilinear sample at a half-pixel).
 
 Unchanged from the plan: STL and OBJ with orientation and silhouette
 extraction. STEP stays post-1.0.
+
+## Gouge highlighting
+
+Moved here from phase 6 by the maintainer on 2026-11-24. A gouge is a cut
+into material that was meant to stay. Phase 6's Simulate step highlights
+**uncut material** against a design surface built from the 2.5D
+operations' shapes; it leaves gouges out, because with no model of the
+part the export safety pass (S9, S17) already refuses the cuts a gouge
+check could find. A model gives the check its meaning: the simulated
+stock below the model's surface, by more than a threshold, where a
+Surface Rough or Surface Finish cut too deep.
+
+What phase 6 leaves ready (`docs/specs/phase-6/design.md`): the model's
+height grid is a second producer of `dc_sim::Design`; `dc_sim::compare`
+flags a cell with one bit, `UNCUT_FLAG`, and a gouge is the next; the
+Result section lists places by operation and frames them. What phase 7
+has to decide: the threshold, whether a gouge marks the Simulate step or
+is a warning, and what is waste around a model, which phase 6's spec
+first drafted for through-cut outlines and then withdrew (its capability
+121 and acceptance 149).
+
+SolidCore (`tangency-labs/solidcore`, Apache-2.0, a Rust port of NVIDIA's
+SMLib; experimental at 0.0.x in November 2026) was raised then as a help
+with 3D modelling. Look at it when ADR-0003 is re-examined for retained
+material, and for STEP import after 1.0.

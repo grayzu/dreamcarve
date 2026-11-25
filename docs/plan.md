@@ -316,13 +316,40 @@ drawing modes, snapping, and edit-session code, `src/commands/creationShapes.ts`
 **Goal:** see the result before cutting.
 
 **In:** heightfield material-removal simulation driven by the generated
-toolpaths, rendered in a wgpu panel, with playback and per-operation
-stepping. Uncut-material and gouge highlighting.
+toolpaths, on a sixth step of the app, **Simulate**, between Operations
+and Export, rendered with wgpu; playback of the whole job with the tool
+shown, and stepping operation by operation; colour by operation and by
+depth. Uncut-material highlighting, against a design surface built
+from the operations' own shapes and depths, since there is no model of
+the part to compare with (ADR-0003). `dreamcarve simulate`,
+which prints the result's report and writes it as a 16-bit heightmap
+PNG. Toolpaths, G-code and the file format do not change.
 
-**Exit:** the simulation of each earlier test part matches the physical cut
-to within the tool-radius tolerance stated in the spec; `v0.6.0`.
+**Out:** a model of the part and CSG; gouge highlighting, which waits
+for phase 7's models (the export safety pass already refuses a program
+that cuts outside its operation's material); 3D on the other steps; collision
+checks of the shank, the collet or clamps; simulating a G-code file;
+rotary work, bar stock and a second face, which PureCutCNC's simulation
+also covers.
 
-**Read first:** `src/engine/simulation/`, `src/components/simulation/`.
+**Sub-phases:** delivered in order on one branch, with no tag between
+them: 6.1 The engine (`dc-sim`, playback, `dreamcarve simulate`), 6.2
+The 3D view (the Simulate step, the renderer, playback in the window),
+6.3 Checking the result (the design surface, uncut material),
+6.4 Release. The slice list is in the phase 6 design spec.
+
+**Exit:** the simulation of each earlier test part that has been cut
+matches the physical cut to within 0.3 mm across and 0.2 mm in depth at
+Standard quality, the tolerance the functional spec states; quick start
+"Check the cut in 3D"; `v0.6.0`.
+
+**Real cut:** none, since machine output does not change. The bench
+check compares the parts already cut with their simulations.
+
+**Read first:** `src/engine/simulation/`, `src/components/simulation/`,
+`src/components/viewport3d/orbitControls.ts` and `viewPresets.ts`,
+`planning/SIMULATION_GPU_HEIGHTFIELD_DESIGN.md`. The survey is
+`docs/research/purecutcnc-simulation-digest.md`.
 
 ### Phase 7: Mesh machining
 
@@ -334,8 +361,12 @@ to Z over a user-set footprint and depth range, so a lake-depth chart or a
 terrain tile carves without a 3D model; Surface Rough and Surface Finish
 (parallel, waterline, constant scallop) and PureCutCNC's surface cleanup
 passes, driven by either source; retained
-2.5D material around a model. Re-examine ADR-0003 here: if retained-material
-math needs CSG, add a crate and amend the ADR.
+2.5D material around a model; gouge highlighting in the Simulate step,
+against the model (moved from phase 6, which has no model to compare
+with). Re-examine ADR-0003 here: if retained-material
+math needs CSG, add a crate and amend the ADR; SolidCore
+(`tangency-labs/solidcore`, Apache-2.0, a Rust port of NVIDIA's SMLib,
+experimental when phase 6 was planned) is one to look at.
 
 **Out:** STEP.
 
