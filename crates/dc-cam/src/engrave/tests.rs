@@ -104,6 +104,8 @@ fn engrave_op(project: &Project, step_down_mm: f64) -> EngraveOp {
         depth_mm: Some(1.0),
         step_down_mm: Some(step_down_mm),
         alternate_direction: false,
+        enter_fraction: None,
+        leave_fraction: None,
         machining_order: MachiningOrder::FullDepthFirst,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 5.0,
@@ -613,4 +615,240 @@ fn toolpath_off_stock_is_an_error() {
     let p = project(vec![open_l()], &[("i1", Transform::translate(1.0, 20.0))]);
     let err = generate_engrave(&p, &engrave_op(&p, 1.0)).unwrap_err();
     assert!(matches!(err, CamError::OffStock { .. }), "{err:?}");
+}
+
+// Where the bit enters and leaves a path (format 30; the maintainer's
+// request, 2026-11-25).
+
+/// A straight line from (20, 20) to (60, 20).
+fn line_project() -> Project {
+    project(
+        vec![Polyline::new(
+            vec![Vertex::line(0.0, 0.0), Vertex::line(40.0, 0.0)],
+            false,
+        )],
+        &[("i1", at_20_20())],
+    )
+}
+
+/// The one pass's cut along `project`'s path with `enter` and `leave`,
+/// 1 mm deep: its points, and the plunge that precedes it.
+fn entered(project: &Project, enter: Option<f64>, leave: Option<f64>) -> (Vec<Point>, Move) {
+    let mut op = engrave_op(project, 1.0);
+    op.enter_fraction = enter;
+    op.leave_fraction = leave;
+    let (tp, warnings) = generate(project, &op);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let laps = laps(&tp);
+    assert_eq!(laps.len(), 1, "one pass, never lifted: {laps:?}");
+    (laps[0].points.clone(), tp.moves[laps[0].first - 1])
+}
+
+/// The request: a line entered a quarter along and left three quarters
+/// along. The bit plunges at the quarter, cuts back to the start, runs
+/// the whole line to its end, and comes back to the three quarters,
+/// where it lifts. The whole line is cut and nothing off it.
+#[test]
+fn a_line_is_entered_and_left_where_it_says() {
+    let p = line_project();
+    let (points, plunge) = entered(&p, Some(0.25), Some(0.75));
+    assert_points(
+        &points,
+        &[(30.0, 20.0), (20.0, 20.0), (60.0, 20.0), (50.0, 20.0)],
+    );
+    // The plunge is at the entry point, straight down, at the plunge rate.
+    assert_eq!(plunge.kind, MoveKind::Linear);
+    assert_approx_eq!(plunge.to.x, 30.0, TOL);
+    assert_approx_eq!(plunge.to.y, 20.0, TOL);
+    assert_approx_eq!(plunge.to.z, THICKNESS_MM - 1.0, TOL);
+    assert_approx_eq!(plunge.feed_mm_min.unwrap(), PLUNGE_MM_MIN, TOL);
+
+    // And the lift is at the exit point.
+    let mut op = engrave_op(&p, 1.0);
+    op.enter_fraction = Some(0.25);
+    op.leave_fraction = Some(0.75);
+    let (tp, _) = generate(&p, &op);
+    let lap = &laps(&tp)[0];
+    let lift = tp.moves[lap.last + 1];
+    assert!(lift.is_rapid(), "{lift:?}");
+    assert_approx_eq!(lift.to.x, 50.0, TOL);
+    assert_approx_eq!(lift.to.y, 20.0, TOL);
+    assert_approx_eq!(lift.to.z, SAFE_Z_MM, TOL);
+}
+
+/// The route is the shorter of the two that cut the whole path: out to
+/// the nearer end first. Either point may be left unset, and is then the
+/// end the cut starts from or finishes at; at an end already, a point
+/// changes nothing but, for the far end, the way the path is run.
+#[test]
+fn the_route_covers_the_path_the_shorter_way() {
+    let p = line_project();
+    let route = |enter, leave| entered(&p, enter, leave).0;
+    let at = |xs: &[f64]| xs.iter().map(|x| (*x, 20.0)).collect::<Vec<_>>();
+    // Entered past the middle and left before it: the other way round.
+    assert_points(
+        &route(Some(0.75), Some(0.25)),
+        &at(&[50.0, 60.0, 20.0, 30.0]),
+    );
+    // Only where it enters.
+    assert_points(&route(Some(0.25), None), &at(&[30.0, 20.0, 60.0]));
+    assert_points(&route(Some(0.75), None), &at(&[50.0, 60.0, 20.0]));
+    // Only where it leaves.
+    assert_points(&route(None, Some(0.75)), &at(&[20.0, 60.0, 50.0]));
+    assert_points(&route(None, Some(0.25)), &at(&[60.0, 20.0, 30.0]));
+    // At the ends.
+    assert_points(&route(Some(0.0), Some(1.0)), &at(&[20.0, 60.0]));
+    assert_points(&route(Some(1.0), None), &at(&[60.0, 20.0]));
+    assert_points(&route(Some(1.0), Some(0.0)), &at(&[60.0, 20.0]));
+    // Entered and left at one point: out, along, back.
+    assert_points(&route(Some(0.5), Some(0.5)), &at(&[40.0, 20.0, 60.0, 40.0]));
+}
+
+/// Along a path with a corner the points are by length: three quarters
+/// along the L is half way up its second leg.
+#[test]
+fn enter_and_leave_are_measured_along_the_path() {
+    let p = l_project();
+    let (points, _) = entered(&p, Some(0.75), None);
+    assert_points(
+        &points,
+        &[(30.0, 25.0), (30.0, 30.0), (30.0, 20.0), (20.0, 20.0)],
+    );
+    let (points, _) = entered(&p, Some(0.25), Some(0.75));
+    assert_points(
+        &points,
+        &[
+            (25.0, 20.0),
+            (20.0, 20.0),
+            (30.0, 20.0),
+            (30.0, 30.0),
+            (30.0, 25.0),
+        ],
+    );
+}
+
+/// Every pass enters and leaves where it says: the bit lifts at the exit
+/// and comes down again at the entry, to 1 mm above the floor it cut
+/// there. Alternate direction would plunge at both points, so it is not
+/// applied.
+#[test]
+fn every_pass_enters_and_leaves_at_the_same_points() {
+    let p = line_project();
+    for alternate in [false, true] {
+        let mut op = engrave_op(&p, 0.5);
+        op.enter_fraction = Some(0.25);
+        op.leave_fraction = Some(0.75);
+        op.alternate_direction = alternate;
+        let (tp, _) = generate(&p, &op);
+        let laps = laps(&tp);
+        assert_eq!(laps.len(), 2, "{laps:?}");
+        for lap in &laps {
+            assert_points(
+                &lap.points,
+                &[(30.0, 20.0), (20.0, 20.0), (60.0, 20.0), (50.0, 20.0)],
+            );
+        }
+        let between = &tp.moves[laps[0].last + 1..laps[1].first];
+        assert_eq!(between.len(), 4, "{between:?}");
+        assert!(between[0].is_rapid() && between[1].is_rapid() && between[2].is_rapid());
+        assert_approx_eq!(between[0].to.z, SAFE_Z_MM, TOL);
+        assert_approx_eq!(between[1].to.x, 30.0, TOL);
+        assert_approx_eq!(between[2].to.z, PASS_Z_MM[0] + 1.0, TOL);
+        assert_approx_eq!(between[3].to.z, PASS_Z_MM[1], TOL);
+        assert_approx_eq!(between[3].feed_mm_min.unwrap(), PLUNGE_MM_MIN, TOL);
+    }
+}
+
+/// A closed path: where it enters is where the loop starts and ends, and
+/// where it leaves carries the cut on past that point. Entered alone,
+/// the passes follow one another without a lift, as a closed path's do.
+#[test]
+fn a_closed_path_starts_where_it_enters_and_runs_on_to_where_it_leaves() {
+    let p = rect_project();
+    // The rectangle is 300 mm round from (20, 20): half way is (120, 70).
+    let (points, _) = entered(&p, Some(0.5), None);
+    assert_points(
+        &points,
+        &[
+            (120.0, 70.0),
+            (20.0, 70.0),
+            (20.0, 20.0),
+            (120.0, 20.0),
+            (120.0, 70.0),
+        ],
+    );
+    // Left three quarters round: 75 mm past the start, along the top.
+    let (points, _) = entered(&p, Some(0.5), Some(0.75));
+    assert_points(
+        &points,
+        &[
+            (120.0, 70.0),
+            (20.0, 70.0),
+            (20.0, 20.0),
+            (120.0, 20.0),
+            (120.0, 70.0),
+            (45.0, 70.0),
+        ],
+    );
+    // Left alone: the loop from its own start, then on to the point.
+    let (points, _) = entered(&p, None, Some(0.1));
+    assert_points(
+        &points,
+        &[
+            (20.0, 20.0),
+            (120.0, 20.0),
+            (120.0, 70.0),
+            (20.0, 70.0),
+            (20.0, 20.0),
+            (50.0, 20.0),
+        ],
+    );
+    // Entered alone, two passes stay down between them.
+    let mut op = engrave_op(&p, 0.5);
+    op.enter_fraction = Some(0.5);
+    let (tp, _) = generate(&p, &op);
+    let laps = laps(&tp);
+    assert_eq!(laps.len(), 2, "{laps:?}");
+    let between = &tp.moves[laps[0].last + 1..laps[1].first];
+    assert_eq!(between.len(), 1, "one plunge, no lift: {between:?}");
+    assert_approx_eq!(between[0].to.x, 120.0, TOL);
+    assert_approx_eq!(between[0].to.y, 70.0, TOL);
+}
+
+/// An arc is cut as arcs of its own circle from the point it is entered
+/// at: every cut ends on the circle, and the cut is as long as the path
+/// and the two stretches run twice.
+#[test]
+fn an_arc_is_entered_and_left_on_its_own_circle() {
+    // Half a circle of radius 20 about (20, 0), from (0, 0) to (40, 0).
+    let arc = Polyline::new(
+        vec![Vertex::new(0.0, 0.0, 1.0), Vertex::line(40.0, 0.0)],
+        false,
+    );
+    let length = arc.length_mm();
+    let p = project(vec![arc], &[("i1", Transform::translate(40.0, 60.0))]);
+    let mut op = engrave_op(&p, 1.0);
+    op.enter_fraction = Some(0.25);
+    op.leave_fraction = Some(0.75);
+    let (tp, _) = generate(&p, &op);
+    let centre = Point::new(60.0, 60.0);
+    let mut from = None;
+    let mut cut_mm = 0.0;
+    for mv in &tp.moves {
+        if let Some(from) = from
+            && !mv.is_rapid()
+            && mv.to.xy().distance_to(from) > EPS_MM
+        {
+            assert!(
+                !matches!(mv.kind, MoveKind::Linear),
+                "an arc is cut as an arc: {mv:?}"
+            );
+            assert_approx_eq!(mv.to.xy().distance_to(centre), 20.0, 1e-6);
+            // The chord's arc on a circle of radius 20.
+            let chord = mv.to.xy().distance_to(from);
+            cut_mm += 2.0 * 20.0 * (chord / 40.0).asin();
+        }
+        from = Some(mv.to.xy());
+    }
+    assert_approx_eq!(cut_mm, length * 1.5, 1e-6);
 }

@@ -217,6 +217,37 @@ centre on the line, to `depth_mm` in passes of `step_down_mm`
 cutter is allowed, as with Profile's On line. `alternate_direction`
 (default off) cuts successive passes of an open path in opposite
 directions, saving a retract per pass (D9).
+
+    **Where the bit enters and leaves** (format 30; the maintainer's
+    request, 2026-11-25: an engraved line entered a quarter along and
+    left three quarters along, so that the bit goes in at the quarter,
+    cuts back to the start, runs to the end and returns to the three
+    quarters). An Engrave has `enter_fraction` and `leave_fraction`,
+    each `null` or a fraction of each target path's length from its
+    first point, 0 to 1 (`out_of_range` otherwise). With both `null` a
+    path is cut as before. With either set:
+    - an **open** path is still cut whole, by the shorter of the two
+      routes there are: from where it enters out to one end, back along
+      the whole path to the other end, and back to where it leaves
+      (towards the path's first point first when the two are as long).
+      A point left `null` is the end that route starts from or finishes
+      at. So `enter 0.25, leave 0.75` is 25 → 0 → 100 → 75, and the
+      stretches before the one and after the other are cut twice;
+    - a **closed** path is cut once round from where it enters (its own
+      start when `null`), and with `leave_fraction` set carries on round
+      to that point, cutting that stretch twice;
+    - every pass takes the same route: the bit plunges at the entry at
+      the plunge rate, lifts at the exit and comes back to the entry for
+      the next pass (S2's rapid down to 1 mm above the floor it cut
+      there). `alternate_direction` would plunge at both points and is
+      not applied; a closed path that leaves where it enters still
+      steps down without a lift;
+    - every cut is on the path, so S1 to S20 hold as for any Engrave;
+      arcs stay arcs of their own circles.
+    In the app the fields are **Enter at** and **Leave at** in the
+    Strategy group, percentages (so `100/4` is a quarter), empty for
+    `null`; **Alternate direction** is not offered while either is set.
+    PureCutCNC has no such setting.
 16. **Entry** (`entry`) on Profile and Pocket (VCarve "Ramps", Zig Zag;
     Fusion "Ramp Type"): `plunge`, `ramp` (default; `init` writes it) at
     `angle_deg` (default 15°), or `helix` of `diameter_fraction` of the

@@ -765,6 +765,8 @@ pub fn engrave_project() -> impl Strategy<Value = Project> {
                         depth_mm: Some(depth.depth_mm(s.thickness_mm)),
                         step_down_mm,
                         alternate_direction,
+                        enter_fraction: None,
+                        leave_fraction: None,
                         machining_order: order,
                         through_cut_allowance_mm: depth.allowance_mm,
                         safe_z_mm,

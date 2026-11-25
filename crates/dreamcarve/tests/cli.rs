@@ -7467,6 +7467,9 @@ fn before_format_29(text: &str) -> String {
         "\"group\": null,",
         "\"groups\": [],",
         "\"opacity_fraction\": 1.0,",
+        // And what format 30 added after it, to an Engrave.
+        "\"enter_fraction\": null,",
+        "\"leave_fraction\": null,",
     ];
     let kept: Vec<&str> = text
         .lines()
@@ -9058,6 +9061,8 @@ fn engrave_exports_and_passes_safety() {
         depth_mm: Some(1.0),
         step_down_mm: Some(0.5),
         alternate_direction: true,
+        enter_fraction: None,
+        leave_fraction: None,
         machining_order: MachiningOrder::FullDepthFirst,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 5.0,
@@ -11213,6 +11218,8 @@ fn estimate_project(dir: &Path) -> PathBuf {
         depth_mm: Some(1.0),
         step_down_mm: Some(1.0),
         alternate_direction: false,
+        enter_fraction: None,
+        leave_fraction: None,
         machining_order: MachiningOrder::FullDepthFirst,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 25.0,

@@ -1417,6 +1417,35 @@ Tests: `dc-app` `tests/formula.rs` (`a_formula_resolves_to_its_number`,
 `every_kind_of_field_takes_a_formula`); in the window
 `editing::a_field_takes_a_formula_and_shows_its_result`.
 
+### Where an Engrave enters and leaves, 2026-11-25
+
+Phase 2 functional, capability 15, "Where the bit enters and leaves".
+- `dc_project::EngraveOp::{enter_fraction, leave_fraction}: Option<f64>`
+  after `alternate_direction` (format 30; `migrate::v29_to_v30` adds
+  both as `null` to each Engrave; fixtures `dcv/v30/`). Validation:
+  each finite and in 0 to 1, `out_of_range` at its field.
+- `dc_cam::engrave::route(path, enter, leave) -> Option<Polyline>`: the
+  one open path a pass traces, doubling back on itself, built from
+  `between(path, from_mm, to_mm)` (each segment's `Segment::piece`, so
+  an arc's part is an arc) and `Polyline::reversed`. `None` with both
+  unset, when the path is run as before. A routed pass is not reversed
+  by `alternate_direction`, and stays down between passes only round a
+  closed path that leaves where it enters.
+- `dc_app::editor::fields`: the rows `enter_fraction` and
+  `leave_fraction` (`FieldKind::Percentage`), and `alternate_direction`
+  under the rule `runs_end_to_end`.
+- Tests: `dc-project` `migrate::v29_to_v30_adds_where_an_engrave_enters_and_leaves`,
+  `a_file_claiming_29_with_a_format_30_field_is_refused`,
+  `version_30_fixtures_load`,
+  `validate::an_engraves_enter_and_leave_are_on_the_path`; `dc-cam`
+  `engrave::a_line_is_entered_and_left_where_it_says`,
+  `the_route_covers_the_path_the_shorter_way`,
+  `enter_and_leave_are_measured_along_the_path`,
+  `every_pass_enters_and_leaves_at_the_same_points`,
+  `a_closed_path_starts_where_it_enters_and_runs_on_to_where_it_leaves`,
+  `an_arc_is_entered_and_left_on_its_own_circle`; `dc-app`
+  `editor::an_engrave_says_where_it_enters_and_leaves`.
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the

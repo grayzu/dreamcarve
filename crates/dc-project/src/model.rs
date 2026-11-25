@@ -1515,8 +1515,21 @@ pub struct EngraveOp {
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Cut successive passes of an open path in opposite directions,
-    /// saving a retract per pass.
+    /// saving a retract per pass. Not while [`Self::enter_fraction`] or
+    /// [`Self::leave_fraction`] is set: every pass then enters and leaves
+    /// where they say.
     pub alternate_direction: bool,
+    /// Where the bit enters each path (format 30; the maintainer's
+    /// request, 2026-11-25): how far along it from its first point, as a
+    /// fraction of its length, 0 to 1. `None` is an end of the path, as
+    /// before. The whole path is still cut: from a point inside it the
+    /// bit runs out to one end and back along it to the other.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub enter_fraction: Option<f64>,
+    /// Where the bit leaves each path (format 30), as
+    /// [`Self::enter_fraction`]. `None` is where the cut ends of itself.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub leave_fraction: Option<f64>,
     /// The order shapes and passes are visited.
     pub machining_order: MachiningOrder,
     /// How far below the stock bottom the cut may go, millimetres.

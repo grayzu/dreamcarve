@@ -427,6 +427,8 @@ fn with_tool(
             depth_mm: None,
             step_down_mm: None,
             alternate_direction: false,
+            enter_fraction: None,
+            leave_fraction: None,
             machining_order,
             through_cut_allowance_mm,
             safe_z_mm,

@@ -514,6 +514,29 @@ Decisions taken, for the maintainer:
   the sum's problem until it is finished, as it does for any text
   that is not yet a value.
 
+### Where an Engrave enters and leaves, 2026-11-25
+
+The maintainer's request, needed for a project in hand: an engraved line
+entered a quarter along and left three quarters along. Done:
+`EngraveOp::enter_fraction` and `leave_fraction` (format 30, `v29_to_v30`),
+`dc_cam::engrave::route`, **Enter at** and **Leave at** in the Engrave's
+Strategy group. PureCutCNC has nothing to port.
+
+Decisions taken, for the maintainer:
+
+- **Format 30, not a change to 29 in place.** The maintainer has
+  projects saved by this branch; a changed 29 would have refused them.
+- A point is a fraction of the path's length from its first point, typed
+  as a percentage. Not a distance, and not a click on the Viewport: both
+  could be added. With several paths in one Engrave it applies to each.
+- The route is the shorter of the two that cut the whole open path.
+- Every pass takes the same route and lifts between passes; Alternate
+  direction is not applied, and not shown, while a point is set.
+- A closed path starts where it enters and, with a leave point, runs on
+  to it.
+- Engrave only. A Profile along an open path (On line, Left, Right) is
+  not covered.
+
 ## Slices
 
 Status is one of: todo, doing, done, owner (waits for the maintainer).

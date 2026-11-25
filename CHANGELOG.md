@@ -10,6 +10,16 @@ before that; its changes are those under Unreleased.
 
 ### Added
 
+- **An Engrave says where the bit enters and leaves.** **Enter at** and
+  **Leave at**, each a percentage along the path and each optional. A
+  line entered at 25 and left at 75 is cut 25 → 0 → 100 → 75: the bit
+  plunges a quarter along, cuts back to the start, runs the whole line
+  and comes back to the three-quarter point to lift. The whole path is
+  still cut; every pass enters and leaves at the same points; on a
+  closed path the cut starts where it enters and carries on to where it
+  leaves. In the file they are `enter_fraction` and `leave_fraction`,
+  which make it **format version 30**: older projects upgrade with both
+  `null` and are cut as they were.
 - **Formulas in fields.** Every field that takes a number takes a sum
   and holds what it comes to: type `1.5 + .375 / 2` and the field reads
   `1.6875`. `+`, `-`, `*`, `/` and brackets, with one unit at the end

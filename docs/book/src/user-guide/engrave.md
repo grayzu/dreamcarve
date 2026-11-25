@@ -20,6 +20,8 @@ Profile. A complete Engrave:
   "depth_mm": 1.0,
   "step_down_mm": 0.5,
   "alternate_direction": true,
+  "enter_fraction": null,
+  "leave_fraction": null,
   "machining_order": "full_depth_first",
   "through_cut_allowance_mm": 0.0,
   "safe_z_mm": 5.0
@@ -34,7 +36,7 @@ Operations step
 one of the two kinds the menu offers for an open path; the other is a
 Profile.
 
-![The plaque's Border and squiggle Engrave in the Inspector: Targets 2 shapes, Tool 1/8 end mill (T2), Depth 1 mm; the Depth group open with Step-down 1 mm and Through-cut allowance 0 mm; the Strategy group open with Alternate direction unticked; the Order group open with Machining order Full depth first; and the Heights group open with Safe Z 15 mm; on the Viewport the red cut follows the border and the squiggle](figures/app/op-engrave.png)
+![The plaque's Border and squiggle Engrave in the Inspector: Targets 2 shapes, Tool 1/8 end mill (T2), Depth 1 mm; the Depth group open with Step-down 1 mm and Through-cut allowance 0 mm; the Strategy group open with Alternate direction unticked and Enter at and Leave at empty; the Order group open with Machining order Full depth first; and the Heights group open with Safe Z 15 mm; on the Viewport the red cut follows the border and the squiggle](figures/app/op-engrave.png)
 
 The editor's rows, and the field of the project file each one sets:
 
@@ -45,7 +47,8 @@ The editor's rows, and the field of the project file each one sets:
 | | **Depth** | `depth_mm` |
 | **Depth** | **Step-down** | `step_down_mm`. Empty is `null`, the tool's |
 | | **Through-cut allowance** | `through_cut_allowance_mm` |
-| **Strategy** | **Alternate direction** | `alternate_direction` |
+| **Strategy** | **Alternate direction** | `alternate_direction`. Not shown while **Enter at** or **Leave at** is set |
+| | **Enter at**, **Leave at** | `enter_fraction`, `leave_fraction`, as percentages. Empty is `null` ([Where the bit enters and leaves](#where-the-bit-enters-and-leaves)) |
 | **Order** | **Machining order**: Full depth first, Pass first | `machining_order` |
 | **Heights** | **Safe Z** | `safe_z_mm` |
 
@@ -61,6 +64,8 @@ The editor's rows, and the field of the project file each one sets:
 | `depth_mm` | How deep to cut, measured down from the stock top. **Required.** |
 | `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, `check` reports it and export refuses. |
 | `alternate_direction` | `true` cuts the passes of an open path back and forth. See [Alternating direction](#alternating-direction). Default `false`. |
+| `enter_fraction` | Where the bit goes into each path: how far along it from its first point, from 0 to 1 of its length. `null` is the path's own end. See [Where the bit enters and leaves](#where-the-bit-enters-and-leaves). From format version 30. |
+| `leave_fraction` | Where the bit comes out of each path, the same way. `null` is where the cut ends of itself. |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](machining-order.md#machining-order). |
 | `through_cut_allowance_mm` | How far below the stock bottom a cut as deep as the stock goes, as for [Profile](profile.md#cutting-through). Engraving rarely needs it; leave it at 0. |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
@@ -102,6 +107,44 @@ and travelling back: one retract and one rapid saved per pass. The groove
 is the same; only the direction of cut changes, which on most engraving is
 not visible. Closed paths are unaffected: they already end where they
 start, so every pass runs the same way.
+
+### Where the bit enters and leaves
+
+A path is normally entered at one end and left at the other, and the
+plunge leaves its mark there. **Enter at** and **Leave at** move the two
+to points of your choosing along the path, each a percentage of its
+length from its first point. Either can be left empty.
+
+Take a straight line with **Enter at** 25 and **Leave at** 75. The bit
+plunges a quarter of the way along, cuts back to the start, runs the
+whole line to its far end, and comes back to the three-quarter point,
+where it lifts:
+
+| Enter at | Leave at | The bit goes |
+| --- | --- | --- |
+| 25 | 75 | 25 → 0 → 100 → 75 |
+| 75 | 25 | 75 → 100 → 0 → 25 |
+| 25 | empty | 25 → 0 → 100 |
+| empty | 75 | 0 → 100 → 75 |
+| 100 | empty | 100 → 0: the path run from its other end |
+
+- **The whole path is still cut.** The stretch before the entry and the
+  stretch after the exit are cut twice, once each way.
+- The route is the shorter of the two that cover the path: out to the
+  nearer end first.
+- **Every pass** enters and leaves at the same two points. The bit lifts
+  at the exit and comes back to the entry for the next pass, so
+  **Alternate direction**, which would plunge at both, is not used and
+  its row is not shown.
+- With several paths in one Engrave, the percentages apply to each.
+- On a **closed** path, **Enter at** is where the loop starts and ends,
+  and **Leave at** carries the cut on past that point, cutting that
+  stretch twice.
+- The first point of a path is where it was drawn from. Turn on **Start
+  points** in the Viewport's **Layers** to see where each cut begins.
+
+A percentage field takes a sum, so `100/4` is a quarter
+([Formulas](keyboard.md#formulas)).
 
 ## V-bits
 

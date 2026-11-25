@@ -29,7 +29,7 @@ use crate::tabs::segment_kind;
 use crate::targets::target_profiles;
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
-use dc_geometry::{Contour, EPS_MM, Point3, Polyline, nest};
+use dc_geometry::{Contour, EPS_MM, Point3, Polyline, Vertex, nest};
 use dc_project::{EngraveOp, Project};
 
 /// Generates the Engrave toolpath for `op` in `project`, in project space
@@ -94,11 +94,19 @@ fn engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>)
     for (shape, path) in &paths {
         let closed = path.is_closed();
         let backwards = path.reversed();
+        // Where the bit enters and leaves, when the operation says: one
+        // route for every pass, and no alternation, which would plunge
+        // at both points.
+        let routed = route(path, op.enter_fraction, op.leave_fraction);
         // The Z of the pass above, where the tool is when a pass begins.
         let mut above_z_mm: Option<f64> = None;
         for (pass, &z_mm) in pass_z.iter().enumerate() {
-            let reverse = !closed && op.alternate_direction && pass % 2 == 1;
-            let traced = if reverse { &backwards } else { path };
+            let reverse = routed.is_none() && !closed && op.alternate_direction && pass % 2 == 1;
+            let traced = match &routed {
+                Some(routed) => routed,
+                None if reverse => &backwards,
+                None => path,
+            };
             // `resolve_targets` kept only paths of two distinct points.
             let entry = traced
                 .vertices()
@@ -119,7 +127,12 @@ fn engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>)
             // pass ended there: always for a closed path, and for an open
             // path cut back and forth. Then the descent starts at the
             // previous pass Z; otherwise the sequencer retracts first.
-            let stays_down = closed || op.alternate_direction;
+            let stays_down = match &routed {
+                // A route ends where it began only round a closed path
+                // that leaves where it enters.
+                Some(_) => closed && exit.distance_to(entry) <= EPS_MM,
+                None => closed || op.alternate_direction,
+            };
             let descent_from_z_mm = above_z_mm.filter(|_| stays_down).unwrap_or(safe_z_mm);
             above_z_mm = Some(z_mm);
             blocks.push(CutBlock {
@@ -148,6 +161,97 @@ fn engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>)
     // The cutter must stay on the stock.
     ctx.check_on_stock(&toolpath, tool.cut_radius_mm())?;
     Ok((toolpath, warnings))
+}
+
+/// The route one pass takes along `path` when the operation says where
+/// the bit enters or leaves it (format 30; the maintainer's request,
+/// 2026-11-25), as one open path that doubles back on itself: `None`
+/// when it says neither, and the path is run as it always was.
+///
+/// `enter` and `leave` are fractions of the path's length from its first
+/// point, held to 0 to 1 (validation refuses any other).
+///
+/// - An **open** path is cut whole, the shorter of the two ways there
+///   are: from where it enters out to one end, back along the whole of
+///   it to the other, and from there back to where it leaves; towards
+///   the path's start first when the two are as long. A point left unset
+///   is the end the cut starts from, or finishes at.
+/// - A **closed** path is cut once round from where it enters (its own
+///   start when unset) and, when it says where to leave, on round to
+///   there, cutting that stretch a second time.
+fn route(path: &Polyline, enter: Option<f64>, leave: Option<f64>) -> Option<Polyline> {
+    if enter.is_none() && leave.is_none() {
+        return None;
+    }
+    let length_mm = path.length_mm();
+    let at = |fraction: f64| fraction.clamp(0.0, 1.0) * length_mm;
+    let mut parts: Vec<Polyline> = Vec::new();
+    if path.is_closed() {
+        let from = enter.map_or(0.0, at);
+        parts.push(between(path, from, length_mm));
+        parts.push(between(path, 0.0, from));
+        if let Some(to) = leave.map(at) {
+            if to > from + EPS_MM {
+                parts.push(between(path, from, to));
+            } else if to < from - EPS_MM {
+                parts.push(between(path, from, length_mm));
+                parts.push(between(path, 0.0, to));
+            }
+        }
+    } else {
+        // Start first: enter → start → end → leave. End first: enter →
+        // end → start → leave. An unset point is where that way begins
+        // or finishes.
+        let start_first = enter.map_or(0.0, at) + (length_mm - leave.map_or(length_mm, at));
+        let end_first = (length_mm - enter.map_or(length_mm, at)) + leave.map_or(0.0, at);
+        if start_first <= end_first + EPS_MM {
+            let (from, to) = (enter.map_or(0.0, at), leave.map_or(length_mm, at));
+            parts.push(between(path, 0.0, from).reversed());
+            parts.push(between(path, 0.0, length_mm));
+            parts.push(between(path, to, length_mm).reversed());
+        } else {
+            let (from, to) = (enter.map_or(length_mm, at), leave.map_or(0.0, at));
+            parts.push(between(path, from, length_mm));
+            parts.push(between(path, 0.0, length_mm).reversed());
+            parts.push(between(path, 0.0, to));
+        }
+    }
+    // One path, each part going on from where the last ended.
+    let mut vertices: Vec<Vertex> = Vec::new();
+    for part in parts.iter().filter(|part| part.vertices().len() >= 2) {
+        vertices.pop();
+        vertices.extend(part.vertices());
+    }
+    Some(Polyline::new(vertices, false))
+}
+
+/// The open path along `path` from `from_mm` to `to_mm` of its length,
+/// running the way `path` does; an arc's part is an arc of its circle.
+/// A closed path is walked as its lap from its first vertex. Fewer than
+/// two vertices when the stretch has no length.
+fn between(path: &Polyline, from_mm: f64, to_mm: f64) -> Polyline {
+    let mut vertices: Vec<Vertex> = Vec::new();
+    let mut end = None;
+    let mut walked_mm = 0.0;
+    for segment in path.segments() {
+        let length_mm = segment.length_mm();
+        let (start_mm, stop_mm) = (walked_mm, walked_mm + length_mm);
+        walked_mm = stop_mm;
+        if length_mm <= EPS_MM || stop_mm <= from_mm + EPS_MM || start_mm >= to_mm - EPS_MM {
+            continue;
+        }
+        let first = ((from_mm - start_mm) / length_mm).clamp(0.0, 1.0);
+        let last = ((to_mm - start_mm) / length_mm).clamp(0.0, 1.0);
+        let Some(piece) = segment.piece(first, last) else {
+            continue;
+        };
+        vertices.push(Vertex::new(piece.start.x, piece.start.y, piece.bulge));
+        end = Some(piece.end);
+    }
+    if let Some(end) = end {
+        vertices.push(Vertex::line(end.x, end.y));
+    }
+    Polyline::new(vertices, false)
 }
 
 /// Places every profile of every target instance, in target then profile

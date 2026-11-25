@@ -624,10 +624,111 @@ fn pocket_and_engrave_golden_render_order() {
             "step_down_mm",
             "through_cut_allowance_mm",
             "alternate_direction",
+            "enter_fraction",
+            "leave_fraction",
             "machining_order",
             "safe_z_mm",
         ]
     );
+}
+
+/// The maintainer's request of 2026-11-25: an Engrave says where the bit
+/// enters and leaves each path, **Enter at** and **Leave at**, each a
+/// percentage along the path and each empty for the path's own end. A
+/// formula does for the percentage. While either is set **Alternate
+/// direction** is not offered, since every pass then enters and leaves
+/// at those points.
+#[test]
+fn an_engrave_says_where_it_enters_and_leaves() {
+    let mut h = dc_app::test_support::Harness::from_project(common::plaque());
+    let id = h
+        .app
+        .project()
+        .operations
+        .iter()
+        .find(|o| matches!(o, Operation::Engrave(_)))
+        .unwrap()
+        .id()
+        .clone();
+    let engrave = |h: &dc_app::test_support::Harness| op_of(h, id.as_str());
+    let op = engrave(&h);
+    assert_eq!(
+        (
+            strings_of(&h, &op, "enter_fraction"),
+            strings_of(&h, &op, "leave_fraction")
+        ),
+        (
+            ("Enter at".to_owned(), String::new()),
+            ("Leave at".to_owned(), String::new())
+        ),
+        "both empty: the path's own ends"
+    );
+    assert!(keys(&op).contains(&"alternate_direction"));
+
+    let label = {
+        let command = editor::commit_text(
+            h.app.project(),
+            &op,
+            row_of(&op, "enter_fraction"),
+            "100 / 4",
+        );
+        run_edit(&mut h, command)
+    };
+    // An edit is named for the file's word for its field, as every edit is.
+    assert_eq!(label, "Set enter of “Border and squiggle”");
+    let op = engrave(&h);
+    {
+        let command =
+            editor::commit_text(h.app.project(), &op, row_of(&op, "leave_fraction"), "75 %");
+        run_edit(&mut h, command)
+    };
+    let op = engrave(&h);
+    let Operation::Engrave(set) = &op else {
+        panic!("an Engrave");
+    };
+    assert_eq!(
+        (set.enter_fraction, set.leave_fraction),
+        (Some(0.25), Some(0.75))
+    );
+    assert_eq!(strings_of(&h, &op, "enter_fraction").1, "25");
+    assert!(
+        !keys(&op).contains(&"alternate_direction"),
+        "not offered while a point is set"
+    );
+    assert!(h.app.validation().errors.is_empty());
+
+    // Emptied, it is the path's end again; past the path, it is refused
+    // at the field by validation.
+    {
+        let command = editor::commit_text(h.app.project(), &op, row_of(&op, "enter_fraction"), "");
+        run_edit(&mut h, command)
+    };
+    let op = engrave(&h);
+    {
+        let command =
+            editor::commit_text(h.app.project(), &op, row_of(&op, "leave_fraction"), "150");
+        run_edit(&mut h, command)
+    };
+    let op = engrave(&h);
+    let located = editor::Located::of(h.warnings(), &op)
+        .status(row_of(&op, "leave_fraction"))
+        .expect("the point off the path is reported at its field");
+    assert_eq!(located.tier, Tier::Error);
+    assert!(
+        located.message.starts_with("Leave at of operation")
+            || located.message.starts_with("Leave at is"),
+        "{}",
+        located.message
+    );
+}
+
+/// A row's label and the text its field shows.
+fn strings_of(h: &dc_app::test_support::Harness, op: &Operation, key: &str) -> (String, String) {
+    let row = row_of(op, key);
+    (
+        h.app.strings().get(row.label).to_owned(),
+        editor::value_text(h.app.project(), op, row),
+    )
 }
 
 /// `fields::get` and `fields::set` by key path on the record, through

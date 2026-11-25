@@ -6648,3 +6648,39 @@ fn a_gears_sizes_are_checked_together() {
         );
     }
 }
+
+// Format 30: where an Engrave enters and leaves a path.
+
+/// An Engrave's `enter_fraction` and `leave_fraction` are a place on the
+/// path, 0 to 1 of its length, or unset: anything else is an error at
+/// its field, and nothing is cut.
+#[test]
+fn an_engraves_enter_and_leave_are_on_the_path() {
+    use crate::test_support::sample_engrave;
+    let with = |enter: Option<f64>, leave: Option<f64>| {
+        let mut p = sample_project();
+        let mut op = sample_engrave();
+        op.enter_fraction = enter;
+        op.leave_fraction = leave;
+        p.operations = vec![Operation::Engrave(op)];
+        validate(&p)
+    };
+    assert_eq!(with(None, None), vec![]);
+    assert_eq!(with(Some(0.25), Some(0.75)), vec![]);
+    assert_eq!(with(Some(0.0), Some(1.0)), vec![], "the ends are on it");
+    let problems = with(Some(-0.1), Some(1.5));
+    let fields: Vec<_> = problems.iter().filter_map(Problem::field).collect();
+    assert_eq!(
+        fields,
+        [
+            "operations[o4].enter_fraction",
+            "operations[o4].leave_fraction"
+        ]
+    );
+    assert!(
+        problems.iter().all(|p| p.code() == "out_of_range"),
+        "{problems:?}"
+    );
+    let problems = with(Some(f64::NAN), None);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+}

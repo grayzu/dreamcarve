@@ -2173,6 +2173,7 @@ pub const MIN_BITMAP_OPACITY: f64 = 0.1;
 
 const POSITIVE: &str = "a value greater than 0";
 const OPACITY: &str = "a value from 0.1 to 1";
+const ALONG_PATH: &str = "a value from 0 to 1, a fraction of the path's length";
 const POLYGON_SIDES: &str = "a whole number from 3 to 50";
 const GEAR_TEETH: &str = "a whole number from 6 to 200";
 const PRESSURE_ANGLE: &str = "an angle from 10 to 35 degrees";
@@ -4335,6 +4336,19 @@ impl Validator {
             op.through_cut_allowance_mm,
         );
         self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
+        // Where the bit enters and leaves a path (format 30): on it.
+        for (field, fraction) in [
+            ("enter_fraction", op.enter_fraction),
+            ("leave_fraction", op.leave_fraction),
+        ] {
+            let field = format!("{at}.{field}");
+            if let Some(fraction) = fraction
+                && self.finite(&field, fraction)
+                && !(0.0..=1.0).contains(&fraction)
+            {
+                self.out_of_range(field, fraction, ALONG_PATH);
+            }
+        }
     }
 
     /// An entry's values (functional spec, capability 16): a ramp or helix

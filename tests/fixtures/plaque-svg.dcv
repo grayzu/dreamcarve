@@ -1,5 +1,5 @@
 {
-  "version": 29,
+  "version": 30,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -90,6 +90,8 @@
       "depth_mm": 1.0,
       "step_down_mm": 1.0,
       "alternate_direction": false,
+      "enter_fraction": null,
+      "leave_fraction": null,
       "machining_order": "full_depth_first",
       "through_cut_allowance_mm": 0.0,
       "safe_z_mm": 15.0

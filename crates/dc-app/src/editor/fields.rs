@@ -1123,18 +1123,43 @@ const POCKET: &[Row] = &[
 ];
 
 /// Capability 68's Engrave line, every field (slice 11, #540).
+/// Whether an Engrave runs each path from one end to the other: it says
+/// neither where the bit enters nor where it leaves.
+fn runs_end_to_end(record: &Value) -> bool {
+    record["enter_fraction"].is_null() && record["leave_fraction"].is_null()
+}
+
 const ENGRAVE: &[Row] = &[
     TARGETS,
     TOOL,
     DEPTH,
     STEP_DOWN,
     THROUGH_CUT_ALLOWANCE,
-    row(
+    // Not while the path is entered or left at a point of its own: every
+    // pass then enters and leaves there, and none runs backwards.
+    ruled(
         Group::Strategy,
         "alternate_direction",
         FieldKind::Checkbox,
         StrKey::EditorFieldAlternateDirection,
         StrKey::EditorFieldAlternateDirectionHelp,
+        runs_end_to_end,
+    ),
+    // Where the bit enters and leaves each path (format 30): a percentage
+    // along it; empty is the path's own end.
+    row(
+        Group::Strategy,
+        "enter_fraction",
+        FieldKind::Percentage,
+        StrKey::EditorFieldEnterAt,
+        StrKey::EditorFieldEnterAtHelp,
+    ),
+    row(
+        Group::Strategy,
+        "leave_fraction",
+        FieldKind::Percentage,
+        StrKey::EditorFieldLeaveAt,
+        StrKey::EditorFieldLeaveAtHelp,
     ),
     MACHINING_ORDER,
     SAFE_Z,
