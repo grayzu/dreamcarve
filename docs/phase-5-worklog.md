@@ -39,8 +39,10 @@ and `../graphite` at `615b4050` (sparse). Their surveys are
 ## Where it stands
 
 Baseline before the first slice: 3,430 tests pass on macOS at
-`0.5.0-alpha.1`. After slice 27: 3,727. Every slice is done; the phase
-waits for the maintainer (below).
+`0.5.0-alpha.1`. After slice 27: 3,727; after the maintainer's rounds of
+requests, 3,799. Every slice is done. The maintainer tested the branch and
+on 2026-11-25 gave the word to release it as `v0.5.0-alpha.1` (slice 28);
+`v0.5.0` stays theirs.
 
 ### Exit criteria (functional spec)
 
@@ -51,19 +53,20 @@ waits for the maintainer (below).
 | The hook plate drawn in the app with no import, its programs equal to the CLI's | `first_design::the_hook_plate_is_designed_in_the_window` draws it through the window; the same steps with no window are exported against `dreamcarve export` |
 | Quick start "Your first design" and every chapter, with screenshots from the build | Written; 28 pictures taken by `book.rs` |
 | `CONTEXT.md` updated; every user-visible string keyed | Done; `strings::every_key_is_used` and the scans pass |
-| The maintainer's review, and the open questions settled | **Open.** "Decisions waiting for the maintainer", below |
-| `v0.5.0-alpha.1`, then `v0.5.0` | **The maintainer's.** No tag is cut and nothing is merged to `main` |
+| The maintainer's review, and the open questions settled | Tested by the maintainer, who gave the word to release on 2026-11-25. The open questions below stand as taken unless they say otherwise |
+| `v0.5.0-alpha.1`, then `v0.5.0` | `v0.5.0-alpha.1` cut on 2026-11-25 at the maintainer's word (slice 28). `v0.5.0` is **the maintainer's** |
 
 ### Checks CI runs that the local gate does not
 
-Run on macOS on 2026-11-23, at the head of the branch:
+Run on macOS on 2026-11-23, at the head of the branch, and again on
+2026-11-25 before the release (all clean on the first try that day):
 
 | Check | Result |
 | --- | --- |
 | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace`, and with `--document-private-items` | Clean, after three intra-doc links were fixed |
 | `cargo deny check licenses advisories` | OK, after `dc-text` left `ttf-parser` (below) |
 | `mdbook build docs/book` | Builds |
-| `cargo test --locked -p third-party-licenses --test ci -- --ignored` | Both pass |
+| `cargo test --locked -p third-party-licenses --test ci -- --ignored` | Both pass; on 2026-11-25 with `FONT-LICENSES` checked in both archives |
 | `dist plan`, `dist generate --check` | Both exit 0 |
 | `cargo clippy --all-targets --all-features -- -D warnings` for `x86_64-pc-windows-msvc` and `x86_64-unknown-linux-gnu` | Clean for both |
 
@@ -263,7 +266,7 @@ Decisions made while building are added here.
   archive carries `NOTICE` and `THIRD-PARTY-LICENSES`, and neither
   holds the OFL's text (`about.toml` lists crates, not assets). Phase
   4's interface fonts are in the same position. The licence files are
-  in the source tree and `NOTICE` names every font and its copyright.
+  in the source tree and `NOTICE` names every font and its copyright. Settled in slice 28: every archive now carries `FONT-LICENSES`.
 - Slice 23, the layout: the capital height is measured on the font's
   own `H`, with `capHeight` second, so an H is the height asked in a
   script too (the design had them the other way round). Kerning reads
@@ -557,11 +560,12 @@ Decisions taken, for the maintainer:
 - "Distance from" read as a length along the path from its first point
   (**From the start**) or back from its last (**From the end**). Not a
   straight-line distance from a point: that is what **Near a point**
-  covers.
+  covers. Confirmed by the maintainer on 2026-11-25.
 - A distance longer than a path is that path's far end and warns,
   located on the Distance field; it is not refused, since one Engrave's
   paths differ in length and validation does not measure them. A
-  distance of 0 is the end itself.
+  distance of 0 is the end itself. Confirmed by the maintainer on
+  2026-11-25 ("Warning is fine").
 - On a closed path the start is the end, so **From the end** counts back
   round from the start.
 - **Near a point** takes each path's own nearest point however far away
@@ -634,3 +638,4 @@ The numbers are the design spec's.
 | Slice | What | Status |
 | --- | --- | --- |
 | 27 | The hook plate from the quick start's own tables (`design_steps`), through the window (`design_window`, `first_design.rs`) and against the CLI on six post-processors (`gui_equality`); the quick start "Your first design" with 20 pictures; nine user-guide chapters with 8 pictures, and The app, Placing shapes, Images, Overview, Warnings, Porting, Crate map, README, `CONTEXT.md` and the changelog brought up to date; construction-only open paths no longer warned about. Gate: 3,727 tests | done |
+| 28 | The release `v0.5.0-alpha.1`, at the maintainer's word on 2026-11-25 after their tests. `FONT-LICENSES` (new, at the root and in every archive through `include` in `dist-workspace.toml`) holds the licence text of each bundled font and icon set, settling the OFL question left from slice 23; `fonts::font_licenses_hold_every_bundled_licence_text` checks it against the licence files in the tree. README and the Installing chapter name `v0.5.0-alpha.1`. The checks CI runs and the local gate does not pass (above). `main` fast-forwarded to `Phase-5` and the tag pushed; `release.yml` builds and publishes from the tag | done |

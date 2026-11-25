@@ -23,7 +23,8 @@ install-updater = false
 # Extra files copied into the root of every archive. LICENSE is auto-included.
 # THIRD-PARTY-LICENSES is generated before `dist build` by the steps in
 # .github/build-setup.yml (`cargo run -p third-party-licenses -- generate`).
-include = ["NOTICE", "THIRD-PARTY-LICENSES"]
+# FONT-LICENSES holds the licence texts of the bundled fonts and icons.
+include = ["NOTICE", "THIRD-PARTY-LICENSES", "FONT-LICENSES"]
 # Steps run before `dist build` on every build runner.
 github-build-setup = "../build-setup.yml"
 # dist 0.33 builds aarch64-apple-darwin on `macos-14`, an image GitHub has
