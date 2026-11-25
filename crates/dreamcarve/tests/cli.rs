@@ -7467,9 +7467,9 @@ fn before_format_29(text: &str) -> String {
         "\"group\": null,",
         "\"groups\": [],",
         "\"opacity_fraction\": 1.0,",
-        // And what format 30 added after it, to an Engrave.
-        "\"enter_fraction\": null,",
-        "\"leave_fraction\": null,",
+        // And what formats 30 and 31 added after it, to an Engrave.
+        "\"enter\": \"auto\",",
+        "\"leave\": \"auto\",",
     ];
     let kept: Vec<&str> = text
         .lines()
@@ -9061,8 +9061,8 @@ fn engrave_exports_and_passes_safety() {
         depth_mm: Some(1.0),
         step_down_mm: Some(0.5),
         alternate_direction: true,
-        enter_fraction: None,
-        leave_fraction: None,
+        enter: dc_project::PathPoint::Auto,
+        leave: dc_project::PathPoint::Auto,
         machining_order: MachiningOrder::FullDepthFirst,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 5.0,
@@ -11218,8 +11218,8 @@ fn estimate_project(dir: &Path) -> PathBuf {
         depth_mm: Some(1.0),
         step_down_mm: Some(1.0),
         alternate_direction: false,
-        enter_fraction: None,
-        leave_fraction: None,
+        enter: dc_project::PathPoint::Auto,
+        leave: dc_project::PathPoint::Auto,
         machining_order: MachiningOrder::FullDepthFirst,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 25.0,
@@ -13475,4 +13475,81 @@ fn image_prep_threshold_range_exits_2() {
         ],
     );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+// ── Format 31: where an Engrave enters and leaves, by any point ──
+
+/// Format 31 (`migrate::v30_to_v31`) turns an Engrave's `enter_fraction`
+/// and `leave_fraction` into `enter` and `leave`. The plaque's Engrave
+/// saved at format 30 with fractions set (`tests/fixtures/engrave-points-
+/// migration/`: entered and left at a quarter and three quarters; entered
+/// at 0.6 with alternation asked for; left at 0.1; two passes each, every
+/// other operation disabled) exports byte for byte the programs the format
+/// 30 build exported from them (`tests/expected/engrave-points-migration/`),
+/// as loaded and once saved at format 31: a file that held a fraction cuts
+/// as it did.
+#[test]
+fn version_30_engrave_points_export_byte_identical_programs() {
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/engrave-points-migration");
+    let expected_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected/engrave-points-migration");
+    let cases = [
+        ("plaque-quarters", Some(0.25), Some(0.75)),
+        ("plaque-enter", Some(0.6), None),
+        ("plaque-leave", None, Some(0.1)),
+    ];
+    let point = |fraction: Option<f64>| match fraction {
+        Some(length_fraction) => dc_project::PathPoint::Fraction { length_fraction },
+        None => dc_project::PathPoint::Auto,
+    };
+    for (name, enter, leave) in cases {
+        let dir = work_dir(&format!("version_30_engrave_points_{name}"));
+        let file = format!("{name}.dcv");
+        std::fs::copy(fixtures.join(&file), dir.join(&file)).expect("fixture copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(
+            text.contains("\"version\": 30,"),
+            "{name} is a version 30 file"
+        );
+        assert!(text.contains("\"enter_fraction\": "), "{name}");
+        let expected = std::fs::read_to_string(expected_dir.join(format!("{name}.nc")))
+            .unwrap_or_else(|e| panic!("{name}: expected program: {e}"));
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        let engrave = project
+            .operations
+            .iter()
+            .find_map(|op| match op {
+                Operation::Engrave(e) => Some(e),
+                _ => None,
+            })
+            .expect("the plaque's Engrave");
+        assert_eq!(
+            (engrave.enter, engrave.leave),
+            (point(enter), point(leave)),
+            "{name}"
+        );
+        for case in ["as loaded", "saved at format 31"] {
+            if case != "as loaded" {
+                std::fs::write(dir.join(&file), save(&project).expect("saves")).expect("written");
+                let saved = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+                assert!(!saved.contains("enter_fraction"), "{name}: {saved}");
+            }
+            let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{name} {case}: {}",
+                stderr(&out)
+            );
+            let program =
+                std::fs::read_to_string(dir.join(format!("{name}.nc"))).expect("program written");
+            assert!(
+                program == expected,
+                "{name} {case}: differs from the format 30 build's program:\n{program}"
+            );
+        }
+    }
 }

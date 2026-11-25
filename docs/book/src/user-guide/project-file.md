@@ -129,7 +129,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `30`. |
+| `version` | Format version. This build writes `31`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve: more than 0 and at most 0.1. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -645,6 +645,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 28 | Adds the `"tapered_ball_nose"` cutter (#677), with its `tip_diameter_mm`, `taper_angle_deg` (per side) and `flute_length_mm`. A version 27 file holds none, so the upgrade changes only the version and the file exports the same programs, byte for byte; an older DreamCarve refuses a version 28 file rather than misread a cutter it does not know. A version 27 file that already holds one is refused. |
 | 29 | Adds what drawing in the app saves: each definition's `shape`, after its `name`, `null` on upgrade (a plain outline, which every older shape is); each instance's `construction` (`false`) and `group` (`null`), after its `locked`; `groups`, after `tabs`, `[]`; and each bitmap's `opacity_fraction`, after its `locked`, `1.0`. Nothing that is cut reads any of them, so a version 28 file exports the same programs, byte for byte; an older DreamCarve refuses a version 29 file rather than drop a shape's sizes. |
 | 30 | Adds where an Engrave's bit enters and leaves each path: `enter_fraction` and `leave_fraction`, after its `alternate_direction`, both `null` on upgrade, an end of the path as every older Engrave was cut ([Engrave](engrave.md#where-the-bit-enters-and-leaves)). A project with no Engrave gains only the version. |
+| 31 | Replaces an Engrave's `enter_fraction` and `leave_fraction` with `enter` and `leave`, in their place, which also take a distance from either end of the path or a point near which ([Engrave](engrave.md#where-the-bit-enters-and-leaves)). On upgrade `null` becomes `"auto"` and a number `f` becomes `{ "fraction": { "length_fraction": f } }`, so a version 30 file exports the same programs, byte for byte; an older DreamCarve refuses a version 31 file rather than drop where an Engrave enters. A version 30 file that already holds `enter` or `leave` is refused. |
 
 ## What `check` reports
 

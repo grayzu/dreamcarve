@@ -1446,6 +1446,53 @@ Phase 2 functional, capability 15, "Where the bit enters and leaves".
   `an_arc_is_entered_and_left_on_its_own_circle`; `dc-app`
   `editor::an_engrave_says_where_it_enters_and_leaves`.
 
+### Enter and leave by a distance or a click, 2026-11-25
+
+Phase 2 functional, capability 15, "Where the bit enters and leaves", as
+changed the same day: a point may also be a distance from either end of
+the path, or the path's point nearest a point clicked on the Viewport.
+- `dc_project::PathPoint`, externally tagged as `StartAt` is (a unit
+  variant): `Auto`, `Fraction { length_fraction }`, `FromStart {
+  distance_mm }`, `FromEnd { distance_mm }`, `Near { x_mm, y_mm }`.
+  `EngraveOp::{enter, leave}: PathPoint` replace `enter_fraction` and
+  `leave_fraction` in their place (format 31; `migrate::v30_to_v31`
+  renames each and turns `null` into `"auto"` and a number into a
+  `fraction`; the v30 fixtures stay as the previous version's, and
+  `dcv/v31/` are the current ones). Validation: a fraction finite and in
+  0 to 1, a distance finite and 0 or more, a point's coordinates within
+  `MAX_COORDINATE_MM`; `out_of_range` at the field
+  (`operations[o].enter.from_start.distance_mm`).
+- `dc_cam::engrave`: `along_mm(path, point)` turns a `PathPoint` into a
+  length along one placed path (`Near` by `dc_geometry::nearest_point`,
+  so each target path takes its own nearest point), clamping a distance
+  past the path to its far end with `Warning::EngravePointPastEnd`
+  (`engrave_point_past_end`, located at the distance's field); `route`
+  now takes lengths in millimetres and is otherwise unchanged, so a
+  fraction cuts exactly as format 30's did.
+- `dc_app::editor::fields`: `enter` and `leave` are choices
+  (`ENTER_POINTS`, `LEAVE_POINTS`: a fraction starts at 0 for the one
+  and 1 for the other, a distance at 0, a point at the stock's centre),
+  each with its variant's rows under it; `enter.near` and `leave.near`
+  are `FieldKind::PointPick` rows, armed and clicked through the
+  window's existing point pick (`arm_point_pick`, `point_at`), so
+  nothing in the Viewport is new. `runs_end_to_end` is both `"auto"`.
+- Tests: `dc-project` `migrate::v30_to_v31_keeps_where_an_engrave_enters_and_leaves`,
+  `a_file_claiming_30_with_a_format_31_field_is_refused`,
+  `version_31_fixtures_load`,
+  `validate::an_engraves_enter_and_leave_are_on_the_path`; `dc-cam`
+  `engrave::a_distance_is_measured_from_either_end`,
+  `a_zero_distance_is_the_end_itself`,
+  `a_distance_past_the_end_is_the_far_end_and_warns`,
+  `a_closed_path_is_entered_a_distance_round_from_its_start`,
+  `each_path_is_entered_at_its_own_point_nearest_a_picked_point`,
+  `a_closed_path_starts_at_its_point_nearest_a_picked_point`; `dc-app`
+  `editor::an_engrave_says_where_it_enters_and_leaves`,
+  `an_engrave_enters_and_leaves_a_distance_from_an_end`,
+  `an_engrave_point_can_be_clicked_on_the_viewport`; in the window
+  `kittest::engrave_point_click_on_the_viewport`; the CLI's
+  `version_30_engrave_points_export_byte_identical_programs`, against
+  programs the format 30 build exported.
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the

@@ -537,6 +537,41 @@ Decisions taken, for the maintainer:
 - Engrave only. A Profile along an open path (On line, Left, Right) is
   not covered.
 
+### Enter and leave by a distance or a click, 2026-11-25
+
+The maintainer's second request of the day: say where an Engrave enters
+and leaves by a distance from either end, or by clicking a point on the
+Viewport. Done: `dc_project::PathPoint` and `EngraveOp::{enter, leave}`
+(format 31, `v30_to_v31`), `dc_cam::engrave::along_mm`, the warning
+`engrave_point_past_end`, and **Enter at** and **Leave at** as choices in
+the Engrave's Strategy group, each with its value's rows and, for a
+point, the Profile start point's *Pick on the view*. The plaque's Engrave
+saved at format 30 with fractions is committed with the programs the
+format 30 build exported, and exports them byte for byte at format 31.
+
+Decisions taken, for the maintainer:
+
+- **Format 31, with format 30's two fields replaced**, not kept beside
+  new ones: one value per end, `"auto"` or a point, so a file cannot say
+  two things at once. `null` became `"auto"`, as `StartAt` writes it.
+- "Distance from" read as a length along the path from its first point
+  (**From the start**) or back from its last (**From the end**). Not a
+  straight-line distance from a point: that is what **Near a point**
+  covers.
+- A distance longer than a path is that path's far end and warns,
+  located on the Distance field; it is not refused, since one Engrave's
+  paths differ in length and validation does not measure them. A
+  distance of 0 is the end itself.
+- On a closed path the start is the end, so **From the end** counts back
+  round from the start.
+- **Near a point** takes each path's own nearest point however far away
+  the point is, the first along the path on a tie, as the Profile's start
+  point does; no warning for a point far from a path.
+- Choosing a mode writes a value at an end of the path: 0 % to enter,
+  100 % to leave (which cut as Auto does, but for Alternate direction),
+  a distance of 0 (that end itself); a point starts at the stock's
+  centre, as the Profile's does.
+
 ## Slices
 
 Status is one of: todo, doing, done, owner (waits for the maintainer).

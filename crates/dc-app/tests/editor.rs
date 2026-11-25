@@ -624,23 +624,27 @@ fn pocket_and_engrave_golden_render_order() {
             "step_down_mm",
             "through_cut_allowance_mm",
             "alternate_direction",
-            "enter_fraction",
-            "leave_fraction",
+            "enter",
+            "leave",
             "machining_order",
             "safe_z_mm",
         ]
     );
 }
 
-/// The maintainer's request of 2026-11-25: an Engrave says where the bit
-/// enters and leaves each path, **Enter at** and **Leave at**, each a
-/// percentage along the path and each empty for the path's own end. A
-/// formula does for the percentage. While either is set **Alternate
-/// direction** is not offered, since every pass then enters and leaves
-/// at those points.
-#[test]
-fn an_engrave_says_where_it_enters_and_leaves() {
-    let mut h = dc_app::test_support::Harness::from_project(common::plaque());
+/// Runs the edit `command` makes of the harness's project, as
+/// [`run_edit`].
+fn edit(
+    h: &mut dc_app::test_support::Harness,
+    command: impl FnOnce(&Project) -> Result<Option<Command>, dc_app::CommandError>,
+) -> String {
+    let command = command(h.app.project());
+    run_edit(h, command)
+}
+
+/// The plaque's Engrave, the harness over it and its id.
+fn plaque_engrave() -> (dc_app::test_support::Harness, dc_project::OperationId) {
+    let h = dc_app::test_support::Harness::from_project(common::plaque());
     let id = h
         .app
         .project()
@@ -650,75 +654,297 @@ fn an_engrave_says_where_it_enters_and_leaves() {
         .unwrap()
         .id()
         .clone();
+    (h, id)
+}
+
+/// The Engrave of `op`.
+fn engrave_of(op: &Operation) -> &dc_project::EngraveOp {
+    let Operation::Engrave(engrave) = op else {
+        panic!("an Engrave: {op:?}");
+    };
+    engrave
+}
+
+/// The maintainer's requests of 2026-11-25: an Engrave says where the bit
+/// enters and leaves each path, **Enter at** and **Leave at**, each a
+/// choice, Auto at first. *Percentage along* opens its Percentage row at
+/// 0 % for Enter at and 100 % for Leave at, the path's own ends, and a
+/// formula does for the percentage. While either is other than Auto
+/// **Alternate direction** is not offered, since every pass then enters
+/// and leaves at those points. A percentage past the path is refused at
+/// its row by validation; Auto again drops the row.
+#[test]
+fn an_engrave_says_where_it_enters_and_leaves() {
+    use dc_project::PathPoint;
+    let (mut h, id) = plaque_engrave();
     let engrave = |h: &dc_app::test_support::Harness| op_of(h, id.as_str());
     let op = engrave(&h);
     assert_eq!(
-        (
-            strings_of(&h, &op, "enter_fraction"),
-            strings_of(&h, &op, "leave_fraction")
-        ),
-        (
-            ("Enter at".to_owned(), String::new()),
-            ("Leave at".to_owned(), String::new())
-        ),
-        "both empty: the path's own ends"
+        (engrave_of(&op).enter, engrave_of(&op).leave),
+        (PathPoint::Auto, PathPoint::Auto)
     );
+    assert_eq!(strings_of(&h, &op, "enter").0, "Enter at");
+    assert_eq!(strings_of(&h, &op, "leave").0, "Leave at");
     assert!(keys(&op).contains(&"alternate_direction"));
+    assert!(
+        keys(&op).iter().all(|k| !k.starts_with("enter.")),
+        "Auto has no value: {:?}",
+        keys(&op)
+    );
 
-    let label = {
-        let command = editor::commit_text(
-            h.app.project(),
-            &op,
-            row_of(&op, "enter_fraction"),
-            "100 / 4",
-        );
-        run_edit(&mut h, command)
-    };
+    let enter = row_of(&op, "enter");
+    assert_eq!(enter.group, Group::Strategy);
+    let label = edit(&mut h, |p| {
+        editor::choose(p, &op, enter, option(enter, "fraction"))
+    });
     // An edit is named for the file's word for its field, as every edit is.
     assert_eq!(label, "Set enter of “Border and squiggle”");
     let op = engrave(&h);
-    {
-        let command =
-            editor::commit_text(h.app.project(), &op, row_of(&op, "leave_fraction"), "75 %");
-        run_edit(&mut h, command)
-    };
-    let op = engrave(&h);
-    let Operation::Engrave(set) = &op else {
-        panic!("an Engrave");
-    };
     assert_eq!(
-        (set.enter_fraction, set.leave_fraction),
-        (Some(0.25), Some(0.75))
+        engrave_of(&op).enter,
+        PathPoint::Fraction {
+            length_fraction: 0.0
+        }
     );
-    assert_eq!(strings_of(&h, &op, "enter_fraction").1, "25");
+    let percentage = row_of(&op, "enter.fraction.length_fraction");
+    assert_eq!(percentage.unit(), fields::Unit::Percent);
+    assert_eq!(
+        strings_of(&h, &op, percentage.key),
+        ("Percentage".to_owned(), "0".to_owned())
+    );
+    edit(&mut h, |p| {
+        editor::commit_text(p, &op, percentage, "100 / 4")
+    });
+    let op = engrave(&h);
+    let leave = row_of(&op, "leave");
+    edit(&mut h, |p| {
+        editor::choose(p, &op, leave, option(leave, "fraction"))
+    });
+    let op = engrave(&h);
+    assert_eq!(
+        strings_of(&h, &op, "leave.fraction.length_fraction").1,
+        "100",
+        "Leave at starts at the path's end"
+    );
+    edit(&mut h, |p| {
+        editor::commit_text(
+            p,
+            &op,
+            row_of(&op, "leave.fraction.length_fraction"),
+            "75 %",
+        )
+    });
+    let op = engrave(&h);
+    assert_eq!(
+        (engrave_of(&op).enter, engrave_of(&op).leave),
+        (
+            PathPoint::Fraction {
+                length_fraction: 0.25
+            },
+            PathPoint::Fraction {
+                length_fraction: 0.75
+            }
+        )
+    );
+    assert_eq!(
+        strings_of(&h, &op, "enter.fraction.length_fraction").1,
+        "25"
+    );
     assert!(
         !keys(&op).contains(&"alternate_direction"),
         "not offered while a point is set"
     );
     assert!(h.app.validation().errors.is_empty());
 
-    // Emptied, it is the path's end again; past the path, it is refused
-    // at the field by validation.
-    {
-        let command = editor::commit_text(h.app.project(), &op, row_of(&op, "enter_fraction"), "");
-        run_edit(&mut h, command)
-    };
-    let op = engrave(&h);
-    {
-        let command =
-            editor::commit_text(h.app.project(), &op, row_of(&op, "leave_fraction"), "150");
-        run_edit(&mut h, command)
-    };
+    // Past the path, it is refused at its row by validation.
+    edit(&mut h, |p| {
+        editor::commit_text(p, &op, row_of(&op, "leave.fraction.length_fraction"), "150")
+    });
     let op = engrave(&h);
     let located = editor::Located::of(h.warnings(), &op)
-        .status(row_of(&op, "leave_fraction"))
-        .expect("the point off the path is reported at its field");
+        .status(row_of(&op, "leave.fraction.length_fraction"))
+        .expect("the point off the path is reported at its row");
     assert_eq!(located.tier, Tier::Error);
+
+    // Auto again: the value's row goes with it.
+    let enter = row_of(&op, "enter");
+    edit(&mut h, |p| {
+        editor::choose(p, &op, enter, option(enter, "auto"))
+    });
+    let op = engrave(&h);
+    assert_eq!(engrave_of(&op).enter, PathPoint::Auto);
+    assert!(keys(&op).iter().all(|k| !k.starts_with("enter.")));
+}
+
+/// *From the start* and *From the end* (format 31) each open a Distance
+/// row at 0, the end itself, a length in the display units with the
+/// file in millimetres. A negative distance is refused at its row by
+/// validation; one longer than a path is that path's far end, and the
+/// generator's `engrave_point_past_end` warning is located on the row.
+#[test]
+fn an_engrave_enters_and_leaves_a_distance_from_an_end() {
+    use dc_project::PathPoint;
+    let (mut h, id) = plaque_engrave();
+    let engrave = |h: &dc_app::test_support::Harness| op_of(h, id.as_str());
+    let op = engrave(&h);
+    let (enter, leave) = (row_of(&op, "enter"), row_of(&op, "leave"));
+    edit(&mut h, |p| {
+        editor::choose(p, &op, enter, option(enter, "from_start"))
+    });
+    let op = engrave(&h);
+    edit(&mut h, |p| {
+        editor::choose(p, &op, leave, option(leave, "from_end"))
+    });
+    let op = engrave(&h);
+    assert_eq!(
+        (engrave_of(&op).enter, engrave_of(&op).leave),
+        (
+            PathPoint::FromStart { distance_mm: 0.0 },
+            PathPoint::FromEnd { distance_mm: 0.0 }
+        )
+    );
+    let from_start = row_of(&op, "enter.from_start.distance_mm");
+    assert_eq!(from_start.unit(), fields::Unit::Length);
+    assert_eq!(strings_of(&h, &op, from_start.key).0, "Distance");
+    edit(&mut h, |p| editor::commit_text(p, &op, from_start, "10"));
+    let op = engrave(&h);
+    edit(&mut h, |p| {
+        editor::commit_text(p, &op, row_of(&op, "leave.from_end.distance_mm"), "5 + 5")
+    });
+    let op = engrave(&h);
+    assert_eq!(
+        (engrave_of(&op).enter, engrave_of(&op).leave),
+        (
+            PathPoint::FromStart { distance_mm: 10.0 },
+            PathPoint::FromEnd { distance_mm: 10.0 }
+        )
+    );
+    assert!(h.app.validation().errors.is_empty());
+    // In an inch project the field reads inches and the file millimetres.
+    let mut inch = h.app.project().clone();
+    inch.display_units = Units::Inch;
+    let mut tenth = op.clone();
+    if let Operation::Engrave(e) = &mut tenth {
+        e.enter = PathPoint::FromStart { distance_mm: 25.4 };
+    }
+    assert_eq!(
+        editor::value_text(
+            &inch,
+            &tenth,
+            row_of(&tenth, "enter.from_start.distance_mm")
+        ),
+        "1"
+    );
+
+    // Negative: refused at the row.
+    edit(&mut h, |p| {
+        editor::commit_text(p, &op, row_of(&op, "enter.from_start.distance_mm"), "-1")
+    });
+    let op = engrave(&h);
+    let located = editor::Located::of(h.warnings(), &op)
+        .status(row_of(&op, "enter.from_start.distance_mm"))
+        .expect("a negative distance is reported at its row");
+    assert_eq!(located.tier, Tier::Error);
+
+    // Longer than the paths: the far end, and a warning at the row.
+    edit(&mut h, |p| {
+        editor::commit_text(p, &op, row_of(&op, "enter.from_start.distance_mm"), "5000")
+    });
+    h.generate();
+    let op = engrave(&h);
+    assert!(h.app.validation().errors.is_empty());
+    let located = editor::Located::of(h.warnings(), &op)
+        .status(row_of(&op, "enter.from_start.distance_mm"))
+        .unwrap_or_else(|| {
+            panic!(
+                "a distance past the path is warned at its row: {:?}",
+                h.warnings()
+            )
+        });
+    assert_eq!(located.tier, Tier::Warning);
     assert!(
-        located.message.starts_with("Leave at of operation")
-            || located.message.starts_with("Leave at is"),
+        located.message.contains("shorter than the 5000 mm"),
         "{}",
         located.message
+    );
+}
+
+/// *Near a point* (format 31) writes the stock's centre and offers its
+/// pick row, **Enter on the view**, which takes a click on the Viewport:
+/// the click writes `enter.near` as the project point under it, one undo
+/// step, read back in the typed rows. **Leave at** has its own pick, and
+/// a row that is not a pick refuses a click.
+#[test]
+fn an_engrave_point_can_be_clicked_on_the_viewport() {
+    use dc_project::PathPoint;
+    let (mut h, id) = plaque_engrave();
+    let engrave = |h: &dc_app::test_support::Harness| op_of(h, id.as_str());
+    for (choice, pick, x, label) in [
+        (
+            "enter",
+            "enter.near",
+            "enter.near.x_mm",
+            "Set enter of “Border and squiggle”",
+        ),
+        (
+            "leave",
+            "leave.near",
+            "leave.near.x_mm",
+            "Set leave of “Border and squiggle”",
+        ),
+    ] {
+        let op = engrave(&h);
+        let row = row_of(&op, choice);
+        edit(&mut h, |p| editor::choose(p, &op, row, option(row, "near")));
+        let near = engrave(&h);
+        let point = |op: &Operation| match choice {
+            "enter" => engrave_of(op).enter,
+            _ => engrave_of(op).leave,
+        };
+        // The plaque's stock is 170 × 120 mm.
+        assert_eq!(
+            point(&near),
+            PathPoint::Near {
+                x_mm: 85.0,
+                y_mm: 60.0
+            },
+            "{choice}: Near starts at the stock's centre"
+        );
+        let pick_row = row_of(&near, pick);
+        assert!(matches!(pick_row.kind, FieldKind::PointPick));
+        assert_eq!(pick_row.group, Group::Strategy);
+        let clicked = dc_geometry::Point::new(40.0, 22.5);
+        assert_eq!(
+            run_edit(&mut h, editor::pick_point(&near, pick_row, clicked)),
+            label
+        );
+        let picked = engrave(&h);
+        assert_eq!(
+            point(&picked),
+            PathPoint::Near {
+                x_mm: 40.0,
+                y_mm: 22.5
+            },
+            "{choice}"
+        );
+        assert_eq!(
+            editor::value_text(h.app.project(), &picked, row_of(&picked, x)),
+            dc_app::units::field_text(40.0, Units::Mm)
+        );
+        assert_eq!(
+            editor::pick_point(&picked, pick_row, clicked).unwrap(),
+            None,
+            "the same point again is no step"
+        );
+        assert!(editor::pick_point(&picked, row_of(&picked, choice), clicked).is_err());
+    }
+    assert_eq!(
+        strings_of(&h, &engrave(&h), "enter.near").0,
+        "Enter on the view"
+    );
+    assert_eq!(
+        strings_of(&h, &engrave(&h), "leave.near").0,
+        "Leave on the view"
     );
 }
 

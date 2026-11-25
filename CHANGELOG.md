@@ -11,15 +11,23 @@ before that; its changes are those under Unreleased.
 ### Added
 
 - **An Engrave says where the bit enters and leaves.** **Enter at** and
-  **Leave at**, each a percentage along the path and each optional. A
-  line entered at 25 and left at 75 is cut 25 → 0 → 100 → 75: the bit
-  plunges a quarter along, cuts back to the start, runs the whole line
-  and comes back to the three-quarter point to lift. The whole path is
-  still cut; every pass enters and leaves at the same points; on a
-  closed path the cut starts where it enters and carries on to where it
-  leaves. In the file they are `enter_fraction` and `leave_fraction`,
-  which make it **format version 30**: older projects upgrade with both
-  `null` and are cut as they were.
+  **Leave at**, each Auto (an end of the path, as before) or a point
+  along it: a percentage of its length, a distance from its start or
+  back from its end, or its point nearest a point typed or picked on the
+  view with *Pick on the view*. A line entered at 25 % and left at 75 %
+  is cut 25 → 0 → 100 → 75: the bit plunges a quarter along, cuts back
+  to the start, runs the whole line and comes back to the three-quarter
+  point to lift. The whole path is still cut; every pass enters and
+  leaves at the same points; on a closed path the cut starts where it
+  enters and carries on to where it leaves. With several paths each
+  takes its own point: the same share or distance along it, or its own
+  point nearest the one picked. A distance longer than a path is its far
+  end, with the new warning `engrave_point_past_end`. In the file they
+  are `enter` and `leave` (`"auto"`, `fraction`, `from_start`,
+  `from_end`, `near`), which make it **format version 31**. Version 30,
+  which had `enter_fraction` and `leave_fraction`, upgrades to the same
+  points and exports the same programs, byte for byte; older projects
+  upgrade with both `"auto"` and are cut as they were.
 - **Formulas in fields.** Every field that takes a number takes a sum
   and holds what it comes to: type `1.5 + .375 / 2` and the field reads
   `1.6875`. `+`, `-`, `*`, `/` and brackets, with one unit at the end

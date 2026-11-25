@@ -22,7 +22,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 30;
+pub const CURRENT_VERSION: u32 = 31;
 
 /// Something a migration changed that the user should hear about, though
 /// the file loads.
@@ -61,7 +61,7 @@ const STEPS: [Step; CURRENT_VERSION as usize] = [
     v0_to_v1, v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9,
     v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13, v13_to_v14, v14_to_v15, v15_to_v16, v16_to_v17,
     v17_to_v18, v18_to_v19, v19_to_v20, v20_to_v21, v21_to_v22, v22_to_v23, v23_to_v24, v24_to_v25,
-    v25_to_v26, v26_to_v27, v27_to_v28, v28_to_v29, v29_to_v30,
+    v25_to_v26, v26_to_v27, v27_to_v28, v28_to_v29, v29_to_v30, v30_to_v31,
 ];
 
 const FLATTEN_TOLERANCE_KEY: &str = "flatten_tolerance_mm";
@@ -803,6 +803,41 @@ fn v29_to_v30(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
             Value::Null,
             &at,
         )
+    })?;
+    Ok(root)
+}
+
+/// Version 30 → 31 (the maintainer's request, 2026-11-25; phase 2
+/// functional spec, capability 15, as changed): an Engrave's
+/// `enter_fraction` and `leave_fraction` become `enter` and `leave`, in
+/// their place, each a [`crate::PathPoint`]: `null` is `"auto"` and a
+/// number `f` is `{ "fraction": { "length_fraction": f } }`, so every
+/// Engrave cuts as it did. Fails if an Engrave already has `enter` or
+/// `leave`, or lacks the field it replaces: that is not a version 30
+/// file.
+fn v30_to_v31(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    each_operation(&mut root, &["engrave"], |index, operation| {
+        let at = format!("operations[{index}].");
+        for (from, to) in [("enter_fraction", "enter"), ("leave_fraction", "leave")] {
+            let Some(old) = operation.get(from).cloned() else {
+                return Err(format!(
+                    "a version 30 file has `{at}{from}`, but this one does not"
+                ));
+            };
+            rename_key(30, operation, from, to, &at)?;
+            let point = match old {
+                Value::Null => Value::from("auto"),
+                fraction => {
+                    let mut data = Map::new();
+                    data.insert("length_fraction".to_owned(), fraction);
+                    let mut variant = Map::new();
+                    variant.insert("fraction".to_owned(), Value::Object(data));
+                    Value::Object(variant)
+                }
+            };
+            operation.insert(to.to_owned(), point);
+        }
+        Ok(())
     })?;
     Ok(root)
 }

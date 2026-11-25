@@ -258,8 +258,8 @@ In `plaque.dcv`, select the whole `"operations"` block: from the line
     "depth_mm": 1.0,
     "step_down_mm": 1.0,
     "alternate_direction": false,
-    "enter_fraction": null,
-    "leave_fraction": null,
+    "enter": "auto",
+    "leave": "auto",
     "machining_order": "full_depth_first",
     "through_cut_allowance_mm": 0.0,
     "safe_z_mm": 15.0

@@ -28,9 +28,9 @@ use crate::countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 use crate::ids::{BitmapId, DefinitionId, GroupId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
     Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp,
-    EngraveOp, Entry, InlayOp, LastPass, Lead, Operation, OriginXy, PeckRetract, PhotoVCarveOp,
-    PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement, TabSpec, Tool, ToolKind, VCarveOp,
-    VCarveStrategy,
+    EngraveOp, Entry, InlayOp, LastPass, Lead, Operation, OriginXy, PathPoint, PeckRetract,
+    PhotoVCarveOp, PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement, TabSpec, Tool,
+    ToolKind, VCarveOp, VCarveStrategy,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -4336,17 +4336,29 @@ impl Validator {
             op.through_cut_allowance_mm,
         );
         self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
-        // Where the bit enters and leaves a path (format 30): on it.
-        for (field, fraction) in [
-            ("enter_fraction", op.enter_fraction),
-            ("leave_fraction", op.leave_fraction),
-        ] {
-            let field = format!("{at}.{field}");
-            if let Some(fraction) = fraction
-                && self.finite(&field, fraction)
-                && !(0.0..=1.0).contains(&fraction)
-            {
-                self.out_of_range(field, fraction, ALONG_PATH);
+        // Where the bit enters and leaves a path (formats 30 and 31): on
+        // it, at a distance of 0 or more, or near a point in range.
+        for (name, point) in [("enter", op.enter), ("leave", op.leave)] {
+            match point {
+                PathPoint::Auto => {}
+                PathPoint::Fraction { length_fraction } => {
+                    let field = format!("{at}.{name}.fraction.length_fraction");
+                    if self.finite(&field, length_fraction)
+                        && !(0.0..=1.0).contains(&length_fraction)
+                    {
+                        self.out_of_range(field, length_fraction, ALONG_PATH);
+                    }
+                }
+                PathPoint::FromStart { distance_mm } => {
+                    self.non_negative(&format!("{at}.{name}.from_start.distance_mm"), distance_mm);
+                }
+                PathPoint::FromEnd { distance_mm } => {
+                    self.non_negative(&format!("{at}.{name}.from_end.distance_mm"), distance_mm);
+                }
+                PathPoint::Near { x_mm, y_mm } => {
+                    self.coordinate(&format!("{at}.{name}.near.x_mm"), x_mm);
+                    self.coordinate(&format!("{at}.{name}.near.y_mm"), y_mm);
+                }
             }
         }
     }

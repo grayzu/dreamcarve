@@ -498,6 +498,26 @@ fn message_fixtures() -> Vec<(Warning, &'static str)> {
             "`Shape` (instance `i1`, profile 2) has fewer than two distinct points, so there is nothing to engrave; it is skipped",
         ),
         (
+            Warning::EngravePointPastEnd {
+                op: op(),
+                shape: shape(),
+                field: "enter.from_start.distance_mm",
+                distance_mm: 50.0,
+                length_mm: 40.004,
+            },
+            "`Shape` (instance `i1`, profile 2) is 40 mm long, shorter than the 50 mm enter.from_start.distance_mm asks for, so the bit enters it at its end",
+        ),
+        (
+            Warning::EngravePointPastEnd {
+                op: op(),
+                shape: shape(),
+                field: "leave.from_end.distance_mm",
+                distance_mm: 12.5,
+                length_mm: 10.0,
+            },
+            "`Shape` (instance `i1`, profile 2) is 10 mm long, shorter than the 12.5 mm leave.from_end.distance_mm asks for, so the bit leaves it at its start",
+        ),
+        (
             Warning::CutInsideFreedPart {
                 op: op(),
                 earlier_op: "o0".into(),
@@ -927,7 +947,8 @@ const fn next_code(code: WarningCode) -> Option<WarningCode> {
         C::LastPassUnused => C::LastPassEdgeFaster,
         C::LastPassEdgeFaster => C::LastPassFlattenedCurve,
         C::LastPassFlattenedCurve => C::EngravePathDegenerate,
-        C::EngravePathDegenerate => C::CutInsideFreedPart,
+        C::EngravePathDegenerate => C::EngravePointPastEnd,
+        C::EngravePointPastEnd => C::CutInsideFreedPart,
         C::CutInsideFreedPart => C::CutInsideTabHeldPart,
         C::CutInsideTabHeldPart => C::ToolChangeAvoidable,
         C::ToolChangeAvoidable => C::DrillTargetNotCircle,
@@ -1000,7 +1021,7 @@ fn every_warning_code_has_a_variant() {
         count += 1;
         code = next_code(c);
     }
-    assert_eq!(count, 61);
+    assert_eq!(count, 62);
 }
 
 #[test]
