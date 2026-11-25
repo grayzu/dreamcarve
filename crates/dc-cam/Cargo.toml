@@ -12,16 +12,22 @@ repository.workspace = true
 authors.workspace = true
 
 [features]
-# Exposes `test_support::assert_safe` to other crates' tests.
-test-support = []
+# Exposes `test_support::assert_safe` to other crates' tests. The seat
+# check among them reads the simulation's kernel (`dc-sim`), which only
+# tests may: no generator reads a simulation (phase 6 functional spec,
+# S22; `tests/manifest.rs` holds the entries below to that).
+test-support = ["dep:dc-sim"]
 
 [dependencies]
 dc-geometry.workspace = true
 dc-project.workspace = true
+dc-sim = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
 dc-project = { workspace = true, features = ["test-support"] }
+# The test heightfield's closed forms (`heightfield.rs`).
+dc-sim.workspace = true
 # The V-Carve tests read the text fixtures' polygon JSON (#404).
 serde_json.workspace = true
 

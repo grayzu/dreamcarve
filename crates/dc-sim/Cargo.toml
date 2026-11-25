@@ -1,0 +1,27 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "dc-sim"
+description = "DreamCarve material-removal simulation: the stock as a grid of heights and the cuts that lower it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Below `dc-cam` on purpose (phase 6 design, "Module layout"): the crate
+# reads its own plain move type, so `dc-cam`'s tests can use the one
+# kernel, and no generator can read a simulation (S22).
+[dependencies]
+dc-geometry.workspace = true
+dc-project.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+dc-project = { workspace = true, features = ["test-support"] }
+proptest.workspace = true
+
+[lints]
+workspace = true

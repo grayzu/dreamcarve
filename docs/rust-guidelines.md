@@ -46,10 +46,15 @@ dc-geometry → dc-project → { dc-cam, dc-import, dc-library } → dc-job → 
 dc-project → dc-cam → dc-gcode → dc-job → dreamcarve
 dreamcarve-shell → { dreamcarve, dreamcarve-app }
 dc-geometry → dc-text → dc-app
+dc-project → dc-sim ⇢ dc-cam   (tests and `test-support` only)
 ```
 
 `dc-gcode` depends on `dc-cam` for the `Toolpath` type it writes out, and for
-nothing else. `dc-text` (phase 5) reads fonts and lays text out as
+nothing else. `dc-sim` (phase 6) is the material-removal simulation: it
+sits below `dc-cam`, reads its own plain moves, and is a reader, so no
+generator or post-processor depends on it (phase 6 functional spec, S22);
+`dc-cam` names it for its tests alone, which `dc-sim`'s `tests/manifest.rs`
+holds. `dc-text` (phase 5) reads fonts and lays text out as
 outlines; it knows `dc-geometry` alone, and `dc-app` gives it what a
 project's text holds. `dc-job` is the pipeline both shells drive (phase 4 design,
 "Overview"): validation, generation, the order and tab checks, emission,

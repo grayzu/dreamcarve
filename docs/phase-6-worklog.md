@@ -13,10 +13,12 @@ the same phase 5 local process."
 
 - All work is on the branch `Phase-6`. It was cut from `main` at
   `5f75ce9b` (`0.4.0-alpha.2`), before phase 5 reached `main`, and the
-  specs were written against `Phase-5` at `a2eee9b9`. **Before slice 1,
-  the branch is rebased onto `main` with phase 5 in it** and the
-  workspace version is set to `0.6.0-alpha.1`. Nothing but documents is
-  on the branch until then.
+  specs were written against `Phase-5` at `a2eee9b9`. On 2026-11-24, at
+  the maintainer's word ("proceed using the latest bits from phase 5 as
+  a starting point"), the branch was rebased onto `Phase-5` at
+  `d75c61ef` and the workspace version set to `0.6.0-alpha.1`. Phase 5
+  is not on `main` or tagged yet: what it gains after `d75c61ef` has to
+  be merged into this branch.
 - No pull requests, no issues, no CI waits. It merges to `main` only
   when the whole phase is done.
 - Spec first: `functional.md` and `design.md` were written before any
@@ -45,8 +47,8 @@ Its survey is `docs/research/purecutcnc-simulation-digest.md`.
 
 ## Where it stands
 
-Planned. No code. The baseline test count is taken when the branch is
-rebased.
+Baseline before the first slice: 3,766 tests pass on macOS at
+`0.6.0-alpha.1`, on `Phase-5`'s `d75c61ef`. After slice 4: 3,838.
 
 ### Exit criteria (functional spec)
 
@@ -95,6 +97,51 @@ spec's eight. Each has a choice taken so the work can proceed:
 
 Decisions made while building are added here.
 
+- Slices 1 to 4, the engine. **Heights are `f64`**, not the `f32` the
+  first draft had: `docs/rust-guidelines.md` keeps `f32` to the
+  renderer's edge. A grid's fields are private and a height is read as
+  an `Option`; the cut is `Heightfield::cut`, and `build` takes the base
+  stock by value, since the guidelines give the engine no `&mut` to a
+  caller's data. The design spec's signatures are the code's now.
+- Slice 2. **Phase 3's closed form could lose a cut at the rim**: a move
+  that falls as it leaves a cell is lowest over it exactly on the
+  cutter's rim, where rounding put the distance a hair past the radius.
+  The reference test found it on a 90° V; a pose inside a covered
+  stretch is now read no further out than the rim. `dc-cam`'s seat and
+  carve tests are unchanged by it. **An arc that falls** is cut along
+  the whole arc's chords however it is split, so that playing it in
+  parts is the whole to rounding (chords of each part differed by half
+  a micron). A line is split into pieces only when its box runs long
+  across both axes. Upstream's kernel test is ported on moves of my own
+  in its frame: the survey names the kinds of move, not their numbers.
+- Slice 3. The cut order is the order of the generated runs, the
+  stock's then the male board's: `emit_programs` only divides that
+  sequence into programs where the tool changes. Acceptance 142 holds
+  it on six post-processors and both splits by the programs' tool runs
+  and operations, and move for move against the generated toolpaths; it
+  does not read the written G-code back, which the safety pass already
+  holds to the toolpath (S11, S12). **Acceptance 138 is tested on the
+  plaque**, not the coaster, which has no committed project. Besides
+  its four tabs the plaque's Profile leaves a fifth patch standing in
+  its own run's cells: the lead-in arc at the back, which only the first
+  pass cuts, 4 mm deep, beside the trench. It is in the waste; the
+  simulation shows it, and the test says so. A run's key is an FNV-1a
+  hash in `dc-sim` (`SimRun::key`), mixed with its board's size in
+  `dc-job`.
+- Slice 4. Playback is placed by a cursor, and a time is turned into
+  one, so a move that takes no time (a rapid with no rapid rate set) is
+  passed as soon as it is reached and the tool is never drawn on it.
+  **At the job's end the finished build is put in place of the played
+  stock**: parts of a move agree with the whole to rounding, not to the
+  bit, and the end should be the build itself (acceptance 139). A step
+  back from part-way along a move goes to that move's start. Upstream's
+  two subdivision tests are not ported: the cut splits moves here.
+- The environment, not the code: on this machine a newly built program
+  can wait minutes to start while another session runs its tests (the
+  build volume is shared, and launches seem to queue system-wide). A
+  gate run that takes 15 minutes alone took far longer beside the
+  Phase-5 worktree's.
+
 ## Slices
 
 Status is one of: todo, doing, done, owner (waits for the maintainer).
@@ -105,10 +152,10 @@ The numbers are the design spec's.
 | Slice | What | Status |
 | --- | --- | --- |
 | 0 | The specs: `functional.md` (capabilities 107–127 with 121 withdrawn, acceptance 131–158 with 149 withdrawn, S22, the bench check's table), `design.md` (14 slices), the survey `docs/research/purecutcnc-simulation-digest.md`, the roadmap's phase 6 brought up to date. No ADR: the design surface is display only | owner (review) |
-| 1 | `dc-sim`: the grid and the cutters | todo |
-| 2 | The cut: `sweep` moved from `dc-cam` with its tests, the ball and the level arc, `cut` | todo |
-| 3 | Runs in order: `build`, checkpoints, progress and stop, `facts`, `dc_job::simulate::plan` | todo |
-| 4 | The timeline and playback | todo |
+| 1 | `dc-sim`, a new crate below `dc-cam`: `Grid` (square cells counted along the longer side, a least cell and a cap of 2²⁴; upstream's 24-cell floor not ported), `Heightfield` (an `f64` height and the last run to lower it, a cell; never below the bottom), `Cutter` and `CutterShape::of` (flat, ball, V, tapered ball nose; a drill and an engraving bit as plain cylinders), `SimError`; `tests/manifest.rs` for S22; the crate graph in the guidelines and the book's crate map | done |
+| 2 | The cut: `dc_sim::sweep`, phase 3's closed forms moved from `dc-cam` with their test and held to a brute force for every shape (the ball and the capped V added; the rim fix); `Heightfield::cut` for a line, a level arc (whole, by its true distance) and a falling arc (fixed chords within a micron), by a span of the move, with the changed rectangle and the count of cells tested; `SimMove`; two properties (a move in parts is the move; moves in any order leave the same bits); `dc-cam`'s test heightfield on `dc-sim`'s forms | done |
+| 3 | Runs in order: `SimRun`, `build` (from any run's checkpoint, the stock handed back after each run, progress and stop between chunks of cells tested), `Checkpoints` within a byte budget, `facts` (the deepest cut and its run, the area cut through, the volume removed, the plain cylinders), `SimRun::key`; `dc_job::simulate::plan` (each board's runs in the order export writes them, each move with its seconds) and `dc_job::sim` | done |
+| 4 | `Timeline` (every move's place in time) and `Playback` (a cursor over the whole job, seeks forward by cutting and back from the nearest checkpoint, bounded by cells tested; a step of one cutting move; the end of a run; the tip's pose; the dirty rectangle; the finished build put in place at the end). Gate for slices 1 to 4 together, on macOS: fmt and clippy clean, 3,838 tests of which one failed for a reason of the run's own (`version_flag_prints_dev_build_time_and_commit_hash` compares the binary's commit with `HEAD`, which the version commit moved while the tests ran; it passes on a build of the commit), doc tests and headers pass | done |
 | 5 | `dreamcarve simulate`: the report, the PNG, the fixtures' results, the parity capture | todo |
 
 ### 6.2 The 3D view

@@ -4,7 +4,9 @@
 waits for its tag; the maintainer reviews it before any slice starts.
 Decisions waiting for them are under "Open questions". Written against
 the `Phase-5` branch at `a2eee9b9` (format 29, capability 106,
-acceptance 130, S21).
+acceptance 130, S21) and rebased onto it at `d75c61ef` on 2026-11-24,
+when the work began; a slice amends it in the commit that changes what
+it describes.
 **Design spec:** `design.md`
 **Decision record:** ADR-0003 (the 3D view is a heightfield simulation),
 which this phase builds and does not change
@@ -268,10 +270,13 @@ nothing there is an undo step.
      `--out <file.png>` writes the finished stock as a 16-bit grayscale
      PNG, one pixel a cell, white at the stock top and black at the
      stock bottom. `--quality draft|standard|fine` or `--cell <mm>` set
-     the cells, `--board stock|male` the board, `--until <operation>`
-     stops after that operation. It refuses a project `check` refuses,
-     exits 0 whatever the check finds, and never overwrites a file
-     without `--force`, as `export` does not.
+     the cells, `--board female|male` the board (as `export` names
+     them; the stock is the female), `--until <operation>` stops after
+     that operation. It refuses a project `check` refuses, with
+     `check`'s lines, and exits 0 whatever the check for uncut material
+     finds. It writes `--out` over nothing or over a picture it wrote
+     before, which it knows by the picture's own `Software` text, and
+     over no other file, as `check --preview` treats its SVG.
 
 126. **Keyboard.** `Space` plays and pauses; `[` and `]` are Previous
      and Next; `,` and `.` step one move back and forward (`Shift`: ten);
@@ -341,11 +346,11 @@ within 0.001 mm.
      hole.
 137. **Plain cylinders** (110). A drill and an engraving bit cut as
      flat cylinders and the result names both tools.
-138. **Through cuts and tabs** (109). The coaster's Profile leaves
-     every cell of its trench at the stock bottom, which is *cut
-     through*, except over its four tabs, which stand 3 mm high and
-     8 mm long. No cell is ever below the stock bottom, and none ever
-     rises.
+138. **Through cuts and tabs** (109). The plaque's Profile leaves
+     the cells of its trench at the stock bottom, which is *cut
+     through*, except over its four tabs, which stand 3 mm high. No
+     cell is ever below the stock bottom, and none ever rises. (The
+     first draft named the coaster, which has no committed project.)
 139. **Playback ends where the build ends** (113). For the plaque and
      the sign, playing from the start in steps of the whole job divided
      by 7, 53, 197 and 1000 ends with every cell equal to the direct
@@ -407,8 +412,7 @@ within 0.001 mm.
 153. **`dreamcarve simulate`** (125). For each of the coaster, the
      plaque, the sign and the hook plate, every pixel of the PNG is
      within one level of the committed one and the report's numbers
-     equal the committed text's to the place they are printed; an
-     existing file is not replaced without `--force`; a project `check`
+     equal the committed text's to the place they are printed; a file that is not its own picture is not replaced, and its own is; a project `check`
      refuses is refused with the same message.
 154. **The earlier test parts** (exit). Measured on the simulation at
      Standard: the coaster is 90 mm across within a cell; the plaque's

@@ -46,6 +46,7 @@ writes is the CLI's (phase 4 functional spec, S20).
 | `dc-library` | The tool library: its file format, load and save, adding, finding and removing tools, Fusion 360 import, importing a file with the per-tool report, and the copy a project embeds. Bytes in, values out; the shells own `tools.json`, through `dreamcarve-shell`. | `dc-project` |
 | `dc-gcode` | G-code emission, arc fitting, canned cycles, and the safety pass that parses every emitted program and re-derives each operation's material from the project, the carves' cones (S17), countersinks (S18) and photo grooves (S19) included. | `dc-cam`, `dc-project`, `dc-geometry` |
 | `dc-cam` | Toolpath generators (Profile, Pocket, Drill and countersink, Bore, Engrave, V-Carve and its clearing passes, Inlay, Photo V-Carve), tool runs, sequencing and the operation-order warnings. Pure functions from project and operation to toolpaths plus warnings. | `dc-project`, `dc-geometry` |
+| `dc-sim` | Material-removal simulation (phase 6): the stock as a grid of heights, the shapes cutters have, and the cut of one move into the grid, exact for a move that falls as it goes. A reader: it knows nothing above `dc-project`, and no generator or post-processor reads it (S22). `dc-cam`'s tests use its kernel. | `dc-project`, `dc-geometry` |
 | `dc-text` | Text (phase 5): a font read from its bytes, the fonts that travel with the app (compiled in, each with its licence), the single-line font *Simple Stroke*, and the outlines of laid-out text, counters as holes. Reads no file and lists no system font. | `dc-geometry` |
 | `dc-import` | Importers: SVG (flipped from Y-down into Y-up), DXF (already Y-up, not flipped) and pictures (PNG and JPEG to the 8-bit grayscale a bitmap stores, top row at the highest Y); image prep and the import checks. | `dc-project`, `dc-geometry` |
 | `dc-project` | The project data model, the bundled post-processor definitions, `.dcv` load and save, migrations, validation, undo history, and the rules validation, generators and the safety pass must share: a tool's derived profile, the countersink's depth, the cleared start plane, the male Inlay's band, a stored bitmap's checked decoding. | `dc-geometry` |
@@ -167,7 +168,7 @@ own (`entry/profile_tests.rs`, `profile/defect_tests.rs`).
 | `toolpath.rs` | `Toolpath`, `Move`, `MoveKind` (including `Dwell`): project-space output. |
 | `error.rs`, `warning.rs` | `CamError`; `Warning` with a stable `WarningCode`. |
 | `test_support.rs` | `assert_safe`, the shared emitted-motion safety assertions, and `assert_run_safe` for a tool run (`test-support` feature). |
-| `heightfield.rs` | A heightfield simulation of a carve's programs, exact for V-bit, tapered ball nose and end mill, for the tests that measure how a plug seats (`test-support` feature). |
+| `heightfield.rs` | A heightfield simulation of a carve's programs, exact for V-bit, tapered ball nose and end mill, for the tests that measure how a plug seats (`test-support` feature). Its closed forms are `dc-sim`'s since phase 6. |
 
 ### `dc-gcode` (`crates/dc-gcode/src/`)
 

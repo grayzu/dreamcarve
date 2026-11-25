@@ -59,7 +59,7 @@ ported-file header (`AGENTS.md`).
 
 | DreamCarve module | Source | What is taken, what changes |
 | --- | --- | --- |
-| `dc-sim::grid` | `src/engine/simulation/grid.ts`, `types.ts` [2] | Square cells counted along the stock's longer side, one `f32` height a cell, row-major from the lowest Y, the bottom as "cut through". Not taken: the 24-cell floor on each axis, which makes a narrow stock's grid reach past it [2.2]; stock-profile masking; `wrap`, `initialTopZ`. Added: a least cell size, a cell cap, the run that cut each cell. |
+| `dc-sim::grid` | `src/engine/simulation/grid.ts`, `types.ts` [2] | Square cells counted along the stock's longer side, one height a cell (an `f64` here, upstream's is an `f32`), row-major from the lowest Y, the bottom as "cut through". Not taken: the 24-cell floor on each axis, which makes a narrow stock's grid reach past it [2.2]; stock-profile masking; `wrap`, `initialTopZ`. Added: a least cell size, a cell cap, the run that cut each cell. |
 | `dc-sim::cutter` | `tools.ts` (`cutterSurfaceZ`) [3] | The flat, ball and V profiles, and the drill as a flat cylinder. Added: the tapered ball nose (DreamCarve's own, `dc_geometry::profile::BitProfile`), the engraving bit as a plain cylinder. |
 | `dc-sim::sweep` | `crates/dc-cam/src/heightfield.rs` (DreamCarve's own, phase 3) and `replay.ts` (`applyMoveKernel`) [5] | The box of cells a move can reach, cells only ever lowered, nothing below the stock bottom, the inclusive changed rectangle: PureCutCNC's. The height itself is DreamCarve's: the lowest the cutter's surface reaches over the cell anywhere along the move, in closed form, where upstream takes the tip's height at the nearest point and so leaves a ramp up to `slope × radius` too high [5.3]. Arcs are moves here; upstream has only chords. |
 | `dc-sim::build` | `replay.ts` (`replayItemsIntoGrid`, the chunked variant), `src/app/simulationCompute.ts` [5.6, 5.7, 7] | Items in cut order onto one grid, cancellable between chunks, never a part-built result. Added: a checkpoint after each run, progress, a build that starts at a given run. Not taken: Selected mode's lone operation on fresh stock [7.2]. |
@@ -91,39 +91,44 @@ pub enum CellSpec { Quality(Quality), CellMm(f64) }
 pub enum Quality { Draft, Standard, Fine }          // 512, 1024, 2048 cells on the longer side
 
 pub const MIN_CELL_MM: f64 = 0.02;
-pub const MAX_CELLS: usize = 1 << 24;               // 16 777 216; four bytes of height each
+pub const MAX_CELLS: usize = 1 << 24;               // 16 777 216; eight bytes of height each
 
 /// Square cells over a board: cell (i, j) covers
 /// [i·c, (i+1)·c) × [j·c, (j+1)·c) from the board's bottom-left corner,
 /// row 0 at the lowest Y. The last column or row may reach past the
-/// board by part of a cell.
-pub struct Grid { pub cell_mm: f64, pub nx: u32, pub ny: u32, pub width_mm: f64, pub height_mm: f64 }
+/// board by part of a cell. Fields are private: `Grid::of` holds them to
+/// their ranges.
+pub struct Grid { /* cell_mm, nx, ny, width_mm, height_mm */ }
 impl Grid {
     pub fn of(width_mm: f64, height_mm: f64, spec: CellSpec) -> Result<Self, SimError>;
     pub fn centre(&self, i: u32, j: u32) -> Point;
     pub fn cell_at(&self, p: Point) -> Option<(u32, u32)>;
     pub fn on_board(&self, i: u32, j: u32) -> bool;   // its centre is on the board
+    pub fn index(&self, i: u32, j: u32) -> Option<usize>;
 }
 
-/// The run that cut a cell last, as its place in the plan.
+/// The owner of a cell no run has cut, in `Heightfield::owners`.
 pub const UNCUT: u16 = u16::MAX;
 
 /// The heights a board's runs leave. A height is from the board's
 /// bottom, never below 0 and never above `top_z_mm`.
-pub struct Heightfield {
-    grid: Grid, top_z_mm: f64,
-    z_mm: Vec<f32>,        // row-major; `top_z_mm` where nothing has cut
-    cut_by: Vec<u16>,      // UNCUT, or the run that lowered the cell last
-}
+pub struct Heightfield { /* grid, top_z_mm, z_mm: Vec<f64>, cut_by: Vec<u16> */ }
 impl Heightfield {
-    pub fn uncut(grid: Grid, top_z_mm: f64) -> Self;
-    pub fn z_mm(&self, i: u32, j: u32) -> f32;  pub fn cut_by(&self, i: u32, j: u32) -> u16;
-    pub fn is_through(&self, i: u32, j: u32) -> bool;        // z == 0
-    pub fn heights(&self) -> &[f32];  pub fn owners(&self) -> &[u16];   // what the renderer uploads
+    pub fn uncut(grid: Grid, top_z_mm: f64) -> Result<Self, SimError>;
+    pub fn z_mm(&self, i: u32, j: u32) -> Option<f64>;
+    pub fn cut_by(&self, i: u32, j: u32) -> Option<u16>;    // None: uncut, or no such cell
+    pub fn is_through(&self, i: u32, j: u32) -> bool;        // at the bottom
+    pub fn heights(&self) -> &[f64];  pub fn owners(&self) -> &[u16];   // what the renderer reads
+    /// Cuts the part of `mv` between two fractions of its length, as run
+    /// `owner`.
+    pub fn cut(&mut self, mv: &SimMove, span: (f64, f64), cutter: &Cutter, owner: u16) -> Stamp;
+    pub fn restore(&mut self, from: &Self) -> bool;          // a copy of a checkpoint on the same grid
 }
 
 /// Cells [i0, i1) × [j0, j1).
 pub struct CellRect { pub i0: u32, pub i1: u32, pub j0: u32, pub j1: u32 }
+/// What a cut did: the cells that changed and how many were tested.
+pub struct Stamp { pub changed: Option<CellRect>, pub tested: u64 }
 
 /// A cutter's surface. `radius_mm` is half the cutting diameter; nothing
 /// is cut beyond it.
@@ -138,59 +143,70 @@ impl CutterShape { pub fn of(tool: &Tool) -> Result<Self, SimError>; }
 impl Cutter {
     /// The surface's height above the tip at `d_mm` from the axis; None past the radius.
     pub fn height_mm(&self, d_mm: f64) -> Option<f64>;
-    /// The lowest the surface reaches over `q` while the tip runs a → b; ∞ when never over it.
-    pub fn low_over_mm(&self, a: Point3, b: Point3, q: Point) -> f64;
+    /// The lowest the surface reaches over `q` while the tip runs a → b; None when never over it.
+    pub fn low_over_mm(&self, a: Point3, b: Point3, q: Point) -> Option<f64>;
 }
 
 /// One move as the simulation reads it.
+pub enum Motion { Cut, Travel }                     // Travel: a rapid or a dwell
+pub enum Turn { Cw, Ccw }                           // seen from +Z, Y up
+pub struct SimArc { pub centre: Point, pub turn: Turn }
 pub struct SimMove {
     pub from: Point3, pub to: Point3,
-    pub arc: Option<SimArc>,          // centre and direction, Y-up
-    pub cuts: bool,                   // false: a rapid or a dwell
+    pub arc: Option<SimArc>,
+    pub motion: Motion,
     pub seconds: f64,                 // on the timeline; 0 allowed
 }
 pub struct SimRun { pub cutter: CutterShape, pub moves: Vec<SimMove> }
+impl SimRun { pub fn key(&self) -> u64; }           // FNV-1a of everything the simulation reads of it
 
-/// Cuts `mv` between two fractions of its length into `field`, as run
-/// `owner`. Returns the cells that changed.
-pub fn cut(field: &mut Heightfield, mv: &SimMove, span: (f64, f64), cutter: &Cutter, owner: u16) -> Option<CellRect>;
-
-pub enum Outcome { Finished, Stopped }
+pub enum Outcome { Finished(Heightfield), Stopped }
 pub struct Progress { pub run: usize, pub moves_done: usize, pub moves: usize }
-/// Cuts runs[from..] into `field`, which holds runs[..from]. Calls
-/// `after_run` with the field after each run and `keep_going` between
-/// chunks of `CHUNK_CELLS` cell tests.
-pub fn build(field: &mut Heightfield, runs: &[SimRun], from: usize,
+/// Cuts runs[from..] into `base`, which holds runs[..from]. Calls
+/// `after_run` with the number of runs cut and the stock they leave (once
+/// before anything, then after each run) and `keep_going` between chunks
+/// of `CHUNK_CELLS` cell tests.
+pub fn build(base: Heightfield, runs: &[SimRun], from: usize,
              after_run: &mut dyn FnMut(usize, &Heightfield),
-             keep_going: &mut dyn FnMut(Progress) -> bool) -> Outcome;
+             keep_going: &mut dyn FnMut(Progress) -> bool) -> Result<Outcome, SimError>;
 
-pub struct Facts { pub deepest_mm: f64, pub deepest_run: Option<u16>, pub through_cells: u32,
-                   pub removed_mm3: f64, pub plain_tools: Vec<usize> }
+pub struct Facts { pub deepest_mm: f64, pub deepest_run: Option<u16>, pub through_mm2: f64,
+                   pub through_runs: Vec<u16>, pub removed_mm3: f64, pub plain_runs: Vec<usize> }
 pub fn facts(field: &Heightfield, runs: &[SimRun]) -> Facts;
 ```
 
 ```rust
 /// Where each move starts and ends in time.
-pub struct Timeline { /* cumulative seconds per run and per move */ }
+pub struct Timeline { /* the time each move ends, per run */ }
+/// Every move before (run, mv) is done; that move as far as `fraction`.
+/// The end of the job is run `runs.len()`.
 pub struct Cursor { pub run: usize, pub mv: usize, pub fraction: f64 }
 impl Timeline {
     pub fn of(runs: &[SimRun]) -> Self;
-    pub fn total_s(&self) -> f64;  pub fn run_span_s(&self, run: usize) -> (f64, f64);
+    pub fn total_s(&self) -> f64;  pub fn run_span_s(&self, run: usize) -> Option<(f64, f64)>;
     pub fn at(&self, t_s: f64) -> Cursor;  pub fn time_of(&self, c: Cursor) -> f64;
 }
 
-/// The grids kept after runs, within a byte budget.
-pub struct Checkpoints { /* Arc<Heightfield> by run; CHECKPOINT_BYTES = 256 MiB */ }
+/// The stock kept after runs, by how many runs have cut it, within a
+/// byte budget (CHECKPOINT_BYTES = 256 MiB).
+pub struct Checkpoints { /* BTreeMap<usize, Arc<Heightfield>> */ }
+impl Checkpoints {
+    pub fn keep(&mut self, runs_cut: usize, field: &Heightfield);
+    pub fn get(&self, runs_cut: usize) -> Option<&Arc<Heightfield>>;
+    pub fn at_or_before(&self, runs_cut: usize) -> Option<(usize, &Arc<Heightfield>)>;
+    pub fn truncate(&mut self, runs_cut: usize);
+}
 
 pub struct Pose { pub tip: Point3, pub run: usize, pub cuts: bool }
-pub struct Playback { /* runs, timeline, checkpoints, the live field, the cursor, the dirty rect */ }
+pub struct Playback { /* runs, timeline, checkpoints, the finished stock, the live stock, the cursor, the dirty rect */ }
 impl Playback {
-    pub fn at_end(runs: Arc<[SimRun]>, checkpoints: Checkpoints, finished: &Heightfield) -> Self;
+    pub fn at_end(runs: Arc<[SimRun]>, checkpoints: Checkpoints, finished: Arc<Heightfield>) -> Self;
     /// Moves the cursor toward `t_s`, cutting what it passes, until it
     /// is there or `budget_cells` cell tests are spent; returns the time reached.
     pub fn seek(&mut self, t_s: f64, budget_cells: u64) -> f64;
     pub fn step_moves(&mut self, n: i64);  pub fn to_run_end(&mut self, run: usize);
     pub fn time_s(&self) -> f64;  pub fn cursor(&self) -> Cursor;
+    pub fn is_at_start(&self) -> bool;  pub fn is_finished(&self) -> bool;
     pub fn pose(&self) -> Option<Pose>;                      // None at the start and at the end
     pub fn field(&self) -> &Heightfield;  pub fn take_dirty(&mut self) -> Option<CellRect>;
 }
@@ -199,7 +215,7 @@ impl Playback {
 ```rust
 /// What the operations' shapes ask for (functional 119).
 pub struct Design {
-    z_mm: Vec<f32>,        // the surface; `top_z_mm` where nothing asks
+    z_mm: Vec<f64>,        // the surface; `top_z_mm` where nothing asks
     asked_by: Vec<u16>,    // the operation that asks for the lowest, or NONE
 }
 impl Design {
@@ -217,9 +233,16 @@ pub fn compare(field: &Heightfield, design: &Design, uncut_mm: f64) -> Compariso
 ```
 
 `SimError` is the crate's one error: a cell size that passes `MAX_CELLS`
-or is not finite and positive, a board with no size, a tapered ball nose
-with an unset value (validation refuses that project first, so a shell
-never sees it). The crate has no warnings: what it finds is `Facts` and
+or is under `MIN_CELL_MM`, a board with no size or no thickness, more
+runs than a cell can name, a tool with no shape (a tapered ball nose
+with an unset value; validation refuses that project first, so a shell
+never sees it).
+
+Heights are `f64`, as `docs/rust-guidelines.md` asks of all geometry
+("`f32` appears only in GPU vertex buffers at the renderer edge"): the
+first draft of this spec had `f32`. A grid of the most cells is 134 MB
+of heights. The engine's functions take what they change by value or as
+`&mut self` of a value the caller owns, per the same guidelines. The crate has no warnings: what it finds is `Facts` and
 `Comparison`.
 
 ### dc-job
@@ -352,34 +375,47 @@ segment)`, which is PureCutCNC's kernel.
    `| |q − centre| − R |` where the angle of `q` about the centre is in
    the arc's sweep, else the distance to the nearer end. **An arc whose
    Z changes** is cut as chords within `CHORD_MM` (0.001 mm), each a
-   straight move.
+   straight move. The chords are the whole arc's, at fixed fractions of
+   it, and a part of the arc is cut along them: a falling arc played in
+   parts is then the whole to rounding, where chords of each part would
+   differ from the whole's by up to the chord tolerance.
 3. The box of cells: the move's XY box grown by the radius, as cell
    ranges clamped to the grid. A move whose lower end is at or above
    `top_z_mm`, or whose box misses the grid, returns `None` before any
    cell is read. For a V, the radius is first cut down to `(top −
    lowest tip) · slope` when that is smaller.
-4. For each cell of the box: `z = max(low(q), 0)`, rounded to `f32` by
-   the one helper that documents the range; if it is below the cell's
-   height, write it, set `cut_by` to `owner`, and grow the changed
+4. For each cell of the box: `z = max(low(q), 0)`; if it is below the
+   cell's height, write it, set `cut_by` to `owner`, and grow the changed
    rectangle. A cell is never raised and never written below 0.
+
+A pose inside a stretch the cutter covers is read no further out than
+the rim. A move that falls as it leaves a cell is lowest over it at its
+last pose, exactly on the rim, where rounding would otherwise put the
+distance a hair past the radius and lose the cut; phase 3's closed form
+had that flaw and slice 2's reference test found it.
 
 A straight move's part is a straight move and an arc's part is an arc,
 and `low` over a move is the least of `low` over its parts, so a move cut
-in any number of pieces, in any order, leaves what the whole move leaves.
-That is what makes playback exact (acceptance 139), and upstream's
-part-played ramps are not (digest, item 4 at its head).
+in any number of pieces, in any order, leaves what the whole move leaves
+(to rounding: a part is worked out from other end points). That is what
+makes playback exact (acceptance 140), and upstream's part-played ramps
+are not (digest, item 4 at its head). At the job's end `Playback` puts
+the finished build in place of its own stock, so the end is the build to
+the bit and the owner (acceptance 139).
 
-`build` cuts each run's moves in order and, as upstream's playback does,
-splits a move longer than `max(2 · radius, 8 cells)` into pieces first,
-so a long diagonal's box does not cover a square of cells it never
-touches. It counts cell tests and calls `keep_going` every `CHUNK_CELLS`
+`build` cuts each run's moves in order. The cut itself splits a line
+whose box runs further than `max(2 · radius, 8 cells)` across both axes
+into pieces, as upstream's playback splits moves, so a long diagonal's
+box does not cover a square of cells it never touches; a move along an
+axis has a tight box and is cut whole. It counts cell tests and calls `keep_going` every `CHUNK_CELLS`
 (2²²); `false` returns `Stopped` with the field unusable, which the
 caller drops.
 
 **Determinism.** The kernel is a pure function of the field, the move
-and the cutter. Within one platform the result is the same bytes
-whatever the piece lengths or chunking, because each cell's final height
-is a minimum of the same set of values. Across platforms `tan`, `hypot`,
+and the cutter. Within one platform a build is the same bytes whatever
+its chunking or the run it starts from, and whole moves in any order
+leave the same heights, because each cell's final height is a minimum of
+the same set of values. Across platforms `tan`, `hypot`,
 `sin` and `cos` (a tool's angle, a chord's end) may differ in their last
 bit, so heights are compared within 0.0005 mm there (acceptance 143),
 well under the 16-bit PNG's step.
@@ -600,9 +636,12 @@ on *Stop*, on a newer job, and on any change to the project.
 `export` does; generate every enabled operation (`dc_job`'s build path,
 stopping on an error as `check` reports it); `plan`; for the chosen
 board `Grid::of`, `build` (to `--until`'s last run when given),
-`facts`, `design`, `compare`, `report`; print the report; with `--out`,
-`heightmap_png` through `dreamcarve-shell`'s staged write, `commit_new`
-unless `--force`. A pixel is `round(z / thickness · 65535)`; the PNG's
+`facts`, `design`, `compare`, the report's lines; print them; with
+`--out`, `heightmap_png` through `dreamcarve-shell`'s staged write. The
+path is checked before anything is read: a `.png`, not the project, and
+holding nothing or a picture `is_heightmap` knows as its own (a
+`Software` text chunk, as the preview SVG is known by its marker). A
+pixel is `round(z / thickness · 65535)`; the PNG's
 first row is the grid's last, since a picture's top is the highest Y.
 
 ## Module layout
@@ -678,62 +717,86 @@ function.
 `cells_are_counted_along_the_longer_side`,
 `a_small_stock_is_held_to_the_least_cell`,
 `a_narrow_stock_has_no_cells_beyond_it` (upstream's 24-cell floor is not
-ported), `too_many_cells_name_the_cell_that_fits` (acc 131);
-`cutter::` `each_tool_kind_has_its_shape`,
+ported), `a_part_cell_is_on_the_board_only_by_its_centre`,
+`too_many_cells_name_the_cell_that_fits` (acc 131),
+`a_board_or_a_cell_that_is_no_size_is_refused`, `centres_and_cells_agree`,
+`a_span_is_the_cells_whose_centres_it_holds`; `field::`
+`uncut_stock_is_at_its_top_and_cut_by_nothing`,
+`cells_only_go_down_and_never_below_the_bottom` (acc 138),
+`a_board_with_no_thickness_is_refused`; `cutter::`
+`each_tool_kind_has_its_shape`,
 `a_drill_and_an_engraver_are_plain_cylinders` (acc 137),
 `heights_are_the_profiles` (port: `cutterSurfaceZ`'s table),
-`nothing_is_cut_past_the_radius`.
+`a_tapered_ball_nose_is_ball_then_cone`, `nothing_is_cut_past_the_radius`,
+`a_tool_with_no_size_has_no_shape`; `tests/manifest.rs` (S22): `dc-sim`
+knows nothing above the project, the post-processor does not list it,
+the generators list it for tests only and name it in one gated module.
 
-**The cut (slice 2)** `dc_sim::sweep::` the tests of `cone_low_mm`,
-`disc_low_mm` and `tapered_low_mm` (moved), and
-`a_ball_is_the_tapered_balls_ball`,
-`a_level_arc_is_cut_at_its_true_distance`; `cut::`
-`a_level_move_matches_the_profile_at_the_nearest_point` (port:
-`replay.test.ts` `testKernelMatchesReferenceProfile`, for a flat r 1.5,
-a ball r 2, a V r 3 at 60° and 90°, a drill r 1.25, over the axis cut,
-the plunge, the lead and the cut below the bottom),
-`a_ramp_is_cut_to_the_lowest_pose_not_the_nearest` (upstream's diagonal
-ramp, with the exact answer),
+**The cut (slice 2)** `dc_sim::sweep::`
+`tapered_descending_move_is_exact` (moved from `dc-cam`),
+`every_shape_is_cut_to_its_lowest_pose` (acc 136; each shape against a
+10⁵-pose brute force), `a_ramp_is_cut_to_the_lowest_pose_not_the_nearest`
+(upstream's ramp, with the exact answer),
+`a_level_move_is_the_profile_at_the_nearest_point`,
+`a_v_deeper_than_its_cone_reaches_no_further_than_its_radius`;
+`cut::tests::` `a_flat_end_mill_cuts_a_slot_at_any_angle` (acc 132),
+`a_ball_nose_leaves_its_arc` (acc 133),
+`a_v_bit_leaves_its_cone_and_a_wall_past_it` (acc 134),
+`a_tapered_ball_nose_leaves_ball_cone_and_wall` (acc 135),
+`the_kernel_matches_the_reference_profile` (port:
+`testKernelMatchesReferenceProfile`, for a flat r 1.5, a ball r 2, a V
+r 3 at 60° and 90°, a drill r 1.25, over a ramp, an axis cut, a plunge,
+a lead and a cut below the bottom),
 `the_changed_rectangle_holds_every_changed_cell` (port:
-`testDirtyRegionCoversChangedCells`), `cells_only_go_down_and_never_below_the_bottom`,
+`testDirtyRegionCoversChangedCells`),
 `a_move_off_the_grid_or_above_the_stock_reads_no_cell`,
-`a_helical_arc_is_cut_within_a_micron`,
-`a_v_deeper_than_its_cone_leaves_a_wall`; the properties
-`a_move_in_pieces_equals_the_move` and
-`moves_in_any_order_leave_the_same_field` (acc 132–136);
-`dc_cam`'s seat and carve tests unchanged and green.
+`a_level_arc_is_cut_at_its_true_distance`,
+`a_helix_is_cut_within_a_micron_and_leaves_a_round_hole` (acc 136),
+`a_part_of_a_move_is_cut_to_where_the_tip_is`,
+`a_long_diagonal_is_cut_in_pieces`, `a_moves_length_and_points`; the
+properties (`tests/properties.rs`) `a_move_in_pieces_equals_the_move`
+and `moves_in_any_order_leave_the_same_field`; `dc_cam`'s seat and carve
+tests unchanged and green.
 
-**Runs and reuse (slice 3)** `dc_job::simulate::`
-`the_plan_is_the_runs_export_writes` on all six post-processors and both
-splits (acc 142), `a_rapid_and_a_dwell_cut_nothing`,
+**Runs and reuse (slice 3)** `dc_sim::build::`
+`a_build_from_a_checkpoint_equals_a_build_from_nothing` (acc 144),
+`the_owner_is_the_last_run_to_lower_a_cell` (acc 151),
+`a_stopped_build_stops_within_a_chunk` (acc 145),
+`a_build_of_nothing_is_the_base`; `checkpoints::`
+`the_latest_at_or_before_is_found`,
+`dropping_keeps_the_first_and_the_last`; `facts::`
+`uncut_stock_has_no_facts`, `removed_volume_of_a_slot`,
+`the_deepest_cut_and_the_through_cut_name_their_runs`; `digest::`
+`the_hash_is_fnv_1a`, `every_input_changes_the_key`;
+`dc_job` `tests/simulate.rs`: `the_plan_is_the_runs_export_writes` on
+all six post-processors and both splits, for the plaque, the sign and
+the inlay pair (acc 142), `a_rapid_and_a_dwell_cut_nothing`,
 `a_runs_seconds_are_its_lengths_over_its_feeds`,
-`each_board_has_its_own_runs` (acc 150);
-`dc_sim::build::` `a_build_from_a_checkpoint_equals_a_build_from_nothing`
-(acc 144), `a_stopped_build_stops_within_a_chunk` (acc 145),
-`the_owner_is_the_last_run_to_lower_a_cell` (acc 151);
-`checkpoints::dropping_keeps_the_first_and_the_last`;
-`facts::` `the_deepest_cut_names_its_run`, `removed_volume_of_a_pocket`;
-`dc_job::simulate::` `the_coasters_tabs_stand` (port:
-`tabbedEdgeSimulation.test.ts`, on the coaster at two qualities; acc
-138), `a_v_carve_equals_the_reference` (acc 141),
-`the_same_bytes_twice` (acc 143).
+`each_board_has_its_own_runs` (acc 150),
+`a_runs_key_follows_what_the_simulation_reads` (acc 144),
+`the_plaques_tabs_stand` (port: `tabbedEdgeSimulation.test.ts`, on the
+plaque at two qualities; acc 138; the plaque stands in for the coaster,
+which has no committed project).
 
-**Playback (slice 4)** `dc_sim::playback::` the ports of
-`playback.test.ts`: `pieces_keep_their_moves_seconds`,
-`short_moves_are_not_split`, `a_slow_move_takes_longer`,
-`forward_seeks_equal_one_seek`, `a_backward_seek_restores_the_earlier_field`,
-`the_dirty_rectangle_grows_until_taken` and
-`a_backward_seek_dirties_the_grid`; and
+**Playback (slice 4)** `dc_sim::timeline::`
+`a_runs_span_is_its_moves_seconds`, `time_and_cursor_round_trip`,
+`a_zero_second_move_is_passed`; `playback::tests::` the ports of
+`playback.test.ts`: `a_slow_move_takes_longer`,
+`forward_seeks_equal_one_seek`,
+`a_backward_seek_restores_the_earlier_field`,
+`the_dirty_rectangle_grows_until_taken` (a backward seek dirties the
+grid); upstream's two subdivision tests are not ported, since the cut
+splits moves here; and `a_job_opens_at_its_end`,
 `playing_in_any_steps_ends_at_the_build` for steps of the job over 7,
-53, 197 and 1000 (acc 139; upstream's step counts, on ramps too),
-`part_way_is_the_build_of_the_moves_so_far` (acc 140),
+53, 197 and 1000 (acc 139; upstream's step counts, on ramps, a helix
+and arcs), `part_way_is_the_build_of_the_moves_so_far` (acc 140),
+`to_run_end_is_the_runs_checkpoint`, `a_step_is_one_cutting_move`,
 `a_spent_budget_returns_the_time_reached`,
-`to_run_end_is_the_runs_checkpoint`, `the_pose_is_none_at_both_ends`;
-`timeline::` `time_and_cursor_round_trip`, `a_zero_second_move_is_passed`.
+`the_pose_is_none_at_both_ends`, `an_empty_job_plays`.
 
 **The command (slice 5)** `dreamcarve::cli::simulate::`
 `the_report_and_the_picture_of_each_fixture` (acc 153, 154),
-`an_existing_file_is_kept_without_force`,
+`a_file_that_is_not_its_picture_is_kept`,
 `a_refused_project_is_refused_as_check_refuses_it`,
 `until_stops_after_the_operation`, `the_male_board_is_its_own_picture`,
 `a_cell_too_small_is_refused` (acc 131);

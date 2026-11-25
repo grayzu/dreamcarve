@@ -899,6 +899,7 @@ version = "0.6.0-alpha.1"
 dependencies = [
  "dc-geometry",
  "dc-project",
+ "dc-sim",
  "serde_json",
  "thiserror 2.0.21",
 ]
@@ -952,6 +953,7 @@ dependencies = [
  "dc-geometry",
  "dc-import",
  "dc-project",
+ "dc-sim",
  "png",
  "serde",
  "thiserror 2.0.21",
@@ -980,6 +982,16 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "dc-sim"
+version = "0.6.0-alpha.1"
+dependencies = [
+ "dc-geometry",
+ "dc-project",
+ "proptest",
  "thiserror 2.0.21",
 ]
 

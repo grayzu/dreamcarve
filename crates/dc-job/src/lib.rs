@@ -28,6 +28,7 @@ pub mod preview;
 pub mod project_from;
 pub mod report;
 pub mod setup_sheet;
+pub mod simulate;
 pub mod summary;
 pub mod tabs;
 
@@ -43,6 +44,11 @@ pub use summary::{
     CarveFacts, EstimateConfig, Estimates, ProjectExtents, carve_facts, describe_carves,
     describe_operations, project_extents,
 };
+
+/// The simulation (`dc-sim`, phase 6), under the name the app's crates
+/// reach it by: they list `dc-job` and not it, as for the engine's other
+/// crates.
+pub use dc_sim as sim;
 
 // The `dc-cam` and `dc-gcode` types a shell needs, so the app's crates
 // list neither (functional spec, S20).
