@@ -115,6 +115,10 @@ pub enum WarningCode {
     /// An Engrave target path has fewer than two distinct points, so there
     /// is nothing to trace; it was skipped.
     EngravePathDegenerate,
+    /// An Engrave enters or leaves a path a distance from one of its ends
+    /// that is longer than the path, so it enters or leaves at the far
+    /// end instead.
+    EngravePointPastEnd,
     /// A closed target of this operation lies inside an outline an earlier
     /// operation cuts free of the stock, so the cut would run in a loose
     /// part (`docs/specs/phase-2/design.md`, "Operation-order warnings";
@@ -288,6 +292,7 @@ impl WarningCode {
             Self::LastPassEdgeFaster => "last_pass_edge_faster",
             Self::LastPassFlattenedCurve => "last_pass_flattened_curve",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
+            Self::EngravePointPastEnd => "engrave_point_past_end",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
             Self::CutInsideTabHeldPart => "cut_inside_tab_held_part",
             Self::ToolChangeAvoidable => "tool_change_avoidable",
@@ -738,6 +743,20 @@ pub enum Warning {
         /// The path skipped.
         shape: ShapeRef,
     },
+    /// [`WarningCode::EngravePointPastEnd`].
+    EngravePointPastEnd {
+        /// The operation.
+        op: OperationId,
+        /// The path.
+        shape: ShapeRef,
+        /// The distance's field in the operation
+        /// (`enter.from_start.distance_mm`).
+        field: &'static str,
+        /// The distance asked for, mm.
+        distance_mm: f64,
+        /// The path's length, mm.
+        length_mm: f64,
+    },
     /// [`WarningCode::CutInsideFreedPart`].
     CutInsideFreedPart {
         /// This operation.
@@ -1140,7 +1159,10 @@ impl Warning {
             Self::InlayMaleBoardUnset { op } => {
                 Some(format!("operations[{op}].male_board.thickness_mm"))
             }
-            Self::InlayMarginIgnored { op, field } => Some(format!("operations[{op}].{field}")),
+            Self::InlayMarginIgnored { op, field }
+            | Self::EngravePointPastEnd { op, field, .. } => {
+                Some(format!("operations[{op}].{field}"))
+            }
             Self::InlayBoundaryEmpty { op, index, .. }
             | Self::InlayBoundaryHoleIgnored { op, index, .. } => {
                 Some(format!("operations[{op}].boundary[{index}]"))
@@ -1184,6 +1206,7 @@ impl Warning {
             Self::LastPassEdgeFaster { .. } => WarningCode::LastPassEdgeFaster,
             Self::LastPassFlattenedCurve { .. } => WarningCode::LastPassFlattenedCurve,
             Self::EngravePathDegenerate { .. } => WarningCode::EngravePathDegenerate,
+            Self::EngravePointPastEnd { .. } => WarningCode::EngravePointPastEnd,
             Self::CutInsideFreedPart { .. } => WarningCode::CutInsideFreedPart,
             Self::CutInsideTabHeldPart { .. } => WarningCode::CutInsideTabHeldPart,
             Self::ToolChangeAvoidable { .. } => WarningCode::ToolChangeAvoidable,
@@ -1247,6 +1270,7 @@ impl Warning {
             | Self::LastPassEdgeFaster { op, .. }
             | Self::LastPassFlattenedCurve { op, .. }
             | Self::EngravePathDegenerate { op, .. }
+            | Self::EngravePointPastEnd { op, .. }
             | Self::CutInsideFreedPart { op, .. }
             | Self::CutInsideTabHeldPart { op, .. }
             | Self::DrillTargetNotCircle { op, .. }
@@ -1317,6 +1341,7 @@ impl Warning {
             | Self::LastPassEdgeFaster { shape, .. }
             | Self::LastPassFlattenedCurve { shape, .. }
             | Self::EngravePathDegenerate { shape, .. }
+            | Self::EngravePointPastEnd { shape, .. }
             | Self::CutInsideFreedPart { shape, .. }
             | Self::CutInsideTabHeldPart { shape, .. }
             | Self::DrillTargetNotCircle { shape, .. }
@@ -1846,6 +1871,32 @@ impl fmt::Display for Warning {
                 f,
                 "{shape} has fewer than two distinct points, so there is nothing to engrave; it is skipped"
             ),
+            Self::EngravePointPastEnd {
+                shape,
+                field,
+                distance_mm,
+                length_mm,
+                ..
+            } => {
+                let (goes, which) = (
+                    if field.starts_with("enter") {
+                        "enters"
+                    } else {
+                        "leaves"
+                    },
+                    if field.contains("from_start") {
+                        "end"
+                    } else {
+                        "start"
+                    },
+                );
+                write!(
+                    f,
+                    "{shape} is {} mm long, shorter than the {} mm {field} asks for, so the bit {goes} it at its {which}",
+                    mm(*length_mm),
+                    mm(*distance_mm)
+                )
+            }
             Self::CutInsideFreedPart {
                 earlier_op,
                 shape,

@@ -511,7 +511,8 @@ fn without<'a>(text: &'a str, suffix: &str) -> &'a str {
 
 /// A whole number that fits the field's type, as typed.
 fn whole<T: std::str::FromStr>(text: &str) -> Result<T, CommandError> {
-    let trimmed = text.trim();
+    let resolved = crate::formula::typed_decimal(text)?;
+    let trimmed = resolved.trim();
     if trimmed.is_empty() {
         return Err(refused(text, "nothing was typed"));
     }
@@ -522,7 +523,8 @@ fn whole<T: std::str::FromStr>(text: &str) -> Result<T, CommandError> {
 
 /// A decimal number, as typed: a dot for the decimal point.
 fn decimal(text: &str) -> Result<f64, CommandError> {
-    let trimmed = text.trim();
+    let resolved = crate::formula::typed_decimal(text)?;
+    let trimmed = resolved.trim();
     if trimmed.is_empty() {
         return Err(refused(text, "nothing was typed"));
     }

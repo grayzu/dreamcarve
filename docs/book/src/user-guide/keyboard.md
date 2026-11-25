@@ -175,3 +175,28 @@ the project file does: `1/4 in`, `1 1/4 in` or `6.35 mm` for a length,
 `60 in/min` or `1500 mm/min` for a feed rate. A number with no unit is in
 the project's units. The project file always stores millimetres, so
 switching the units changes only what you see.
+
+### Formulas
+
+Any field that takes a number also takes a sum, and holds what it comes
+to. Type `1.5 + .375 / 2` and the field reads `1.6875`: there is no need
+to work it out somewhere else first.
+
+- `+`, `-`, `*` and `/`, with `*` and `/` done first, and brackets:
+  `(18 - 6) / 2`.
+- A unit goes once, at the end, and is the result's: `(1 + 1/2) in`,
+  `100 / 3 %`, `360 / 7 °`. A sum of two units, `1 in + 3 mm`, is
+  refused: do one of them yourself.
+- In a sum a fraction is a division, and `1 1/2` (a whole number, a
+  space, a fraction) is one and a half, so `1 1/2 + 3/8` is `1.875`.
+- The result is rounded to nine decimal places.
+
+Only the result is kept. The field shows the number afterwards, and so
+does the project file: there are no variables and the sum is not
+remembered. A sum that cannot be worked out (unfinished, a bracket not
+closed, a division by zero) marks the field with the reason and changes
+nothing.
+
+This works in every number field: sizes and positions, the sizes typed
+while drawing, an operation's depths and percentages, a tool's feeds
+and speed, angles and counts.

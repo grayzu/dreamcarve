@@ -233,7 +233,8 @@ capability 52); what a tool holds before it commits is not project data.
     still follows the mouse). `Enter` commits the step with the fields
     as they read; `Escape` in a field unpins it. Fields take what every
     length field takes (phase 4, capability 53): `1/4 in`, `6.35`,
-    `2 1/2 in`. An angle is degrees anticlockwise from +X, as the Y-up
+    `2 1/2 in`, and a formula (`18 / 2 + 0.3`; capability 53,
+    "Formulas"). An angle is degrees anticlockwise from +X, as the Y-up
     file is. A value the tool cannot use (a zero width, a radius under
     half the chord) marks the field as phase 4 marks a field's problem
     and commits nothing.

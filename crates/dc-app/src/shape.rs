@@ -642,6 +642,13 @@ pub(crate) fn read_size(
     text: &str,
 ) -> Result<f64, String> {
     let text = text.trim();
+    // A sum is worked out first (a length's by its own parser, which
+    // knows the file's fractions).
+    let resolved = match field.quantity() {
+        Quantity::Length => std::borrow::Cow::Borrowed(text),
+        _ => crate::formula::resolved_decimal(text)?,
+    };
+    let text = resolved.trim();
     match field.quantity() {
         Quantity::Length => units::parse_length_mm(text, units).map_err(|e| e.to_string()),
         Quantity::Angle => parse_angle_deg(text)

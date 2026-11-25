@@ -1,5 +1,5 @@
 {
-  "version": 29,
+  "version": 31,
   "name": "tbn-coupon",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,

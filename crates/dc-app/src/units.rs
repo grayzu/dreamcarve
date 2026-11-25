@@ -205,7 +205,10 @@ fn parse(
     default_unit: &str,
     read: fn(serde_json::Value) -> Result<f64, serde_json::Error>,
 ) -> Result<f64, CommandError> {
-    let trimmed = text.trim();
+    // A sum is worked out first; what the file's grammar reads as it is
+    // (a number, a fraction, a mixed number) is left to it.
+    let resolved = crate::formula::typed(text)?;
+    let trimmed = resolved.trim();
     let refused = |reason: String| CommandError::NotAQuantity {
         text: text.to_owned(),
         reason,

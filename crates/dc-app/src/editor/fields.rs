@@ -692,6 +692,21 @@ fn near_template(project: &Project) -> Value {
     json!({ "x_mm": project.stock.width_mm / 2.0, "y_mm": project.stock.height_mm / 2.0 })
 }
 
+/// A point at the start of a path, as a share of its length.
+fn start_fraction_template(_: &Project) -> Value {
+    json!({ "length_fraction": 0.0 })
+}
+
+/// A point at the end of a path, as a share of its length.
+fn end_fraction_template(_: &Project) -> Value {
+    json!({ "length_fraction": 1.0 })
+}
+
+/// A distance of 0 from an end of a path: the end itself.
+fn zero_distance_template(_: &Project) -> Value {
+    json!({ "distance_mm": 0.0 })
+}
+
 /// A ramp at `init`'s angle.
 fn ramp_template(_: &Project) -> Value {
     json!({ "angle_deg": init_ramp_angle_deg() })
@@ -786,6 +801,50 @@ const DIRECTIONS: &[ChoiceOption] = &[
 const STARTS: &[ChoiceOption] = &[
     tag(StrKey::EditorChoiceAuto, "auto"),
     tag(StrKey::EditorChoiceFirstVertex, "first_vertex"),
+    variant(StrKey::EditorChoiceNear, "near", near_template),
+];
+/// Where an Engrave enters each path (format 31). A percentage starts at
+/// 0 and a distance at 0, the path's own first point and ends, so that
+/// choosing one moves nothing until a value is typed; a point starts at
+/// the stock's centre, as a start point does.
+const ENTER_POINTS: &[ChoiceOption] = &[
+    tag(StrKey::EditorChoiceAuto, "auto"),
+    variant(
+        StrKey::EditorChoiceFraction,
+        "fraction",
+        start_fraction_template,
+    ),
+    variant(
+        StrKey::EditorChoiceFromStart,
+        "from_start",
+        zero_distance_template,
+    ),
+    variant(
+        StrKey::EditorChoiceFromEnd,
+        "from_end",
+        zero_distance_template,
+    ),
+    variant(StrKey::EditorChoiceNear, "near", near_template),
+];
+/// Where an Engrave leaves each path, as [`ENTER_POINTS`]; a percentage
+/// starts at 100, the path's last point.
+const LEAVE_POINTS: &[ChoiceOption] = &[
+    tag(StrKey::EditorChoiceAuto, "auto"),
+    variant(
+        StrKey::EditorChoiceFraction,
+        "fraction",
+        end_fraction_template,
+    ),
+    variant(
+        StrKey::EditorChoiceFromStart,
+        "from_start",
+        zero_distance_template,
+    ),
+    variant(
+        StrKey::EditorChoiceFromEnd,
+        "from_end",
+        zero_distance_template,
+    ),
     variant(StrKey::EditorChoiceNear, "near", near_template),
 ];
 const ENTRIES: &[ChoiceOption] = &[
@@ -1123,18 +1182,129 @@ const POCKET: &[Row] = &[
 ];
 
 /// Capability 68's Engrave line, every field (slice 11, #540).
+/// Whether an Engrave runs each path from one end to the other: it says
+/// neither where the bit enters nor where it leaves.
+fn runs_end_to_end(record: &Value) -> bool {
+    record["enter"] == "auto" && record["leave"] == "auto"
+}
+
 const ENGRAVE: &[Row] = &[
     TARGETS,
     TOOL,
     DEPTH,
     STEP_DOWN,
     THROUGH_CUT_ALLOWANCE,
-    row(
+    // Not while the path is entered or left at a point of its own: every
+    // pass then enters and leaves there, and none runs backwards.
+    ruled(
         Group::Strategy,
         "alternate_direction",
         FieldKind::Checkbox,
         StrKey::EditorFieldAlternateDirection,
         StrKey::EditorFieldAlternateDirectionHelp,
+        runs_end_to_end,
+    ),
+    // Where the bit enters and leaves each path (format 31): a choice,
+    // and the chosen point's value under it.
+    row(
+        Group::Strategy,
+        "enter",
+        FieldKind::Choice(ENTER_POINTS),
+        StrKey::EditorFieldEnterAt,
+        StrKey::EditorFieldEnterAtHelp,
+    )
+    .summarised(StrKey::EditorSummaryEnter),
+    row(
+        Group::Strategy,
+        "enter.fraction.length_fraction",
+        FieldKind::Percentage,
+        StrKey::EditorFieldAlongPercentage,
+        StrKey::EditorFieldAlongPercentageHelp,
+    ),
+    row(
+        Group::Strategy,
+        "enter.from_start.distance_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldAlongDistance,
+        StrKey::EditorFieldFromStartHelp,
+    ),
+    row(
+        Group::Strategy,
+        "enter.from_end.distance_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldAlongDistance,
+        StrKey::EditorFieldFromEndHelp,
+    ),
+    row(
+        Group::Strategy,
+        "enter.near",
+        FieldKind::PointPick,
+        StrKey::EditorFieldEnterPick,
+        StrKey::EditorFieldEnterPickHelp,
+    ),
+    row(
+        Group::Strategy,
+        "enter.near.x_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldEnterX,
+        StrKey::EditorFieldEnterXHelp,
+    ),
+    row(
+        Group::Strategy,
+        "enter.near.y_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldEnterY,
+        StrKey::EditorFieldEnterYHelp,
+    ),
+    row(
+        Group::Strategy,
+        "leave",
+        FieldKind::Choice(LEAVE_POINTS),
+        StrKey::EditorFieldLeaveAt,
+        StrKey::EditorFieldLeaveAtHelp,
+    )
+    .summarised(StrKey::EditorSummaryLeave),
+    row(
+        Group::Strategy,
+        "leave.fraction.length_fraction",
+        FieldKind::Percentage,
+        StrKey::EditorFieldAlongPercentage,
+        StrKey::EditorFieldAlongPercentageHelp,
+    ),
+    row(
+        Group::Strategy,
+        "leave.from_start.distance_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldAlongDistance,
+        StrKey::EditorFieldFromStartHelp,
+    ),
+    row(
+        Group::Strategy,
+        "leave.from_end.distance_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldAlongDistance,
+        StrKey::EditorFieldFromEndHelp,
+    ),
+    row(
+        Group::Strategy,
+        "leave.near",
+        FieldKind::PointPick,
+        StrKey::EditorFieldLeavePick,
+        StrKey::EditorFieldLeavePickHelp,
+    ),
+    row(
+        Group::Strategy,
+        "leave.near.x_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldLeaveX,
+        StrKey::EditorFieldLeaveXHelp,
+    ),
+    row(
+        Group::Strategy,
+        "leave.near.y_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldLeaveY,
+        StrKey::EditorFieldLeaveYHelp,
     ),
     MACHINING_ORDER,
     SAFE_Z,

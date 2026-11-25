@@ -6648,3 +6648,84 @@ fn a_gears_sizes_are_checked_together() {
         );
     }
 }
+
+// Formats 30 and 31: where an Engrave enters and leaves a path.
+
+/// An Engrave's `enter` and `leave` are a place on the path: a fraction
+/// 0 to 1 of its length, a distance of 0 or more from either end (a
+/// distance longer than a path is the generator's to warn about, since
+/// paths differ), or a point within the coordinate limit. Anything else is
+/// an error at its field, and nothing is cut.
+#[test]
+fn an_engraves_enter_and_leave_are_on_the_path() {
+    use crate::PathPoint;
+    use crate::test_support::sample_engrave;
+    let with = |enter: PathPoint, leave: PathPoint| {
+        let mut p = sample_project();
+        let mut op = sample_engrave();
+        op.enter = enter;
+        op.leave = leave;
+        p.operations = vec![Operation::Engrave(op)];
+        validate(&p)
+    };
+    let fraction = |length_fraction| PathPoint::Fraction { length_fraction };
+    let near = |x_mm, y_mm| PathPoint::Near { x_mm, y_mm };
+    assert_eq!(with(PathPoint::Auto, PathPoint::Auto), vec![]);
+    assert_eq!(with(fraction(0.25), fraction(0.75)), vec![]);
+    assert_eq!(
+        with(fraction(0.0), fraction(1.0)),
+        vec![],
+        "the ends are on it"
+    );
+    assert_eq!(
+        with(
+            PathPoint::FromStart { distance_mm: 0.0 },
+            PathPoint::FromEnd { distance_mm: 1e5 }
+        ),
+        vec![],
+        "a zero distance is an end, and a long one the generator's to warn about"
+    );
+    assert_eq!(with(near(-5.0, 1000.0), near(0.0, 0.0)), vec![]);
+
+    let fields_of = |problems: &[Problem]| -> Vec<String> {
+        assert!(
+            problems.iter().all(|p| p.code() == "out_of_range"),
+            "{problems:?}"
+        );
+        problems.iter().filter_map(Problem::field).collect()
+    };
+    assert_eq!(
+        fields_of(&with(fraction(-0.1), fraction(1.5))),
+        [
+            "operations[o4].enter.fraction.length_fraction",
+            "operations[o4].leave.fraction.length_fraction"
+        ]
+    );
+    assert_eq!(
+        fields_of(&with(
+            PathPoint::FromStart { distance_mm: -1.0 },
+            PathPoint::FromEnd { distance_mm: -0.5 }
+        )),
+        [
+            "operations[o4].enter.from_start.distance_mm",
+            "operations[o4].leave.from_end.distance_mm"
+        ]
+    );
+    assert_eq!(
+        fields_of(&with(PathPoint::Auto, near(1e7, -1e7))),
+        [
+            "operations[o4].leave.near.x_mm",
+            "operations[o4].leave.near.y_mm"
+        ]
+    );
+    for point in [
+        fraction(f64::NAN),
+        PathPoint::FromStart {
+            distance_mm: f64::INFINITY,
+        },
+        near(f64::NAN, 0.0),
+    ] {
+        let problems = with(point, PathPoint::Auto);
+        assert_eq!(problems.len(), 1, "{point:?}: {problems:?}");
+    }
+}

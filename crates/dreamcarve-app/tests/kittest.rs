@@ -4919,6 +4919,82 @@ fn start_point_click_on_the_viewport() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Format 31 through the window: with the plaque's Engrave entered near a
+/// point, *Pick on the view* beside **Enter on the view** arms the
+/// Viewport, and the next click there sets `enter.near` to the project
+/// point the camera puts under the cursor, one undo step, selects nothing,
+/// and disarms it, as a Profile's start point's pick does.
+#[test]
+fn engrave_point_click_on_the_viewport() {
+    let dir = scratch("engrave-point-pick");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let dc_project::Operation::Engrave(mut engrave) = operation_of(&h, "op5") else {
+        panic!("the plaque's Border and squiggle is an Engrave");
+    };
+    engrave.enter = dc_project::PathPoint::Near {
+        x_mm: 85.0,
+        y_mm: 60.0,
+    };
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateOperation(
+            dc_project::Operation::Engrave(engrave),
+        ))
+        .expect("the entry is set");
+    h.run();
+    open_operation(&mut h, "Border and squiggle");
+    open_group(&mut h, "Strategy");
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Enter X")
+            .is_some(),
+        "the point's typed rows are shown"
+    );
+
+    h.get_by_label("Pick on the view").scroll_to_me();
+    h.run();
+    h.get_by_label("Pick on the view").click();
+    h.run();
+    let steps = undo_steps(&h);
+    // Empty stock near the plaque's bottom-left corner (stock 170 × 120).
+    let want = dc_geometry::Point::new(5.0, 4.0);
+    let at = common::on_screen(&h, want);
+    let under = world_at(&h, at);
+    common::click_at(&mut h, at, egui::Modifiers::NONE);
+    let dc_project::Operation::Engrave(after) = operation_of(&h, "op5") else {
+        panic!("still an Engrave");
+    };
+    let dc_project::PathPoint::Near { x_mm, y_mm } = after.enter else {
+        panic!("still near a point: {:?}", after.enter);
+    };
+    assert_near(
+        dc_geometry::Point::new(x_mm, y_mm),
+        under,
+        "the entry is the point under the click",
+    );
+    assert_eq!(after.leave, dc_project::PathPoint::Auto);
+    assert_eq!(undo_steps(&h), steps + 1, "one step");
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Set enter of “Border and squiggle”")
+    );
+    assert!(h.state().app().selection().is_empty(), "nothing selected");
+
+    // One click: the Viewport is disarmed after it.
+    let elsewhere = common::on_screen(&h, dc_geometry::Point::new(165.0, 5.0));
+    common::click_at(&mut h, elsewhere, egui::Modifiers::NONE);
+    let dc_project::Operation::Engrave(still) = operation_of(&h, "op5") else {
+        panic!("still an Engrave");
+    };
+    assert_eq!(still.enter, after.enter);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// S18 in the editor (capability 68's Drill line, mock-up 07): the sign's
 /// countersink shows its depth, derived from the mouth and the V-bit
 /// (`2.5 + 6 / (2 · tan 45°)`), in a read-only Depth field where a Drill's

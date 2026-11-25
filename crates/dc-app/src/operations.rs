@@ -427,6 +427,8 @@ fn with_tool(
             depth_mm: None,
             step_down_mm: None,
             alternate_direction: false,
+            enter: dc_project::PathPoint::Auto,
+            leave: dc_project::PathPoint::Auto,
             machining_order,
             through_cut_allowance_mm,
             safe_z_mm,

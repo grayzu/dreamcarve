@@ -491,6 +491,87 @@ library, photo tone controls, plain help for the inlay terms, nesting
 (phase 8); Enter after X in a tool's first field commits with Y at its
 default; messages still say `null` and name `config.toml` settings.
 
+### Formulas in fields, 2026-11-25
+
+The maintainer's request: a field takes a sum (`1.5 + .375 / 2`) and
+holds the result, with no variables and nothing remembered. Done:
+`dc_app::formula` (`resolved`, `resolved_decimal`), run before every
+number parser of the app (`units::parse`, the tool, project, picture,
+shape, rotation and editor fields). PureCutCNC has nothing to port.
+
+Decisions taken, for the maintainer:
+
+- One unit, after the sum. `1 in + 3 mm` is refused, not converted:
+  mixing units needs each term's dimension tracked, and a product of
+  two lengths would be an area.
+- A plain number, `1/4 in` and `1 1/2` go to the file's grammar
+  untouched, so they mean what they meant, exactly. In a sum a fraction
+  is a division and `1 1/2` a mixed number.
+- The result is rounded to nine decimal places, so `0.1 + 0.2` is 0.3.
+- No functions (`sqrt`, `sin`), no `^`, no implied multiplication
+  (`2(3)`): each is easy to add if wanted.
+- While a sum is half typed in a drawing tool's field, the field shows
+  the sum's problem until it is finished, as it does for any text
+  that is not yet a value.
+
+### Where an Engrave enters and leaves, 2026-11-25
+
+The maintainer's request, needed for a project in hand: an engraved line
+entered a quarter along and left three quarters along. Done:
+`EngraveOp::enter_fraction` and `leave_fraction` (format 30, `v29_to_v30`),
+`dc_cam::engrave::route`, **Enter at** and **Leave at** in the Engrave's
+Strategy group. PureCutCNC has nothing to port.
+
+Decisions taken, for the maintainer:
+
+- **Format 30, not a change to 29 in place.** The maintainer has
+  projects saved by this branch; a changed 29 would have refused them.
+- A point is a fraction of the path's length from its first point, typed
+  as a percentage. Not a distance, and not a click on the Viewport: both
+  could be added. With several paths in one Engrave it applies to each.
+- The route is the shorter of the two that cut the whole open path.
+- Every pass takes the same route and lifts between passes; Alternate
+  direction is not applied, and not shown, while a point is set.
+- A closed path starts where it enters and, with a leave point, runs on
+  to it.
+- Engrave only. A Profile along an open path (On line, Left, Right) is
+  not covered.
+
+### Enter and leave by a distance or a click, 2026-11-25
+
+The maintainer's second request of the day: say where an Engrave enters
+and leaves by a distance from either end, or by clicking a point on the
+Viewport. Done: `dc_project::PathPoint` and `EngraveOp::{enter, leave}`
+(format 31, `v30_to_v31`), `dc_cam::engrave::along_mm`, the warning
+`engrave_point_past_end`, and **Enter at** and **Leave at** as choices in
+the Engrave's Strategy group, each with its value's rows and, for a
+point, the Profile start point's *Pick on the view*. The plaque's Engrave
+saved at format 30 with fractions is committed with the programs the
+format 30 build exported, and exports them byte for byte at format 31.
+
+Decisions taken, for the maintainer:
+
+- **Format 31, with format 30's two fields replaced**, not kept beside
+  new ones: one value per end, `"auto"` or a point, so a file cannot say
+  two things at once. `null` became `"auto"`, as `StartAt` writes it.
+- "Distance from" read as a length along the path from its first point
+  (**From the start**) or back from its last (**From the end**). Not a
+  straight-line distance from a point: that is what **Near a point**
+  covers.
+- A distance longer than a path is that path's far end and warns,
+  located on the Distance field; it is not refused, since one Engrave's
+  paths differ in length and validation does not measure them. A
+  distance of 0 is the end itself.
+- On a closed path the start is the end, so **From the end** counts back
+  round from the start.
+- **Near a point** takes each path's own nearest point however far away
+  the point is, the first along the path on a tie, as the Profile's start
+  point does; no warning for a point far from a path.
+- Choosing a mode writes a value at an end of the path: 0 % to enter,
+  100 % to leave (which cut as Auto does, but for Alternate direction),
+  a distance of 0 (that end itself); a point starts at the stock's
+  centre, as the Profile's does.
+
 ## Slices
 
 Status is one of: todo, doing, done, owner (waits for the maintainer).

@@ -87,13 +87,86 @@ fn at_current(root: &Value) -> Value {
         }
     }
     out.insert("version".into(), json!(CURRENT_VERSION));
-    with_format_29(&Value::Object(out))
+    with_format_30(&with_format_29(&Value::Object(out)))
+}
+
+/// Takes out of `root` what formats 30 and 31 added, leaving it as a
+/// format 29 file held it: each Engrave's `enter` and `leave` (format
+/// 31's), or `enter_fraction` and `leave_fraction` (format 30's).
+fn without_format_30(root: &mut Value) {
+    if let Some(operations) = root.get_mut("operations").and_then(Value::as_array_mut) {
+        for operation in operations {
+            let operation = operation.as_object_mut().unwrap();
+            for key in ["enter", "leave", "enter_fraction", "leave_fraction"] {
+                operation.shift_remove(key);
+            }
+        }
+    }
+}
+
+/// `root`, a file from before format 30, with what formats 30 and 31 add
+/// as the current version writes it, each key where a saved file has it:
+/// each Engrave's `"enter": "auto"` and `"leave": "auto"`. Written apart
+/// from the migration, so the two are checked against each other.
+fn with_format_30(root: &Value) -> Value {
+    let mut out = root.clone();
+    if let Some(Value::Array(operations)) = out.get_mut("operations") {
+        for operation in operations {
+            if operation["kind"] != json!("engrave") {
+                continue;
+            }
+            let added = [("enter", json!("auto")), ("leave", json!("auto"))];
+            let fields = insert_after(
+                operation.as_object().unwrap(),
+                "alternate_direction",
+                &added,
+            );
+            *operation = Value::Object(fields);
+        }
+    }
+    out
+}
+
+/// `root`, a current file, as format 30 held it: each Engrave's `enter`
+/// and `leave` written as `enter_fraction` and `leave_fraction` in their
+/// place, `null` for `"auto"` and the number of a `fraction`. Panics on
+/// any other point, which format 30 could not hold.
+fn as_format_30(root: &Value) -> Value {
+    let mut out = root.clone();
+    out["version"] = json!(30);
+    if let Some(Value::Array(operations)) = out.get_mut("operations") {
+        for operation in operations {
+            if operation["kind"] != json!("engrave") {
+                continue;
+            }
+            let fields: Map<String, Value> = operation
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| {
+                    let fraction = |v: &Value| match v {
+                        Value::String(auto) if auto == "auto" => Value::Null,
+                        _ => v["fraction"]["length_fraction"].clone(),
+                    };
+                    match k.as_str() {
+                        "enter" => ("enter_fraction".to_owned(), fraction(v)),
+                        "leave" => ("leave_fraction".to_owned(), fraction(v)),
+                        _ => (k.clone(), v.clone()),
+                    }
+                })
+                .collect();
+            *operation = Value::Object(fields);
+        }
+    }
+    out
 }
 
 /// Takes out of `root` what format 29 added, leaving it as a format 28
 /// file held it: `groups`, each definition's `shape`, each instance's
-/// `construction` and `group`, each bitmap's `opacity_fraction`.
+/// `construction` and `group`, each bitmap's `opacity_fraction`; and
+/// what format 30 added after it.
 fn without_format_29(root: &mut Value) {
+    without_format_30(root);
     let root = root.as_object_mut().unwrap();
     root.shift_remove("groups");
     if let Some(definitions) = root.get_mut("definitions").and_then(Value::as_object_mut) {
@@ -177,13 +250,16 @@ fn assert_saved_adds_format_29_only(saved: &str, before: &str, what: &str) {
     let before: Value = serde_json::from_str(before).unwrap();
     assert_eq!(
         serde_json::to_string_pretty(&saved).unwrap(),
-        serde_json::to_string_pretty(&with_format_29(&before)).unwrap(),
+        serde_json::to_string_pretty(&with_format_30(&with_format_29(&before))).unwrap(),
         "{what}"
     );
 }
 
 fn sample_root_at(version: u32) -> Value {
     let mut root = serde_json::to_value(sample_project()).unwrap();
+    if version < 30 {
+        without_format_30(&mut root);
+    }
     if version < 29 {
         without_format_29(&mut root);
     }
@@ -1987,6 +2063,8 @@ fn v19_to_v20_bumps_the_version_only() {
         let op = serde_json::to_value(op).unwrap();
         root["operations"].as_array_mut().unwrap().push(op);
     }
+    // An Engrave of that version has nothing of format 30.
+    without_format_30(&mut root);
     let expected = at_current(&root);
     let migrated = migrate(root, 19).unwrap();
     assert_eq!(migrated, expected);
@@ -2034,6 +2112,8 @@ fn v20_to_v21_bumps_the_version_only() {
         let op = serde_json::to_value(op).unwrap();
         root["operations"].as_array_mut().unwrap().push(op);
     }
+    // An Engrave of that version has nothing of format 30.
+    without_format_30(&mut root);
     let expected = at_current(&root);
     let migrated = migrate(root, 20).unwrap();
     assert_eq!(migrated, expected);
@@ -2108,6 +2188,8 @@ fn v21_to_v22_bumps_the_version_only() {
         let op = serde_json::to_value(op).unwrap();
         root["operations"].as_array_mut().unwrap().push(op);
     }
+    // An Engrave of that version has nothing of format 30.
+    without_format_30(&mut root);
     let expected = at_current(&root);
     let migrated = migrate(root, 21).unwrap();
     assert_eq!(migrated, expected);
@@ -2952,40 +3034,297 @@ fn a_v28_project_exports_the_same_programs() {
         let loaded = load(fixture).unwrap();
         assert_eq!(loaded.notes, vec![]);
         let saved = crate::save(&loaded.project).unwrap();
-        let expected = old.replacen("\"version\": 28,", "\"version\": 29,", 1);
-        assert_saved_adds_format_29_only(&saved, &expected, "the format 29 fields only");
+        let expected = old.replacen(
+            "\"version\": 28,",
+            &format!("\"version\": {CURRENT_VERSION},"),
+            1,
+        );
+        assert_saved_adds_format_29_only(&saved, &expected, "the later formats' fields only");
     }
 }
 
-/// Set this environment variable to rewrite the version 29 fixtures from
-/// their builders instead of only comparing them; the test then fails so
-/// the run is not mistaken for a check. Run it again without.
-const UPDATE_V29: &str = "DC_PROJECT_UPDATE_V29_FIXTURES";
-
-/// The version 29 fixtures load as they are and save byte for byte: the
-/// plain sample, and a drawing with a shape of every kind but text, each
-/// with the outline its sizes give, a group selected together and one
-/// not, construction geometry and a faded picture.
+/// The version 29 fixtures, written by the build that had format 29 for
+/// its own, load as the projects they were and save as version 30 files
+/// with nothing else changed: neither holds an Engrave, the one kind
+/// format 30 adds to.
 #[test]
 fn version_29_fixtures_load() {
     use crate::test_support::drawing_project;
-    if std::env::var_os(UPDATE_V29).is_some() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/dcv/v29");
+    for (fixture, project) in [
+        (V29_FIXTURE, sample_project()),
+        (V29_DRAWING_FIXTURE, drawing_project()),
+    ] {
+        let text = std::str::from_utf8(fixture).unwrap();
+        assert!(text.contains("\"version\": 29,"), "a version 29 file");
+        let loaded = load(fixture).unwrap();
+        assert_eq!(loaded.project, project);
+        assert_eq!(loaded.problems, vec![]);
+        assert_eq!(loaded.notes, vec![]);
+        assert_eq!(
+            crate::save(&loaded.project).unwrap(),
+            text.replacen(
+                "\"version\": 29,",
+                &format!("\"version\": {CURRENT_VERSION},"),
+                1
+            )
+        );
+    }
+}
+
+const V30_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v30/sample.dcv");
+const V30_DRAWING_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v30/drawing.dcv");
+
+/// Format 30 adds where an Engrave's bit enters and leaves each path,
+/// `enter_fraction` and `leave_fraction`, both `null` after
+/// `alternate_direction`, and changes nothing else: a project with an
+/// Engrave among the other kinds migrates to what this build writes for
+/// it, keys in order. A project with no Engrave gains nothing but its
+/// version.
+#[test]
+fn v29_to_v30_adds_where_an_engrave_enters_and_leaves() {
+    use crate::test_support::{sample_engrave, sample_pocket};
+    let mut project = sample_project();
+    project.operations.push(Operation::Pocket(sample_pocket()));
+    project
+        .operations
+        .push(Operation::Engrave(sample_engrave()));
+    let expected = serde_json::to_value(&project).unwrap();
+    let engrave = expected["operations"].as_array().unwrap().last().unwrap();
+    assert_eq!(engrave["enter"], json!("auto"));
+    assert_eq!(engrave["leave"], json!("auto"));
+
+    let mut root = expected.clone();
+    without_format_30(&mut root);
+    root["version"] = json!(29);
+    assert!(
+        root["operations"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("enter")
+            .is_none()
+    );
+    let (migrated, notes) = migrate_with_notes(root.clone(), 29).unwrap();
+    assert_eq!(migrated, expected);
+    assert_eq!(
+        serde_json::to_string_pretty(&migrated).unwrap(),
+        serde_json::to_string_pretty(&expected).unwrap(),
+        "the keys keep their order"
+    );
+    assert_eq!(notes, vec![]);
+    // The test's own reading of the format agrees with the step.
+    let mut by_hand = with_format_30(&root);
+    by_hand["version"] = json!(CURRENT_VERSION);
+    assert_eq!(by_hand, expected);
+    // What it means is what a version 29 Engrave was: an end of the path.
+    let loaded: crate::Project = serde_json::from_value(migrated).unwrap();
+    let Some(Operation::Engrave(engrave)) = loaded.operations.last() else {
+        panic!("the Engrave is there");
+    };
+    assert_eq!(
+        (engrave.enter, engrave.leave),
+        (crate::PathPoint::Auto, crate::PathPoint::Auto)
+    );
+}
+
+/// A file that says 29 and already holds a format 30 field is not a
+/// version 29 file: the migration refuses it, naming the field.
+#[test]
+fn a_file_claiming_29_with_a_format_30_field_is_refused() {
+    use crate::test_support::sample_engrave;
+    let mut project = sample_project();
+    project.operations = vec![Operation::Engrave(sample_engrave())];
+    let current = serde_json::to_value(&project).unwrap();
+    for field in ["enter_fraction", "leave_fraction"] {
+        let mut root = current.clone();
+        without_format_30(&mut root);
+        root["version"] = json!(29);
+        root["operations"][0][field] = Value::Null;
+        let err = migrate(root, 29).unwrap_err();
+        match &err {
+            LoadError::Migration {
+                from: 29,
+                to: 30,
+                message,
+                ..
+            } => assert!(
+                message.contains(&format!("`operations[0].{field}`")),
+                "{field}: {message}"
+            ),
+            _ => panic!("{field}: {err:?}"),
+        }
+    }
+}
+
+/// The version 30 fixtures, written by the build that had format 30 for
+/// its own, load as the projects they were and save as current files with
+/// nothing but the version changed: neither holds an Engrave, the one
+/// kind format 31 changes.
+#[test]
+fn version_30_fixtures_load() {
+    use crate::test_support::drawing_project;
+    for (fixture, project) in [
+        (V30_FIXTURE, sample_project()),
+        (V30_DRAWING_FIXTURE, drawing_project()),
+    ] {
+        let text = std::str::from_utf8(fixture).unwrap();
+        assert!(text.contains("\"version\": 30,"), "a version 30 file");
+        let loaded = load(fixture).unwrap();
+        assert_eq!(loaded.project, project);
+        assert_eq!(loaded.problems, vec![]);
+        assert_eq!(loaded.notes, vec![]);
+        assert_eq!(
+            crate::save(&loaded.project).unwrap(),
+            text.replacen(
+                "\"version\": 30,",
+                &format!("\"version\": {CURRENT_VERSION},"),
+                1
+            )
+        );
+    }
+}
+
+// Version 30 → 31: an Engrave enters and leaves at any point.
+
+const V31_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v31/sample.dcv");
+const V31_DRAWING_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v31/drawing.dcv");
+
+/// Format 31 turns an Engrave's `enter_fraction` and `leave_fraction`
+/// into `enter` and `leave`, in their place: `null` becomes `"auto"` and
+/// a number a `fraction` of the same number, so every Engrave cuts as it
+/// did (the CLI's `version_30_engrave_points_export_byte_identical_programs`
+/// compares the programs). Every other key keeps its value and its place,
+/// and no note is given. A project with no Engrave gains only its version.
+#[test]
+fn v30_to_v31_keeps_where_an_engrave_enters_and_leaves() {
+    use crate::PathPoint;
+    use crate::test_support::{sample_engrave, sample_pocket};
+    for (enter, leave) in [
+        (PathPoint::Auto, PathPoint::Auto),
+        (
+            PathPoint::Fraction {
+                length_fraction: 0.25,
+            },
+            PathPoint::Fraction {
+                length_fraction: 0.75,
+            },
+        ),
+        (
+            PathPoint::Fraction {
+                length_fraction: 0.0,
+            },
+            PathPoint::Auto,
+        ),
+        (
+            PathPoint::Auto,
+            PathPoint::Fraction {
+                length_fraction: 1.0,
+            },
+        ),
+    ] {
+        let mut project = sample_project();
+        project.operations.push(Operation::Pocket(sample_pocket()));
+        let mut engrave = sample_engrave();
+        engrave.enter = enter;
+        engrave.leave = leave;
+        project.operations.push(Operation::Engrave(engrave));
+        let expected = serde_json::to_value(&project).unwrap();
+
+        let root = as_format_30(&expected);
+        let old = root["operations"].as_array().unwrap().last().unwrap();
+        assert!(old.get("enter").is_none(), "{old}");
+        let (migrated, notes) = migrate_with_notes(root.clone(), 30).unwrap();
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
+            "{enter:?} {leave:?}: the same values, keys in order"
+        );
+        assert_eq!(notes, vec![]);
+        let loaded: crate::Project = serde_json::from_value(migrated).unwrap();
+        assert_eq!(loaded, project, "{enter:?} {leave:?}");
+    }
+
+    // With no Engrave, only the version changes.
+    let root = sample_root_at(30);
+    let mut expected = root.clone();
+    expected["version"] = json!(CURRENT_VERSION);
+    assert_eq!(migrate(root, 30).unwrap(), expected);
+}
+
+/// A file that says 30 and holds an Engrave's `enter` or `leave`, or lacks
+/// its `enter_fraction` or `leave_fraction`, is not a version 30 file: the
+/// migration refuses it, naming the field.
+#[test]
+fn a_file_claiming_30_with_a_format_31_field_is_refused() {
+    use crate::test_support::sample_engrave;
+    let mut project = sample_project();
+    project.operations = vec![Operation::Engrave(sample_engrave())];
+    let v30 = as_format_30(&serde_json::to_value(&project).unwrap());
+    let refusal = |root: Value| match migrate(root, 30).unwrap_err() {
+        LoadError::Migration {
+            from: 30,
+            to: 31,
+            message,
+            ..
+        } => message,
+        err => panic!("{err:?}"),
+    };
+    for field in ["enter", "leave"] {
+        let mut root = v30.clone();
+        root["operations"][0][field] = json!("auto");
+        let message = refusal(root);
+        assert!(
+            message.contains(&format!("`operations[0].{field}`")),
+            "{field}: {message}"
+        );
+    }
+    for field in ["enter_fraction", "leave_fraction"] {
+        let mut root = v30.clone();
+        root["operations"][0]
+            .as_object_mut()
+            .unwrap()
+            .shift_remove(field);
+        let message = refusal(root);
+        assert!(
+            message.contains(&format!("`operations[0].{field}`")),
+            "{field}: {message}"
+        );
+    }
+}
+
+/// Set this environment variable to rewrite the version 31 fixtures from
+/// their builders instead of only comparing them; the test then fails so
+/// the run is not mistaken for a check. Run it again without.
+const UPDATE_V31: &str = "DC_PROJECT_UPDATE_V31_FIXTURES";
+
+/// The version 31 fixtures, the current ones, load as they are and save
+/// byte for byte: the plain sample, and the drawing with a shape of every
+/// kind but text.
+#[test]
+fn version_31_fixtures_load() {
+    use crate::test_support::drawing_project;
+    if std::env::var_os(UPDATE_V31).is_some() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/dcv/v31");
         for (name, project) in [("sample", sample_project()), ("drawing", drawing_project())] {
             let text = crate::save(&project).unwrap();
             std::fs::write(format!("{dir}/{name}.dcv"), text).unwrap();
         }
-        panic!("{UPDATE_V29} is set: the fixtures were rewritten, not checked");
+        panic!("{UPDATE_V31} is set: the fixtures were rewritten, not checked");
     }
-    let text = std::str::from_utf8(V29_FIXTURE).unwrap();
-    assert!(text.contains("\"version\": 29,"), "a version 29 file");
-    let loaded = load(V29_FIXTURE).unwrap();
-    assert_eq!(loaded.project, sample_project());
-    assert_eq!(loaded.problems, vec![]);
-    assert_eq!(crate::save(&loaded.project).unwrap(), text);
-
-    let text = std::str::from_utf8(V29_DRAWING_FIXTURE).unwrap();
-    assert!(text.contains("\"version\": 29,"), "a version 29 file");
+    for (fixture, project) in [
+        (V31_FIXTURE, sample_project()),
+        (V31_DRAWING_FIXTURE, drawing_project()),
+    ] {
+        let text = std::str::from_utf8(fixture).unwrap();
+        assert!(text.contains("\"version\": 31,"), "a version 31 file");
+        let loaded = load(fixture).unwrap();
+        assert_eq!(loaded.project, project);
+        assert_eq!(loaded.problems, vec![]);
+        assert_eq!(crate::save(&loaded.project).unwrap(), text);
+    }
+    // What the drawing holds, by its keys in the file.
+    let text = std::str::from_utf8(V31_DRAWING_FIXTURE).unwrap();
     for key in [
         "\"kind\": \"rectangle\"",
         "\"corner\": \"square\"",
@@ -3006,16 +3345,55 @@ fn version_29_fixtures_load() {
     ] {
         assert!(text.contains(key), "{key}");
     }
-    let loaded = load(V29_DRAWING_FIXTURE).unwrap();
-    assert_eq!(loaded.project, drawing_project());
-    assert_eq!(crate::save(&loaded.project).unwrap(), text);
-    assert_eq!(loaded.problems, vec![]);
 }
 
-/// A version 28 reader refuses a version 29 file as newer (ADR-0002).
+/// A version 30 reader refuses a version 31 file as newer (ADR-0002).
 #[test]
-fn version_29_is_newer_than_28() {
-    assert_eq!(CURRENT_VERSION, 29);
+fn version_31_is_newer_than_30() {
+    assert_eq!(CURRENT_VERSION, 31);
     let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
     assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+}
+
+/// Every point an Engrave can enter or leave at saves as the chapter
+/// writes it and reads back as itself.
+#[test]
+fn every_path_point_round_trips() {
+    use crate::PathPoint;
+    for (point, text) in [
+        (PathPoint::Auto, json!("auto")),
+        (
+            PathPoint::Fraction {
+                length_fraction: 0.25,
+            },
+            json!({ "fraction": { "length_fraction": 0.25 } }),
+        ),
+        (
+            PathPoint::FromStart { distance_mm: 10.0 },
+            json!({ "from_start": { "distance_mm": 10.0 } }),
+        ),
+        (
+            PathPoint::FromEnd { distance_mm: 2.5 },
+            json!({ "from_end": { "distance_mm": 2.5 } }),
+        ),
+        (
+            PathPoint::Near {
+                x_mm: 1.0,
+                y_mm: -2.0,
+            },
+            json!({ "near": { "x_mm": 1.0, "y_mm": -2.0 } }),
+        ),
+    ] {
+        assert_eq!(serde_json::to_value(point).unwrap(), text);
+        assert_eq!(serde_json::from_value::<PathPoint>(text).unwrap(), point);
+    }
+    // A distance takes a unit, as every length does.
+    assert_eq!(
+        serde_json::from_value::<PathPoint>(json!({ "from_end": { "distance_mm": "1 in" } }))
+            .unwrap(),
+        PathPoint::FromEnd { distance_mm: 25.4 }
+    );
+    assert!(
+        serde_json::from_value::<PathPoint>(json!({ "from_end": { "distance": 1.0 } })).is_err()
+    );
 }

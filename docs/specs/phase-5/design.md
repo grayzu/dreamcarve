@@ -1391,6 +1391,108 @@ The names here are today's.
   `warnings::a_shown_message_calls_a_field_by_its_label`,
   `every_row_of_an_operation_is_called_by_its_label`.
 
+### Formulas in fields, 2026-11-25
+
+`dc_app::formula` (phase 4 functional, capability 53, "Formulas"; no
+upstream). `resolved(text)` and `resolved_decimal(text)` return the text
+with the sum in it replaced by its value as a plain decimal, or the
+text itself when it holds no sum; the second is for fields of plain
+decimals, where a fraction is a sum. The text before the first letter,
+percent or degree sign is the sum (`Reader`: `sum`, `product`, `factor`,
+`unsigned`, `number`, a recursive descent with brackets to `MAX_DEPTH`
+32); what follows is the result's unit. It runs first in every number
+parser of the app: `units::parse` (lengths and rates), `tools::whole`
+and `decimal`, `properties::decimal`, `project::parse_seconds` and
+`parse_places`, `pictures::opacity`, `shape::read_size`,
+`tool::draw::parse_angle_deg`, `arrange::parse_angle`, and the
+editor's `parse_plain` and counts. The window is unchanged: it hands
+the typed text to those as before.
+
+Tests: `dc-app` `tests/formula.rs` (`a_formula_resolves_to_its_number`,
+`the_unit_after_a_formula_is_the_results`,
+`what_is_no_formula_is_left_as_typed`,
+`a_fraction_is_a_sum_where_the_field_has_no_fractions`,
+`a_formula_that_cannot_be_worked_out_says_why`,
+`a_length_and_a_rate_take_a_formula`,
+`every_kind_of_field_takes_a_formula`); in the window
+`editing::a_field_takes_a_formula_and_shows_its_result`.
+
+### Where an Engrave enters and leaves, 2026-11-25
+
+Phase 2 functional, capability 15, "Where the bit enters and leaves".
+- `dc_project::EngraveOp::{enter_fraction, leave_fraction}: Option<f64>`
+  after `alternate_direction` (format 30; `migrate::v29_to_v30` adds
+  both as `null` to each Engrave; fixtures `dcv/v30/`). Validation:
+  each finite and in 0 to 1, `out_of_range` at its field.
+- `dc_cam::engrave::route(path, enter, leave) -> Option<Polyline>`: the
+  one open path a pass traces, doubling back on itself, built from
+  `between(path, from_mm, to_mm)` (each segment's `Segment::piece`, so
+  an arc's part is an arc) and `Polyline::reversed`. `None` with both
+  unset, when the path is run as before. A routed pass is not reversed
+  by `alternate_direction`, and stays down between passes only round a
+  closed path that leaves where it enters.
+- `dc_app::editor::fields`: the rows `enter_fraction` and
+  `leave_fraction` (`FieldKind::Percentage`), and `alternate_direction`
+  under the rule `runs_end_to_end`.
+- Tests: `dc-project` `migrate::v29_to_v30_adds_where_an_engrave_enters_and_leaves`,
+  `a_file_claiming_29_with_a_format_30_field_is_refused`,
+  `version_30_fixtures_load`,
+  `validate::an_engraves_enter_and_leave_are_on_the_path`; `dc-cam`
+  `engrave::a_line_is_entered_and_left_where_it_says`,
+  `the_route_covers_the_path_the_shorter_way`,
+  `enter_and_leave_are_measured_along_the_path`,
+  `every_pass_enters_and_leaves_at_the_same_points`,
+  `a_closed_path_starts_where_it_enters_and_runs_on_to_where_it_leaves`,
+  `an_arc_is_entered_and_left_on_its_own_circle`; `dc-app`
+  `editor::an_engrave_says_where_it_enters_and_leaves`.
+
+### Enter and leave by a distance or a click, 2026-11-25
+
+Phase 2 functional, capability 15, "Where the bit enters and leaves", as
+changed the same day: a point may also be a distance from either end of
+the path, or the path's point nearest a point clicked on the Viewport.
+- `dc_project::PathPoint`, externally tagged as `StartAt` is (a unit
+  variant): `Auto`, `Fraction { length_fraction }`, `FromStart {
+  distance_mm }`, `FromEnd { distance_mm }`, `Near { x_mm, y_mm }`.
+  `EngraveOp::{enter, leave}: PathPoint` replace `enter_fraction` and
+  `leave_fraction` in their place (format 31; `migrate::v30_to_v31`
+  renames each and turns `null` into `"auto"` and a number into a
+  `fraction`; the v30 fixtures stay as the previous version's, and
+  `dcv/v31/` are the current ones). Validation: a fraction finite and in
+  0 to 1, a distance finite and 0 or more, a point's coordinates within
+  `MAX_COORDINATE_MM`; `out_of_range` at the field
+  (`operations[o].enter.from_start.distance_mm`).
+- `dc_cam::engrave`: `along_mm(path, point)` turns a `PathPoint` into a
+  length along one placed path (`Near` by `dc_geometry::nearest_point`,
+  so each target path takes its own nearest point), clamping a distance
+  past the path to its far end with `Warning::EngravePointPastEnd`
+  (`engrave_point_past_end`, located at the distance's field); `route`
+  now takes lengths in millimetres and is otherwise unchanged, so a
+  fraction cuts exactly as format 30's did.
+- `dc_app::editor::fields`: `enter` and `leave` are choices
+  (`ENTER_POINTS`, `LEAVE_POINTS`: a fraction starts at 0 for the one
+  and 1 for the other, a distance at 0, a point at the stock's centre),
+  each with its variant's rows under it; `enter.near` and `leave.near`
+  are `FieldKind::PointPick` rows, armed and clicked through the
+  window's existing point pick (`arm_point_pick`, `point_at`), so
+  nothing in the Viewport is new. `runs_end_to_end` is both `"auto"`.
+- Tests: `dc-project` `migrate::v30_to_v31_keeps_where_an_engrave_enters_and_leaves`,
+  `a_file_claiming_30_with_a_format_31_field_is_refused`,
+  `version_31_fixtures_load`,
+  `validate::an_engraves_enter_and_leave_are_on_the_path`; `dc-cam`
+  `engrave::a_distance_is_measured_from_either_end`,
+  `a_zero_distance_is_the_end_itself`,
+  `a_distance_past_the_end_is_the_far_end_and_warns`,
+  `a_closed_path_is_entered_a_distance_round_from_its_start`,
+  `each_path_is_entered_at_its_own_point_nearest_a_picked_point`,
+  `a_closed_path_starts_at_its_point_nearest_a_picked_point`; `dc-app`
+  `editor::an_engrave_says_where_it_enters_and_leaves`,
+  `an_engrave_enters_and_leaves_a_distance_from_an_end`,
+  `an_engrave_point_can_be_clicked_on_the_viewport`; in the window
+  `kittest::engrave_point_click_on_the_viewport`; the CLI's
+  `version_30_engrave_points_export_byte_identical_programs`, against
+  programs the format 30 build exported.
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the

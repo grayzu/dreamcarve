@@ -1333,6 +1333,8 @@ mod tests {
             depth_mm: Some(depth_mm),
             step_down_mm: None,
             alternate_direction: false,
+            enter: dc_project::PathPoint::Auto,
+            leave: dc_project::PathPoint::Auto,
             machining_order: MachiningOrder::FullDepthFirst,
             through_cut_allowance_mm: 0.0,
             safe_z_mm: 5.0,

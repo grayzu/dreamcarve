@@ -176,7 +176,9 @@ message.
 
 Lengths and feeds are shown in the project's units, millimetres or
 inches, set on the Stock step or from the status bar. A field also takes
-a value with its own unit, such as `1/4 in` in a millimetre project.
+a value with its own unit, such as `1/4 in` in a millimetre project,
+and a sum, such as `1.5 + .375 / 2`, which it works out
+([Formulas](keyboard.md#formulas)).
 [Keyboard shortcuts](keyboard.md#typing-values) has the details, and
 every shortcut.
 

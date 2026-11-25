@@ -247,7 +247,8 @@ pub fn locked_message(strings: &Strings, locked: &[String]) -> Option<String> {
 ///
 /// [`CommandError::NotAQuantity`] when the text is not a finite number.
 pub fn parse_angle(text: &str) -> Result<f64, CommandError> {
-    let trimmed = text.trim();
+    let resolved = crate::formula::typed_decimal(text)?;
+    let trimmed = resolved.trim();
     let bare = trimmed.strip_suffix('°').unwrap_or(trimmed).trim_end();
     let refused = |reason: String| CommandError::NotAQuantity {
         text: text.to_owned(),

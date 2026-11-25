@@ -374,8 +374,11 @@ fn generate_on(project: &Project, operation: &Operation, board: Option<Board>) -
             // `inlay_plug_base_thin` (#434): once.
             let warnings = warnings.iter().filter(|w| !reported_by_validation(w));
             for w in warnings {
+                // A warning about one of the operation's values
+                // (`engrave_point_past_end`) is located at it.
                 out.findings.push(
                     Finding::warning(w.code().as_str(), format!("operation `{id}`: {w}"))
+                        .at_field(w.field())
                         .for_op(Some(id.clone()))
                         .on_shape(w.shape().cloned()),
                 );

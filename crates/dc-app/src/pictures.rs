@@ -174,7 +174,8 @@ pub fn opacity(
             &[("text", text.trim())],
         ),
     };
-    let percent: f64 = text
+    let resolved = crate::formula::typed_decimal(text)?;
+    let percent: f64 = resolved
         .trim()
         .trim_end_matches('%')
         .trim_end()

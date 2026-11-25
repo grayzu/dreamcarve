@@ -117,7 +117,7 @@ pub fn tapered_project() -> Project {
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
 /// yet, and no bitmap. Matches the committed fixture
-/// `tests/fixtures/dcv/v29/sample.dcv`.
+/// `tests/fixtures/dcv/v31/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -298,6 +298,8 @@ pub fn sample_engrave() -> EngraveOp {
         depth_mm: Some(1.0),
         step_down_mm: None,
         alternate_direction: false,
+        enter: crate::PathPoint::Auto,
+        leave: crate::PathPoint::Auto,
         machining_order: MachiningOrder::FullDepthFirst,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 5.0,

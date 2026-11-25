@@ -2236,7 +2236,8 @@ pub(crate) fn show(
                 && let Some(at) = response.interact_pointer_pos()
             {
                 // An armed click is the point row's (a Profile's start
-                // point), one click, not a selection.
+                // point, an Engrave's entry or exit), one click, not a
+                // selection.
                 editor::arm_point_pick(ui.ctx(), None);
                 view.drag = None;
                 view.clicks.reset();

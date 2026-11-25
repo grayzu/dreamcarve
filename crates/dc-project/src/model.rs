@@ -1515,8 +1515,19 @@ pub struct EngraveOp {
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Cut successive passes of an open path in opposite directions,
-    /// saving a retract per pass.
+    /// saving a retract per pass. Not while [`Self::enter`] or
+    /// [`Self::leave`] is other than [`PathPoint::Auto`]: every pass then
+    /// enters and leaves where they say.
     pub alternate_direction: bool,
+    /// Where the bit enters each path (format 30 as a fraction, format 31
+    /// as any [`PathPoint`]; the maintainer's requests, 2026-11-25).
+    /// [`PathPoint::Auto`] is an end of the path, as before. The whole
+    /// path is still cut: from a point inside it the bit runs out to one
+    /// end and back along it to the other.
+    pub enter: PathPoint,
+    /// Where the bit leaves each path, as [`Self::enter`].
+    /// [`PathPoint::Auto`] is where the cut ends of itself.
+    pub leave: PathPoint,
     /// The order shapes and passes are visited.
     pub machining_order: MachiningOrder,
     /// How far below the stock bottom the cut may go, millimetres.
@@ -1525,6 +1536,58 @@ pub struct EngraveOp {
     /// Retract height above the stock top, millimetres.
     #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
+}
+
+/// A point along each path an Engrave cuts, where its bit enters or leaves
+/// it (functional spec, capability 15, "Where the bit enters and leaves";
+/// format 31). Saved as `"auto"`, `{ "fraction": { "length_fraction":
+/// 0.25 } }`, `{ "from_start": { "distance_mm": 10.0 } }`, `{ "from_end":
+/// { "distance_mm": 10.0 } }` or `{ "near": { "x_mm": 0.0, "y_mm": 0.0 }
+/// }`. Every variant but `Near` measures along the path, arcs followed,
+/// from its first point as drawn; a closed path's first point is also its
+/// last.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum PathPoint {
+    /// An end of the path: the one the cut starts from, or finishes at.
+    Auto,
+    /// A fraction of the path's length from its first point, 0 to 1.
+    Fraction {
+        /// How far along, as a fraction of the path's length.
+        length_fraction: f64,
+    },
+    /// A distance along the path from its first point, millimetres, 0 or
+    /// more. Past the path's end it is the end, with a warning.
+    FromStart {
+        /// How far along, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
+        distance_mm: f64,
+    },
+    /// A distance back along the path from its last point, millimetres, 0
+    /// or more. Past the path's start it is the start, with a warning.
+    FromEnd {
+        /// How far back, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
+        distance_mm: f64,
+    },
+    /// The point of each path nearest this project point, Y-up: each
+    /// target path takes its own.
+    Near {
+        /// X, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
+        x_mm: f64,
+        /// Y, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
+        y_mm: f64,
+    },
+}
+
+impl PathPoint {
+    /// Whether it is [`PathPoint::Auto`], an end of the path.
+    #[must_use]
+    pub const fn is_auto(&self) -> bool {
+        matches!(self, Self::Auto)
+    }
 }
 
 /// Which side of an outline a profile cuts on. Inside, Outside and On line
