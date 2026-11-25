@@ -1002,7 +1002,8 @@ fn parse_park(text: &str, units: Units) -> Result<Option<ParkXy>, CommandError> 
 
 /// Seconds, with or without an `s`.
 fn parse_seconds(text: &str) -> Result<f64, CommandError> {
-    let trimmed = text.trim();
+    let resolved = crate::formula::typed_decimal(text)?;
+    let trimmed = resolved.trim();
     let number = trimmed.strip_suffix('s').unwrap_or(trimmed).trim();
     let refused = |reason: String| CommandError::NotAQuantity {
         text: text.to_owned(),
@@ -1019,7 +1020,8 @@ fn parse_seconds(text: &str) -> Result<f64, CommandError> {
 
 /// A whole number of decimal places, 0 to 255 as the file reads it.
 fn parse_places(text: &str) -> Result<u8, CommandError> {
-    text.trim()
+    crate::formula::typed_decimal(text)?
+        .trim()
         .parse::<u8>()
         .map_err(|_| CommandError::NotAQuantity {
             text: text.to_owned(),

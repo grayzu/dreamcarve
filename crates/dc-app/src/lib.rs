@@ -14,6 +14,7 @@ pub mod editor;
 mod error;
 pub mod export;
 pub mod fonts;
+pub mod formula;
 pub mod generation;
 pub mod history;
 pub mod import;

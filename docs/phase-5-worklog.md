@@ -491,6 +491,29 @@ library, photo tone controls, plain help for the inlay terms, nesting
 (phase 8); Enter after X in a tool's first field commits with Y at its
 default; messages still say `null` and name `config.toml` settings.
 
+### Formulas in fields, 2026-11-25
+
+The maintainer's request: a field takes a sum (`1.5 + .375 / 2`) and
+holds the result, with no variables and nothing remembered. Done:
+`dc_app::formula` (`resolved`, `resolved_decimal`), run before every
+number parser of the app (`units::parse`, the tool, project, picture,
+shape, rotation and editor fields). PureCutCNC has nothing to port.
+
+Decisions taken, for the maintainer:
+
+- One unit, after the sum. `1 in + 3 mm` is refused, not converted:
+  mixing units needs each term's dimension tracked, and a product of
+  two lengths would be an area.
+- A plain number, `1/4 in` and `1 1/2` go to the file's grammar
+  untouched, so they mean what they meant, exactly. In a sum a fraction
+  is a division and `1 1/2` a mixed number.
+- The result is rounded to nine decimal places, so `0.1 + 0.2` is 0.3.
+- No functions (`sqrt`, `sin`), no `^`, no implied multiplication
+  (`2(3)`): each is easy to add if wanted.
+- While a sum is half typed in a drawing tool's field, the field shows
+  the sum's problem until it is finished, as it does for any text
+  that is not yet a value.
+
 ## Slices
 
 Status is one of: todo, doing, done, owner (waits for the maintainer).

@@ -296,6 +296,24 @@ folder are app preferences, kept outside the project.
     file accepts (capability 32): `0.5 in` and `1 1/4 in` in a mm project
     convert on entry; a bare number is in the project's units. The stored
     value stays millimetres and the file is unchanged by the display.
+    **Formulas** (phase 5; the maintainer's request, 2026-11-25): every
+    field that takes a number, of any kind (a length, a rate, an angle,
+    a percentage, a count, seconds; in a panel, an editor, the tool bar
+    or a popover), takes a sum and holds what it comes to: `1.5 + .375 /
+    2` is 1.6875. `+`, `-`, `*`, `/` (and `×`, `÷`), `*` and `/` first,
+    left to right, with brackets and a sign before a number or a
+    bracket. One unit, percent sign or degree sign may follow the sum
+    and is the result's (`(1 + 1/2) in`); a unit inside a sum (`1 in +
+    3 mm`) is refused. What the file's grammar already reads (a number,
+    `1/4 in`, `1 1/2`) means what it meant, to the last bit; in a sum a
+    fraction is a division and `1 1/2` a mixed number, and in a field of
+    plain decimals a fraction is a sum. The result is rounded to nine
+    decimal places and handed to the field's own parser, so its unit,
+    range and rounding rules hold. Nothing of the sum is kept: the
+    field shows the number, the file holds numbers, and there are no
+    variables. A sum that cannot be worked out (unfinished, an unmatched
+    bracket, a division by zero, not a sum) is the field's problem, with
+    the reason, and changes nothing. PureCutCNC has no such thing.
     The switch is the first row of the Stock step (**Units**, a `mm` /
     `in` segmented control above the stock's size) and the status bar's units menu
     (50b); both set the same field, convert the display only, and are

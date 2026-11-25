@@ -10,6 +10,12 @@ before that; its changes are those under Unreleased.
 
 ### Added
 
+- **Formulas in fields.** Every field that takes a number takes a sum
+  and holds what it comes to: type `1.5 + .375 / 2` and the field reads
+  `1.6875`. `+`, `-`, `*`, `/` and brackets, with one unit at the end
+  for the result (`(1 + 1/2) in`, `100 / 3 %`). Only the number is
+  kept: no variables, and nothing of the sum in the project file. A sum
+  that cannot be worked out marks the field with the reason.
 - **Drawing in the app.** A part can now be designed in DreamCarve with
   no drawing to import. **Draw from scratch** on the start screen opens
   a blank project, and the Viewport has drawing tools: Line, Arc and

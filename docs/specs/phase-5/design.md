@@ -1391,6 +1391,32 @@ The names here are today's.
   `warnings::a_shown_message_calls_a_field_by_its_label`,
   `every_row_of_an_operation_is_called_by_its_label`.
 
+### Formulas in fields, 2026-11-25
+
+`dc_app::formula` (phase 4 functional, capability 53, "Formulas"; no
+upstream). `resolved(text)` and `resolved_decimal(text)` return the text
+with the sum in it replaced by its value as a plain decimal, or the
+text itself when it holds no sum; the second is for fields of plain
+decimals, where a fraction is a sum. The text before the first letter,
+percent or degree sign is the sum (`Reader`: `sum`, `product`, `factor`,
+`unsigned`, `number`, a recursive descent with brackets to `MAX_DEPTH`
+32); what follows is the result's unit. It runs first in every number
+parser of the app: `units::parse` (lengths and rates), `tools::whole`
+and `decimal`, `properties::decimal`, `project::parse_seconds` and
+`parse_places`, `pictures::opacity`, `shape::read_size`,
+`tool::draw::parse_angle_deg`, `arrange::parse_angle`, and the
+editor's `parse_plain` and counts. The window is unchanged: it hands
+the typed text to those as before.
+
+Tests: `dc-app` `tests/formula.rs` (`a_formula_resolves_to_its_number`,
+`the_unit_after_a_formula_is_the_results`,
+`what_is_no_formula_is_left_as_typed`,
+`a_fraction_is_a_sum_where_the_field_has_no_fractions`,
+`a_formula_that_cannot_be_worked_out_says_why`,
+`a_length_and_a_rate_take_a_formula`,
+`every_kind_of_field_takes_a_formula`); in the window
+`editing::a_field_takes_a_formula_and_shows_its_result`.
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the

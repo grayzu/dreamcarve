@@ -923,7 +923,8 @@ pub(super) fn angle_text(angle_deg: f64) -> String {
 
 /// A typed angle, degrees: a number, with `°` or `deg` after it or not.
 pub(crate) fn parse_angle_deg(text: &str) -> Option<f64> {
-    let text = text.trim();
+    let resolved = crate::formula::resolved_decimal(text).ok()?;
+    let text = resolved.trim();
     let number = text
         .strip_suffix('°')
         .or_else(|| text.strip_suffix("deg"))

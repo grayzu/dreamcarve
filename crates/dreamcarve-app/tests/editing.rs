@@ -739,6 +739,33 @@ fn zero_height_lays_a_drawn_line_level() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// The maintainer's request of 2026-11-25: a field takes a sum and holds
+/// what it comes to. `25 + 15` typed into W makes the square 40 wide and
+/// the field reads 40; a sum that cannot be worked out changes nothing.
+#[test]
+fn a_field_takes_a_formula_and_shows_its_result() {
+    use egui_kittest::kittest::NodeT as _;
+    let (mut h, dir) = plaque("formula");
+    common::go_to(&mut h, "Design");
+    select(&mut h, &["i4"]);
+    h.run_steps(8);
+    retype(&mut h, "W", "25 + 15");
+    let wide = box_of(&h, "i4");
+    assert!((wide.width_mm() - 40.0).abs() < 1e-9, "{wide:?}");
+    h.run_steps(8);
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "W")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some("40"),
+        "the field holds the result, not the sum"
+    );
+    retype(&mut h, "W", "25 +");
+    assert_eq!(box_of(&h, "i4"), wide, "an unfinished sum changes nothing");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Where instance `id` lies in the project.
 fn box_of(h: &Harness<'_, Shell>, id: &str) -> dc_geometry::Rect {
     let project = h.state().app().project();

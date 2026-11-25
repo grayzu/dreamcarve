@@ -93,7 +93,9 @@ Every step of every tool can be **typed** instead of clicked:
   follows the pointer. Type a width, and the height still follows the
   mouse. **Escape** in a field unpins it.
 - A field takes what any length field takes: `6.35`, `1/4 in`,
-  `2 1/2 in`. An angle is in degrees, anticlockwise from the X axis.
+  `2 1/2 in`, or a sum such as `18 / 2 + 0.3`
+  ([Formulas](keyboard.md#formulas)). An angle is in degrees,
+  anticlockwise from the X axis.
 - A value the tool cannot use, such as a width of zero, marks its field
   and draws nothing.
 

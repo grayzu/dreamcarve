@@ -95,7 +95,8 @@ fn number_text(row: &Row, value: f64, units: Units) -> String {
 
 /// A number typed into a field whose unit is `suffix`, the suffix allowed.
 fn parse_plain(text: &str, suffix: &str) -> Result<f64, CommandError> {
-    let trimmed = text.trim();
+    let resolved = crate::formula::typed_decimal(text)?;
+    let trimmed = resolved.trim();
     let bare = trimmed.strip_suffix(suffix).unwrap_or(trimmed).trim();
     let refused = |reason: String| CommandError::NotAQuantity {
         text: text.to_owned(),
@@ -142,6 +143,8 @@ fn parse(project: &Project, row: &Row, key: &str, text: &str) -> Result<Value, C
         FieldKind::Percentage => Value::from(parse_plain(text, "%")? / 100.0),
         FieldKind::Seconds => Value::from(parse_plain(text, "s")?),
         FieldKind::Count => {
+            let resolved = crate::formula::typed_decimal(text)?;
+            let trimmed = resolved.trim();
             let count: u64 = trimmed.parse().map_err(|_| CommandError::NotAQuantity {
                 text: text.to_owned(),
                 reason: format!("`{trimmed}` is not a whole number"),
