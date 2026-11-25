@@ -716,3 +716,59 @@ fn output_is_deterministic() {
     let b = entry(with_island(), &upstream_helix(), (2.0, 5.0), 4.0, 0.0);
     assert_eq!(a, b);
 }
+
+/// The maintainer's tester, 2026-11-24: an 80 mm round pocket cut with a
+/// 6 mm bit warned that there was no room for a ramp, but only when the
+/// tool came to it from above. A ring that starts on the round wall of
+/// the tool-centre region starts on the arc, a hair outside the chords
+/// that stand for it; the room for a ramp is then on one side of the
+/// start only, and for a start on the upper half that side is behind
+/// every direction tried. Wherever on the wall a ring starts, and on
+/// every ring inside it, the ramp is placed.
+#[test]
+fn a_ramp_fits_wherever_a_ring_starts_on_a_round_wall() {
+    let disc = region(Polyline::circle(Point::new(0.0, 0.0), 37.0), Vec::new());
+    let domain = EntryDomain::new(&[disc], 6.0, FLATTEN_TOLERANCE_DEFAULT_MM);
+    let tool = EntryTool {
+        diameter_mm: 6.0,
+        feed_mm_min: 2000.0,
+        plunge_mm_min: 800.0,
+        direction: CutDirection::Climb,
+        side: CutSide::Internal,
+        quantum_mm: 0.001,
+    };
+    let ramp = Entry::Ramp { angle_deg: 15.0 };
+    let mut plunged = Vec::new();
+    for ring in 0..14 {
+        let radius = 37.0 - 2.7 * f64::from(ring);
+        for half_degree in 0..720 {
+            let angle = f64::from(half_degree) * PI / 360.0;
+            let target = Point::new(radius * angle.cos(), radius * angle.sin());
+            let descent = plan(&domain, &ramp, target, &tool).descend(23.0, 12.0);
+            if descent.fell_back() {
+                plunged.push((ring, half_degree, descent.reason));
+                continue;
+            }
+            // The ramp stays in the disc, clear of its wall, and ends on
+            // the ring's start.
+            let mut at = descent.from;
+            for mv in &descent.moves {
+                assert!(
+                    at.distance_to(Point::new(0.0, 0.0)) <= 37.0 + EPS_MM,
+                    "ring {ring} at {half_degree}: {at:?}"
+                );
+                at = mv.to.xy();
+            }
+            assert!(
+                at.distance_to(target) <= 1e-6,
+                "ring {ring} at {half_degree}"
+            );
+        }
+    }
+    assert!(
+        plunged.is_empty(),
+        "{} starts plunged: {:?}",
+        plunged.len(),
+        &plunged[..plunged.len().min(8)]
+    );
+}

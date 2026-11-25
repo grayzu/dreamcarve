@@ -1256,8 +1256,9 @@ impl Area {
     /// Upstream `lineIntervalInsideRegion`: along the line `origin + t ·
     /// direction`, the longest interval `[min, max]` between consecutive
     /// boundary crossings that holds `t = 0`, or starts at most
-    /// `origin_slack_mm` past it (an origin just outside the flattened
-    /// rings), and lies in the region.
+    /// `origin_slack_mm` past it or ends at most that far before it (an
+    /// origin just outside the flattened rings, with the region ahead of
+    /// it or behind it along the line), and lies in the region.
     fn line_interval(
         &self,
         origin: Point,
@@ -1285,7 +1286,10 @@ impl Area {
         let mut best: Option<(f64, f64)> = None;
         for w in ts.windows(2) {
             let [min, max] = *w else { continue };
-            if min > origin_slack_mm.max(ENTRY_EPS) || max < -ENTRY_EPS {
+            // The directions tried cover a half circle, so the region
+            // is as often behind an origin on its boundary as ahead.
+            let slack = origin_slack_mm.max(ENTRY_EPS);
+            if min > slack || max < -slack {
                 continue;
             }
             if !self.contains(origin + direction * ((min + max) / 2.0)) {
