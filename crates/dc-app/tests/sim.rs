@@ -361,3 +361,44 @@ fn rows_are_in_cut_order_and_follow_the_playback() {
     assert!(matches!(reached[2], sim::Reached::Cutting(f) if (f - 0.25).abs() < 1e-9));
     assert_eq!(reached[3..], [sim::Reached::Ahead; 2]);
 }
+
+/// Capability 108: an operation an error of its own stops has no runs.
+/// The rest are simulated, and the app says which is left out. Here the
+/// stock is 4 mm too narrow for the cut-out, which validation passes and
+/// the Profile's generator refuses: it would cut off the stock.
+#[test]
+fn an_operation_with_an_error_is_left_out() {
+    let mut project = plaque();
+    project.stock.width_mm = 166.0;
+    let mut harness = Harness::from_project(project);
+    harness.app.prefs_mut().sim.quality = Quality::Draft;
+    harness.generate();
+    assert!(
+        harness.app.validation().errors.is_empty(),
+        "{:?}",
+        harness.app.validation().errors
+    );
+    let cut_out = op(&harness, 4);
+    assert_eq!(harness.app.project().operations[4].name(), "Cut out");
+    assert_eq!(harness.app.sim_left_out(), std::slice::from_ref(&cut_out));
+    assert_eq!(harness.app.sim_blocked(), None, "the rest can be simulated");
+
+    let built = simulate(&mut harness);
+    assert_eq!(built.plan.runs.len(), 4);
+    assert!(built.plan.runs.iter().all(|run| run.op != cut_out));
+    assert_eq!(harness.app.sim_state(), SimState::Current);
+    let rows = sim::rows(
+        harness.app.project(),
+        harness.app.strings(),
+        &built,
+        f64::INFINITY,
+    );
+    assert_eq!(rows.rows.len(), 4, "a row an operation that was cut");
+    assert_eq!(
+        steps::summary(&harness.app, &Session::default(), Step::Simulate),
+        format!(
+            "4 operations · {}",
+            dc_job::simulate::describe_duration(rows.total_s)
+        )
+    );
+}

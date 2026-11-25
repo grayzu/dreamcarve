@@ -176,8 +176,9 @@ nothing there is an undo step.
      dimmed. **Previous** and **Next** on the transport step to the end
      of the operation before and after; with the stock at the end of an
      operation, Play continues from there. A row whose operation has
-     several runs opens to show them (*Clearing · 1/4 in End Mill*), and
-     a run can be clicked as an operation can. The row of the operation
+     several runs lists them under it (*Clearing · 1/4 in End Mill*;
+     they are always shown, there being two or three at most), and a
+     run can be clicked as an operation can. The row of the operation
      being cut shows its progress.
 
 115. **The tool.** While the job is part-way through, the tool is drawn

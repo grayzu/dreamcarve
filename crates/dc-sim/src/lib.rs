@@ -10,11 +10,11 @@
 //! holds the stock's height at each cell's centre, from the board's
 //! bottom, and the run that cut the cell last. A [`Cutter`] is a tool's
 //! cutting surface, and [`Heightfield::cut`] lowers the stock under one
-//! [`SimMove`] of it. [`build`] cuts a job's [`SimRun`]s in order,
+//! [`SimMove`] of it. [`build()`] cuts a job's [`SimRun`]s in order,
 //! handing back the stock after each as a checkpoint; a [`Timeline`]
 //! places every move in time, and a [`Playback`] shows the stock at any
-//! moment of it. [`facts`] says what the cut stock is like, and
-//! [`compare`] where it still stands above the [`Design`] its operations'
+//! moment of it. [`facts()`] says what the cut stock is like, and
+//! [`compare()`] where it still stands above the [`Design`] its operations'
 //! shapes ask for: uncut material. Everything is in project space: Y-up, Z-up,
 //! millimetres, Z = 0 at the board's bottom (ADR-0001). The grid has no
 //! flip and no handedness rule.

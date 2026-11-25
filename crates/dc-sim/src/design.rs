@@ -5,7 +5,7 @@
 //! `docs/specs/phase-6/design.md`, "Algorithms → The design surface"):
 //! what the stock would look like if every operation cut exactly its
 //! shapes to its depth with a perfectly sharp tool. It exists to be
-//! compared with the simulated stock ([`crate::compare`]).
+//! compared with the simulated stock ([`crate::compare()`]).
 //!
 //! It starts as the uncut stock, and each operation lowers it over its
 //! shapes; a cell keeps the lowest asked of it and the operation that

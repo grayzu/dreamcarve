@@ -18,7 +18,7 @@
 //!
 //! These are the closed forms phase 3 wrote for its tests
 //! (`dc_cam::heightfield`, #452, #456, #679), moved here to be the
-//! simulation's kernel; `dc-cam`'s tests call them still. A [`LineSweep`]
+//! simulation's kernel; `dc-cam`'s tests call them still. A `LineSweep`
 //! is the same arithmetic with a move's own values worked out once, for
 //! the many cells a move is tested against.
 //!

@@ -866,6 +866,8 @@ result is kept to show and to build on, see the worklog),
 `undo_brings_the_earlier_result_back`, `stop_holds_until_simulate_again`,
 `another_quality_is_another_simulation`,
 `nothing_enabled_and_a_refused_project_are_blocked`,
+`an_operation_with_an_error_is_left_out` (capability 108, on the plaque
+with a stock too narrow for its cut-out),
 `simulate_is_empty_then_complete_and_never_needs_attention` (acc 155),
 `rows_are_in_cut_order_and_follow_the_playback`; `sim::camera::`
 `the_presets_look_the_way_their_names_say`,
@@ -908,6 +910,8 @@ vertex and instance counts), `only_the_changed_rectangle_is_sent`;
 `quality_colour_and_layers_are_preferences`,
 `the_male_board_is_offered_with_an_inlay`,
 `the_uncut_list_frames_its_places` (acc 147 in the window),
+`space_plays_and_pauses` (Space after a click, and a control reached
+with Tab keeping it),
 `a_frame_of_the_plaque_is_not_blank_and_changes` (acc 157, through
 wgpu); `tests/kittest.rs`:
 `the_rail_has_six_steps_and_a_project_opens_on_its_first_incomplete_one`,
