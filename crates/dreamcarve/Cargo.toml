@@ -39,6 +39,8 @@ dc-project = { workspace = true, features = ["test-support"] }
 # `assert_safe` on a generated V-Carve (#404).
 dc-cam = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
+# `tests/cli/simulate.rs` reads the heightmaps `simulate --out` writes.
+png.workspace = true
 
 [lints]
 workspace = true

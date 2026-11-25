@@ -40,6 +40,13 @@ pub enum JobError {
         /// The size asked for, mm.
         size_mm: f64,
     },
+    /// The simulated stock could not be written as a picture
+    /// ([`crate::simulate::heightmap_png`]).
+    #[error("the heightmap could not be encoded: {reason}")]
+    Heightmap {
+        /// What the encoder said.
+        reason: String,
+    },
     /// A picture's footprint would reach further from the origin than
     /// [`dc_geometry::MAX_COORDINATE_MM`] ([`crate::picture::picture_into`]).
     #[error(

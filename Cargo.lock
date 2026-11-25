@@ -1107,6 +1107,7 @@ dependencies = [
  "dc-library",
  "dc-project",
  "dreamcarve-shell",
+ "png",
  "serde_json",
 ]
 

@@ -21,6 +21,14 @@
 //! time here leaves out what only the program has: the spindle's spin-up
 //! dwell, and what arc fitting does to a length.
 
+mod design;
+mod picture;
+mod report;
+
+pub use design::design;
+pub use picture::{PICTURE_SOFTWARE, heightmap_png, is_heightmap};
+pub use report::{describe, describe_duration, describe_uncut};
+
 use dc_geometry::Point3;
 use dc_project::{Board, Operation, OperationId, Project, Stock, ToolId};
 use dc_sim::{CutterShape, Digest, Motion, SimError, SimMove, SimRun, Turn};

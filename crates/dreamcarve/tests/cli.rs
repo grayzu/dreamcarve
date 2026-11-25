@@ -38,6 +38,9 @@ mod acceptance_3;
 /// Pictures: `init` on a PNG or JPEG, `image add` and `image list` (#645).
 #[path = "cli/picture.rs"]
 mod picture;
+/// `simulate` (phase 6, capability 125).
+#[path = "cli/simulate.rs"]
+mod simulate;
 /// The tapered ball nose: the library, `tools add`, `check` (#677).
 #[path = "cli/tapered.rs"]
 mod tapered;

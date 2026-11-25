@@ -19,6 +19,8 @@ dc-import.workspace = true
 dc-project.workspace = true
 # The simulation's plan (`simulate`), and its re-export for the shells.
 dc-sim.workspace = true
+# The simulated stock as a 16-bit picture (`simulate::heightmap_png`).
+png.workspace = true
 # `EstimateConfig` is the `[estimate]` table of the user config, read by
 # `dreamcarve-shell` into the type the estimate lines take.
 serde.workspace = true

@@ -52,11 +52,13 @@ under "Documentation deliverables".
   list under Result says *Square recess · 4 areas*. The block would not
   have dropped in. Sam goes back to Operations, sets the Pocket's corner
   relief to dogbone, and the list is empty.
-- **Alex** is carving a sign with a V-bit and a flat depth, and forgot
-  the clearing pass. In the simulation the letters have clean walls and
-  a plateau of uncut wood down the middle of every wide stroke,
-  highlighted. Alex adds the clearing pass and presses **Play** to watch
-  the end mill clear the floor before the V-bit follows the walls.
+- **Alex** has a logo to pocket with a 1/4 in end mill, and wonders
+  whether the bit gets into its narrow necks and sharp inside corners.
+  In the simulation the pocket's floor is flat where the bit ran, and
+  **Uncut material** lights the necks and the corners it could not
+  enter. Alex adds a second Pocket with a 1/8 in bit for the rest,
+  presses **Play**, and watches the big bit clear the floor and the
+  small one follow into the corners.
 - **Jo** wants to know whether the holes are bored before the plaque is
   cut free. They click each row of the operations list in turn: the
   stock shows what has been cut up to and including that operation. The
@@ -227,9 +229,10 @@ nothing there is an undo step.
      their number, their total area and their greatest height (*Square
      recess · 4 areas · 8.7 mm² · up to 6.0 mm*). A click on a row frames
      its places from the Top. What it finds, among others: the corners a
-     round bit leaves in a Pocket or an inside Profile, the middle of a
-     wide V-Carve stroke with no clearing pass, a Pocket too narrow for
-     its tool, ridges between passes taller than the threshold. Tabs
+     round bit leaves in a Pocket or an inside Profile, a Pocket too
+     narrow for its tool, ridges between passes taller than the
+     threshold. (A V-Carve too wide for its bit is not among them: an
+     existing safety rule refuses it before anything is cut.) Tabs
      are not uncut material. A place narrower than about two cells is
      not found (the sliver a 1/8 in bit leaves in a hexagon's corner is
      a quarter of a millimetre wide): the panel says so beside the
@@ -272,7 +275,8 @@ nothing there is an undo step.
      stock bottom. `--quality draft|standard|fine` or `--cell <mm>` set
      the cells, `--board female|male` the board (as `export` names
      them; the stock is the female), `--until <operation>` stops after
-     that operation. It refuses a project `check` refuses, with
+     that operation, and `--uncut-over <mm>` sets 120's threshold. It
+     refuses a project `check` refuses, with
      `check`'s lines, and exits 0 whatever the check for uncut material
      finds. It writes `--out` over nothing or over a picture it wrote
      before, which it knows by the picture's own `Software` text, and
@@ -389,8 +393,9 @@ within 0.001 mm.
 147. **Uncut material** (120). A 30 mm square Pocket with a 6 mm end
      mill reports four areas of `(1 − π/4)·r²` each within two cells'
      worth; with dogbone relief it reports none. A sliver one cell
-     wide along a wall is not reported. A V-Carve of a 12 mm wide bar with a flat depth
-     and no clearing pass reports the plateau; with the pass, none.
+     wide along a wall is not reported. The sign, V-carved with and
+     without its clearing pass, reports none: without one the V-bit
+     clears its own floor.
      Tabs are never reported. Ridges 0.25 mm high are not reported at
      0.3 mm and are at 0.2 mm.
 148. **Only what is asked for** (119, 120). Nothing is reported where

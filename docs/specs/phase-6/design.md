@@ -214,20 +214,23 @@ impl Playback {
 
 ```rust
 /// What the operations' shapes ask for (functional 119).
-pub struct Design {
-    z_mm: Vec<f64>,        // the surface; `top_z_mm` where nothing asks
-    asked_by: Vec<u16>,    // the operation that asks for the lowest, or NONE
-}
+pub struct Design { /* grid, top_z_mm, z_mm: Vec<f64>, asked_by: Vec<u16> */ }
+pub enum BandSide { Inside, Outside }
 impl Design {
-    pub fn uncut(grid: &Grid, top_z_mm: f64) -> Self;
-    pub fn lower_regions(&mut self, regions: &[Region], z_mm: f64, op: u16);            // Pocket, Bore, a trench
-    pub fn raise_in(&mut self, regions: &[Region], z_mm: f64, within: &[Region]);        // tabs in a trench
+    pub fn uncut(grid: Grid, top_z_mm: f64) -> Self;
+    pub fn z_mm(&self, i: u32, j: u32) -> Option<f64>;  pub fn asked_by(&self, i: u32, j: u32) -> Option<u16>;
+    pub fn lower_regions(&mut self, regions: &[Region], z_mm: f64, op: u16);            // Pocket, Bore
+    pub fn lower_band(&mut self, regions: &[Region], width_mm: f64, side: BandSide, z_mm: f64, op: u16);  // a trench beside an edge
+    pub fn lower_near(&mut self, paths: &[Polyline], reach_mm: f64, z_mm: f64, op: u16);  // a trench along a path
+    pub fn raise_near(&mut self, paths: &[Polyline], reach_mm: f64, z_mm: f64, op: u16);  // tabs in a trench
     pub fn lower_cone(&mut self, regions: &[Region], start_z_mm: f64, slope: f64, flat_mm: Option<f64>, op: u16);
 }
 
 pub const UNCUT_MM: f64 = 0.3;                      // the threshold unless the user changes it
+pub const UNCUT_RANGE_MM: (f64, f64) = (0.05, 5.0);
 pub const UNCUT_FLAG: u8 = 1;                       // a bit, so phase 7's gouge can be the next
-pub struct Place { pub op: u16, pub cells: u32, pub area_mm2: f64, pub height_mm: f64, pub bounds: Rect }
+pub const MIN_PLACE_CELLS: u32 = 4;
+pub struct Place { pub op: Option<u16>, pub cells: u32, pub area_mm2: f64, pub height_mm: f64, pub bounds: Rect }
 pub struct Comparison { pub flags: Vec<u8>, pub places: Vec<Place> }
 pub fn compare(field: &Heightfield, design: &Design, uncut_mm: f64) -> Comparison;
 ```
@@ -254,12 +257,14 @@ pub struct BoardPlan { pub board: Board, pub width_mm: f64, pub height_mm: f64, 
                        pub runs: Vec<PlannedRun> }
 pub struct PlannedRun { pub op: OperationId, pub op_index: usize, pub label: RunLabel, pub tool: ToolId,
                         pub sim: SimRun, pub key: u64 }        // key: what `dc_app` digests
-pub fn plan(project: &Project, generated: &[EmitOp], estimate: &EstimateConfig) -> Plan;
-pub fn design(project: &Project, board: &BoardPlan, grid: &Grid) -> Design;
+pub fn plan(project: &Project, generated: &[EmitOp], estimate: &EstimateConfig) -> Result<Plan, SimError>;
+pub fn sim_moves(toolpath: &Toolpath, estimate: &EstimateConfig) -> Vec<SimMove>;
+pub fn design(project: &Project, board: &BoardPlan, generated: &[EmitOp], grid: Grid) -> Design;
 
-pub struct Report { /* the facts, the places by operation, the plain tools; `Display` is the CLI's text */ }
-pub fn report(project: &Project, board: &BoardPlan, facts: &Facts, comparison: &Comparison) -> Report;
-pub fn heightmap_png(field: &Heightfield) -> Vec<u8>;          // 16-bit gray, top row the highest Y
+pub fn describe(project: &Project, board: &BoardPlan, field: &Heightfield, runs_cut: usize, facts: &Facts) -> Vec<String>;
+pub fn describe_uncut(project: &Project, comparison: &Comparison, uncut_mm: f64, cell_mm: f64) -> Vec<String>;
+pub fn heightmap_png(field: &Heightfield) -> Result<Vec<u8>, JobError>;   // 16-bit gray, top row the highest Y
+pub fn is_heightmap(bytes: &[u8]) -> bool;                               // a picture `heightmap_png` wrote
 ```
 
 `dc_job` re-exports `dc_sim` as `dc_job::sim`, as it re-exports the
@@ -492,19 +497,32 @@ lowest asked of it and the operation that asked):
 
 | Operation | Regions and height |
 | --- | --- |
-| Pocket | The regions its generator clears, from the same target resolution (`dc_cam`'s public region helper for a Pocket, added in slice 10 if none is public), at `top − depth`; with corner relief, the notches' discs joined to them |
-| Profile | The trench: between each target outline and its offset by the tool's diameter on the cut side (`dc_geometry::offset`, sharp corners kept on the outline's side), or by the radius each way for On; at `top − depth`, 0 when it goes through. Then `raise_in` each placed tab's footprint (its width along the outline, the trench's width across) to the tab's top |
-| Bore | Each circle's disc at `top − depth` |
-| V-Carve | `lower_cone` over its targets' area: `start − min(flat, d / slope)` with `d` the distance from the cell's centre to the area's boundary and `start` the operation's start plane |
+| Pocket | `lower_regions`: its targets' closed outlines as placed, nested into regions with their islands as holes, as the safety pass finds them, at `top − depth` |
+| Profile, Inside or Outside | `lower_band`: a trench the tool's diameter wide beside the regions' edges, on the cut side, at `top − depth` (the bottom when it goes through). The band is found on the grid: the cells of that side whose centres are within the width of the edge, by the distance transform below, so the shape's own corners stay sharp |
+| Profile, On line, Left or Right | `lower_near`: within the tool's radius of the paths (a Left or Right Profile's offset by the radius to its side first): what the tool sweeps |
+| Profile's tabs | `raise_near`: the trench is kept at the tallest tab's top within the tool's radius, and a cell, of each stretch of the tool's path that rides over a tab. Those stretches are the preview's tab marks (`dc_job::preview::marks`), the one thing read from a generated run |
+| Bore | `lower_regions`: each circle's disc at `top − depth` |
+| V-Carve | `lower_cone` over its regions: `start − min(flat, d / slope)` with `d` the distance from the cell's centre to the regions' edge and `start` the top less the operation's start depth |
 | Drill, Engrave, Inlay, Photo V-Carve | Nothing. The design stays as it is under them, so nothing they cut or leave is reported |
+
+A tab is kept a tool's radius longer at each end than the 8 mm that
+stands, where the tool's round end is still coming down: more than
+stands, never less, so a tab is never reported. A Pocket's corner relief
+is not asked for: it is a cut past the shape, which only a gouge check
+would look at. A V-Carve seldom has anything to report: a carve too wide
+for its bit is refused by S17 before it is cut, and with no clearing
+pass the V-bit clears its own floor; what is left to find is a floor's
+ridges over the threshold.
 
 `lower_cone` needs each inside cell's distance to the boundary. It
 rasterises the area to the grid (a cell is inside when its centre is),
 then takes the exact Euclidean distance transform of the mask
 (Felzenszwalb and Huttenlocher's two-pass lower-envelope method, O(cells),
-written from the paper), less half a cell: the mask's edge is half a cell
-from the first inside centre on average. The error is under a cell,
-which `compare`'s neighbourhood absorbs.
+written from the paper; `dc_sim::edt`), less half a cell: the mask's edge
+is half a cell from the first inside centre on average. The error is
+under a cell, which `compare`'s neighbourhood absorbs. A shape is laid on
+the grid by scan lines over its outlines, arcs flattened to an eighth of
+a cell.
 
 The design is only ever at or below the uncut top, and the check reads
 it one way: stock standing above it. Where no operation asks for a cut
@@ -794,15 +812,18 @@ and arcs), `part_way_is_the_build_of_the_moves_so_far` (acc 140),
 `a_spent_budget_returns_the_time_reached`,
 `the_pose_is_none_at_both_ends`, `an_empty_job_plays`.
 
-**The command (slice 5)** `dreamcarve::cli::simulate::`
-`the_report_and_the_picture_of_each_fixture` (acc 153, 154),
-`a_file_that_is_not_its_picture_is_kept`,
+**The command (slice 5)** `dreamcarve` `tests/cli/simulate.rs`:
+`the_report_and_the_picture_of_each_fixture` (acc 153; the plaque, the
+sign, the inlay's male board), `a_file_that_is_not_its_picture_is_kept`,
 `a_refused_project_is_refused_as_check_refuses_it`,
-`until_stops_after_the_operation`, `the_male_board_is_its_own_picture`,
-`a_cell_too_small_is_refused` (acc 131);
-`dc_job::simulate::heightmap_png_is_sixteen_bit_top_row_first`;
-`golden::sim_*` each `tests/golden/sim-<case>/heights.bin` within the
-case's stated tolerance.
+`until_stops_after_the_operation`, `the_male_board_is_its_own_picture`
+(acc 150), `a_cell_too_small_is_refused` (acc 131),
+`uncut_material_is_listed_by_operation` (acc 147); `dc_job`
+`tests/simulate.rs`: `a_heightmap_is_sixteen_bit_top_row_first`,
+`the_plaque_measures_as_it_is_drawn` (acc 154). The parity capture of
+PureCutCNC's grids (`tools/parity/sim-capture.ts`) is not done: it needs
+`npm install` in the reference checkout, which is the maintainer's to
+run (the worklog).
 
 **The app core (slice 6)** `dc_app::steps::` `there_are_six_steps`,
 `simulate_is_empty_then_complete_then_attention` (acc 155),
@@ -837,19 +858,23 @@ directions, `fit_frames_the_eight_corners`, `no_drag_goes_under_the_bed`
 `the_keys` (acc 158), `the_uncut_list_frames_its_places`.
 
 **The check (slices 10–11)** `dc_sim::edt::`
-`distances_equal_brute_force_on_random_masks` (a property);
-`design::` `lower_cone_is_distance_over_slope_capped`,
-`the_design_is_never_above_the_top`;
-`dc_job::simulate::design::` `each_operation_asks_for_its_table_row`
-(acc 146), `tabs_are_raised_in_the_trench`;
-`dc_sim::compare::` `a_wall_one_cell_off_is_not_a_place`,
-`small_components_are_dropped`, `a_place_names_its_operation`;
-`dc_job::simulate::` `a_square_pocket_has_four_corners_and_none_with_dogbones`,
-`a_sliver_one_cell_wide_is_not_a_place`, `a_wide_v_stroke_without_clearing_has_a_plateau`,
-`ridges_follow_the_threshold` (acc 147),
-`nothing_is_reported_where_no_shape_asks` (a lead beside a trench, a
-Drill wider than its circle, an Engrave, an Inlay, a Photo V-Carve, the
-uncut stock; acc 148).
+`distances_equal_brute_force_on_random_masks`,
+`a_bars_cells_count_from_its_edge`, `a_full_mask_is_far_from_any_edge`;
+`design::` `a_region_is_lowered_and_its_island_left`,
+`the_lowest_asked_wins_and_stays_in_the_board`,
+`a_band_is_the_tools_width_beside_the_edge`,
+`a_path_is_lowered_within_reach`, `a_tab_is_raised_in_its_own_trench`,
+`lower_cone_is_distance_over_slope_capped`,
+`the_design_is_never_above_the_top`; `compare::`
+`a_square_pocket_has_four_corners`,
+`nothing_is_reported_where_no_shape_asks`,
+`a_wall_one_cell_off_is_not_a_place`, `ridges_follow_the_threshold`,
+`small_patches_are_dropped_and_places_name_their_operations`; `dc_job`
+`tests/simulate.rs`: `each_operation_asks_for_its_table_row` (acc 146,
+on the plaque), `a_v_carve_asks_for_its_cone_to_the_flat_depth` (acc
+146, on the sign), `a_square_pocket_has_four_corners_and_none_with_dogbones`
+(acc 147 and 148: the plaque, the sign and the inlay pair report
+nothing; the plaque with its relief off, four corners).
 
 ## Slices
 

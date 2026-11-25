@@ -262,7 +262,7 @@ pub fn check_preview_not_program(preview: &Path, outputs: &[PathBuf]) -> Result<
 /// True if `a` and `b` name one file, whether or not it exists yet: the
 /// same path, the same existing file, or the same name in the same
 /// directory.
-fn same_path(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
     if a == b || same_file(a, b) {
         return true;
     }

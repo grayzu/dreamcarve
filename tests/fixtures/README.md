@@ -240,3 +240,21 @@ The calibration drawings for the image-prep defaults (#599), drawn by
 pinholes, and the same letters with a trace's jittered edges. The sweep
 that fixes `--min-detail` and `--smooth` from them, and how to rerun it,
 are in `prep/README.md`.
+
+## `simulate/`
+
+What `dreamcarve simulate` says of the quick-start projects and the
+pictures it writes of them (phase 6 functional spec, acceptance 153):
+`plaque` and `sign` at the Standard quality, and the lettered inlay's male
+board (`dc.dcv --board male`) at Draft. Each `.txt` is the command's
+report, less its last line, which names the picture's path; each `.png`
+is the finished stock as a 16-bit grayscale heightmap, white at the
+board's top and black at its bottom. `crates/dreamcarve/tests/cli/simulate.rs`
+compares the report to the place it prints and every pixel to within one
+level. They change only in a commit whose message says why; to write
+them again:
+
+```sh
+cargo run -p dreamcarve -- simulate tests/fixtures/plaque.dcv --out tests/fixtures/simulate/plaque.png
+```
+

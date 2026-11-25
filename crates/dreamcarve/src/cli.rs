@@ -21,7 +21,7 @@ use dc_project::{PostProcessorError, PostProcessorRef, SettingReset};
 use dreamcarve_shell::{ShellError, StagedFile};
 
 use crate::output::{self, errln, outln};
-use crate::{check, config, export, image, init, prep, tabs, tools};
+use crate::{check, config, export, image, init, prep, simulate, tabs, tools};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
 #[derive(Debug, Parser)]
@@ -48,6 +48,10 @@ pub enum Command {
     Export(ExportArgs),
     /// Report the problems export would find, without writing G-code.
     Check(CheckArgs),
+    /// Cut the project's toolpaths into its stock and report what is
+    /// left: the deepest cut, where it goes through, what the round bits
+    /// could not reach. Writes nothing but the picture --out asks for.
+    Simulate(SimulateArgs),
     /// List the available post-processors.
     Posts,
     /// Show the user configuration.
@@ -397,6 +401,49 @@ pub struct CheckArgs {
     pub preview: Option<PathBuf>,
 }
 
+/// Arguments of `simulate` (phase 6, capability 125).
+#[derive(Debug, clap::Args)]
+pub struct SimulateArgs {
+    /// The project to simulate.
+    pub dcv: PathBuf,
+    /// Write the finished stock to this .png file as a 16-bit grayscale
+    /// heightmap, one pixel a cell: white is the board's top, black its
+    /// bottom. Written over nothing but an earlier heightmap.
+    #[arg(long, value_name = "PNG")]
+    pub out: Option<PathBuf>,
+    /// How finely the board is divided: 512, 1024 or 2048 cells along
+    /// its longer side [default: standard].
+    #[arg(long, value_name = "QUALITY", conflicts_with = "cell")]
+    pub quality: Option<QualityArg>,
+    /// The cell size in millimetres, instead of a quality: at least 0.02.
+    #[arg(long, value_name = "MM")]
+    pub cell: Option<f64>,
+    /// The board to simulate: `female`, the stock, or `male`, the Inlays'
+    /// male board [default: female].
+    #[arg(long, value_name = "BOARD")]
+    pub board: Option<BoardArg>,
+    /// Stop after this operation: the stock as it is once the operation
+    /// of this id has cut. The check for uncut material is then left out.
+    #[arg(long, value_name = "OPERATION")]
+    pub until: Option<String>,
+    /// How far above what the shapes ask for the stock must stand to be
+    /// listed as uncut material, in millimetres, from 0.05 to 5
+    /// [default: 0.3].
+    #[arg(long, value_name = "MM")]
+    pub uncut_over: Option<f64>,
+}
+
+/// `--quality` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum QualityArg {
+    /// 512 cells along the longer side.
+    Draft,
+    /// 1024 cells.
+    Standard,
+    /// 2048 cells.
+    Fine,
+}
+
 /// `--board` values (#498).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum BoardArg {
@@ -493,6 +540,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Command::ImagePrep(args) => prep::run(&args),
         Command::Export(args) => export::run(&args),
         Command::Check(args) => check::run(&args),
+        Command::Simulate(args) => simulate::run(&args),
         Command::Posts => posts(),
         Command::Config(args) => config::run(&args.command),
         Command::Tools(args) => tools::run(&args.command),

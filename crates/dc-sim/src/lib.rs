@@ -13,7 +13,9 @@
 //! [`SimMove`] of it. [`build`] cuts a job's [`SimRun`]s in order,
 //! handing back the stock after each as a checkpoint; a [`Timeline`]
 //! places every move in time, and a [`Playback`] shows the stock at any
-//! moment of it. [`facts`] says what the cut stock is like. Everything is in project space: Y-up, Z-up,
+//! moment of it. [`facts`] says what the cut stock is like, and
+//! [`compare`] where it still stands above the [`Design`] its operations'
+//! shapes ask for: uncut material. Everything is in project space: Y-up, Z-up,
 //! millimetres, Z = 0 at the board's bottom (ADR-0001). The grid has no
 //! flip and no handedness rule.
 //!
@@ -25,9 +27,12 @@
 
 mod build;
 mod checkpoints;
+mod compare;
 mod cut;
 mod cutter;
+mod design;
 mod digest;
+mod edt;
 mod facts;
 mod field;
 mod grid;
@@ -37,8 +42,12 @@ mod timeline;
 
 pub use build::{CHUNK_CELLS, Outcome, Progress, SimRun, build};
 pub use checkpoints::{CHECKPOINT_BYTES, Checkpoints};
+pub use compare::{
+    Comparison, MIN_PLACE_CELLS, Place, UNCUT_FLAG, UNCUT_MM, UNCUT_RANGE_MM, compare,
+};
 pub use cut::{CHORD_MM, Motion, SimArc, SimMove, Stamp, Turn};
 pub use cutter::{Cutter, CutterShape};
+pub use design::{BandSide, Design};
 pub use digest::Digest;
 pub use facts::{Facts, facts};
 pub use field::{Heightfield, UNCUT};

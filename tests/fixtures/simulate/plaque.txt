@@ -1,0 +1,6 @@
+Simulated the stock, 170.000 mm × 120.000 mm × 11.800 mm, as 1024 × 723 cells of 0.166 mm.
+5 operations in 5 tool runs, 3 min 33 s of moves.
+Deepest cut: 11.800 mm by `Cut out` (op4).
+Cut through: 3078.0 mm² by `Screw holes` (op3), `Cut out` (op4).
+Removed: 64.18 cm³.
+No uncut material: nowhere is the stock more than 0.300 mm above what the shapes ask for.

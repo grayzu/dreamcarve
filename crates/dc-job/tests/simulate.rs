@@ -15,11 +15,14 @@
 
 mod common;
 
-use dc_geometry::{Point3, assert_approx_eq};
-use dc_job::sim::{CellSpec, Grid, Heightfield, Motion, Outcome, Quality, build, facts};
-use dc_job::simulate::{BoardPlan, Plan, plan, sim_moves};
+use dc_geometry::{Point, Point3, Rect, assert_approx_eq};
+use dc_job::sim::{
+    CellSpec, Comparison, Cutter, Design, Grid, Heightfield, Motion, Outcome, Quality, SimMove,
+    UNCUT_MM, build, compare, facts,
+};
+use dc_job::simulate::{BoardPlan, Plan, design, heightmap_png, is_heightmap, plan, sim_moves};
 use dc_job::{EmitOp, EstimateConfig, Move, ProgramSplit, Toolpath};
-use dc_project::{Board, Operation, PostProcessorRef, Project, ToolId};
+use dc_project::{Board, CornerRelief, Operation, PostProcessorRef, Project, ToolId};
 
 use common::{DATE, load_dcv, repo_root};
 
@@ -411,4 +414,337 @@ fn the_plaques_tabs_stand() {
             );
         }
     }
+}
+
+/// The box of instance `id`'s outlines as placed on the stock.
+fn bounds_of(project: &Project, id: &str) -> Rect {
+    let instance = project
+        .instances
+        .iter()
+        .find(|i| i.id.as_str() == id)
+        .unwrap_or_else(|| panic!("instance {id}"));
+    let definition = &project.definitions[&instance.definition];
+    let mut bounds: Option<Rect> = None;
+    for profile in &definition.profiles {
+        let placed = instance.transform.apply_polyline(profile).unwrap();
+        let b = placed.bounds().unwrap();
+        bounds = Some(bounds.map_or(b, |a| a.including(b.min).including(b.max)));
+    }
+    bounds.unwrap()
+}
+
+fn centre_of(rect: Rect) -> Point {
+    Point::new(
+        (rect.min.x + rect.max.x) / 2.0,
+        (rect.min.y + rect.max.y) / 2.0,
+    )
+}
+
+/// The operation of `id`'s place in the project's list: the number the
+/// design knows it by.
+fn op_number(project: &Project, id: &str) -> u16 {
+    let index = project
+        .operations
+        .iter()
+        .position(|op| op.id().as_str() == id)
+        .unwrap_or_else(|| panic!("operation {id}"));
+    u16::try_from(index).unwrap()
+}
+
+/// A project's stock simulated at `quality`, with its design surface and
+/// the comparison of the two.
+fn checked(project: &Project, quality: Quality) -> (Heightfield, Design, Comparison) {
+    let runs = generated(project);
+    let plan = plan(project, &runs, &EstimateConfig::default()).unwrap();
+    let board = plan.board(Board::Female).unwrap();
+    let field = cut(board, CellSpec::Quality(quality));
+    let asked = design(project, board, &runs, *field.grid());
+    let found = compare(&field, &asked, UNCUT_MM);
+    (field, asked, found)
+}
+
+fn asked_at(design: &Design, p: Point) -> (f64, Option<u16>) {
+    let (i, j) = design.grid().cell_at(p).expect("on the board");
+    (design.z_mm(i, j).unwrap(), design.asked_by(i, j))
+}
+
+/// Acceptance 146: on the plaque, which has one operation of most
+/// kinds, the design surface at named points is the functional spec's
+/// table: a Pocket's floor inside its region and the top on its island;
+/// a Bore's circle, through; an Outside Profile's trench its tool's
+/// width wide round the outline, through but for its tabs, and the top
+/// beyond it; nothing for the Engrave, whose line is what it cuts.
+#[test]
+fn each_operation_asks_for_its_table_row() {
+    let project = fixture("plaque");
+    let (_, asked, _) = checked(&project, Quality::Standard);
+    let top_mm = project.stock.thickness_mm.unwrap();
+    let cell_mm = asked.grid().cell_mm();
+
+    // op1, the Panel: a rounded rectangle (i2) with a round island (i3),
+    // 4 mm deep.
+    let (panel, island) = (bounds_of(&project, "i2"), bounds_of(&project, "i3"));
+    let in_panel = Point::new(panel.min.x + 10.0, centre_of(panel).y);
+    let (z, op) = asked_at(&asked, in_panel);
+    assert_approx_eq!(z, top_mm - 4.0, 1e-9);
+    assert_eq!(op, Some(op_number(&project, "op1")));
+    assert_eq!(
+        asked_at(&asked, centre_of(island)),
+        (top_mm, None),
+        "the island"
+    );
+
+    // op2, the Square recess (i4), 6 mm deep, its corners sharp.
+    let square = bounds_of(&project, "i4");
+    let corner = Point::new(square.min.x + 2.0 * cell_mm, square.min.y + 2.0 * cell_mm);
+    for p in [centre_of(square), corner] {
+        let (z, op) = asked_at(&asked, p);
+        assert_approx_eq!(z, top_mm - 6.0, 1e-9);
+        assert_eq!(op, Some(op_number(&project, "op2")));
+    }
+
+    // op3, the Screw holes: each circle bored through.
+    for hole in ["i5", "i6", "i7", "i8"] {
+        let (z, op) = asked_at(&asked, centre_of(bounds_of(&project, hole)));
+        assert_approx_eq!(z, 0.0, 0.0);
+        assert_eq!(op, Some(op_number(&project, "op3")));
+    }
+
+    // op4, the Cut out: a trench 6.35 mm wide outside the outline (i1).
+    let outline = bounds_of(&project, "i1");
+    let quarter_up = outline.min.y + (outline.max.y - outline.min.y) / 4.0;
+    let cut_out = Some(op_number(&project, "op4"));
+    assert_eq!(
+        asked_at(&asked, Point::new(outline.min.x - 3.0, quarter_up)),
+        (0.0, cut_out)
+    );
+    assert_eq!(
+        asked_at(
+            &asked,
+            Point::new(outline.min.x - 6.35 - 3.0 * cell_mm, quarter_up)
+        ),
+        (top_mm, None),
+        "past the trench"
+    );
+    assert_eq!(
+        asked_at(&asked, Point::new(outline.min.x + 2.0, quarter_up)),
+        (top_mm, None),
+        "the part itself"
+    );
+    // Its four tabs stand 3 mm high in the trench, and only there.
+    let grid = *asked.grid();
+    let mut tab_cells = 0;
+    for j in 0..grid.ny() {
+        for i in 0..grid.nx() {
+            if asked.asked_by(i, j) == cut_out && asked.z_mm(i, j).unwrap() > 0.0 {
+                assert_approx_eq!(asked.z_mm(i, j).unwrap(), 3.0, 1e-9);
+                tab_cells += 1;
+            }
+        }
+    }
+    // Four tabs of 8 mm, 6.35 mm across. The design keeps the trench at
+    // the tab's top wherever the tool rides over the tab and a radius
+    // past each end of that ride, where the tool's round end is still
+    // coming down: more than the 8 mm that stands, never less, so a tab
+    // is never reported as uncut.
+    let tab_mm2 = f64::from(tab_cells) * cell_mm * cell_mm;
+    assert!(
+        tab_mm2 > 4.0 * 8.0 * 6.35 && tab_mm2 < 4.0 * (8.0 + 2.0 * 6.35 + 1.0) * 6.35,
+        "{tab_mm2} mm² of tab"
+    );
+
+    // op5, the Engrave: its border runs 5 mm inside the outline, and
+    // nothing is asked there.
+    let on_border = Point::new(outline.min.x + 5.0, centre_of(outline).y);
+    assert_eq!(asked_at(&asked, on_border), (top_mm, None));
+}
+
+/// Acceptance 146, the V-Carve: on the sign, the Background is asked to
+/// its flat depth away from its walls and its oval island is left at the
+/// top where the lettering does not carve it.
+#[test]
+fn a_v_carve_asks_for_its_cone_to_the_flat_depth() {
+    let project = fixture("sign");
+    let (field, asked, _) = checked(&project, Quality::Standard);
+    let top_mm = project.stock.thickness_mm.unwrap();
+    let background = Some(op_number(&project, "op2"));
+    // Every cell the Background asks for is between the top and 2.5 mm
+    // down, and most of its floor is at 2.5 mm.
+    let grid = *asked.grid();
+    let (mut cells, mut on_floor) = (0_u32, 0_u32);
+    for j in 0..grid.ny() {
+        for i in 0..grid.nx() {
+            if asked.asked_by(i, j) != background {
+                continue;
+            }
+            let depth_mm = top_mm - asked.z_mm(i, j).unwrap();
+            assert!((0.0..=2.5 + 1e-9).contains(&depth_mm), "{depth_mm} mm deep");
+            cells += 1;
+            on_floor += u32::from((depth_mm - 2.5).abs() < 1e-9);
+            // What was cut there is at least as deep as asked, to the
+            // threshold: the sign has no uncut material.
+            assert!(field.z_mm(i, j).unwrap() <= asked.z_mm(i, j).unwrap() + 1.0);
+        }
+    }
+    assert!(
+        cells > 10_000 && on_floor > cells / 2,
+        "{on_floor} of {cells}"
+    );
+}
+
+/// Acceptance 147: the plaque's Square recess has dogbone relief and
+/// reports nothing; with the relief turned off its four corners are
+/// uncut, each the corner a 6.35 mm end mill leaves, the Pocket's full
+/// 6 mm high. Acceptance 148: nothing else is reported, on the plaque,
+/// the sign or the inlay pair: not beside the Profile's trench where its
+/// lead-in cut, not on the Engrave, not on a tab.
+#[test]
+fn a_square_pocket_has_four_corners_and_none_with_dogbones() {
+    for name in ["plaque", "sign", "dc"] {
+        for quality in [Quality::Draft, Quality::Standard] {
+            let (_, _, found) = checked(&fixture(name), quality);
+            assert!(
+                found.places.is_empty(),
+                "{name} at {quality:?}: {:?}",
+                found.places
+            );
+        }
+    }
+
+    let mut project = fixture("plaque");
+    for op in &mut project.operations {
+        if let Operation::Pocket(pocket) = op
+            && pocket.id.as_str() == "op2"
+        {
+            assert_eq!(pocket.corner_relief, CornerRelief::Dogbone);
+            pocket.corner_relief = CornerRelief::None;
+        }
+    }
+    let square = bounds_of(&project, "i4");
+    let recess = Some(op_number(&project, "op2"));
+    for quality in [Quality::Standard, Quality::Fine] {
+        let (field, _, found) = checked(&project, quality);
+        assert_eq!(found.places.len(), 4, "{quality:?}: {:?}", found.places);
+        let r = 6.35 / 2.0;
+        let corner_mm2 = (1.0 - std::f64::consts::FRAC_PI_4) * r * r;
+        for place in &found.places {
+            assert_eq!(place.op, recess);
+            assert_approx_eq!(place.height_mm, 6.0, 1e-9);
+            assert!(
+                place.area_mm2 > corner_mm2 / 3.0 && place.area_mm2 < corner_mm2,
+                "{quality:?}: a corner of {} mm², under {corner_mm2}",
+                place.area_mm2
+            );
+            // In a corner of the square.
+            let c = centre_of(place.bounds);
+            assert!(
+                (c.x - square.min.x).min(square.max.x - c.x) < r
+                    && (c.y - square.min.y).min(square.max.y - c.y) < r,
+                "a place at {c:?}"
+            );
+        }
+        let flagged = found.flags.iter().filter(|&&f| f != 0).count();
+        assert_eq!(
+            flagged,
+            found.places.iter().map(|p| p.cells as usize).sum::<usize>()
+        );
+        assert_eq!(found.flags.len(), field.heights().len());
+    }
+}
+
+/// Acceptance 154: read from the simulation at Standard, the plaque is
+/// its drawing's sizes to within a cell and its depths exactly: the two
+/// pockets' floors, the four holes' diameter, the engraved line's depth.
+#[test]
+fn the_plaque_measures_as_it_is_drawn() {
+    let project = fixture("plaque");
+    let (field, _, _) = checked(&project, Quality::Standard);
+    let top_mm = project.stock.thickness_mm.unwrap();
+    let cell_mm = field.grid().cell_mm();
+    let z_at = |p: Point| {
+        let (i, j) = field.grid().cell_at(p).unwrap();
+        field.z_mm(i, j).unwrap()
+    };
+    let panel = bounds_of(&project, "i2");
+    assert_approx_eq!(
+        z_at(Point::new(panel.min.x + 10.0, centre_of(panel).y)),
+        top_mm - 4.0,
+        1e-9
+    );
+    assert_approx_eq!(z_at(centre_of(bounds_of(&project, "i3"))), top_mm, 0.0);
+    let square = bounds_of(&project, "i4");
+    assert_approx_eq!(z_at(centre_of(square)), top_mm - 6.0, 1e-9);
+    // The recess is 30 mm across at its middle: the floor's width there.
+    let mid_y = centre_of(square).y;
+    let across = (0..field.grid().nx())
+        .filter(|&i| {
+            let c = field.grid().centre(i, 0);
+            c.x > square.min.x - 2.0
+                && c.x < square.max.x + 2.0
+                && z_at(Point::new(c.x, mid_y)) < top_mm - 5.9
+        })
+        .count();
+    assert_approx_eq!(across as f64 * cell_mm, 30.0, 2.0 * cell_mm);
+    // Each hole is cut through over a 5 mm circle.
+    for hole in ["i5", "i6", "i7", "i8"] {
+        let b = bounds_of(&project, hole);
+        let centre = centre_of(b);
+        assert_approx_eq!(b.max.x - b.min.x, 5.0, 1e-6);
+        let (mut through, mut ring) = (0_u32, 0.0_f64);
+        for j in 0..field.grid().ny() {
+            for i in 0..field.grid().nx() {
+                let c = field.grid().centre(i, j);
+                if c.distance_to(centre) < 4.0 && field.is_through(i, j) {
+                    through += 1;
+                    ring = ring.max(c.distance_to(centre));
+                }
+            }
+        }
+        let area_mm2 = f64::from(through) * cell_mm * cell_mm;
+        assert_approx_eq!(
+            area_mm2,
+            std::f64::consts::PI * 2.5 * 2.5,
+            2.5 * 2.0 * 3.2 * cell_mm
+        );
+        assert_approx_eq!(ring, 2.5, cell_mm);
+    }
+}
+
+/// Capability 125: the picture is a 16-bit grayscale PNG, one pixel a
+/// cell, white at the board's top and black at its bottom, its first row
+/// the grid's last (a picture's top is the highest Y); and it knows its
+/// own pictures from anyone else's.
+#[test]
+fn a_heightmap_is_sixteen_bit_top_row_first() {
+    let grid = Grid::of(4.0, 2.0, CellSpec::CellMm(1.0)).unwrap();
+    let mut field = Heightfield::uncut(grid, 10.0).unwrap();
+    let flat = Cutter::Flat { radius_mm: 0.1 };
+    let dot =
+        |x: f64, y: f64, z: f64| SimMove::cut(Point3::new(x, y, z), Point3::new(x, y, z), 0.0);
+    // Half way down in the top row's first cell; through in the bottom
+    // row's last.
+    field.cut(&dot(0.5, 1.5, 5.0), (0.0, 1.0), &flat, 0);
+    field.cut(&dot(3.5, 0.5, -1.0), (0.0, 1.0), &flat, 0);
+    let png = heightmap_png(&field).unwrap();
+
+    let decoder = png::Decoder::new(std::io::Cursor::new(&png));
+    let mut reader = decoder.read_info().unwrap();
+    assert_eq!((reader.info().width, reader.info().height), (4, 2));
+    assert_eq!(reader.info().color_type, png::ColorType::Grayscale);
+    assert_eq!(reader.info().bit_depth, png::BitDepth::Sixteen);
+    let mut buffer = vec![0; reader.output_buffer_size().unwrap()];
+    reader.next_frame(&mut buffer).unwrap();
+    let (pairs, _) = buffer.as_chunks::<2>();
+    let pixels: Vec<u16> = pairs.iter().map(|p| u16::from_be_bytes(*p)).collect();
+    // 5 of 10 mm is 32 767.5, which rounds up.
+    assert_eq!(
+        pixels,
+        [32_768, 65_535, 65_535, 65_535, 65_535, 65_535, 65_535, 0]
+    );
+
+    assert!(is_heightmap(&png));
+    let theirs = std::fs::read(repo_root().join("tests/fixtures/photo/gradient.png")).unwrap();
+    assert!(!is_heightmap(&theirs), "another program's picture");
+    assert!(!is_heightmap(b"not a picture"));
+    assert!(!is_heightmap(&[]));
 }

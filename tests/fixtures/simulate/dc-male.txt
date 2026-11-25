@@ -1,0 +1,5 @@
+Simulated the male board, 110.000 mm × 80.000 mm × 12.000 mm, as 512 × 373 cells of 0.215 mm.
+1 operation in 3 tool runs, 7 min 24 s of moves.
+Deepest cut: 12.000 mm by `DC` (op1).
+Cut through: 773.8 mm² by `DC` (op1).
+Removed: 22.45 cm³.

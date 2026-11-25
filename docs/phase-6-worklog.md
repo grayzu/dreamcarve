@@ -136,6 +136,30 @@ Decisions made while building are added here.
   bit, and the end should be the build itself (acceptance 139). A step
   back from part-way along a move goes to that move's start. Upstream's
   two subdivision tests are not ported: the cut splits moves here.
+- Slices 5, 10 and 11. **`simulate` follows the CLI as it is**: `--board
+  female|male` as `export` has it (the spec had `stock|male`), and no
+  `--force`, which no command has: `--out` writes over nothing or over
+  a picture it wrote before, known by a `Software` text in the PNG, as
+  `check --preview` knows its SVG. `--uncut-over` sets the threshold.
+  The report's time is the moves' at their feeds: 3 min 33 s for the
+  plaque, well under `export`'s estimate, which counts the spindle's
+  spin-up and reads fitted arcs.
+- **What the uncut check finds on real projects.** The plaque as
+  committed, the sign and the inlay pair report nothing. The plaque
+  with its square recess's dogbones off reports four corners, 5.1 mm²
+  in all at Standard (the corners are 8.7 mm²; a cell along each wall
+  is the tolerance's). **A V-Carve has little to report**: one too wide
+  for its bit is refused by S17 before it is cut, and with no clearing
+  pass the V-bit clears its own floor, so the spec's scenario of an
+  uncut plateau could not happen and is replaced by a Pocket's necks
+  and corners. A Profile's trench is found on the grid, by distance
+  from the shape's edge, with no polygon offset; a tab is kept a tool's
+  radius longer at each end than stands.
+- **The parity capture is the maintainer's to unblock.** `../purecutcnc`
+  has no `node_modules`, and installing them changes that checkout and
+  fetches from the network. With them, `tools/parity/sim-capture.ts`
+  would write PureCutCNC's grid for the golden cases whose moves are
+  level, to compare with `dc-sim`'s.
 - The environment, not the code: on this machine a newly built program
   can wait minutes to start while another session runs its tests (the
   build volume is shared, and launches seem to queue system-wide). A
@@ -156,7 +180,7 @@ The numbers are the design spec's.
 | 2 | The cut: `dc_sim::sweep`, phase 3's closed forms moved from `dc-cam` with their test and held to a brute force for every shape (the ball and the capped V added; the rim fix); `Heightfield::cut` for a line, a level arc (whole, by its true distance) and a falling arc (fixed chords within a micron), by a span of the move, with the changed rectangle and the count of cells tested; `SimMove`; two properties (a move in parts is the move; moves in any order leave the same bits); `dc-cam`'s test heightfield on `dc-sim`'s forms | done |
 | 3 | Runs in order: `SimRun`, `build` (from any run's checkpoint, the stock handed back after each run, progress and stop between chunks of cells tested), `Checkpoints` within a byte budget, `facts` (the deepest cut and its run, the area cut through, the volume removed, the plain cylinders), `SimRun::key`; `dc_job::simulate::plan` (each board's runs in the order export writes them, each move with its seconds) and `dc_job::sim` | done |
 | 4 | `Timeline` (every move's place in time) and `Playback` (a cursor over the whole job, seeks forward by cutting and back from the nearest checkpoint, bounded by cells tested; a step of one cutting move; the end of a run; the tip's pose; the dirty rectangle; the finished build put in place at the end). Gate for slices 1 to 4 together, on macOS: fmt and clippy clean, 3,838 tests of which one failed for a reason of the run's own (`version_flag_prints_dev_build_time_and_commit_hash` compares the binary's commit with `HEAD`, which the version commit moved while the tests ran; it passes on a build of the commit), doc tests and headers pass | done |
-| 5 | `dreamcarve simulate`: the report, the PNG, the fixtures' results, the parity capture | todo |
+| 5 | `dreamcarve simulate <dcv>`: the report (the board and its cells, the runs and their time, the deepest cut, where it goes through, the volume removed, the plain cylinders, the uncut material by operation), `--out` a 16-bit heightmap PNG that knows itself by a `Software` text, `--quality`, `--cell`, `--board`, `--until`, `--uncut-over`; the committed reports and pictures of the plaque, the sign and the inlay's male board; the Overview chapter's section. **Not done: the parity capture**, which needs `npm install` in `../purecutcnc` | done, but for the capture |
 
 ### 6.2 The 3D view
 
@@ -171,8 +195,8 @@ The numbers are the design spec's.
 
 | Slice | What | Status |
 | --- | --- | --- |
-| 10 | The design surface | todo |
-| 11 | Compare: uncut material, the report's list | todo |
+| 10 | The design surface (done before slice 6, with slice 5, since the report lists uncut material): `dc_sim::Design` (regions, a trench beside an edge, a trench along a path, tabs, a V's cone) on `dc_sim::edt`, a distance transform written from the paper; `dc_job::simulate::design` for each operation of a project | done |
+| 11 | `dc_sim::compare`: uncut material against the highest asked in a cell's neighbourhood, patches of four cells and more as places, by operation; the report's list. On the fixtures: the plaque, the sign and the inlay pair report nothing; the plaque with its square recess's dogbones off, its four corners. Gate for slices 5, 10 and 11 together, on macOS: fmt and clippy clean, doc tests and headers pass, 3,865 tests of which two failed for a reason outside these slices (`dreamcarve-app`'s two source scans, for string and colour literals, read the working tree, and found a draft of slice 7's renderer written while the tests ran; the draft was put right, and both scans are part of the next gate) | done |
 | 12 | The window, the check | todo |
 
 ### 6.4 Release

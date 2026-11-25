@@ -246,6 +246,52 @@ that is not an earlier preview, such as the drawing the project came from.
 `export` writes the preview with the programs, all or none; `check` writes
 it only when every operation generated its toolpath.
 
+### `dreamcarve simulate <dcv>`
+
+Cuts the project's toolpaths into its stock, as the machine would, and
+says what is left: how deep the deepest cut is and which operation made
+it, where the stock is cut through, how much was removed, and where
+**uncut material** still stands above what the shapes ask for, such as
+the corners of a square pocket that a round bit cannot reach. It reads
+the same toolpaths `export` writes and changes nothing.
+
+```sh
+dreamcarve simulate plaque.dcv --out plaque-stock.png
+```
+
+```text
+Simulated the stock, 170.000 mm × 120.000 mm × 11.800 mm, as 1024 × 723 cells of 0.166 mm.
+5 operations in 5 tool runs, 3 min 33 s of moves.
+Deepest cut: 11.800 mm by `Cut out` (op4).
+Cut through: 3078.0 mm² by `Screw holes` (op3), `Cut out` (op4).
+Removed: 64.18 cm³.
+No uncut material: nowhere is the stock more than 0.300 mm above what the shapes ask for.
+```
+
+The stock is divided into square **cells**, each holding one height. A
+wall's position is true to within a cell and a depth is true at a cell's
+centre, so a finer quality finds smaller things and takes longer. The
+time is that of the moves at their feeds; it leaves out the spindle's
+spin-up and the tool changes that `export`'s estimate counts. A drill and
+an engraving bit are cut as plain flat cylinders, and the report says so:
+the project holds no point angle for them.
+
+A simulation is geometry. It does not know your clamps, your machine,
+the wood or how sharp the bit is, and a clean report is no reason to
+skip the checks of the [Safety](safety.md) chapter.
+
+| Option | Meaning |
+| --- | --- |
+| `--out <PNG>` | Write the finished stock to this `.png` file as a 16-bit grayscale heightmap, one pixel a cell: white is the board's top and black its bottom. It is written over nothing but a heightmap this command wrote before. |
+| `--quality <QUALITY>` | `draft`, `standard` (the default) or `fine`: 512, 1024 or 2048 cells along the board's longer side, the cell never under 0.02 mm. |
+| `--cell <MM>` | The cell size in millimetres instead of a quality. A size that would need more than 16.8 million cells is refused, with the smallest that fits. |
+| `--board <BOARD>` | `female`, the stock (the default), or `male`, an Inlay's male board. |
+| `--until <OPERATION>` | Stop after the operation of this id: the stock as it is then. The check for uncut material is left out. |
+| `--uncut-over <MM>` | How far the stock must stand above what the shapes ask for to be listed, from 0.05 to 5 mm (the default is 0.3). A place narrower than about two cells is not found. |
+
+A project `check` refuses is refused with `check`'s lines. Uncut
+material is not an error: `simulate` exits 0 whatever it lists.
+
 ### `dreamcarve posts`
 
 Lists the bundled post-processors.

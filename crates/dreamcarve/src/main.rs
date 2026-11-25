@@ -27,6 +27,7 @@ mod image;
 mod init;
 mod output;
 mod prep;
+mod simulate;
 mod tabs;
 mod tools;
 
