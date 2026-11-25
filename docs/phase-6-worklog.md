@@ -61,8 +61,8 @@ slices 5, 10 and 11: 3,865. After the window (slices 6 to 9, 12 to 14):
 | The bench check's table filled for every part that has been cut | **The maintainer's.** The coaster, the plaque and the lettered inlay pair are cut; the sign in part; the line-art inlay, the photo, the tapered ball nose parts and the hook plate are not |
 | Quick start "Check the cut in 3D" and the Simulation chapter, with screenshots from the build | Written, with nine pictures taken by `book::simulation_screenshots`; every other picture of the book taken again for the six-step rail |
 | `CONTEXT.md` updated; every user-visible string keyed | Done: a Simulation section (Simulation, Heightfield, Cell, Quality, Bed, Playback, Design Surface, Uncut Material), and the string scans pass |
-| The maintainer's review, and the open questions settled | **Open.** "Decisions waiting for the maintainer", below |
-| `v0.6.0-alpha.1`, then `v0.6.0` | **The maintainer's** |
+| The maintainer's review, and the open questions settled | Reviewed and tested together with `Phase-5` by the maintainer on 2026-11-25 ("happy with the state of this version"). The open questions below keep the choices taken |
+| `v0.6.0-alpha.1`, then `v0.6.0` | `v0.6.0-alpha.1` at the maintainer's word on 2026-11-25: `Phase-5`'s 0.5.0-alpha.1 cut merged in (`FONT-LICENSES` in every archive), the README and the Installing chapter naming it, `main` fast-forwarded to `Phase-6` and the tag pushed. `v0.6.0` stays the maintainer's |
 
 ## Decisions waiting for the maintainer
 

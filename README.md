@@ -5,7 +5,7 @@ Rust. The goal is a single workspace where you draw or import a design, assign
 machining operations, preview the toolpaths, and export G-code. Its feature set is
 modeled on what hobbyists use in commercial tools such as VCarve.
 
-> **Status:** early alpha. `v0.5.0-alpha.1` is a pre-release for testers: a
+> **Status:** early alpha. `v0.6.0-alpha.1` is a pre-release for testers: a
 > desktop app and a command line program that take an SVG or DXF drawing, or
 > a picture, to G-code. Check every program in your sender's preview and with
 > an air cut before it touches material, and expect breaking changes.
@@ -36,13 +36,13 @@ chapter and a quick start that goes from a drawing to G-code in the app.
 Install the app on macOS or Linux:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grayzu/dreamcarve/releases/download/v0.5.0-alpha.1/dreamcarve-app-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grayzu/dreamcarve/releases/download/v0.6.0-alpha.1/dreamcarve-app-installer.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/grayzu/dreamcarve/releases/download/v0.5.0-alpha.1/dreamcarve-app-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/grayzu/dreamcarve/releases/download/v0.6.0-alpha.1/dreamcarve-app-installer.ps1 | iex"
 ```
 
 Then open a new terminal and run `dreamcarve-app`. The programs are not

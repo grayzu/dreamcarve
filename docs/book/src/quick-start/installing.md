@@ -14,17 +14,17 @@ Tagged releases publish archives of both programs for Linux x86_64, macOS
 and PowerShell installer scripts that put the program on your `PATH`.
 
 The app is in the releases from `v0.4.0-alpha.2`; the newest is
-`v0.5.0-alpha.1`, a pre-release for testers. GitHub's "latest" link skips
+`v0.6.0-alpha.1`, a pre-release for testers. GitHub's "latest" link skips
 pre-releases, so name the version. To install the app on macOS or Linux:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grayzu/dreamcarve/releases/download/v0.5.0-alpha.1/dreamcarve-app-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grayzu/dreamcarve/releases/download/v0.6.0-alpha.1/dreamcarve-app-installer.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/grayzu/dreamcarve/releases/download/v0.5.0-alpha.1/dreamcarve-app-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/grayzu/dreamcarve/releases/download/v0.6.0-alpha.1/dreamcarve-app-installer.ps1 | iex"
 ```
 
 Then open a new terminal and run `dreamcarve-app`. The command line
