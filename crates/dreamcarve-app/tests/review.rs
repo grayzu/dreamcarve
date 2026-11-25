@@ -83,6 +83,7 @@ fn settle(h: &mut H) {
     while h.state().app().generation().busy()
         || h.state().worker_busy()
         || h.state().export_planning()
+        || h.state().simulation_busy()
     {
         assert!(std::time::Instant::now() < deadline, "the window settles");
         h.step();
@@ -2032,6 +2033,170 @@ fn redesign_review() {
     final_export(&shots);
     final_windows(&shots);
     final_focus(&shots);
+}
+
+/// Where phase 6's review pictures are committed.
+fn phase6_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-6/review"),
+        PathBuf::from,
+    )
+}
+
+/// Opens fixture `name` on the Simulate step in a window of its own,
+/// simulated; `None` with no wgpu adapter.
+fn simulated(dir: &Path, name: &str) -> Option<H> {
+    let project = copy_fixture(name, dir);
+    let mut h = window(dir, Some(project), 1440.0, 900.0)?;
+    command_key(&h, egui::Key::Num5);
+    h.run();
+    settle(&mut h);
+    Some(h)
+}
+
+/// The Simulate step's pictures (phase 6 functional spec, acceptance
+/// 157; design, slices 7 to 9, 12 and 13), in dark and light, written
+/// into `docs/specs/phase-6/review/`:
+///
+/// - `a`: the plaque finished, from Home, Top, Front and Right.
+/// - `b`: the plaque part-way: a moment inside its first operation, and
+///   the stock as the Panel and the Square recess leave it.
+/// - `c`: Colour by operation and by depth; uncut material on the plaque
+///   as it is (none) and with the square recess's corner relief off.
+/// - `d`: the sign's V-carving, and the inlay pair's two boards.
+/// - `e`: the three qualities, close on a corner of the plaque.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review phase6_review -- --ignored
+/// ```
+#[test]
+#[ignore = "writes phase 6's committed review pictures; run by hand"]
+fn phase6_review() {
+    use dc_app::sim::Colouring;
+    use dc_job::sim::Quality;
+
+    let out = phase6_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    SCALE.set(1.0);
+    let shots = Shots { out };
+    let dir = scratch("phase6-review");
+    let Some(mut h) = simulated(&dir, "plaque.dcv") else {
+        return;
+    };
+
+    // a: the finished plaque from each view.
+    shots.take(&mut h, "a1-plaque-home");
+    for (key, scene) in [
+        (egui::Key::Num7, "a2-plaque-top"),
+        (egui::Key::Num1, "a3-plaque-front"),
+        (egui::Key::Num3, "a4-plaque-right"),
+    ] {
+        h.key_press(key);
+        h.run();
+        shots.take(&mut h, scene);
+    }
+    h.key_press(egui::Key::Home);
+    h.run();
+
+    // b: part-way. `[` goes back an operation at a time from the end.
+    for scene in [
+        "b3-plaque-after-the-square-recess",
+        "b2-plaque-after-the-panel",
+    ] {
+        h.key_press(egui::Key::OpenBracket);
+        h.run();
+        shots.take(&mut h, scene);
+    }
+    for _ in 0..3 {
+        h.key_press(egui::Key::OpenBracket);
+        h.run();
+    }
+    // Into the first operation: ten cutting moves at a time.
+    for _ in 0..12 {
+        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Period);
+        h.run();
+    }
+    shots.take(&mut h, "b1-plaque-in-the-first-operation");
+    h.key_press(egui::Key::CloseBracket);
+    h.run();
+    for _ in 0..4 {
+        h.key_press(egui::Key::CloseBracket);
+        h.run();
+    }
+
+    // c: colour, and the check.
+    for (colouring, scene) in [
+        (Colouring::Operation, "c1-plaque-by-operation"),
+        (Colouring::Depth, "c2-plaque-by-depth"),
+    ] {
+        h.state_mut().app_mut().prefs_mut().sim.colouring = colouring;
+        h.run();
+        shots.take(&mut h, scene);
+    }
+    h.state_mut().app_mut().prefs_mut().sim.colouring = Colouring::Material;
+    h.state_mut().app_mut().prefs_mut().sim.uncut_shown = true;
+    h.run();
+    shots.take(&mut h, "c3-plaque-uncut-none");
+    // The square recess without its dogbones: four corners are left.
+    let mut recess = h
+        .state()
+        .app()
+        .project()
+        .operations
+        .iter()
+        .find(|op| op.name() == "Square recess")
+        .expect("the plaque's square recess")
+        .clone();
+    if let dc_project::Operation::Pocket(pocket) = &mut recess {
+        pocket.corner_relief = dc_project::CornerRelief::None;
+    }
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateOperation(recess))
+        .unwrap();
+    h.run();
+    settle(&mut h);
+    shots.take(&mut h, "c4-plaque-uncut-corners");
+    h.get_by_label_contains(" places · ").click();
+    h.run();
+    shots.take(&mut h, "c5-plaque-uncut-framed");
+    h.state_mut().app_mut().undo();
+    h.key_press(egui::Key::Home);
+    h.run();
+    settle(&mut h);
+    h.state_mut().app_mut().prefs_mut().sim.uncut_shown = false;
+    h.run();
+
+    // e: the qualities.
+    for (quality, scene) in [
+        (Quality::Draft, "e1-plaque-draft"),
+        (Quality::Fine, "e3-plaque-fine"),
+        (Quality::Standard, "e2-plaque-standard"),
+    ] {
+        h.state_mut().app_mut().prefs_mut().sim.quality = quality;
+        h.run();
+        settle(&mut h);
+        shots.take(&mut h, scene);
+    }
+    drop(h);
+
+    // d: a V-carving, and an inlay's two boards.
+    if let Some(mut h) = simulated(&dir, "sign.dcv") {
+        shots.take(&mut h, "d1-sign-home");
+        h.key_press(egui::Key::Num7);
+        h.run();
+        shots.take(&mut h, "d2-sign-top");
+    }
+    if let Some(mut h) = simulated(&dir, "dc.dcv") {
+        shots.take(&mut h, "d3-inlay-stock");
+        h.state_mut()
+            .app_mut()
+            .set_sim_board(dc_project::Board::Male);
+        h.run();
+        settle(&mut h);
+        shots.take(&mut h, "d4-inlay-male-board");
+    }
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Where the smoke-test pictures are committed.

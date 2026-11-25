@@ -25,6 +25,7 @@ pub(crate) mod project;
 pub(crate) mod properties;
 pub(crate) mod result;
 pub(crate) mod side;
+pub(crate) mod simulate;
 pub(crate) mod tools;
 pub(crate) mod tree;
 pub(crate) mod unsaved;

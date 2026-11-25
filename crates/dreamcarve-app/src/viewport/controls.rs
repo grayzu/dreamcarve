@@ -47,9 +47,9 @@ use crate::widgets::icon::Icon;
 use crate::widgets::segmented::segmented_sized;
 
 /// A floating pill's height, px: a 28-px control and the pill round it.
-pub(super) const PILL_PX: f32 = 36.0;
+pub(crate) const PILL_PX: f32 = 36.0;
 /// A control in a pill, px high.
-const CONTROL_PX: f32 = 28.0;
+pub(crate) const CONTROL_PX: f32 = 28.0;
 /// The read-out's pill, px high.
 const READOUT_PX: f32 = 28.0;
 /// The gap between a pill's controls, px.
@@ -93,7 +93,7 @@ const DRAG_OPACITY: f32 = 0.6;
 /// How far a floating control sits in from the card's edge, px.
 const INSET_PX: f32 = theme::FLOAT_INSET_PX;
 /// The gap between the top-right pill and the legend under it, px.
-pub(super) const LEGEND_GAP_PX: f32 = 8.0;
+pub(crate) const LEGEND_GAP_PX: f32 = 8.0;
 
 /// How far under and left of the origin its label starts, px.
 pub(super) const ORIGIN_LABEL_OFFSET_PX: f32 = 4.0;
@@ -154,7 +154,7 @@ pub(super) fn ways(
 
 /// How much of themselves the controls show this frame: all, easing to
 /// [`DRAG_OPACITY`] while `dragging`.
-pub(super) fn opacity(ui: &Ui, dragging: bool) -> f32 {
+pub(crate) fn opacity(ui: &Ui, dragging: bool) -> f32 {
     let t = ui
         .ctx()
         .animate_bool(Id::unique("dc.viewport.controls.fade"), dragging);
@@ -163,7 +163,7 @@ pub(super) fn opacity(ui: &Ui, dragging: bool) -> f32 {
 
 /// A pill in `rect`, at `opacity`: it takes the clicks on it, and
 /// `body` lays its controls out left to right, centred.
-fn pill(ui: &mut Ui, rect: Rect, salt: &str, opacity: f32, body: impl FnOnce(&mut Ui)) {
+pub(crate) fn pill(ui: &mut Ui, rect: Rect, salt: &str, opacity: f32, body: impl FnOnce(&mut Ui)) {
     let palette = Palette::current(ui);
     // It takes the pointer and not the focus: a pill is no Tab stop, its
     // controls are.

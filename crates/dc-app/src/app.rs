@@ -62,6 +62,10 @@ pub struct App {
     /// The fonts on hand (capability 91): the bundled ones, and those
     /// the shell read from the user's fonts folder.
     fonts: crate::fonts::Fonts,
+    /// The simulations made of the project and what is under way (phase
+    /// 6, capability 108; `crate::sim`). Nothing of it is saved, and
+    /// nothing reads it back (S22).
+    pub(crate) sim: crate::sim::SimSession,
     view: View,
     generation: Generation,
     strings: Strings,
@@ -137,6 +141,7 @@ impl App {
             tool: crate::tool::Session::default(),
             clipboard: crate::clipboard::Clipboard::default(),
             fonts: crate::fonts::Fonts::bundled(),
+            sim: crate::sim::SimSession::default(),
             view,
             generation,
             strings,
@@ -243,6 +248,8 @@ impl App {
         self.editing = None;
         self.previewed = None;
         self.target_edit = None;
+        // Another project: nothing simulated of the last one is its.
+        self.sim = crate::sim::SimSession::default();
         self.source = path;
         self.saved = saved;
         self.notes.clear();

@@ -22,7 +22,7 @@ behaviour, into `dc-app`, which has no egui: the editor's table of
 fields (`editor/fields.rs`), the Tool Library's filter (`library.rs`),
 hit testing and the camera (`viewport/`), the direction arrows. Its
 components, its layout and its styles are not ported. The app's window,
-its five steps (`dc_app::steps`) and its panels in `dreamcarve-app` are
+its six steps (`dc_app::steps`) and its panels in `dreamcarve-app` are
 DreamCarve's own design (`docs/specs/phase-4/redesign.md`).
 
 ## What changes in the port

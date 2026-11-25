@@ -763,12 +763,13 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui.close();
     }
     ui.separator();
-    // The five steps, each with its key (capability 54).
+    // The six steps, each with its key (capability 54; phase 6, 126).
     for command in [
         Shortcut::GoToDesign,
         Shortcut::GoToStock,
         Shortcut::GoToTools,
         Shortcut::GoToOperations,
+        Shortcut::GoToSimulate,
         Shortcut::GoToExport,
     ] {
         if let (Some((_, label)), Some(action)) = (
@@ -778,6 +779,39 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             item(ui, strings, label, keyboard::binding(command), action, out);
         }
     }
+    ui.separator();
+    // The Simulate step's transport and views, each beside its key
+    // (phase 6, capability 126): they act on that step only.
+    let simulating = state.step == Step::Simulate;
+    ui.menu_button(strings.get(StrKey::AppMenuSimulation), |ui| {
+        for command in [
+            Shortcut::SimPlayPause,
+            Shortcut::SimPrevious,
+            Shortcut::SimNext,
+            Shortcut::SimStepBack,
+            Shortcut::SimStepForward,
+            Shortcut::SimSlower,
+            Shortcut::SimFaster,
+            Shortcut::ViewHome,
+            Shortcut::ViewTop,
+            Shortcut::ViewFront,
+            Shortcut::ViewRight,
+        ] {
+            if let (Some((_, label)), Some(action)) = (
+                keyboard::of(command).and_then(|s| s.menu),
+                shortcut_action(state.app, command),
+            ) {
+                item_text(
+                    ui,
+                    strings.get(label),
+                    keyboard::binding(command),
+                    simulating,
+                    action,
+                    out,
+                );
+            }
+        }
+    });
     ui.separator();
     // Capability 73: the toolpath view, as the status bar's button opens
     // it; there is nothing to show until a toolpath exists.

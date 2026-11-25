@@ -25,7 +25,7 @@ Draw your part in the app ([Drawing shapes](drawing-shapes.md); the
 quick start [Your first design](../quick-start/first-design.md) draws
 one from nothing), or draw it in Inkscape or any SVG editor and save it
 as SVG, or in a CAD program and save it as DXF. Then, in the app, the
-job is the five steps in its rail:
+job is the six steps in its rail:
 
 1. **Design**: **Draw from scratch** opens a blank project to draw in;
    **New from drawing…** makes a project round a drawing.
@@ -35,7 +35,10 @@ job is the five steps in its rail:
 4. **Operations**: select shapes, **Add** an operation, and set its depth
    ([Operations in the app](operations.md)). The Viewport shows the
    toolpath as you go.
-5. **Export**: read the warnings, then **Export G-code**.
+5. **Simulate**: see the stock as the cuts leave it, in 3D, and play
+   the job through ([Simulation](simulation.md)). This step is there to
+   look; nothing waits for it.
+6. **Export**: read the warnings, then **Export G-code**.
 
 Then air cut, and cut.
 [From SVG to G-code in the app](../quick-start/app.md) walks through this
@@ -366,7 +369,7 @@ than the limit of 268435456 bytes`. A Fusion 360 tool library is at most
 
 ## Chapters
 
-- [The app](the-app.md): the window, the five steps, selecting and
+- [The app](the-app.md): the window, the six steps, selecting and
   editing.
 - [The project file](project-file.md): every field of `.dcv`.
 - [Importing drawings and pictures](importing.md): starting a project in

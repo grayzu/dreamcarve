@@ -30,9 +30,9 @@ screen**: **New from drawing…**, **New from picture…**, **Open…**, three
 examples to look round (each opens as an untitled copy) and your recent
 files.
 
-## The five steps
+## The six steps
 
-A job is five steps, always in this order. Each is a button in the rail,
+A job is six steps, always in this order. Each is a button in the rail,
 and the step panel shows the one that is open.
 
 | Step | What you do there | Its Inspector |
@@ -41,10 +41,13 @@ and the step panel shows the one that is open.
 | **Stock** | Set the units, the stock's size and thickness, and where work zero is | None |
 | **Tools** | Make the project's tools, or add them from the Tool Library | The selected tool |
 | **Operations** | Add the cuts, in cut order, and set each one | The selected operation |
+| **Simulate** | See the stock as the machine will leave it, in 3D, and play the cut ([Simulation](simulation.md)) | None |
 | **Export** | Check readiness, choose the output settings, write the programs | None |
 
 No step is locked: open any of them at any time, from the rail, from
-**View ▸ Go to …**, or with Ctrl 1 to Ctrl 5 (⌘1 to ⌘5 on macOS).
+**View ▸ Go to …**, or with Ctrl 1 to Ctrl 6 (⌘1 to ⌘6 on macOS).
+Simulate is there to look: nothing waits for it, and you can export
+without opening it.
 
 The rail marks each step with where it stands:
 
@@ -61,6 +64,7 @@ The rail marks each step with where it stands:
 | Stock | The thickness is set and every shape is on the stock | A stock or origin value has a problem, or a shape reaches past the stock |
 | Tools | The project has a tool | A tool an operation uses lacks a feed, plunge rate or spindle speed |
 | Operations | An enabled operation exists | An operation has an error or a warning |
+| Simulate | The project as it stands has been simulated | Never: nothing the simulation finds is a warning |
 | Export | The last export wrote the project as it stands | An error blocks export, or an output setting has a problem |
 
 The marks are worked out from the project each time it changes; nothing
@@ -249,8 +253,8 @@ on its background. The pictures in this book are of the dark appearance.
 
 ## Words the app uses
 
-- **Step**: one of the five parts of a job: Design, Stock, Tools,
-  Operations, Export.
+- **Step**: one of the six parts of a job: Design, Stock, Tools,
+  Operations, Simulate, Export.
 - **Rail**: the column of step buttons at the window's left edge.
 - **Step panel**: the panel beside the rail that shows the open step.
 - **Inspector**: the panel at the right that edits what is selected.

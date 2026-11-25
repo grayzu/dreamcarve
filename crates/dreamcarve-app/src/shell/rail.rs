@@ -45,6 +45,7 @@ const fn icon(step: Step) -> Icon {
         Step::Stock => Icon::Box,
         Step::Tools => Icon::Drill,
         Step::Operations => Icon::Route,
+        Step::Simulate => Icon::Rotate3d,
         Step::Export => Icon::FileOutput,
     }
 }
@@ -56,6 +57,7 @@ const fn shortcut(step: Step) -> Shortcut {
         Step::Stock => Shortcut::GoToStock,
         Step::Tools => Shortcut::GoToTools,
         Step::Operations => Shortcut::GoToOperations,
+        Step::Simulate => Shortcut::GoToSimulate,
         Step::Export => Shortcut::GoToExport,
     }
 }

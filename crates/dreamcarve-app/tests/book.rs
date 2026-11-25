@@ -80,6 +80,7 @@ fn settle(h: &mut H) {
     while h.state().app().generation().busy()
         || h.state().worker_busy()
         || h.state().export_planning()
+        || h.state().simulation_busy()
     {
         assert!(std::time::Instant::now() < deadline, "the window settles");
         h.step();
@@ -484,6 +485,11 @@ fn coaster(h: &mut H, dialogs: &QueuedDialogs, dir: &Path, out: &Path, text: &st
     h.run();
     settle(h);
     assert!(saved.exists(), "⌘S saved the project");
+    // Continue leads through Simulate, which nothing has built yet.
+    click_button(h, "Continue");
+    assert_eq!(h.state().step(), dc_app::steps::Step::Simulate);
+    settle(h);
+    shoot(h, out, "12a-simulate", Crop::Window);
     click_button(h, "Continue");
     assert_eq!(h.state().step(), dc_app::steps::Step::Export);
     settle(h);
@@ -686,6 +692,7 @@ fn steady(h: &mut H) {
     while h.state().app().generation().busy()
         || h.state().worker_busy()
         || h.state().export_planning()
+        || h.state().simulation_busy()
     {
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1050,6 +1057,97 @@ fn the_app_screenshots() {
     h.get_by_label_contains("Warnings:").click();
     h.run();
     shoot(&mut h, &out, "app-warnings-drawer", Crop::Window);
+    drop(h);
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
+
+/// The plaque's square recess with its corner relief off: what the
+/// quick start "Check the cut in 3D" has the reader set in the
+/// Inspector.
+fn square_corners(h: &mut H) {
+    let mut recess = h
+        .state()
+        .app()
+        .project()
+        .operations
+        .iter()
+        .find(|op| op.name() == "Square recess")
+        .expect("the plaque's square recess")
+        .clone();
+    if let dc_project::Operation::Pocket(pocket) = &mut recess {
+        pocket.corner_relief = dc_project::CornerRelief::None;
+    }
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateOperation(recess))
+        .unwrap();
+    h.run();
+    settle(h);
+}
+
+/// The quick start "Check the cut in 3D"
+/// (`docs/book/src/quick-start/simulate.md`) and the chapter
+/// "Simulation" (`docs/book/src/user-guide/simulation.md`): the plaque
+/// on the Simulate step, finished, from the top, as the Panel leaves it,
+/// coloured by operation and by depth, and with the square recess's
+/// corners found as uncut material.
+#[test]
+#[ignore = "writes the book's screenshots; run by hand"]
+fn simulation_screenshots() {
+    let quick = out_dir("quick-start");
+    let guide = out_dir("user-guide");
+    let dialogs = QueuedDialogs::default();
+    let Some((mut h, dir)) = plaque_window("dreamcarve-book-simulate", &dialogs) else {
+        return;
+    };
+
+    // The step, opened from the rail: the finished stock.
+    go_to(&mut h, "Simulate");
+    settle(&mut h);
+    shoot(&mut h, &quick, "sim-01-finished", Crop::Window);
+    shoot(&mut h, &guide, "sim-finished", Crop::Window);
+
+    // From the top, and back.
+    click_button(&mut h, "Top");
+    shoot(&mut h, &quick, "sim-02-top", Crop::Window);
+    click_button(&mut h, "Home");
+
+    // The stock as the Panel leaves it: the rows after it dimmed, the
+    // tool where the next operation starts.
+    h.get_by_role_and_label(Role::ListItem, "Panel").click();
+    h.run();
+    shoot(&mut h, &quick, "sim-03-after-the-panel", Crop::Window);
+    shoot(&mut h, &guide, "sim-part-way", Crop::Window);
+    click_button(&mut h, "Next operation");
+    click_button(&mut h, "Next operation");
+
+    // Colour.
+    for (choice, out, name) in [
+        ("By operation", &quick, "sim-04-by-operation"),
+        ("By depth", &guide, "sim-by-depth"),
+    ] {
+        h.query_all_by_role_and_label(Role::RadioButton, choice)
+            .next()
+            .expect("Colour's choices")
+            .click();
+        h.run();
+        shoot(&mut h, out, name, Crop::Window);
+    }
+    h.query_all_by_role_and_label(Role::RadioButton, "Material")
+        .next()
+        .expect("Colour's choices")
+        .click();
+    h.run();
+
+    // What is left: the recess's corners, listed, then framed.
+    square_corners(&mut h);
+    h.get_by_role_and_label(Role::CheckBox, "Uncut material")
+        .click();
+    h.run();
+    shoot(&mut h, &guide, "sim-uncut", Crop::Window);
+    h.get_by_label_contains(" places · ").click();
+    h.run();
+    shoot(&mut h, &quick, "sim-05-uncut-corners", Crop::Window);
     drop(h);
     std::fs::remove_dir_all(dir.parent().unwrap()).ok();
 }

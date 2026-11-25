@@ -136,8 +136,8 @@ pub fn harness(options: Options, width: f32, height: f32) -> Harness<'static, Sh
     harness
 }
 
-/// Opens step `name` (*Design*, *Stock*, *Tools*, *Operations*, *Export*)
-/// from the rail.
+/// Opens step `name` (*Design*, *Stock*, *Tools*, *Operations*,
+/// *Simulate*, *Export*) from the rail.
 pub fn go_to(harness: &mut Harness<'_, Shell>, name: &str) {
     use egui_kittest::kittest::Queryable as _;
     harness
@@ -461,6 +461,7 @@ pub fn settle(harness: &mut Harness<'_, Shell>) {
     while harness.state().app().generation().busy()
         || harness.state().worker_busy()
         || harness.state().export_planning()
+        || harness.state().simulation_busy()
     {
         assert!(std::time::Instant::now() < deadline, "the window settles");
         harness.step();

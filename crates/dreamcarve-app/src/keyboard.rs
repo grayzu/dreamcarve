@@ -70,7 +70,7 @@ pub enum Command {
     FitView,
     /// View ▸ Zoom to Selection.
     ZoomToSelection,
-    /// View ▸ Go to Design: the first of the five steps.
+    /// View ▸ Go to Design: the first of the six steps.
     GoToDesign,
     /// View ▸ Go to Stock.
     GoToStock,
@@ -78,8 +78,38 @@ pub enum Command {
     GoToTools,
     /// View ▸ Go to Operations.
     GoToOperations,
+    /// View ▸ Go to Simulate (phase 6, capability 126).
+    GoToSimulate,
     /// View ▸ Go to Export.
     GoToExport,
+    /// View ▸ Play or Pause, on the Simulate step (phase 6, capability
+    /// 126).
+    SimPlayPause,
+    /// View ▸ Previous Operation: the stock as the operation before
+    /// leaves it.
+    SimPrevious,
+    /// View ▸ Next Operation.
+    SimNext,
+    /// View ▸ Step Back: one cutting move.
+    SimStepBack,
+    /// View ▸ Step Forward.
+    SimStepForward,
+    /// Ten cutting moves back.
+    SimStepBackTen,
+    /// Ten cutting moves forward.
+    SimStepForwardTen,
+    /// View ▸ Slower: the next playback speed down.
+    SimSlower,
+    /// View ▸ Faster.
+    SimFaster,
+    /// View ▸ Home View: the 3D view from the front right, above.
+    ViewHome,
+    /// View ▸ Top View.
+    ViewTop,
+    /// View ▸ Front View.
+    ViewFront,
+    /// View ▸ Right View.
+    ViewRight,
     /// The Viewport's Tab tool, on or off (#546).
     TabTool,
     /// The Viewport's Select tool (phase 5, capability 81).
@@ -139,6 +169,9 @@ pub enum Menu {
     Shape,
     /// View.
     View,
+    /// View ▸ Simulation: the Simulate step's transport and views (phase
+    /// 6, capability 126).
+    Simulation,
 }
 
 impl Menu {
@@ -152,6 +185,16 @@ impl Menu {
             Self::Draw => StrKey::AppMenuDraw,
             Self::Shape => StrKey::AppMenuShape,
             Self::View => StrKey::AppMenuView,
+            Self::Simulation => StrKey::AppMenuSimulation,
+        }
+    }
+
+    /// The menu it is a submenu of, when it is one.
+    #[must_use]
+    pub const fn parent(self) -> Option<Self> {
+        match self {
+            Self::Simulation => Some(Self::View),
+            Self::File | Self::Edit | Self::Arrange | Self::Draw | Self::Shape | Self::View => None,
         }
     }
 }
@@ -536,13 +579,133 @@ pub const SHORTCUTS: &[Shortcut] = &[
         Scope::Anywhere,
     ),
     menu_row(
-        Command::GoToExport,
+        Command::GoToSimulate,
         COMMAND,
         &[Key::Num5],
+        Menu::View,
+        StrKey::AppMenuGoToSimulate,
+        "Open the Simulate step",
+        Scope::Anywhere,
+    ),
+    menu_row(
+        Command::GoToExport,
+        COMMAND,
+        &[Key::Num6],
         Menu::View,
         StrKey::AppMenuGoToExport,
         "Open the Export step",
         Scope::Anywhere,
+    ),
+    menu_row(
+        Command::SimPlayPause,
+        NONE,
+        &[Key::Space],
+        Menu::Simulation,
+        StrKey::AppMenuSimPlay,
+        "Play or pause the simulation, on the Simulate step",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::SimPrevious,
+        NONE,
+        &[Key::OpenBracket],
+        Menu::Simulation,
+        StrKey::AppMenuSimPrevious,
+        "Show the stock as the operation before leaves it, on the Simulate step",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::SimNext,
+        NONE,
+        &[Key::CloseBracket],
+        Menu::Simulation,
+        StrKey::AppMenuSimNext,
+        "Show the stock as the next operation leaves it, on the Simulate step",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::SimStepBack,
+        NONE,
+        &[Key::Comma],
+        Menu::Simulation,
+        StrKey::AppMenuSimStepBack,
+        "Step the simulation one cutting move back",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::SimStepForward,
+        NONE,
+        &[Key::Period],
+        Menu::Simulation,
+        StrKey::AppMenuSimStepForward,
+        "Step the simulation one cutting move forward",
+        Scope::OutsideFields,
+    ),
+    key_only(
+        Command::SimStepBackTen,
+        SHIFT,
+        &[Key::Comma],
+        "Step the simulation ten cutting moves back",
+    ),
+    key_only(
+        Command::SimStepForwardTen,
+        SHIFT,
+        &[Key::Period],
+        "Step the simulation ten cutting moves forward",
+    ),
+    menu_row(
+        Command::SimSlower,
+        NONE,
+        &[Key::Minus],
+        Menu::Simulation,
+        StrKey::AppMenuSimSlower,
+        "Play the simulation at the next speed down",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::SimFaster,
+        NONE,
+        &[Key::Equals],
+        Menu::Simulation,
+        StrKey::AppMenuSimFaster,
+        "Play the simulation at the next speed up",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::ViewHome,
+        NONE,
+        &[Key::Home],
+        Menu::Simulation,
+        StrKey::AppMenuViewHome,
+        "Look at the simulated stock from the front right, above",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::ViewTop,
+        NONE,
+        &[Key::Num7],
+        Menu::Simulation,
+        StrKey::AppMenuViewTop,
+        "Look at the simulated stock from straight above",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::ViewFront,
+        NONE,
+        &[Key::Num1],
+        Menu::Simulation,
+        StrKey::AppMenuViewFront,
+        "Look at the simulated stock from the operator's side",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::ViewRight,
+        NONE,
+        &[Key::Num3],
+        Menu::Simulation,
+        StrKey::AppMenuViewRight,
+        "Look at the simulated stock from the right",
+        Scope::OutsideFields,
     ),
     menu_row(
         Command::TabTool,
@@ -790,13 +953,31 @@ pub fn consume_key(input: &mut InputState, command: Command, key: Key) -> usize 
     count
 }
 
+/// What is printed on a key that egui names in words: a menu row and the
+/// book show `[`, not `OpenBracket`.
+#[must_use]
+pub const fn key_symbol(key: Key) -> Option<&'static str> {
+    Some(match key {
+        Key::OpenBracket => "[",
+        Key::CloseBracket => "]",
+        Key::Comma => ",",
+        Key::Period => ".",
+        Key::Minus => "-",
+        Key::Equals => "=",
+        _ => return None,
+    })
+}
+
 /// A key's name in the book, for Windows and Linux, then for macOS.
 fn key_names(key: Key) -> (&'static str, &'static str) {
     match key {
         Key::Delete => ("Delete", "⌦"),
         Key::Backspace => ("Backspace", "⌫"),
         Key::Escape => ("Esc", "Esc"),
-        other => (other.name(), other.name()),
+        other => match key_symbol(other) {
+            Some(symbol) => (symbol, symbol),
+            None => (other.name(), other.name()),
+        },
     }
 }
 
@@ -857,7 +1038,16 @@ pub fn chapter_table() -> String {
         let (pc, mac) = keys_text(shortcut);
         let menu = shortcut.menu.map_or_else(
             || "—".to_owned(),
-            |(menu, label)| format!("{} ▸ {}", strings.get(menu.title()), strings.get(label)),
+            |(menu, label)| {
+                let within = menu.parent().map_or_else(String::new, |parent| {
+                    format!("{} ▸ ", strings.get(parent.title()))
+                });
+                format!(
+                    "{within}{} ▸ {}",
+                    strings.get(menu.title()),
+                    strings.get(label)
+                )
+            },
         );
         let does = if shortcut.available {
             shortcut.does.to_owned()

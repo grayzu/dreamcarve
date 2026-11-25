@@ -195,6 +195,16 @@ pub enum Icon {
     Group,
     /// `square-dashed`: construction geometry's row in the Design Tree.
     SquareDashed,
+    /// `rotate-3d`: the Simulate step.
+    Rotate3d,
+    /// `play`: play the simulation.
+    Play,
+    /// `pause`: pause it.
+    Pause,
+    /// `skip-back`: to the end of the operation before.
+    SkipBack,
+    /// `skip-forward`: to the end of the next operation.
+    SkipForward,
 }
 
 impl Icon {
@@ -292,6 +302,11 @@ impl Icon {
             Self::AlignVerticalDistributeCenter => "align-vertical-distribute-center",
             Self::Group => "group",
             Self::SquareDashed => "square-dashed",
+            Self::Rotate3d => "rotate-3d",
+            Self::Play => "play",
+            Self::Pause => "pause",
+            Self::SkipBack => "skip-back",
+            Self::SkipForward => "skip-forward",
         }
     }
 
@@ -388,12 +403,17 @@ impl Icon {
             Self::AlignVerticalDistributeCenter => '\u{e27e}',
             Self::Group => '\u{e464}',
             Self::SquareDashed => '\u{e1cb}',
+            Self::Rotate3d => '\u{e2ea}',
+            Self::Play => '\u{e13c}',
+            Self::Pause => '\u{e12e}',
+            Self::SkipBack => '\u{e15f}',
+            Self::SkipForward => '\u{e160}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 89] = [
+    pub const ALL: [Self; 94] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
@@ -483,6 +503,11 @@ impl Icon {
         Self::AlignVerticalDistributeCenter,
         Self::Group,
         Self::SquareDashed,
+        Self::Rotate3d,
+        Self::Play,
+        Self::Pause,
+        Self::SkipBack,
+        Self::SkipForward,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

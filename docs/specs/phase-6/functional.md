@@ -227,7 +227,8 @@ nothing there is an undo step.
      the design surface by more than the **threshold** (0.3 mm unless
      changed; 0.05 to 5 mm), and lists the places by operation with
      their number, their total area and their greatest height (*Square
-     recess · 4 areas · 8.7 mm² · up to 6.0 mm*). A click on a row frames
+     recess · 4 places · 5.1 mm² · up to 6.0 mm*; the corners are 8.7 mm²
+     on paper, and a cell along each wall is the tolerance's). A click on a row frames
      its places from the Top. What it finds, among others: the corners a
      round bit leaves in a Pocket or an inside Profile, a Pocket too
      narrow for its tool, ridges between passes taller than the
@@ -287,7 +288,12 @@ nothing there is an undo step.
      `-` and `=` step Speed; `Home`, `7`, `1`, `3` are the views Home,
      Top, Front and Right; `F` is Fit. Step 5 on the rail is Simulate
      and Export becomes 6. Every key is in the Keyboard chapter and
-     beside its menu item in View.
+     beside its menu item in **View ▸ Simulation**, a submenu, since
+     eleven rows more made View too long for a short window. The keys
+     are read on the Simulate step only, where the drawing's keys (the
+     tools, Delete, the arrows) are not: they would change shapes that
+     are not in view. `Space` is the Viewport's whenever the focus is
+     only where a click left it; a control reached with Tab keeps it.
 
 127. **Everything else follows.** Undo and redo work on the Simulate
      step and the simulation follows them. Units, themes, the Warnings

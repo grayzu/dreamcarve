@@ -56,10 +56,10 @@
 //! the project and the Design step is open, the card shows the start
 //! screen in place of the stock ([`crate::panels::empty`]).
 
-mod controls;
+pub(crate) mod controls;
 mod draft;
 mod layers;
-mod legend;
+pub(crate) mod legend;
 mod lod;
 mod pictures;
 pub(crate) mod renderer;
@@ -134,13 +134,13 @@ impl Margins {
 
 /// The margin under the card, px: the status bar's pills stand 2 px in
 /// from its top, which makes the gap.
-const BOTTOM_PX: i8 = 6;
+pub(crate) const BOTTOM_PX: i8 = 6;
 /// How far the pointer may move between press and release and still
 /// click rather than drag, px (`experience.md`, section 8: a drag starts
 /// at 4 px).
 const CLICK_SLOP_PX: f32 = 4.0;
 /// Scroll points per wheel line, as egui's native backends count them.
-const POINTS_PER_LINE: f32 = 40.0;
+pub(crate) const POINTS_PER_LINE: f32 = 40.0;
 /// Zoom per scrolled point: a wheel notch of 40 points zooms by e^0.16,
 /// about 17 %, close to PureCutCNC's e^(0.0015 × 100) per browser notch.
 const ZOOM_PER_POINT: f64 = 0.004;

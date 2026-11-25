@@ -83,7 +83,7 @@ pub fn describe(
         }
         lines.push(format!(
             "Cut through: {} by {}.",
-            area(project, facts.through_mm2),
+            describe_area(project, facts.through_mm2),
             by.join(", ")
         ));
     }
@@ -166,7 +166,7 @@ pub fn describe_uncut(
         lines.push(format!(
             "  {name}: {}, {}, up to {}",
             count(places, "place"),
-            area(project, mm2),
+            describe_area(project, mm2),
             describe_length(project, height_mm)
         ));
         k += places;
@@ -195,8 +195,10 @@ fn count(n: usize, what: &str) -> String {
     }
 }
 
-/// An area in the project's units: `1234.5 mm²`, `1.913 in²`.
-fn area(project: &Project, mm2: f64) -> String {
+/// An area in the project's units: `8.7 mm²`, `0.013 in²`. The report's
+/// and the Simulate step's uncut material rows'.
+#[must_use]
+pub fn describe_area(project: &Project, mm2: f64) -> String {
     match project.display_units {
         Units::Mm => format!("{mm2:.1} mm²"),
         Units::Inch => format!("{:.3} in²", mm2 / (MM_PER_INCH * MM_PER_INCH)),

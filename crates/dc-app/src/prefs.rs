@@ -72,6 +72,9 @@ pub struct Prefs {
     pub adjust: crate::tool::AdjustPrefs,
     /// What the Text tool sets a text in, as last set (capability 91).
     pub text: TextPrefs,
+    /// The Simulate step's display and quality, as last set (phase 6,
+    /// capability 124).
+    pub sim: crate::sim::SimPrefs,
 }
 
 /// What the Text tool remembers between texts: the font, the height,

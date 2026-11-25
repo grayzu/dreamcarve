@@ -209,6 +209,7 @@ fn generation(ui: &mut Ui, cell: &GenerationCell, palette: &Palette, out: &mut V
             out.push(match action.action {
                 GenerationAction::Stop => Action::StopGeneration,
                 GenerationAction::RegenerateAll => Action::RegenerateAll,
+                GenerationAction::StopSimulation => Action::StopSimulation,
             });
         }
     }

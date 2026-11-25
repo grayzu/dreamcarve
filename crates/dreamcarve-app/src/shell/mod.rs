@@ -10,6 +10,7 @@ pub mod focus;
 pub(crate) mod header;
 pub(crate) mod menu;
 pub(crate) mod rail;
+pub(crate) mod sim_worker;
 pub(crate) mod status;
 pub mod theme;
 pub(crate) mod toolpaths;

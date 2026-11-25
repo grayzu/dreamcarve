@@ -594,49 +594,78 @@ run's operation.
 
 ### The renderer
 
-The window owns an off-screen colour target (the egui surface's format)
-with a `Depth32Float` buffer, 4× multisampled and resolved, the size of
-the Viewport's card in physical pixels, registered with egui by
-`egui_wgpu::Renderer::register_native_texture` and drawn as the card's
-image. The scene is rendered into it from `App::update`, through
-`Frame::wgpu_render_state`, only on a frame where the camera, the grid,
-a preference or the theme changed. The 2D pipelines and the egui pass
-are untouched; turning on eframe's `depth_buffer` instead would put a
-depth attachment on every pipeline in that pass, the 2D Viewport's
-included.
+`dreamcarve_app::sim::renderer::StockRenderer` owns an off-screen colour
+target with a `Depth32Float` buffer, 4× multisampled and resolved, the
+size of the Viewport's card in physical pixels. The resolved texture is
+`Rgba8Unorm` holding sRGB-encoded colours, which is what egui 0.37
+expects of a texture it samples (its shader reads one as "not
+sRGB-aware"; the first build used an sRGB target and drew the stock a
+good deal too dark). It is registered with egui by
+`egui_wgpu::Renderer::register_native_texture` and painted as the card's
+image. The scene is drawn into it from the
+frame, with the window's own device and queue (a clone of eframe's
+`RenderState`), and only when the camera, the grid, a preference or the
+theme changed: the renderer keeps what it last drew and skips a frame
+that would draw the same. The 2D pipelines and the egui pass are
+untouched; turning on eframe's `depth_buffer` instead would put a depth
+attachment on every pipeline in that pass, the 2D Viewport's included.
 
-Textures, all `nx × ny`, nearest: heights `R32Float`; owners `R16Uint`;
-edge classes and check flags packed in one `R8Uint`; gradients
-`Rg16Snorm`. Each is written with `Queue::write_texture` for the changed
-rectangle only.
+Textures, all `nx × ny`, read with `textureLoad` and never filtered:
+heights `R32Float`; owners `R16Uint`; edge classes and the check's flag
+packed in one `R8Uint`; gradients `Rg32Float` (a 60° V's slope is 1.7,
+past what a signed-normalised texture holds, and `Rg16Snorm` is a wgpu
+feature, not a format every device has). Each is written with
+`Queue::write_texture` for the changed rectangle only. A grid with more
+cells along a side than the device's largest texture is not drawn, and
+the card says to choose a coarser Quality.
 
-Draws, in order:
+There are no vertex or index buffers: every corner comes from the
+vertex's number and the instance's. Draws, in order, in one shader
+(`stock.wgsl`):
 
-1. **The bed**: a quad at Z = 0, a margin wider than the board (5 % of
-   its longer side, at least 10 mm).
-2. **Tops**: one row template of `nx × 4` vertices and `nx × 6` indices,
-   drawn `ny` times by instance. The vertex stage loads the cell's
-   height and places its corner; the fragment stage discards a cell that
-   is cut through, takes its colour from the mode (material; the owner's
-   operation colour from a 256-entry table; the depth ramp's texture),
-   lays the check's tint over it (uncut in the warning colour, 60 %),
-   lights it and darkens it by depth.
-3. **Walls**: two more row templates, the edges between east–west
-   neighbours (`nx + 1` a row, `ny` instances) and between north–south
-   ones (`nx` a row, `ny + 1` instances). The vertex stage loads the two
-   cells either side (outside the grid reads as 0, which makes the
-   stock's own sides) and spans the wall from the higher to the lower;
-   equal heights give no area.
-4. **The tool**, when the playback has a pose: a mesh turned from the
-   cutter's profile (24 segments), with a shank of 1.05 times the radius
-   above a cutting length of 3 diameters.
-5. **Lines**: the toolpath and rapids of the operation being shown, and
-   the origin's axes, as screen-space quads from segments with a Z, the
-   2D renderer's line shader given a depth test.
+1. **The bed**: a quad just under Z = 0, a margin wider than the board
+   (5 % of its longer side, at least 10 mm). Left out when Layers ▸ Bed
+   is off.
+2. **Tops**: `nx × 6` vertices, drawn `ny` times by instance. The vertex
+   stage loads the cell's height and places its corner, trimmed to the
+   board where the last column or row hangs past it; a cell that is cut
+   through is placed outside the clip volume. The fragment stage takes
+   its colour from the mode (material; the owner's operation colour from
+   a table a run, which grows with the plan; the depth ramp's texture,
+   from the top to the job's deepest cut as phase 4's ramp is), lays the
+   check's tint over it (uncut in the warning colour, 60 %), lights it
+   and darkens it by depth.
+3. **Walls**: the edges between east–west neighbours (`nx + 1` a row,
+   `ny` instances) and between north–south ones (`nx` a row, `ny + 1`
+   instances). The vertex stage loads the two cells either side (outside
+   the grid reads as 0, which makes the stock's own sides) and spans the
+   wall from the higher to the lower; equal heights give no area. A wall
+   that is a step is lit by its own face; a riser inside a slope by its
+   cell's gradient. A wall takes the colour of the cut that made it,
+   the lower cell's owner, so a through cut's walls show By operation
+   though it has no floor; By depth colours every point by its own
+   depth, so a wall shades down its height.
+4. **The tool**, when the playback has a pose: `dc_app::sim::tool_mesh`,
+   one profile turned about the axis for every cutter (24 segments), its
+   underside the simulation's own `Cutter::height_mm`, with a shank of
+   1.05 times the radius and two diameters long above a cutting length
+   of 3 diameters.
+5. **Lines** (`overlay.wgsl`, with the tool): the toolpath and rapids of
+   the operation being shown, and the origin's three axes, 5 % of the
+   board's longer side. A quad a segment from an instance buffer,
+   widened on the screen to 1.5 px, clipped to the plane in front of
+   the eye, dashed for a rapid, and lifted a hair toward the eye so a
+   cut's path is not lost in its own floor. The buffer is made again
+   only when the operation shown, the layers or the theme change.
 
 Light: upstream's rig turned to this world, ambient 0.7, a white key of
 0.9 from `(120, −120, 180)` and a blue-white fill of 0.35 from `(−120,
-80, 80)`, diffuse only; darkening `1 − 0.12 · depth / thickness`.
+80, 80)`, diffuse only; darkening `1 − 0.12 · depth / thickness`. The
+light is worked in the theme's sRGB-encoded colours, as upstream's is,
+and written as it is.
+
+A wgpu object's debug label is an id (`sim.tops`): the shell's string
+scan reads every literal as something a user might read.
 
 ### The worker
 
@@ -668,8 +697,8 @@ first row is the grid's last, since a picture's top is the highest Y.
 crates/dc-sim/src/{lib.rs, error.rs, grid.rs (port), field.rs, cutter.rs (port), sweep.rs (moved from dc-cam; the level-arc distance), cut.rs (port: the box, the write, the rectangle), build.rs (port), timeline.rs, checkpoints.rs, playback.rs (port), design.rs, edt.rs, compare.rs, facts.rs}
 crates/dc-cam/src/heightfield.rs — keeps `Heightfield`'s mirror and the seat check for its tests, on dc-sim's `Cutter::low_over_mm`
 crates/dc-job/src/simulate.rs (plan, design, report, heightmap_png) and `pub use dc_sim as sim`
-crates/dc-app/src/sim.rs and sim/{job.rs (SimJob, Simulation, execute), transport.rs, camera.rs (port), mat.rs, probe.rs, shade.rs (port), rows.rs, result.rs}; steps.rs, prefs.rs, strings/en.toml
-crates/dreamcarve-app/src/sim/{mod.rs (the step's Viewport), renderer.rs, heightfield.wgsl, walls.wgsl, tool.rs (port), lines.rs, transport.rs (the floating bar), controls.rs}, panels/simulate.rs (the step panel), shell/sim_worker.rs, shell/rail.rs, keyboard.rs
+crates/dc-app/src/sim.rs and sim/{job.rs (SimJob, Simulation, execute), session.rs (the app's hand-over of jobs and results, what blocks a simulation), transport.rs, camera.rs (port), mat.rs, probe.rs, shade.rs (port), tool.rs (port: the tool's mesh), rows.rs (the rows, the summary, the Result's lines, the read-out), prefs.rs}; steps.rs, prefs.rs, generation.rs (`current_runs`), strings/en.toml
+crates/dreamcarve-app/src/sim/{mod.rs (the step's Viewport: the view's state, the gestures, the keys), renderer.rs (port), stock.wgsl (port: the bed, the tops and the walls), controls.rs (the views, Colour, the transport, the read-out)}, panels/simulate.rs (the step panel), shell/sim_worker.rs, shell/rail.rs, keyboard.rs
 crates/dreamcarve/src/simulate.rs; cli.rs
 crates/dreamcarve-shell/src/gui_prefs.rs ([simulation])
 tools/parity/sim-capture.ts and tests/golden/sim-*/ (slice 5)
@@ -825,37 +854,70 @@ PureCutCNC's grids (`tools/parity/sim-capture.ts`) is not done: it needs
 `npm install` in the reference checkout, which is the maintainer's to
 run (the worklog).
 
-**The app core (slice 6)** `dc_app::steps::` `there_are_six_steps`,
-`simulate_is_empty_then_complete_then_attention` (acc 155),
-`export_is_as_it_was`; `sim::job::`
-`a_job_is_given_only_on_the_step_with_generation_idle`,
+**The app core (slice 6)** `dc_app` `tests/steps.rs`:
+`there_are_six_steps`, and *Continue* and the opening step with a sixth
+(`continue_goes_to_the_next_step_that_is_not_complete`,
+`continue_wraps_to_an_earlier_step_and_ends_on_export`,
+`a_project_opens_on_its_first_step_that_is_not_complete`);
+`tests/sim.rs`: `a_job_is_given_only_with_generation_idle`,
 `a_change_starts_from_the_first_changed_run` (acc 144),
-`a_result_for_an_old_snapshot_is_dropped` (acc 145),
-`undo_brings_the_earlier_result_back`; `sim::camera::` the presets'
-directions, `fit_frames_the_eight_corners`, `no_drag_goes_under_the_bed`
-(acc 152); `sim::probe::reads_a_pockets_floor_and_its_operation`;
-`sim::rows::` `rows_are_in_cut_order_with_their_runs`,
-`rows_after_the_cursor_are_dimmed`; `prefs::simulation_round_trips`;
-`dreamcarve::gui_equality::simulating_changes_no_program` (acc 156).
+`an_old_snapshots_result_is_kept_but_is_not_current` (acc 145; the
+result is kept to show and to build on, see the worklog),
+`undo_brings_the_earlier_result_back`, `stop_holds_until_simulate_again`,
+`another_quality_is_another_simulation`,
+`nothing_enabled_and_a_refused_project_are_blocked`,
+`simulate_is_empty_then_complete_and_never_needs_attention` (acc 155),
+`rows_are_in_cut_order_and_follow_the_playback`; `sim::camera::`
+`the_presets_look_the_way_their_names_say`,
+`fit_frames_the_eight_corners`, `no_drag_goes_under_the_bed` (acc 152),
+`pan_and_zoom_keep_what_is_under_the_pointer`,
+`a_ray_and_the_matrix_agree_with_the_screen`; `sim::mat::` four on the
+view, the perspective and the product; `sim::probe::`
+`reads_a_slots_floor_and_its_run`,
+`a_slanting_ray_meets_what_is_in_front`, `nothing_is_read_off_the_stock`;
+`sim::transport::` `a_job_opens_at_the_speed_that_plays_it_in_half_a_minute`,
+`play_runs_from_the_start_to_the_build`,
+`the_scrubber_and_the_rows_place_the_job`; `sim::rows::`
+`a_row_is_ahead_cutting_or_done`, `the_clock_reads_minutes_and_seconds`,
+`a_fraction_is_a_whole_percentage_that_never_reads_done_early`;
+`sim::prefs::` its three; `dreamcarve_shell::gui_prefs::`
+`simulation_defaults_when_missing` and `round_trip`;
+`dreamcarve_app::files::` `prefs_round_trip_through_the_file_record`,
+`simulation_from_a_file_is_held_to_what_the_app_can_use`;
+`dreamcarve::gui_equality::simulating_changes_no_program` (acc 156: the
+plaque, the sign and the inlay pair, built, stopped and never opened).
 
-**Shading (slice 7)** `dc_app::sim::shade::` the ports of
-`heightfieldShader.test.ts`:
+**Shading and the tool (slices 7 and 8)** `dc_app::sim::shade::` the
+ports of `heightfieldShader.test.ts`:
 `a_tab_bridge_and_a_cut_through_rim_are_steps`,
 `walls_and_slopes_keep_their_class` (0.4 and 0.5 of a cell are slopes,
 0.6 a step, at cells of 0.1, 1, 2 and 2.5), `a_shallow_scallop_is_a_slope`,
-`the_gradient_is_a_central_difference_at_a_centre`,
-`the_gradient_leaves_steps_out`.
+`the_gradient_is_the_slope_and_leaves_steps_out`,
+`shading_a_changed_rectangle_equals_shading_all`; `sim::tool::`
+`the_cutter_is_drawn_in_the_shape_that_cuts`,
+`the_shank_is_a_touch_wider_and_two_diameters_long`,
+`normals_are_unit_and_point_out`, `a_cutter_of_no_size_has_no_mesh`.
 
 **The window (slices 7–9, 12)** `dreamcarve_app::sim::renderer::`
-`one_private_top_a_cell` (port: `gpuMesh.test.ts`),
-`wall_counts` (port: `instancedBoundary.test.ts`),
-`only_the_changed_rectangle_is_uploaded`; `kittest::`
-`the_rail_has_six_steps`, `simulate_lists_the_operations`,
-`play_advances_and_pause_holds`, `a_row_click_dims_the_rest`,
-`quality_colour_and_layers_change_the_picture`,
+`the_globals_match_the_shader`, `the_class_bits_match_the_shader`,
+`one_top_a_cell_and_a_wall_an_edge` (the counts upstream's
+`gpuMesh.test.ts` and `instancedBoundary.test.ts` hold, here the draws'
+vertex and instance counts), `only_the_changed_rectangle_is_sent`;
+`tests/simulate.rs`: `simulate_lists_the_operations_in_cut_order`,
+`play_advances_and_pause_holds`, `a_row_click_dims_the_rows_after_it`,
+`quality_colour_and_layers_are_preferences`,
 `the_male_board_is_offered_with_an_inlay`,
-`a_frame_of_the_plaque_is_not_blank_and_changes` (acc 157),
-`the_keys` (acc 158), `the_uncut_list_frames_its_places`.
+`the_uncut_list_frames_its_places` (acc 147 in the window),
+`a_frame_of_the_plaque_is_not_blank_and_changes` (acc 157, through
+wgpu); `tests/kittest.rs`:
+`the_rail_has_six_steps_and_a_project_opens_on_its_first_incomplete_one`,
+`continue_goes_to_the_next_step_and_export_is_the_primary_on_export`
+(acc 155 in the window), `keyboard_shortcuts_reach_their_commands` (acc
+158: every key of 126), `file_menu_labels_in_order`,
+`focus_order_and_visible_ring`; `keyboard::tests::`
+`chapter_table_matches_the_shortcut_table`. The review pictures are
+`tests/review.rs`'s `phase6_review`, the book's `tests/book.rs`'s
+`simulation_screenshots`.
 
 **The check (slices 10–11)** `dc_sim::edt::`
 `distances_equal_brute_force_on_random_masks`,

@@ -5799,7 +5799,7 @@ fn keyboard_shortcuts_reach_their_commands() {
         h.run();
     }
 
-    // Ctrl 1 to 5 open the five steps, in order.
+    // Ctrl 1 to 6 open the six steps, in order.
     for (key, command, step) in [
         (
             egui::Key::Num1,
@@ -5815,6 +5815,11 @@ fn keyboard_shortcuts_reach_their_commands() {
         ),
         (
             egui::Key::Num5,
+            Key::GoToSimulate,
+            dc_app::steps::Step::Simulate,
+        ),
+        (
+            egui::Key::Num6,
             Key::GoToExport,
             dc_app::steps::Step::Export,
         ),
@@ -6131,6 +6136,100 @@ fn keyboard_shortcuts_reach_their_commands() {
     h.run();
     reached.insert(Key::ToggleSnapping);
 
+    // The Simulate step's keys (phase 6, capability 126; acceptance
+    // 158): the transport's and the views'. The step opens on the
+    // finished stock.
+    {
+        use dc_app::sim::View3;
+        let time = |h: &Harness<'_, dreamcarve_app::Shell>| h.state().sim_time_s().0;
+        command_key(&h, egui::Key::Num5);
+        h.run();
+        common::settle(&mut h);
+        let total = h.state().sim_time_s().1;
+        assert!(total > 60.0, "the plaque's moves take minutes: {total}");
+        assert!((time(&h) - total).abs() < 1e-6, "it opens at the end");
+
+        h.key_press(egui::Key::OpenBracket);
+        h.run();
+        let before_last = time(&h);
+        assert!(before_last < total, "[ shows the operation before's end");
+        reached.insert(Key::SimPrevious);
+        h.key_press(egui::Key::CloseBracket);
+        h.run();
+        assert!((time(&h) - total).abs() < 1e-6, "] the next one's");
+        reached.insert(Key::SimNext);
+
+        h.key_press(egui::Key::Comma);
+        h.run();
+        let one_back = time(&h);
+        assert!(one_back < total, ", steps a cutting move back");
+        reached.insert(Key::SimStepBack);
+        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Comma);
+        h.run();
+        assert!(time(&h) < one_back, "Shift , ten more");
+        reached.insert(Key::SimStepBackTen);
+        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Period);
+        h.run();
+        assert!((time(&h) - one_back).abs() < 1e-6, "Shift . ten forward");
+        reached.insert(Key::SimStepForwardTen);
+        h.key_press(egui::Key::Period);
+        h.run();
+        assert!((time(&h) - total).abs() < 1e-6, ". one forward, to the end");
+        reached.insert(Key::SimStepForward);
+
+        let speed = h.state().sim_speed().expect("a job is shown");
+        h.key_press(egui::Key::Minus);
+        h.run();
+        assert_eq!(h.state().sim_speed(), Some(speed.slower()), "- is slower");
+        reached.insert(Key::SimSlower);
+        h.key_press(egui::Key::Equals);
+        h.run();
+        assert_eq!(h.state().sim_speed(), Some(speed), "= is faster");
+        reached.insert(Key::SimFaster);
+        assert_eq!(
+            h.state().app().prefs().sim.speed,
+            Some(speed),
+            "the speed chosen is a preference"
+        );
+
+        for (key, command, view) in [
+            (egui::Key::Num7, Key::ViewTop, View3::Top),
+            (egui::Key::Num1, Key::ViewFront, View3::Front),
+            (egui::Key::Num3, Key::ViewRight, View3::Right),
+            (egui::Key::Home, Key::ViewHome, View3::Home),
+        ] {
+            h.key_press(key);
+            h.run();
+            assert_eq!(
+                h.state().sim_camera().and_then(|camera| camera.view()),
+                Some(view),
+                "{command:?}"
+            );
+            reached.insert(command);
+        }
+
+        // Space plays, from the start when the job is at its end (here
+        // its last moment, a step having brought it there), and pauses.
+        h.key_press(egui::Key::Space);
+        h.step();
+        h.step();
+        assert!(h.state().sim_playing(), "Space plays");
+        assert!(time(&h) < total, "from the start");
+        h.key_press(egui::Key::Space);
+        h.step();
+        h.step();
+        assert!(!h.state().sim_playing(), "Space pauses");
+        reached.insert(Key::SimPlayPause);
+
+        // On another step the same keys ask nothing.
+        command_key(&h, egui::Key::Num1);
+        h.run();
+        let held = time(&h);
+        h.key_press(egui::Key::CloseBracket);
+        h.run();
+        assert!((time(&h) - held).abs() < 1e-9, "] is the Simulate step's");
+    }
+
     let count = h.state().app().project().instances.len();
     h.key_press(egui::Key::Delete);
     h.run();
@@ -6261,8 +6360,15 @@ fn focus_order_and_visible_ring() {
     );
     assert_eq!(
         steps,
-        ["Design", "Stock", "Tools", "Operations", "Export"],
-        "the five steps are in the focus order"
+        [
+            "Design",
+            "Stock",
+            "Tools",
+            "Operations",
+            "Simulate",
+            "Export"
+        ],
+        "the six steps are in the focus order"
     );
 
     // Shift Tab from the first stop goes back to the status bar.
@@ -7418,13 +7524,14 @@ fn current_step(h: &Harness<'_, dreamcarve_app::Shell>) -> String {
     current[0].clone()
 }
 
-/// Capabilities 50 and 50a (`redesign.md`, "The steps"): the rail has the
-/// five steps in the workflow's order, each a 56 × 52 button in the 64-px
-/// card; the step panel is titled for the current one. A new project
+/// Capabilities 50 and 50a (`redesign.md`, "The steps"; phase 6,
+/// capability 107): the rail has the six steps in the workflow's order,
+/// Simulate between Operations and Export, each a 56 × 52 button in the
+/// 64-px card; the step panel is titled for the current one. A new project
 /// opens on Design and the finished plaque on Export; the step picked
 /// stays, through an edit, until the next project is opened.
 #[test]
-fn rail_has_five_steps_and_a_project_opens_on_its_first_incomplete_one() {
+fn the_rail_has_six_steps_and_a_project_opens_on_its_first_incomplete_one() {
     use dc_app::steps::Step;
     let dir = scratch("rail-steps");
     let plaque = copy_fixture("plaque.dcv", &dir);
@@ -7434,7 +7541,17 @@ fn rail_has_five_steps_and_a_project_opens_on_its_first_incomplete_one() {
     let h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
     let steps = rail_steps(&h);
     let labels: Vec<&str> = steps.iter().map(|t| t.0.as_str()).collect();
-    assert_eq!(labels, ["Design", "Stock", "Tools", "Operations", "Export"]);
+    assert_eq!(
+        labels,
+        [
+            "Design",
+            "Stock",
+            "Tools",
+            "Operations",
+            "Simulate",
+            "Export"
+        ]
+    );
     assert_eq!(current_step(&h), "Design", "a new project opens on Design");
     assert_eq!(h.state().step(), Step::Design);
     let rail = h.state().layout().rail;
@@ -7515,7 +7632,28 @@ fn continue_goes_to_the_next_step_and_export_is_the_primary_on_export() {
         );
     }
     assert_eq!(h.state().step_states().of(Step::Export), State::Empty);
+    // Phase 6, acceptance 155: Continue leads through Simulate, which
+    // nothing has built yet, and from there to Export.
+    assert_eq!(h.state().step_states().of(Step::Simulate), State::Empty);
     go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::Button, "Continue").click();
+    h.run();
+    assert_eq!(
+        current_step(&h),
+        "Simulate",
+        "every step before is complete"
+    );
+    common::settle(&mut h);
+    assert_eq!(
+        h.state().step_states().of(Step::Simulate),
+        State::Complete,
+        "the step is complete once the project as it stands is simulated"
+    );
+    assert_eq!(
+        h.state().step_states().of(Step::Export),
+        State::Empty,
+        "Export's state is what it was without the step"
+    );
     h.get_by_role_and_label(Role::Button, "Continue").click();
     h.run();
     assert_eq!(current_step(&h), "Export", "every step between is complete");
@@ -8752,7 +8890,9 @@ fn file_menu_labels_in_order() {
             "Go to Stock",
             "Go to Tools",
             "Go to Operations",
+            "Go to Simulate",
             "Go to Export",
+            "Simulation",
             "Toolpaths…",
             "Warnings",
             "Snapping",

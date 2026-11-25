@@ -424,6 +424,19 @@ fn a_step_is_one_cutting_move() {
     assert!(play.is_at_start());
     play.step_moves(99);
     assert!(play.is_finished());
+    // A step back from the job's end undoes a whole cutting move, though
+    // rapids that take no time lie between it and the end: the stock
+    // changes, and the time with it.
+    let total = play.timeline().total_s();
+    play.step_moves(-1);
+    assert!(play.time_s() < total, "{} of {total}", play.time_s());
+    assert_same(
+        play.field(),
+        &build_to(BOARD, &runs, play.cursor()),
+        "a step back from the end",
+    );
+    play.step_moves(1);
+    assert_approx_eq!(play.time_s(), total, 0.0);
 }
 
 /// A seek with a budget stops when the cells are spent and says how far

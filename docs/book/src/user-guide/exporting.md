@@ -24,7 +24,7 @@ A finding is one of three kinds.
 The status bar counts each kind, or says *No problems*. The **Warnings**
 button in the rail carries the count of the worst kind found, in its
 colour. A step whose content has an error or a warning has a dot in the
-rail ([The app](the-app.md#the-five-steps)).
+rail ([The app](the-app.md#the-six-steps)).
 
 ## The Warnings drawer
 

@@ -37,15 +37,16 @@ does not work for you, that is a bug.
 Start `dreamcarve-app`. With no project open it shows the **start
 screen**:
 
-![The start screen: New from drawing, New from picture and Open, three example cards, and the five steps in the rail at the left](figures/app/01-start-screen.png)
+![The start screen: New from drawing, New from picture and Open, three example cards, and the six steps in the rail at the left](figures/app/01-start-screen.png)
 
 The window has the same parts whatever you are doing:
 
 - The **header** across the top: the menus, the project's name, Undo and
   Redo, and one green button, **Continue**.
-- The **rail** at the left: the five **steps** of a job, in order.
+- The **rail** at the left: the six **steps** of a job, in order.
   **Design** holds the drawing, **Stock** the material, **Tools** the
-  bits, **Operations** the cuts, and **Export** writes the G-code. Under
+  bits, **Operations** the cuts, **Simulate** shows the result in 3D,
+  and **Export** writes the G-code. Under
   them are **Warnings**, **Appearance** (dark or light) and **Help**.
 - The **step panel** beside the rail: what the current step holds.
 - The **Viewport**: the stock seen from above. Until there is a drawing,
@@ -283,9 +284,20 @@ Save the project first: **File ▸ Save** (Ctrl S, or ⌘S on macOS), as
 `coaster` in the folder that holds the drawing. The header now shows the
 project's name.
 
-Click **Continue**. Every other step is complete, so it opens **Export**.
-The green button is now at the foot of the step's panel, and reads
-**Export G-code**:
+Click **Continue**. It opens **Simulate**, which cuts the toolpath into
+a block of your stock and shows what is left, in 3D:
+
+![The Simulate step: the coaster's stock as a block on its bed, with the circle cut out all the way round and four small tabs still holding it; the panel lists Profile 1 and its time](figures/app/12a-simulate.png)
+
+The circle is cut through, so the bed shows in the groove, and the four
+tabs stand across it. Drag to turn the stock, and press **Play** at the
+bottom to watch the cut. This step is there to look: it changes nothing,
+and you can skip it.
+[Check the cut in 3D](simulate.md) shows what else it can tell you.
+
+Click **Continue** again. Every other step is complete, so it opens
+**Export**. The green button is now at the foot of the step's panel, and
+reads **Export G-code**:
 
 ![The Export step: No problems, an estimated time of 46 s and a Z range of −12..5 mm, the Post-processor, Heights and Tolerances groups, Programs "One program per tool", Program Details, the destination folder and file name, and at the foot "Ready to write 1 program." beside the green Export G-code button](figures/app/13-export.png)
 

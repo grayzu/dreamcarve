@@ -748,3 +748,66 @@ fn a_heightmap_is_sixteen_bit_top_row_first() {
     assert!(!is_heightmap(b"not a picture"));
     assert!(!is_heightmap(&[]));
 }
+
+/// Slice 13's measurement (`docs/specs/phase-6/design.md`, "Slices"):
+/// for each test part at each quality, the grid, the cells the kernel
+/// tests and the time one build takes on this machine, as a table for
+/// the worklog. Ignored: it measures, and holds nothing.
+///
+/// ```sh
+/// cargo test -p dc-job --test simulate the_cost_of_each_part -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "prints a table of costs for the worklog; run by hand"]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::print_stdout,
+    reason = "a count shown in millions, in a table printed for a person"
+)]
+fn the_cost_of_each_part_at_each_quality() {
+    println!("| Part | Quality | Cells | Moves | Cells tested | Build | Design and compare |");
+    println!("| --- | --- | --- | --- | --- | --- | --- |");
+    for name in ["plaque", "sign", "dc"] {
+        let project = fixture(name);
+        let runs = generated(&project);
+        let plan = plan(&project, &runs, &EstimateConfig::default()).unwrap();
+        for board in &plan.boards {
+            let sims = board.sim_runs();
+            let moves: usize = sims.iter().map(|run| run.moves.len()).sum();
+            for quality in [Quality::Draft, Quality::Standard, Quality::Fine] {
+                let grid =
+                    Grid::of(board.width_mm, board.height_mm, CellSpec::Quality(quality)).unwrap();
+                let mut field = Heightfield::uncut(grid, board.thickness_mm).unwrap();
+                let started = std::time::Instant::now();
+                let mut tested = 0_u64;
+                for (owner, run) in sims.iter().enumerate() {
+                    for mv in &run.moves {
+                        tested += field
+                            .cut(
+                                mv,
+                                (0.0, 1.0),
+                                &run.cutter.cutter,
+                                u16::try_from(owner).unwrap(),
+                            )
+                            .tested;
+                    }
+                }
+                let built = started.elapsed();
+                let started = std::time::Instant::now();
+                let asked = design(&project, board, &runs, grid);
+                let found = compare(&field, &asked, UNCUT_MM);
+                let checked = started.elapsed();
+                println!(
+                    "| {name} ({}) | {quality:?} | {} × {} | {moves} | {:.1} M | {:.0} ms | {:.0} ms ({} places) |",
+                    board.board.as_str(),
+                    grid.nx(),
+                    grid.ny(),
+                    tested as f64 / 1e6,
+                    built.as_secs_f64() * 1e3,
+                    checked.as_secs_f64() * 1e3,
+                    found.places.len(),
+                );
+            }
+        }
+    }
+}

@@ -95,9 +95,10 @@ fn states(harness: &Harness) -> States {
     steps::states(&harness.app, &fresh())
 }
 
-/// The order is the workflow's, and it is the rail's.
+/// The order is the workflow's, and it is the rail's: phase 6 puts
+/// Simulate between Operations and Export (capability 107).
 #[test]
-fn the_steps_run_design_stock_tools_operations_export() {
+fn there_are_six_steps() {
     assert_eq!(
         Step::ALL,
         [
@@ -105,12 +106,26 @@ fn the_steps_run_design_stock_tools_operations_export() {
             Step::Stock,
             Step::Tools,
             Step::Operations,
+            Step::Simulate,
             Step::Export
         ]
     );
+    for (index, step) in Step::ALL.into_iter().enumerate() {
+        assert_eq!(step.index(), index);
+    }
     let strings = dc_app::Strings::english();
     let labels: Vec<&str> = Step::ALL.iter().map(|s| strings.get(s.label())).collect();
-    assert_eq!(labels, ["Design", "Stock", "Tools", "Operations", "Export"]);
+    assert_eq!(
+        labels,
+        [
+            "Design",
+            "Stock",
+            "Tools",
+            "Operations",
+            "Simulate",
+            "Export"
+        ]
+    );
 }
 
 /// A new project has nothing in any step, so the rail shows no mark: its
@@ -413,12 +428,15 @@ fn continue_goes_to_the_next_step_that_is_not_complete() {
     let harness = Harness::from_project(coaster());
     let all = states(&harness);
     assert_eq!(steps::next(&all, Step::Design), Step::Stock);
-    // The plaque: everything is done but the export.
+    // The plaque: everything is done but the simulation and the export.
+    // *Continue* leads through Simulate (phase 6, capability 107), and
+    // from it to Export.
     let harness = Harness::from_project(plaque());
     let all = states(&harness);
     for step in [Step::Design, Step::Stock, Step::Tools, Step::Operations] {
-        assert_eq!(steps::next(&all, step), Step::Export, "{step:?}");
+        assert_eq!(steps::next(&all, step), Step::Simulate, "{step:?}");
     }
+    assert_eq!(steps::next(&all, Step::Simulate), Step::Export);
 }
 
 /// With nothing left after the current step, *Continue* looks before it;
@@ -431,19 +449,23 @@ fn continue_wraps_to_an_earlier_step_and_ends_on_export() {
         ..fresh()
     };
     let all = steps::states(&harness.app, &session);
-    assert_eq!(steps::next(&all, Step::Tools), Step::Export);
-    assert_eq!(steps::next(&all, Step::Export), Step::Export);
-    // Exported, then a tool loses its feed: Export is the first after
-    // Operations that is not complete; from Export it wraps to Tools.
+    // Exported and never simulated: only Simulate is left.
+    assert_eq!(steps::next(&all, Step::Tools), Step::Simulate);
+    assert_eq!(steps::next(&all, Step::Simulate), Step::Export);
+    // Exported, then a tool loses its feed: from Simulate, Export is the
+    // first that is not complete; from Export it wraps to Tools.
     let used = used_tool(&harness);
     without_feed(&mut harness, &used);
     let all = steps::states(&harness.app, &session);
-    assert_eq!(steps::next(&all, Step::Operations), Step::Export);
+    assert_eq!(steps::next(&all, Step::Operations), Step::Simulate);
+    assert_eq!(steps::next(&all, Step::Simulate), Step::Export);
     assert_eq!(steps::next(&all, Step::Export), Step::Tools);
 }
 
 /// Opening a project selects the first step that is not complete: an
 /// empty project Design, the coaster Stock, a finished project Export.
+/// Simulate, which nothing has built when a project opens, is never the
+/// reason (phase 6 functional spec, question 11).
 #[test]
 fn a_project_opens_on_its_first_step_that_is_not_complete() {
     assert_eq!(steps::opening(&states(&new_project())), Step::Design);
@@ -463,12 +485,20 @@ fn a_project_opens_on_its_first_step_that_is_not_complete() {
 fn a_mark_holds_while_toolpaths_regenerate() {
     let warned = State::Attention(Severity::Warning);
     let failed = State::Attention(Severity::Error);
-    let shown = States::new([State::Complete, warned, State::Complete, warned, failed]);
+    let shown = States::new([
+        State::Complete,
+        warned,
+        State::Complete,
+        warned,
+        State::Empty,
+        failed,
+    ]);
     let now = States::new([
         State::Complete,
         State::Complete,
         State::Complete,
         State::Complete,
+        State::Empty,
         State::Empty,
     ]);
     let held = steps::settle(&shown, now, true);
@@ -481,6 +511,7 @@ fn a_mark_holds_while_toolpaths_regenerate() {
         State::Complete,
         State::Complete,
         failed,
+        State::Empty,
         failed,
     ]);
     assert_eq!(

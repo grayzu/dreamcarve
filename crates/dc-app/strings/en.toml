@@ -306,7 +306,20 @@ go_to_design = "Go to Design"
 go_to_stock = "Go to Stock"
 go_to_tools = "Go to Tools"
 go_to_operations = "Go to Operations"
+go_to_simulate = "Go to Simulate"
 go_to_export = "Go to Export"
+simulation = "Simulation"
+sim_play = "Play or Pause"
+sim_previous = "Previous Operation"
+sim_next = "Next Operation"
+sim_step_back = "Step Back"
+sim_step_forward = "Step Forward"
+sim_slower = "Slower"
+sim_faster = "Faster"
+view_home = "Home View"
+view_top = "Top View"
+view_front = "Front View"
+view_right = "Right View"
 appearance = "Appearance"
 theme_system = "System"
 theme_light = "Light"
@@ -358,6 +371,7 @@ design = "Design"
 stock = "Stock"
 tools = "Tools"
 operations = "Operations"
+simulate = "Simulate"
 export = "Export"
 
 # The one line under a step's title: what the step holds.
@@ -2017,3 +2031,99 @@ box = "{width} × {height}"
 diameter = "Ø {diameter}"
 radius = "R {radius}"
 length = "{length}"
+
+# The Simulate step (phase 6, capabilities 107 to 123). Its summary line:
+# what stands in the simulation's way, where it has got to, or what it
+# holds.
+[sim.summary]
+empty = "Nothing to simulate: no operation is enabled."
+blocked = "{count} {count|error blocks|errors block} the simulation. The stock is shown uncut."
+waiting = "Waiting for the toolpaths…"
+held = "The toolpaths were stopped. Regenerate them to simulate."
+starting = "Simulating…"
+building = "Simulating… {percent} %"
+stopped = "Simulation stopped"
+failed = "The simulation could not be made: {reason}"
+built = "{count} {count|operation|operations} · {time}"
+
+# A run's row under an operation that has several.
+[sim.rows]
+main = "{kind} · {tool}"
+clearing = "Clearing · {tool}"
+cut_out = "Cut-out · {tool}"
+left_out = "{count} {count|operation is|operations are} left out: {count|it has|they have} an error"
+show = "Show"
+
+[sim.actions]
+again = "Simulate again"
+
+# The board shown, with an Inlay in the project.
+[sim.board]
+stock = "Stock"
+male = "Male board"
+
+# The 3D view: its name for a screen reader, what it says in place of a
+# stock, its views and its read-out.
+[sim.view]
+name = "Simulation"
+no_stock = "Set the stock's thickness to see it here."
+too_fine = "This Quality is finer than the graphics device can draw. Choose a coarser one."
+home = "Home"
+home_help = "Look from the front right, above"
+top = "Top"
+top_help = "Look straight down"
+front = "Front"
+front_help = "Look from the operator's side"
+right = "Right"
+right_help = "Look from the right"
+readout = "X {x}  Y {y}  Z {z}"
+readout_cut = "{at} · {operation}"
+
+[sim.transport]
+play = "Play"
+pause = "Pause"
+previous = "Previous operation"
+next = "Next operation"
+scrubber = "Time into the job"
+time = "{now} / {total}"
+speed = "Speed"
+speed_help = "How fast the job plays, as a multiple of its feeds"
+
+[sim.result]
+title = "Result"
+none = "Nothing is simulated yet."
+
+[sim.uncut]
+show = "Uncut material"
+over = "More than"
+over_help = "How far the finished stock may stand above what the shapes ask for before it is uncut material: 0.05 mm to 5 mm."
+none = "No uncut material."
+row = "{name} · {count} {count|place|places} · {area} · up to {height}"
+no_operation = "No one operation"
+frame_help = "Show these places from the top"
+narrow = "A place narrower than about {width} (two cells) is not found."
+
+[sim.display]
+title = "Display"
+
+[sim.quality]
+label = "Quality"
+help = "How finely the stock is divided: 512, 1024 or 2048 cells along its longer side. A wall is true to within one cell."
+draft = "Draft"
+standard = "Standard"
+fine = "Fine"
+cells = "Cells of {cell}"
+
+[sim.colour]
+label = "Colour"
+material = "Material"
+operation = "By operation"
+depth = "By depth"
+
+[sim.layers]
+label = "Layers"
+tool = "Tool"
+toolpath = "Toolpath"
+rapids = "Rapids"
+bed = "Bed"
+origin = "Origin"

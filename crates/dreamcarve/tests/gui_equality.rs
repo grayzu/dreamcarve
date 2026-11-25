@@ -1122,6 +1122,124 @@ impl Cut {
     }
 }
 
+/// What the app would write for `harness`'s project with `split`: each
+/// program by name, or why the export is refused (one program with tool
+/// changes, on a post-processor with no tool change).
+fn written_with(
+    harness: &Harness,
+    stem: &str,
+    split: dc_job::ProgramSplit,
+) -> Result<Vec<(String, String)>, String> {
+    let mut options = dc_app::export::Options::new(DATE, dc_job::EstimateConfig::default());
+    options.split = split;
+    let ready = match dc_app::export::plan(&harness.app, &options) {
+        dc_app::export::Plan::Ready(ready) => ready,
+        dc_app::export::Plan::Waiting => panic!("{stem}: the plan waits"),
+    };
+    match ready.blocked() {
+        Some(why) => Err(why),
+        None => Ok(ready
+            .files(stem)
+            .into_iter()
+            .map(|(name, text)| (name, text.to_owned()))
+            .collect()),
+    }
+}
+
+/// Acceptance 156 (phase 6 functional spec, capability 124; S22): the
+/// simulation is a reader. On each of the six post-processors and with
+/// each program split, with the simulation built for each board, with a
+/// build stopped, and with the step never opened, the programs the app
+/// writes (or its refusal to write them) and the project it saves are
+/// byte for byte the same; the project is not marked changed, no warning
+/// comes or goes, and the saved file has nothing of a simulation in it.
+#[test]
+fn simulating_changes_no_program() {
+    use dc_app::sim::{self, SimResult, SimState};
+    use dc_project::Board;
+
+    let opened = |bytes: &[u8], post: &str| {
+        let mut harness = Harness::open(bytes).expect("the project opens");
+        if harness.app.project().post_processor.id != post {
+            harness
+                .run(dc_app::Command::SwitchPost {
+                    id: post.to_owned(),
+                })
+                .expect("the post-processor switches");
+        }
+        harness.generate();
+        harness
+    };
+    let every_split = |harness: &Harness, stem: &str| {
+        SPLITS
+            .iter()
+            .map(|(split, _)| written_with(harness, stem, *split))
+            .collect::<Vec<_>>()
+    };
+    let mut written = 0;
+    for name in ["plaque.dcv", "sign.dcv", "dc.dcv"] {
+        let bytes = std::fs::read(repo_root().join("tests/fixtures").join(name)).unwrap();
+        let stem = name.trim_end_matches(".dcv");
+        for post in POSTS {
+            let case = format!("{name} on {post}");
+            let never = opened(&bytes, post);
+            let programs = every_split(&never, stem);
+            written += programs.iter().flatten().count();
+            let saved = never.save().unwrap();
+            assert!(
+                !saved.contains("simul"),
+                "{case}: the file holds nothing of a simulation"
+            );
+
+            // Built, for the stock and for the male board where there
+            // is one.
+            let mut built = opened(&bytes, post);
+            let mut made = 0;
+            for board in [Board::Female, Board::Male] {
+                built.app.set_sim_board(board);
+                let Some((job, runs)) = built.app.next_sim_job() else {
+                    continue;
+                };
+                let result = sim::execute(
+                    built.app.project(),
+                    &runs,
+                    &job,
+                    &dc_job::EstimateConfig::default(),
+                    &mut |_| true,
+                );
+                assert!(matches!(result, SimResult::Built(_)), "{case} {board:?}");
+                assert!(built.app.accept_sim(result));
+                assert_eq!(built.app.sim_state(), SimState::Current);
+                made += 1;
+            }
+            assert!(made >= 1, "{case}: the stock is simulated");
+            assert_eq!(every_split(&built, stem), programs, "{case}: built");
+            assert_eq!(built.save().unwrap(), saved, "{case}: built");
+            assert_eq!(
+                built.app.is_dirty(),
+                never.app.is_dirty(),
+                "{case}: a simulation is no change"
+            );
+            assert_eq!(built.warnings(), never.warnings(), "{case}: nor a warning");
+
+            // A build stopped part-way.
+            let mut stopped = opened(&bytes, post);
+            let (job, _) = stopped.app.next_sim_job().expect("a job is due");
+            stopped.app.stop_sim();
+            stopped.app.accept_sim(SimResult::Stopped {
+                snapshot: job.snapshot,
+            });
+            assert_eq!(stopped.app.sim_state(), SimState::Stopped);
+            assert_eq!(every_split(&stopped, stem), programs, "{case}: stopped");
+            assert_eq!(stopped.save().unwrap(), saved, "{case}: stopped");
+        }
+    }
+    assert!(
+        written >= 3 * POSTS.len(),
+        "programs were compared: {written}"
+    );
+}
+
 /// The first line, from 1, at which programs `a` and `b` differ by more
 /// than the last decimal place of a coordinate; `None` when they are the
 /// same program. An import rounds a drawing's coordinates to a millionth

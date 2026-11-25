@@ -14,6 +14,7 @@
 pub mod keyboard;
 mod panels;
 mod shell;
+mod sim;
 mod viewport;
 mod widgets;
 

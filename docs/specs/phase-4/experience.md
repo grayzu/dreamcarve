@@ -476,6 +476,10 @@ shade off white in light.
 | viewport.marquee | accent at 1 px, accent.soft fill | same | |
 | viewport.handle (fill / stroke) | `#FFFFFF` / accent | `#0F1214` / accent | |
 | viewport.label.bg (cursor readouts, extents caption) | `#FFFFFFE0` | `#1B2024E6` | |
+| sim.stock (the simulated stock's material; phase 6) | `#C2CAD4` | `#B5BECA` | PureCutCNC's grey-blue, one colour for cut and uncut: two fixed lights and a darkening with depth do the rest |
+| sim.bed (the surface the simulated stock stands on) | `#DDE2E5` | `#1D2226` | viewport.grid.major's values: a shade off the background, so a through cut reads as a hole |
+| sim.tool (the cutting part of the tool) | `#8899A6` | `#D9DDE3` | PureCutCNC's |
+| sim.tool.shank (the plain shank above it) | `#5A6470` | `#7D8591` | PureCutCNC's |
 
 The light Viewport's background is a shade darker than it was, which
 leaves the male board, a locked shape, the extents' edge box and rapids a

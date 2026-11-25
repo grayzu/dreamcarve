@@ -339,6 +339,14 @@ pub(crate) fn keys_free(ctx: &Context) -> bool {
     }
 }
 
+/// Whether Space is the Viewport's and not a control's: nothing has the
+/// focus, the Viewport has, or the focus is only where a click left it,
+/// with no ring. A control reached with the keyboard keeps Space, which
+/// presses it (phase 6, capability 126: Space plays the simulation).
+pub(crate) fn space_free(ctx: &Context) -> bool {
+    keys_free(ctx) || !load(ctx).keyboard
+}
+
 /// The ring's width, px (section 7, "focus").
 pub const RING_PX: f32 = 2.0;
 /// The gap between a control and its ring, px.

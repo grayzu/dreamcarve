@@ -27,7 +27,7 @@ mod report;
 
 pub use design::design;
 pub use picture::{PICTURE_SOFTWARE, heightmap_png, is_heightmap};
-pub use report::{describe, describe_duration, describe_uncut};
+pub use report::{describe, describe_area, describe_duration, describe_uncut};
 
 use dc_geometry::Point3;
 use dc_project::{Board, Operation, OperationId, Project, Stock, ToolId};

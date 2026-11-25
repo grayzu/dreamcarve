@@ -48,17 +48,19 @@ Its survey is `docs/research/purecutcnc-simulation-digest.md`.
 ## Where it stands
 
 Baseline before the first slice: 3,766 tests pass on macOS at
-`0.6.0-alpha.1`, on `Phase-5`'s `d75c61ef`. After slice 4: 3,838.
+`0.6.0-alpha.1`, on `Phase-5`'s `d75c61ef`. After slice 4: 3,838. After
+slices 5, 10 and 11: 3,865. After the window (slices 6 to 9, 12 to 14):
+3,919.
 
 ### Exit criteria (functional spec)
 
 | Criterion | Where it stands |
 | --- | --- |
-| Acceptance tests 131–158 green on macOS | Not started |
-| S22's two tests (142, 156) on all six post-processors and both program splits | Not started |
+| Acceptance tests 131–158 green on macOS | Green, with 149 withdrawn. Each is named in the design spec's test plan beside the test that carries it |
+| S22's two tests (142, 156) on all six post-processors and both program splits | Green: `dc_job` `simulate::the_plan_is_the_runs_export_writes` and `dreamcarve` `gui_equality::simulating_changes_no_program`, each on the plaque, the sign and the inlay pair |
 | The bench check's table filled for every part that has been cut | **The maintainer's.** The coaster, the plaque and the lettered inlay pair are cut; the sign in part; the line-art inlay, the photo, the tapered ball nose parts and the hook plate are not |
-| Quick start "Check the cut in 3D" and the Simulation chapter, with screenshots from the build | Not started |
-| `CONTEXT.md` updated; every user-visible string keyed | Not started. `CONTEXT.md` is left alone until the rebase: phase 5 rewrote much of it |
+| Quick start "Check the cut in 3D" and the Simulation chapter, with screenshots from the build | Written, with nine pictures taken by `book::simulation_screenshots`; every other picture of the book taken again for the six-step rail |
+| `CONTEXT.md` updated; every user-visible string keyed | Done: a Simulation section (Simulation, Heightfield, Cell, Quality, Bed, Playback, Design Surface, Uncut Material), and the string scans pass |
 | The maintainer's review, and the open questions settled | **Open.** "Decisions waiting for the maintainer", below |
 | `v0.6.0-alpha.1`, then `v0.6.0` | **The maintainer's** |
 
@@ -155,6 +157,56 @@ Decisions made while building are added here.
   and corners. A Profile's trench is found on the grid, by distance
   from the shape's edge, with no polygon offset; a tab is kept a tool's
   radius longer at each end than stands.
+- Slice 6, the app core. **The last simulation of a board is kept
+  whatever snapshot it was made for**, where the design said a result
+  for an old snapshot is dropped: it is what stays on screen, dimmed,
+  while the next is made, and what the next one builds on. Whether it
+  is the current one is asked of it (`Simulation::state`), by the
+  snapshot and the settings it was made with, so Quality and the uncut
+  threshold are part of what "current" means. A job that stopped
+  because a newer one was wanted is not held as Stop holds one. **A job
+  smaller than one chunk of work is never asked whether to go on**: the
+  plaque at Draft is cut before the engine first asks, so Stop takes on
+  larger jobs only, which is where it matters. **Continue leads through
+  Simulate from any step**, as the first step that is not complete; a
+  project never opens on it (functional question 11). The simulation
+  reads `Generation::current_runs`, every enabled operation's runs once
+  none is waiting, an error or not: an operation an error stopped has
+  none and is left out, and the panel says so.
+- Slice 7, the renderer. As the design now says it: no vertex or index
+  buffers, gradients as `Rg32Float` (a steep V's slope does not fit a
+  normalised texture, and `Rg16Snorm` is a wgpu feature), and an sRGB
+  target, since egui decodes what it samples. **The step rule's edge
+  has a nanometre of slack**: two heights half a cell apart on paper
+  differ by a rounding once they are `f64`s, and upstream's own test
+  asks that exactly half a cell be a slope. A wgpu debug label is an id
+  (`sim.tops`), not words: the shell's string scan reads every literal.
+- Slice 8, playback. The transport's keys and the views' are rows of
+  **View ▸ Simulation**, a submenu: eleven more rows made View too long
+  for a short window. **Space plays whenever the focus is only where a
+  click left it**, and is taken before the window's controls see it, so
+  it does not also press the rail's button; a control reached with Tab
+  keeps Space. The drawing's keys (the tools, Delete, the arrows) are
+  not read on the Simulate step: they would change shapes that are not
+  in view. *Simulating… n %* and Stop are the status bar's generation
+  cell, which the header's chip reads.
+- Slice 12. **Uncut material is off until turned on**, as capability
+  120 says; the first draft of the preferences had it on.
+- **What the pictures and the window's tests found**, each put right:
+  the stock drawn far too dark (an sRGB target, where egui reads a
+  texture as holding encoded colours); a step back from the job's end
+  that changed nothing (it undid only the rapids after the last cut);
+  Play ending at once from the job's last moment, a step having brought
+  it there with those rapids still to pass; an uncut material line too
+  long for the panel, which pushed the rest of the section out of it;
+  Colour's three choices cramped beside their label; a framed place
+  filling the card under the pills. A through cut showed no colour By
+  operation, having no floor: a wall now takes the colour of the cut
+  that made it.
+- **The app quick start goes through Simulate.** *Continue* from
+  Operations opens it, so the chapter says so, shows the coaster there
+  and goes on to Export; its test follows. Every picture of the book
+  was taken again, since each shows the rail.
 - **The parity capture is the maintainer's to unblock.** `../purecutcnc`
   has no `node_modules`, and installing them changes that checkout and
   fetches from the network. With them, `tools/parity/sim-capture.ts`
@@ -186,10 +238,10 @@ The numbers are the design spec's.
 
 | Slice | What | Status |
 | --- | --- | --- |
-| 6 | The app core: `Step::Simulate`, `dc_app::sim`, the preferences | todo |
-| 7 | The window, the stock: the worker, the renderer, the camera, the step panel, Quality | todo |
-| 8 | The window, playback: the transport, the rows, the tool, the keys | todo |
-| 9 | Colour, layers, the male board, the read-out | todo |
+| 6 | The app core: `Step::Simulate`, sixth of six, with *Continue* leading through it and a project never opening on it; `dc_app::sim` (the job and `execute`, which cuts from the first run that changed; `Simulation`, which says whether what is shown is current; what blocks a simulation; the transport; the orbit camera and its matrices; the probe; the rows, the summary and the read-out as text); `Generation::current_runs`; `SimPrefs` and `[simulation]` in `gui.toml` | done |
+| 7 | The window, the stock: the simulation thread (`shell/sim_worker.rs`); `StockRenderer`, off screen with a depth buffer into a texture egui shows, the bed, a top a cell and a wall an edge from `stock.wgsl` with no vertex buffers, only the changed rectangle sent; the step rule and gradients (`shade.rs`, ported with its tests); drag, slide and zoom, the four views and Fit; the step's panel with Quality and its cell size; the tokens `sim.stock`, `sim.bed`, `sim.tool`, `sim.tool.shank`; the first pictures | done |
+| 8 | The window, playback: the transport (Previous, Play or Pause, Next, the scrubber with a tick an operation, the two times, Speed and its five choices), the rows' clicks and their progress, the tool as one turned profile of the cutter's own shape (`tool.rs`), the keys of capability 126 as rows of View ▸ Simulation, *Simulating… n %* and Stop in the status bar | done |
+| 9 | Colour (Material, By operation with a wall coloured by the cut that made it, By depth with phase 4's legend), Layers (the tool, the toolpath and rapids of the operation shown and the origin's axes as lines against the stock's depth, the bed), the male board's choice, the read-out from the machine origin with the operation's name | done |
 
 ### 6.3 Checking the result
 
@@ -197,11 +249,11 @@ The numbers are the design spec's.
 | --- | --- | --- |
 | 10 | The design surface (done before slice 6, with slice 5, since the report lists uncut material): `dc_sim::Design` (regions, a trench beside an edge, a trench along a path, tabs, a V's cone) on `dc_sim::edt`, a distance transform written from the paper; `dc_job::simulate::design` for each operation of a project | done |
 | 11 | `dc_sim::compare`: uncut material against the highest asked in a cell's neighbourhood, patches of four cells and more as places, by operation; the report's list. On the fixtures: the plaque, the sign and the inlay pair report nothing; the plaque with its square recess's dogbones off, its four corners. Gate for slices 5, 10 and 11 together, on macOS: fmt and clippy clean, doc tests and headers pass, 3,865 tests of which two failed for a reason outside these slices (`dreamcarve-app`'s two source scans, for string and colour literals, read the working tree, and found a draft of slice 7's renderer written while the tests ran; the draft was put right, and both scans are part of the next gate) | done |
-| 12 | The window, the check | todo |
+| 12 | The window, the check: the flag folded into the classes texture and tinted in the warning colour on the finished stock; Result with the report's facts, the Uncut material switch (off until turned on), its threshold, a line an operation that frames its places from the top, and what the check cannot find | done |
 
 ### 6.4 Release
 
 | Slice | What | Status |
 | --- | --- | --- |
-| 13 | Looking at it: the test parts' pictures at each quality, the decision on #973, the measured cost | todo |
-| 14 | The book and the exit | todo |
+| 13 | Looking at it: 19 scenes of the plaque, the sign and the inlay pair in both appearances, written by `review::phase6_review` into `docs/specs/phase-6/review/`, with its README: what was looked at, **#973 not ported** (walls on cell edges read well at Standard), and the measured cost, 4 ms to 554 ms a build, so no optimisation | done |
+| 14 | The book and the exit: the quick start "Check the cut in 3D" and the chapter "Simulation", with nine pictures taken by `book::simulation_screenshots`; the app quick start taken through Simulate on its way to Export; every picture of the book taken again, the rail having six steps; the Keyboard chapter's table and its section on the step; the six steps in The app and the Overview; the crate map; `CONTEXT.md`'s Simulation terms; the changelog. Gate for slices 6 to 9 and 12 to 14 together, on macOS: fmt and clippy clean, 3,919 tests pass, doc tests and headers pass. Still to do: the checks CI runs that the gate does not, and the exit audit | doing |

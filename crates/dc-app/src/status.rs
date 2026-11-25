@@ -40,6 +40,8 @@ pub enum GenerationAction {
     /// Force every operation to generate again: offered after Stop and
     /// nowhere else.
     RegenerateAll,
+    /// Abandon the simulation being made (phase 6, capability 123).
+    StopSimulation,
 }
 
 /// The generation cell's button and its label.
@@ -228,7 +230,17 @@ fn generation(app: &App) -> Option<GenerationCell> {
                 StrKey::AppGenerationRegenerateAll,
             ),
         }),
-        None => None,
+        // The toolpaths are in: the simulation that follows them, while
+        // it is made (phase 6, capabilities 108 and 123), in the words of
+        // its step's summary.
+        None => match app.sim_state() {
+            state @ crate::sim::SimState::Building(_) => Some(GenerationCell {
+                text: crate::sim::summary(strings, &state, None, None),
+                spinner: true,
+                action: button(GenerationAction::StopSimulation, StrKey::AppGenerationStop),
+            }),
+            _ => None,
+        },
     }
 }
 

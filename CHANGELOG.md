@@ -10,6 +10,30 @@ before that; its changes are those under Unreleased.
 
 ### Added
 
+- **Simulation: the cut in 3D (phase 6).** The app has a sixth step,
+  **Simulate**, between Operations and Export. It cuts every enabled
+  operation's toolpath into a block of the stock's size, with the shape
+  of each tool (end mill, ball nose, V-bit, tapered ball nose), and
+  shows the result in 3D: turn it, zoom it, look from the top or a side,
+  and read the depth and the operation under the pointer. A transport
+  plays the job at 1× to 500× the programmed feed, scrubs to any moment
+  and steps operation by operation; a click on an operation shows the
+  stock as that operation leaves it. Cut surfaces can be coloured by
+  operation or by depth. **Uncut material** highlights and lists where
+  the finished stock still stands above what the shapes ask for, such
+  as the corners a round bit leaves in a square pocket. The simulation
+  reads the toolpaths export writes and changes no program; export never
+  waits for it. Ctrl 5 opens the step, and Export is now Ctrl 6. The
+  quick start [Check the cut in
+  3D](docs/book/src/quick-start/simulate.md) walks through it on the
+  plaque, and [Simulation](docs/book/src/user-guide/simulation.md) has
+  the rest.
+- **`dreamcarve simulate <dcv>`.** Prints what the finished stock is
+  like (the deepest cut, where it is cut through, the volume removed,
+  uncut material by operation) and, with `--out`, writes it as a 16-bit
+  grayscale heightmap PNG. `--quality` or `--cell` set how finely the
+  stock is divided, `--board male` simulates an Inlay's male board, and
+  `--until <operation>` stops part-way.
 - **Drawing in the app.** A part can now be designed in DreamCarve with
   no drawing to import. **Draw from scratch** on the start screen opens
   a blank project, and the Viewport has drawing tools: Line, Arc and

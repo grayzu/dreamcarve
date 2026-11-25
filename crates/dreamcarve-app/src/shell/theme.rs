@@ -156,6 +156,15 @@ pub struct Palette {
     pub viewport_handle_fill: Color32,
     /// The pill behind a caption on the Viewport.
     pub viewport_label_bg: Color32,
+    /// The simulated stock's material (phase 6, capability 109):
+    /// PureCutCNC's grey-blue, lit and darkened with depth.
+    pub sim_stock: Color32,
+    /// The bed the simulated stock stands on.
+    pub sim_bed: Color32,
+    /// The cutting part of the tool, on the Simulate step.
+    pub sim_tool: Color32,
+    /// The tool's shank above it.
+    pub sim_tool_shank: Color32,
     /// The depth ramp's five stops, stock top first (section 5, "Depth
     /// ramp"), interpolated in linear sRGB.
     pub depth_ramp: [Color32; 5],
@@ -227,6 +236,10 @@ pub const LIGHT: Palette = Palette {
     viewport_extents_edge: rgb(0x8A929E),
     viewport_handle_fill: rgb(0xFFFFFF),
     viewport_label_bg: rgba(0xFFFF_FFE0),
+    sim_stock: rgb(0xC2CAD4),
+    sim_bed: rgb(0xDDE2E5),
+    sim_tool: rgb(0x8899A6),
+    sim_tool_shank: rgb(0x5A6470),
     depth_ramp: [
         rgb(0xAFC2EE),
         rgb(0x7C98E0),
@@ -299,6 +312,10 @@ pub const DARK: Palette = Palette {
     viewport_extents_edge: rgb(0x7B8491),
     viewport_handle_fill: rgb(0x0F1214),
     viewport_label_bg: rgba(0x1B20_24E6),
+    sim_stock: rgb(0xB5BECA),
+    sim_bed: rgb(0x1D2226),
+    sim_tool: rgb(0xD9DDE3),
+    sim_tool_shank: rgb(0x7D8591),
     depth_ramp: [
         rgb(0xE4ECFF),
         rgb(0xBCCBF8),
@@ -372,6 +389,10 @@ impl Palette {
             ("viewport.extents.centre", self.viewport_extents_centre),
             ("viewport.extents.edge", self.viewport_extents_edge),
             ("viewport.label.bg", self.viewport_label_bg),
+            ("sim.stock", self.sim_stock),
+            ("sim.bed", self.sim_bed),
+            ("sim.tool", self.sim_tool),
+            ("sim.tool.shank", self.sim_tool_shank),
         ]
     }
 }

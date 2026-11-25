@@ -711,6 +711,23 @@ impl Generation {
         self.finish_job().filter(|j| j.emit).map(|j| j.runs)
     }
 
+    /// Every enabled operation's current runs, in project order, once
+    /// none is waiting or being generated: what the simulation reads
+    /// (phase 6, capability 108). Unlike [`Generation::finish_input`] it
+    /// does not ask that they generated without error: an operation an
+    /// error stopped has no runs and the rest are given. `None` while
+    /// any is not current, or when validation refuses the project.
+    #[must_use]
+    pub fn current_runs(&self) -> Option<Vec<EmitOp>> {
+        self.all_current().then(|| {
+            self.order
+                .iter()
+                .filter_map(|op| self.results.get(op))
+                .flat_map(|r| r.runs.iter().cloned())
+                .collect()
+        })
+    }
+
     /// Whether anything is left to do for this snapshot: an operation
     /// waiting or in flight, or the project-level pass due or running.
     #[must_use]

@@ -45,7 +45,21 @@ except in an open sheet.
 | Ctrl+2 | ⌘2 | Open the Stock step | View ▸ Go to Stock |
 | Ctrl+3 | ⌘3 | Open the Tools step | View ▸ Go to Tools |
 | Ctrl+4 | ⌘4 | Open the Operations step | View ▸ Go to Operations |
-| Ctrl+5 | ⌘5 | Open the Export step | View ▸ Go to Export |
+| Ctrl+5 | ⌘5 | Open the Simulate step | View ▸ Go to Simulate |
+| Ctrl+6 | ⌘6 | Open the Export step | View ▸ Go to Export |
+| Space | Space | Play or pause the simulation, on the Simulate step | View ▸ Simulation ▸ Play or Pause |
+| [ | [ | Show the stock as the operation before leaves it, on the Simulate step | View ▸ Simulation ▸ Previous Operation |
+| ] | ] | Show the stock as the next operation leaves it, on the Simulate step | View ▸ Simulation ▸ Next Operation |
+| , | , | Step the simulation one cutting move back | View ▸ Simulation ▸ Step Back |
+| . | . | Step the simulation one cutting move forward | View ▸ Simulation ▸ Step Forward |
+| Shift+, | ⇧, | Step the simulation ten cutting moves back | — |
+| Shift+. | ⇧. | Step the simulation ten cutting moves forward | — |
+| - | - | Play the simulation at the next speed down | View ▸ Simulation ▸ Slower |
+| = | = | Play the simulation at the next speed up | View ▸ Simulation ▸ Faster |
+| Home | Home | Look at the simulated stock from the front right, above | View ▸ Simulation ▸ Home View |
+| 7 | 7 | Look at the simulated stock from straight above | View ▸ Simulation ▸ Top View |
+| 1 | 1 | Look at the simulated stock from the operator's side | View ▸ Simulation ▸ Front View |
+| 3 | 3 | Look at the simulated stock from the right | View ▸ Simulation ▸ Right View |
 | T | T | Turn the Tab tool on or off: a click on a shape's outline adds a tab | Shape ▸ Tab Tool |
 | V | V | Take up the Select tool, putting down the tool in use | — |
 | N | N | Edit the nodes of the selected path; a double-click on a path does the same | — |
@@ -67,7 +81,6 @@ except in an open sheet.
 | Shift+arrow keys | ⇧ arrow keys | Nudge the selection 10 mm | — |
 | Alt+arrow keys | ⌥ arrow keys | Nudge the selection 0.1 mm | — |
 | Esc | Esc | Step back out of what a tool has begun, put the tool down, clear the selection, stop picking on the Viewport, or close a menu | — |
-
 <!-- shortcuts:end -->
 
 The table is generated from the app's own shortcut table, so it always
@@ -106,6 +119,24 @@ the table because they have no command of their own.
 | Alt (⌥) | Drag a box while editing an operation's targets | Take the shapes out of the targets |
 | Space, or the middle button | Drag | Pan the Viewport |
 
+## On the Simulate step
+
+The Simulate step shows the stock in 3D, and the drawing's shortcuts
+(the tools, Delete, the arrows) do nothing there. It has its own, which
+are in the table: **Space** plays and pauses, **[** and **]** go to the
+end of the operation before and the next one, **,** and **.** step one
+cutting move back and forward (ten with Shift), **-** and **=** change
+the speed, **Home**, **7**, **1** and **3** are the Home, Top, Front and
+Right views, and **F** fits the stock in the view. They are read while
+the 3D view, or nothing, has the keyboard focus: with a button or a
+checkbox focused, Space presses it as it does everywhere.
+
+| Do this on the 3D view | To |
+| --- | --- |
+| Drag | Turn the stock |
+| Drag with the right or the middle button, or with Shift | Slide the stock |
+| Turn the wheel, or pinch | Zoom about the pointer |
+
 While you edit an operation's targets, **Enter** is **Done** and
 **Escape** is **Cancel**. While a name is being edited, in the list or in
 the Inspector's header, **Enter** keeps the new name and **Escape** the
@@ -115,11 +146,11 @@ old one.
 
 Tab moves the keyboard focus through the window from top left to bottom
 right: the header (the menus, Undo, Redo and the primary button), the
-rail (the five steps, then Warnings, Appearance and Help), the step
+rail (the six steps, then Warnings, Appearance and Help), the step
 panel, the Viewport, the Inspector when something is selected, and the
 status bar, then back to the header. Shift Tab goes the other way.
-Ctrl 1 to Ctrl 5 (⌘1 to ⌘5 on macOS) open the Design, Stock, Tools,
-Operations and Export steps from anywhere.
+Ctrl 1 to Ctrl 6 (⌘1 to ⌘6 on macOS) open the Design, Stock, Tools,
+Operations, Simulate and Export steps from anywhere.
 Inside an open sheet, such as the Tool Library, Tab stays in the sheet.
 
 The control with the focus has a ring in the accent colour around it. The ring shows only

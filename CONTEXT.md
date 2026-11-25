@@ -587,8 +587,8 @@ _PureCutCNC_: cannedCycles
 ### The app
 
 **Step**:
-One of the five parts of a job in the app, in their fixed order: Design,
-Stock, Tools, Operations, Export. A step is empty, complete, or needs
+One of the six parts of a job in the app, in their fixed order: Design,
+Stock, Tools, Operations, Simulate, Export. A step is empty, complete, or needs
 attention; the state is computed from the project and its findings, never
 stored.
 _Avoid_: Stage, phase, page, tab, wizard step (no step is locked); pass (a
@@ -601,7 +601,8 @@ _Avoid_: Sidebar, navigation bar, toolbar
 
 **Step Panel**:
 The panel beside the rail that shows the current step's content: the Design
-Tree, the stock and origin, the tools, the operations list, or the export.
+Tree, the stock and origin, the tools, the operations list, the simulation's
+rows and result, or the export.
 _Avoid_: Side panel, Project Settings, CAM panel (the panels it replaced)
 
 **Inspector**:
@@ -625,7 +626,8 @@ _PureCutCNC_: FeatureTree
 
 **Viewport**:
 The 2D view of the stock from above, with the shapes, the pictures, the
-tabs and the toolpaths.
+tabs and the toolpaths. On the Simulate step its place is taken by the 3D
+view of the simulated stock.
 _Avoid_: Canvas, sketch view
 _PureCutCNC_: SketchCanvas
 
@@ -636,3 +638,61 @@ project data: never saved in the project and never undone.
 _Avoid_: Layers (the button that opens the toggles is labelled Layers; the
 drawing has no layers of its own)
 _PureCutCNC_: ToolpathVisibility
+
+### Simulation
+
+**Simulation**:
+The stock as every enabled operation's tool runs leave it, cut in the
+order the programs cut them, each with its tool's shape (phase 6). A
+reader: it takes the toolpaths export writes and gives nothing back, so no
+program depends on it (S22).
+_Avoid_: Preview (the toolpath preview is the 2D Viewport's and
+`--preview`'s), render, verify (it proves nothing about the machine)
+_PureCutCNC_: simulation, "Simulate"
+
+**Heightfield**:
+The simulation's stock: a grid of cells over the board, each holding one
+height and the tool run that lowered it last. It cannot hold an undercut,
+which no operation here makes (ADR-0003).
+_Avoid_: Heightmap (a model made from a grayscale image; the picture
+`simulate --out` writes is a heightmap *of* the heightfield), mesh, voxels
+_PureCutCNC_: HeightfieldGrid
+
+**Cell**:
+One square of the heightfield. A wall's position is true to within one
+cell, and a depth is true at a cell's centre.
+_Avoid_: Pixel (a pixel is a picture's), voxel, sample
+
+**Quality**:
+How many cells the stock is divided into: Draft, Standard or Fine, 512,
+1024 or 2048 along the board's longer side.
+_Avoid_: Resolution (a number of cells, not a named choice), detail (a
+V-Carve's and a Photo V-Carve's setting)
+
+**Bed**:
+The flat surface the simulated stock stands on, at the stock's bottom,
+reaching a little past it. It shows where a cut goes through.
+_Avoid_: Spoilboard (the bed is a drawing aid; nothing models the real
+spoilboard), table, floor (a floor is a pocket's)
+
+**Playback**:
+The simulation shown at a moment of the job: the stock as the moves up to
+then leave it, and the tool where it is. The **transport** plays, pauses
+and scrubs it.
+_Avoid_: Animation, replay
+
+**Design Surface**:
+What the operations' shapes and depths ask the finished stock to be: for
+each cell, the lowest height any enabled operation's shape asks for there,
+with tabs raised. Built from the project, never saved, and used only to
+find uncut material.
+_Avoid_: Model, part (there is no model of the part before phase 7),
+target surface
+
+**Uncut Material**:
+A place where the finished stock stands above the design surface by more
+than a threshold: the corners a round bit leaves in a square pocket, a
+pocket too narrow for its tool. Reported, never a warning.
+_Avoid_: Rest material (that names what a later tool is meant to remove),
+leftover, excess; gouge (the opposite: a cut into material meant to stay,
+which waits for phase 7)

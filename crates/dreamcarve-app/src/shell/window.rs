@@ -48,9 +48,11 @@ use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, Rect, Vec2, ViewportC
 
 use crate::keyboard::{self, Command as Shortcut};
 use crate::shell::focus::{self, Region};
+use crate::shell::sim_worker::SimWorker;
 use crate::shell::worker::{self, Worker};
 use crate::shell::{files, header, rail, status, theme};
-use crate::{panels, viewport};
+use crate::sim::{SimAct, SimFrame, SimView};
+use crate::{panels, sim, viewport};
 
 /// The quick starts' example projects (functional spec, capability 79).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -419,6 +421,9 @@ pub(crate) enum Action {
     /// Open or close the Warnings drawer (the status bar's counts, View ▸
     /// Warnings).
     ToggleWarnings,
+    /// Open the Warnings drawer (the Simulate step's *Show*, beside the
+    /// operations an error left out).
+    OpenWarnings,
     /// Put `check`'s text on the clipboard (the drawer's *Copy*).
     CopyWarnings,
     /// Open the Warnings drawer at this operation's carve note (the
@@ -441,6 +446,18 @@ pub(crate) enum Action {
     /// How the Viewport colours toolpaths (the toolpath view's colour
     /// mode).
     SetColour(dc_app::ColourMode),
+    /// The Simulate step's transport or camera (a key, a menu row, a row
+    /// of its panel; phase 6, capabilities 111, 113 and 114).
+    Sim(SimAct),
+    /// The Simulate step's preferences: Quality, Colour, Layers, the
+    /// uncut material switch and its threshold, kept in `gui.toml`.
+    SetSimPrefs(dc_app::sim::SimPrefs),
+    /// The board the Simulate step shows, with an Inlay (capability 118).
+    SetSimBoard(dc_project::Board),
+    /// Abandon the simulation being made (the status bar's *Stop*).
+    StopSimulation,
+    /// Make the simulation Stop held, or one that could not be made.
+    SimulateAgain,
     /// Open every operation's eye (the toolpath view's *Show all*).
     ShowAllToolpaths,
     /// Close every operation's eye (the toolpath view's *Hide all*).
@@ -662,6 +679,11 @@ pub struct Shell {
     close_allowed: bool,
     /// The Viewport's gestures and layer caches.
     viewport: viewport::ViewportState,
+    /// The Simulate step's view: its camera, playback and renderer
+    /// (phase 6).
+    sim: SimView,
+    /// The simulation thread.
+    sim_worker: SimWorker,
     /// The generation thread.
     worker: Worker,
     /// Whether the Warnings drawer is open.
@@ -741,6 +763,10 @@ impl Shell {
         if let Some(e) = failed {
             message = Some(e.to_string());
         }
+        let (sim_worker, failed) = SimWorker::spawn(estimate);
+        if let Some(e) = failed {
+            message = Some(e.to_string());
+        }
         theme::apply(&cc.egui_ctx, prefs.theme);
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             viewport::renderer::install(render_state);
@@ -789,6 +815,8 @@ impl Shell {
             title: String::new(),
             close_allowed: false,
             viewport: viewport::ViewportState::default(),
+            sim: SimView::new(cc.wgpu_render_state.as_ref()),
+            sim_worker,
             worker,
             warnings_open: false,
             note_target: None,
@@ -859,6 +887,47 @@ impl Shell {
     #[must_use]
     pub fn worker_busy(&self) -> bool {
         self.worker.busy()
+    }
+
+    /// Whether a simulation is being made, or will be once the toolpaths
+    /// are in: only while the Simulate step shows (phase 6, capability
+    /// 108).
+    #[must_use]
+    pub fn simulation_busy(&self) -> bool {
+        use dc_app::sim::SimState;
+        self.sim_worker.busy()
+            || (self.step == Step::Simulate
+                && self.app.sim_blocked().is_none()
+                && matches!(
+                    self.app.sim_state(),
+                    SimState::Empty | SimState::Stale | SimState::Building(_)
+                ))
+    }
+
+    /// Where the Simulate step's playback is, and the job's length,
+    /// seconds.
+    #[must_use]
+    pub fn sim_time_s(&self) -> (f64, f64) {
+        let frame = self.sim.frame_info();
+        (frame.time_s, frame.total_s)
+    }
+
+    /// Whether the Simulate step's playback is playing.
+    #[must_use]
+    pub fn sim_playing(&self) -> bool {
+        self.sim.frame_info().playing
+    }
+
+    /// The speed the Simulate step plays at, when it has a job.
+    #[must_use]
+    pub fn sim_speed(&self) -> Option<dc_app::sim::Speed> {
+        self.sim.speed()
+    }
+
+    /// The Simulate step's camera, once it has shown a stock.
+    #[must_use]
+    pub fn sim_camera(&self) -> Option<dc_app::sim::OrbitCamera> {
+        self.sim.camera()
     }
 
     /// Whether the Export step is building its plan, or will once
@@ -1523,7 +1592,14 @@ impl Shell {
                 crate::widgets::unit_field::flush(ctx);
             }
             actions.extend(keyed);
-            actions.extend(viewport::keys(ctx, &self.app));
+            // The drawing's keys are the 2D Viewport's: on the Simulate
+            // step they would change shapes that are not in view, and
+            // the step has its own (phase 6, capability 126).
+            if self.step == Step::Simulate {
+                actions.extend(sim::keys(ctx, &self.app));
+            } else {
+                actions.extend(viewport::keys(ctx, &self.app));
+            }
         }
     }
 
@@ -1702,7 +1778,7 @@ impl Shell {
                 Step::Design => self.app.select(dc_app::Selection::Nothing),
                 Step::Tools => panels::tools::select(ctx, None),
                 Step::Operations => self.app.edit(None),
-                Step::Stock | Step::Export => {}
+                Step::Stock | Step::Simulate | Step::Export => {}
             },
             Action::PruneRecent => {
                 files::recent(self.app.prefs_mut());
@@ -1863,6 +1939,7 @@ impl Shell {
                 self.app.view_mut().hide_all(&scene);
             }
             Action::Select(selection) => self.app.select(selection),
+            Action::FitView if self.step == Step::Simulate => self.sim.act(SimAct::Fit),
             Action::FitView => {
                 let app = &self.app;
                 let bounds = dc_app::viewport::camera::fit_bounds(app.project(), app.scene());
@@ -1923,7 +2000,7 @@ impl Shell {
                             Step::Stock | Step::Export => {
                                 panels::project::request_focus(ctx, &field);
                             }
-                            Step::Design | Step::Operations => {}
+                            Step::Design | Step::Operations | Step::Simulate => {}
                         }
                         // A setting's section opens, so the field is in
                         // view.
@@ -1939,6 +2016,30 @@ impl Shell {
                 self.warnings_open = !self.warnings_open;
                 self.finding = None;
             }
+            Action::OpenWarnings => self.warnings_open = true,
+            // A key or a menu row of the Simulate step asks nothing of
+            // another step.
+            Action::Sim(_) if self.step != Step::Simulate => {}
+            Action::Sim(act) => {
+                self.sim.act(act);
+                // The speed chosen is a preference (capability 124).
+                if matches!(act, SimAct::Speed(_) | SimAct::Faster | SimAct::Slower)
+                    && let Some(speed) = self.sim.speed()
+                    && self.app.prefs().sim.speed != Some(speed)
+                {
+                    self.app.prefs_mut().sim.speed = Some(speed);
+                    self.prefs_touched = true;
+                }
+            }
+            Action::SetSimPrefs(prefs) => {
+                if self.app.prefs().sim != prefs {
+                    self.app.prefs_mut().sim = prefs;
+                    self.prefs_touched = true;
+                }
+            }
+            Action::SetSimBoard(board) => self.app.set_sim_board(board),
+            Action::StopSimulation => self.app.stop_sim(),
+            Action::SimulateAgain => self.app.simulate_again(),
             Action::ShowFinding(row) => {
                 self.warnings_open = true;
                 self.finding = Some(row);
@@ -2368,7 +2469,23 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         Shortcut::GoToStock => Some(Action::GoTo(Step::Stock)),
         Shortcut::GoToTools => Some(Action::GoTo(Step::Tools)),
         Shortcut::GoToOperations => Some(Action::GoTo(Step::Operations)),
+        Shortcut::GoToSimulate => Some(Action::GoTo(Step::Simulate)),
         Shortcut::GoToExport => Some(Action::GoTo(Step::Export)),
+        // The Simulate step's: they act there and nowhere else
+        // ([`Shell::run`]).
+        Shortcut::SimPlayPause => Some(Action::Sim(SimAct::PlayPause)),
+        Shortcut::SimPrevious => Some(Action::Sim(SimAct::Previous)),
+        Shortcut::SimNext => Some(Action::Sim(SimAct::Next)),
+        Shortcut::SimStepBack => Some(Action::Sim(SimAct::StepMoves(-1))),
+        Shortcut::SimStepForward => Some(Action::Sim(SimAct::StepMoves(1))),
+        Shortcut::SimStepBackTen => Some(Action::Sim(SimAct::StepMoves(-10))),
+        Shortcut::SimStepForwardTen => Some(Action::Sim(SimAct::StepMoves(10))),
+        Shortcut::SimSlower => Some(Action::Sim(SimAct::Slower)),
+        Shortcut::SimFaster => Some(Action::Sim(SimAct::Faster)),
+        Shortcut::ViewHome => Some(Action::Sim(SimAct::View(dc_app::sim::View3::Home))),
+        Shortcut::ViewTop => Some(Action::Sim(SimAct::View(dc_app::sim::View3::Top))),
+        Shortcut::ViewFront => Some(Action::Sim(SimAct::View(dc_app::sim::View3::Front))),
+        Shortcut::ViewRight => Some(Action::Sim(SimAct::View(dc_app::sim::View3::Right))),
         Shortcut::SelectTool => Some(Action::Arm(dc_app::Tool::Select)),
         Shortcut::EditNodes => Some(Action::Arm(dc_app::Tool::Nodes)),
         Shortcut::Measure => Some(Action::Arm(dc_app::Tool::Measure)),
@@ -2410,7 +2527,13 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
 
 /// The shortcut text a menu row or hint shows for `action`'s binding.
 pub(crate) fn shortcut_text(ctx: &egui::Context, modifiers: Modifiers, key: Key) -> String {
-    ctx.format_shortcut(&KeyboardShortcut::new(modifiers, key))
+    let text = ctx.format_shortcut(&KeyboardShortcut::new(modifiers, key));
+    // egui names these keys in words (`OpenBracket`); a menu row shows
+    // what is on the key.
+    match keyboard::key_symbol(key) {
+        Some(symbol) => text.replace(key.name(), symbol),
+        None => text,
+    }
 }
 
 /// What the frame's widgets read: the app and the shell's view state.
@@ -2427,6 +2550,8 @@ pub(crate) struct FrameState<'a> {
     pub recent: &'a [PathBuf],
     /// The step whose panel shows.
     pub step: Step,
+    /// Where the Simulate step's playback is, for its panel's rows.
+    pub sim: SimFrame,
     /// The steps' states, as the rail marks them.
     pub states: steps::States,
     /// What the steps read that the project does not hold.
@@ -2479,6 +2604,13 @@ impl eframe::App for Shell {
         // What the worker finished since the last frame, before anything
         // reads the results.
         self.worker.tick(&mut self.app, Instant::now());
+        // The simulation's progress and result, likewise, and what the
+        // Simulate step shows of them.
+        let simulating = self.step == Step::Simulate;
+        self.sim_worker.tick(&mut self.app, false);
+        if simulating {
+            self.sim.follow(&self.app);
+        }
         // The picture a sheet waits for, when it has landed; look again
         // soon while it has not.
         if self.poll_picture() {
@@ -2552,6 +2684,7 @@ impl eframe::App for Shell {
             examples: &self.thumbnails,
             recent: &self.recent.1,
             step: self.step,
+            sim: self.sim.frame_info(),
             states: self.states,
             session: self.session(),
             cells,
@@ -2599,7 +2732,13 @@ impl eframe::App for Shell {
             },
         };
         focus::mark(ui, Region::Viewport);
-        let viewport = viewport::show(ui, &state, &mut self.viewport, margins, &mut actions);
+        // The Simulate step has the stock in 3D (phase 6, capability
+        // 107); every other step the 2D Viewport, as phase 5 left it.
+        let viewport = if state.step == Step::Simulate && !state.inert() {
+            sim::show(ui, &state, &mut self.sim, margins, &mut actions)
+        } else {
+            viewport::show(ui, &state, &mut self.viewport, margins, &mut actions)
+        };
         regions.push((Region::Viewport, viewport));
         // The Warnings drawer, a card over the bottom of the Viewport's.
         let drawer = self.warnings_open.then(|| {
@@ -2706,6 +2845,13 @@ impl eframe::App for Shell {
         // Post the next work once the frame's edits have settled; look
         // again soon while any is out or waiting.
         if self.worker.tick(&mut self.app, Instant::now()) {
+            ctx.request_repaint_after(worker::POLL);
+        }
+        // The simulation follows the toolpaths, while its step shows.
+        if self
+            .sim_worker
+            .tick(&mut self.app, self.step == Step::Simulate)
+        {
             ctx.request_repaint_after(worker::POLL);
         }
         self.update_title(&ctx);

@@ -138,14 +138,19 @@ impl Playback {
                 }
             }
         }
-        // How many cutting moves are wholly done. Part-way along a move,
-        // the first step back is to that move's start.
+        // How many cutting moves are wholly done. Part-way along a
+        // cutting move, the first step back is to that move's start;
+        // anywhere else (on a move's end, or among the rapids after the
+        // last cut, as at the job's end) it undoes a whole cutting move,
+        // so a step back always changes the stock.
         let done = ends.partition_point(|end| *end <= self.at);
-        let on_an_end = done
-            .checked_sub(1)
-            .and_then(|last| ends.get(last))
-            .is_none_or(|end| *end == self.at);
-        let back_to_start = i64::from(n < 0 && !on_an_end);
+        let inside_a_cut = self.at.fraction > 0.0
+            && self
+                .runs
+                .get(self.at.run)
+                .and_then(|r| r.moves.get(self.at.mv))
+                .is_some_and(crate::cut::SimMove::cuts);
+        let back_to_start = i64::from(n < 0 && inside_a_cut);
         let wanted = i64::try_from(done)
             .unwrap_or(i64::MAX)
             .saturating_add(n)

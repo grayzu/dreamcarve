@@ -6,8 +6,8 @@
 //! question 11): the window and panel layout, the toolpath display
 //! settings, the recent files, where each project last exported, the
 //! theme, the Tool Library's display units, the sizes the user dragged
-//! a sheet or a table's columns to, and the snapping and drawing-tool
-//! settings. View state, never project state: nothing here changes a program
+//! a sheet or a table's columns to, the snapping and drawing-tool
+//! settings, and what the Simulate step shows. View state, never project state: nothing here changes a program
 //! or reaches the `.dcv`.
 //!
 //! Read at start and written on change and on exit. A missing file is the
@@ -68,6 +68,58 @@ pub struct GuiPrefs {
     pub drawing: Drawing,
     /// What the Text tool sets a text in (phase 5, capability 91).
     pub text: Text,
+    /// What the Simulate step shows and how finely (phase 6, capability
+    /// 124).
+    pub simulation: Simulation,
+}
+
+/// What the Simulate step remembers between sessions: its quality and
+/// what it draws. Nothing of a simulation itself is kept.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Simulation {
+    /// How finely the stock is divided: `draft`, `standard` or `fine`. A
+    /// name this build does not know is the default.
+    pub quality: String,
+    /// What colours a cut cell: `material`, `operation` or `depth`.
+    pub colour: String,
+    /// Whether the tool is drawn.
+    pub tool: bool,
+    /// Whether the cutting moves of the operation shown are drawn.
+    pub toolpath: bool,
+    /// Whether its rapids are drawn.
+    pub rapids: bool,
+    /// Whether the bed under the stock is drawn.
+    pub bed: bool,
+    /// Whether the machine origin's axes are drawn.
+    pub origin: bool,
+    /// Whether uncut material is highlighted and listed: off until it is
+    /// turned on.
+    pub uncut: bool,
+    /// How far above the shapes' depths the stock stands before it is
+    /// uncut material, mm.
+    pub uncut_mm: f64,
+    /// The playback speed last chosen, as its multiple of the feed: 1,
+    /// 5, 25, 100 or 500. Missing until one is chosen: a job then opens
+    /// at the speed that plays it in about half a minute.
+    pub speed: Option<u32>,
+}
+
+impl Default for Simulation {
+    fn default() -> Self {
+        Self {
+            quality: "standard".to_owned(),
+            colour: "material".to_owned(),
+            tool: true,
+            toolpath: false,
+            rapids: false,
+            bed: true,
+            origin: true,
+            uncut: false,
+            uncut_mm: 0.3,
+            speed: None,
+        }
+    }
 }
 
 /// What the Text tool remembers between sessions.
@@ -460,6 +512,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "snap",
         "drawing",
         "text",
+        "simulation",
     ];
     const WINDOW: &[&str] = &["x", "y", "width", "height", "maximized"];
     const PANELS: &[&str] = &[
@@ -498,6 +551,10 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "line_spacing",
         "align",
     ];
+    const SIMULATION: &[&str] = &[
+        "quality", "colour", "tool", "toolpath", "rapids", "bed", "origin", "uncut", "uncut_mm",
+        "speed",
+    ];
     let mut unknown = Vec::new();
     for (key, value) in table {
         if !TOP.contains(&key.as_str()) {
@@ -512,6 +569,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
             "snap" => SNAP,
             "drawing" => DRAWING,
             "text" => TEXT,
+            "simulation" => SIMULATION,
             _ => continue,
         };
         if let toml::Value::Table(inner) = value {
@@ -656,6 +714,18 @@ mod tests {
                 line_spacing: 1.2,
                 align: "centre".to_owned(),
             },
+            simulation: Simulation {
+                quality: "fine".to_owned(),
+                colour: "depth".to_owned(),
+                tool: false,
+                toolpath: true,
+                rapids: true,
+                bed: false,
+                origin: false,
+                uncut: true,
+                uncut_mm: 0.5,
+                speed: Some(100),
+            },
         };
         save(&paths, &prefs).unwrap();
         let loaded = load(&paths);
@@ -664,6 +734,40 @@ mod tests {
         // And the text itself reads back to the same record.
         assert_eq!(parse(&to_toml(&prefs), &paths.gui_prefs_file).prefs, prefs);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Phase 6 (capability 124): a file from before the Simulate step has
+    /// no `[simulation]` and reads as its defaults: Standard, the
+    /// material's colour, the toolpath and rapids off, uncut material
+    /// off with its threshold at 0.3 mm, and no speed chosen. An unknown key inside the
+    /// table is noted like any other.
+    #[test]
+    fn simulation_defaults_when_missing() {
+        let path = Path::new("/somewhere/gui.toml");
+        let loaded = parse("theme = \"light\"\n", path);
+        assert!(loaded.notes.is_empty(), "{:?}", loaded.notes);
+        let simulation = &loaded.prefs.simulation;
+        assert_eq!(simulation.quality, "standard");
+        assert_eq!(simulation.colour, "material");
+        assert!(simulation.tool && simulation.bed && simulation.origin);
+        assert!(!simulation.toolpath && !simulation.rapids && !simulation.uncut);
+        assert!((simulation.uncut_mm - 0.3).abs() < 1e-9);
+        assert_eq!(simulation.speed, None);
+        let text = to_toml(&GuiPrefs::default());
+        assert!(text.contains("[simulation]"), "{text}");
+        assert!(!text.contains("speed"), "{text}");
+        let loaded = parse(
+            "[simulation]\nquality = \"draft\"\nspeed = 25\ngrain = true\n",
+            path,
+        );
+        assert_eq!(loaded.prefs.simulation.quality, "draft");
+        assert_eq!(loaded.prefs.simulation.speed, Some(25));
+        assert_eq!(loaded.notes.len(), 1, "{:?}", loaded.notes);
+        assert!(
+            loaded.notes[0].contains("unknown key `simulation.grain`"),
+            "{:?}",
+            loaded.notes
+        );
     }
 
     /// Phase 5: a file from before the drawing tools has no `[snap]` and

@@ -225,6 +225,31 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
                 _ => dc_project::Align::Left,
             },
         },
+        // A name or a number this build does not know is the default.
+        sim: {
+            let defaults = dc_app::sim::SimPrefs::default();
+            dc_app::sim::SimPrefs {
+                quality: dc_app::sim::quality_named(&file.simulation.quality)
+                    .unwrap_or(defaults.quality),
+                colouring: dc_app::sim::Colouring::parse(&file.simulation.colour)
+                    .unwrap_or(defaults.colouring),
+                layers: dc_app::sim::Layers {
+                    tool: file.simulation.tool,
+                    toolpath: file.simulation.toolpath,
+                    rapids: file.simulation.rapids,
+                    bed: file.simulation.bed,
+                    origin: file.simulation.origin,
+                },
+                uncut_shown: file.simulation.uncut,
+                uncut_mm: Some(file.simulation.uncut_mm)
+                    .filter(|mm| mm.is_finite() && *mm > 0.0)
+                    .unwrap_or(defaults.uncut_mm),
+                speed: file
+                    .simulation
+                    .speed
+                    .and_then(dc_app::sim::Speed::of_multiple),
+            }
+        },
     }
 }
 
@@ -323,6 +348,18 @@ pub fn prefs_to_file(prefs: &Prefs) -> GuiPrefs {
             }
             .to_owned(),
         },
+        simulation: gui_prefs::Simulation {
+            quality: dc_app::sim::quality_name(prefs.sim.quality).to_owned(),
+            colour: prefs.sim.colouring.as_str().to_owned(),
+            tool: prefs.sim.layers.tool,
+            toolpath: prefs.sim.layers.toolpath,
+            rapids: prefs.sim.layers.rapids,
+            bed: prefs.sim.layers.bed,
+            origin: prefs.sim.layers.origin,
+            uncut: prefs.sim.uncut_shown,
+            uncut_mm: prefs.sim.uncut_mm(),
+            speed: prefs.sim.speed.map(dc_app::sim::Speed::multiple),
+        },
     }
 }
 
@@ -379,8 +416,50 @@ mod tests {
             line_spacing_fraction: 1.5,
             align: dc_project::Align::Right,
         };
+        prefs.sim = dc_app::sim::SimPrefs {
+            quality: dc_job::sim::Quality::Fine,
+            colouring: dc_app::sim::Colouring::Depth,
+            layers: dc_app::sim::Layers {
+                tool: false,
+                toolpath: true,
+                rapids: true,
+                bed: false,
+                origin: false,
+            },
+            uncut_shown: true,
+            uncut_mm: 0.5,
+            speed: Some(dc_app::sim::Speed::X100),
+        };
         assert_eq!(prefs_from_file(&prefs_to_file(&prefs)), prefs);
         assert_eq!(prefs_from_file(&GuiPrefs::default()), Prefs::default());
+    }
+
+    /// Phase 6, capability 124: a quality, a colour or a speed this
+    /// build does not know is the default, and a threshold that is no
+    /// length is the default's.
+    #[test]
+    fn simulation_from_a_file_is_held_to_what_the_app_can_use() {
+        let mut file = GuiPrefs::default();
+        file.simulation.quality = "ultra".to_owned();
+        file.simulation.colour = "wood".to_owned();
+        file.simulation.speed = Some(7);
+        file.simulation.uncut_mm = f64::NAN;
+        file.simulation.toolpath = true;
+        let prefs = prefs_from_file(&file);
+        assert_eq!(
+            prefs.sim,
+            dc_app::sim::SimPrefs {
+                layers: dc_app::sim::Layers {
+                    toolpath: true,
+                    ..dc_app::sim::Layers::default()
+                },
+                ..dc_app::sim::SimPrefs::default()
+            }
+        );
+        // A threshold out of the check's range is written held to it.
+        let mut wide = Prefs::default();
+        wide.sim.uncut_mm = 99.0;
+        assert!((prefs_to_file(&wide).simulation.uncut_mm - 5.0).abs() < 1e-9);
     }
 
     /// What `gui.toml` holds for snapping and drawing is held to what the

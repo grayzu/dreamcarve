@@ -585,23 +585,28 @@ pub fn has_toolpaths(app: &App) -> bool {
         .any(|op| !op.runs.is_empty())
 }
 
-/// `p` as the read-out writes it (`experience.md`, section 9): one
-/// decimal in mm and three in inches, from the origin, never `-0.0`.
-fn cursor(strings: &Strings, p: Point, units: Units) -> String {
+/// A length as a read-out writes a coordinate (`experience.md`, section
+/// 9): one decimal in mm and three in inches, never `-0.0`.
+pub(crate) fn coordinate(mm: f64, units: Units) -> String {
     let decimals = match units {
         Units::Mm => 1,
         Units::Inch => 3,
     };
-    let coordinate = |mm: f64| {
-        let text = format!("{:.decimals$}", crate::units::to_display(mm, units));
-        match text.strip_prefix('-') {
-            Some(digits) if digits.chars().all(|c| c == '0' || c == '.') => digits.to_owned(),
-            _ => text,
-        }
-    };
+    let text = format!("{:.decimals$}", crate::units::to_display(mm, units));
+    match text.strip_prefix('-') {
+        Some(digits) if digits.chars().all(|c| c == '0' || c == '.') => digits.to_owned(),
+        _ => text,
+    }
+}
+
+/// `p` as the read-out writes it: its two [`coordinate`]s.
+fn cursor(strings: &Strings, p: Point, units: Units) -> String {
     strings.fmt(
         StrKey::AppViewportCursor,
-        &[("x", &coordinate(p.x)), ("y", &coordinate(p.y))],
+        &[
+            ("x", &coordinate(p.x, units)),
+            ("y", &coordinate(p.y, units)),
+        ],
     )
 }
 

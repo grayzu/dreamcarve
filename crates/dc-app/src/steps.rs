@@ -1,9 +1,9 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The five steps (`docs/specs/phase-4/redesign.md`, "The steps"; functional
-//! spec, capability 50): Design, Stock, Tools, Operations, Export, in the
-//! order the work is done. Each step's [`State`] is computed from the
+//! The six steps (`docs/specs/phase-4/redesign.md`, "The steps"; functional
+//! spec, capability 50; phase 6, capability 107): Design, Stock, Tools,
+//! Operations, Simulate, Export, in the order the work is done. Each step's [`State`] is computed from the
 //! project and its findings, so the rail's marks, the header's *Continue*
 //! and the step a project opens on are tested without a window.
 //!
@@ -18,6 +18,7 @@
 //! | Stock | The thickness is set and every shape is on the stock | A stock or origin field has a problem, or a shape reaches past the stock |
 //! | Tools | A tool exists | A finding is about a tool |
 //! | Operations | An enabled operation exists | A finding is about an operation |
+//! | Simulate | The project as it stands has been simulated | Never: nothing the simulation finds is a warning |
 //! | Export | The last export wrote the current snapshot | An error blocks the export of an enabled operation, or an output setting has a problem |
 //!
 //! Two rules keep the marks quiet where they would otherwise shout. A
@@ -44,7 +45,7 @@ use crate::{units, warnings};
 /// The field validation names when the stock has no thickness.
 const STOCK_THICKNESS: &str = "stock.thickness_mm";
 
-/// One of the five steps.
+/// One of the six steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Step {
     /// Bringing geometry in: drawings, pictures, the Design Tree.
@@ -55,17 +56,20 @@ pub enum Step {
     Tools,
     /// The operations, in cut order.
     Operations,
+    /// The stock as the operations leave it, in 3D (phase 6).
+    Simulate,
     /// Checking, the output settings and the export.
     Export,
 }
 
 impl Step {
     /// Every step, in the workflow's order: the rail's.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Design,
         Self::Stock,
         Self::Tools,
         Self::Operations,
+        Self::Simulate,
         Self::Export,
     ];
 
@@ -77,7 +81,8 @@ impl Step {
             Self::Stock => 1,
             Self::Tools => 2,
             Self::Operations => 3,
-            Self::Export => 4,
+            Self::Simulate => 4,
+            Self::Export => 5,
         }
     }
 
@@ -89,6 +94,7 @@ impl Step {
             Self::Stock => StrKey::StepsLabelStock,
             Self::Tools => StrKey::StepsLabelTools,
             Self::Operations => StrKey::StepsLabelOperations,
+            Self::Simulate => StrKey::StepsLabelSimulate,
             Self::Export => StrKey::StepsLabelExport,
         }
     }
@@ -116,24 +122,25 @@ pub enum State {
 
 /// Every step's state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct States([State; 5]);
+pub struct States([State; 6]);
 
 impl States {
-    /// The states of the five steps, in [`Step::ALL`]'s order.
+    /// The states of the six steps, in [`Step::ALL`]'s order.
     #[must_use]
-    pub const fn new(states: [State; 5]) -> Self {
+    pub const fn new(states: [State; 6]) -> Self {
         Self(states)
     }
 
     /// The state of `step`.
     #[must_use]
     pub const fn of(&self, step: Step) -> State {
-        let [design, stock, tools, operations, export] = self.0;
+        let [design, stock, tools, operations, simulate, export] = self.0;
         match step {
             Step::Design => design,
             Step::Stock => stock,
             Step::Tools => tools,
             Step::Operations => operations,
+            Step::Simulate => simulate,
             Step::Export => export,
         }
     }
@@ -142,7 +149,7 @@ impl States {
 impl Default for States {
     /// Every step empty: a blank project's.
     fn default() -> Self {
-        Self([State::Empty; 5])
+        Self([State::Empty; 6])
     }
 }
 
@@ -307,13 +314,20 @@ pub fn states(app: &App, session: &Session) -> States {
     let tools = state(worst(app, Step::Tools), !project.tools.is_empty());
     let operations = state(worst(app, Step::Operations), enabled);
 
+    // Complete once the project as it stands is simulated, with the
+    // settings as they are; never in need of attention (capability 107).
+    let simulate = state(
+        None,
+        matches!(app.sim_state(), crate::sim::SimState::Current),
+    );
+
     let export = if session.exported == Some(app.snapshot()) {
         State::Complete
     } else {
         let blocked = (enabled && app.findings().has_errors()).then_some(Severity::Error);
         state(worst(app, Step::Export).max(blocked), false)
     };
-    States::new([design, stock, tools, operations, export])
+    States::new([design, stock, tools, operations, simulate, export])
 }
 
 /// The states to show: `now`, except that while toolpaths regenerate
@@ -356,11 +370,14 @@ pub fn next(states: &States, current: Step) -> Step {
 
 /// The step a newly opened project starts on: the first that is not
 /// complete, so an empty project opens on Design and a finished one on
-/// Export.
+/// Export. Simulate is never the reason: nothing is simulated when a
+/// project opens, and only *Continue* leads through it (phase 6
+/// functional spec, question 11).
 #[must_use]
 pub fn opening(states: &States) -> Step {
     Step::ALL
         .into_iter()
+        .filter(|step| *step != Step::Simulate)
         .find(|step| states.of(*step) != State::Complete)
         .unwrap_or(Step::Export)
 }
@@ -443,6 +460,12 @@ pub fn summary(app: &App, session: &Session, step: Step) -> String {
             project.operations.len(),
             StrKey::StepsSummaryOperation,
             StrKey::StepsSummaryOperations,
+        ),
+        Step::Simulate => crate::sim::summary(
+            strings,
+            &app.sim_state(),
+            app.sim_blocked().as_ref(),
+            app.sim_built().map(|built| &**built),
         ),
         Step::Export => {
             let errors = warnings::counts(app).errors;

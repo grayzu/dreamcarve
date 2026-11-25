@@ -219,6 +219,7 @@ fn step(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         Step::Stock => panels::project::stock_step(ui, state, out),
         Step::Tools => panels::tools::list(ui, state, out),
         Step::Operations => panels::operations::list(ui, state, out),
+        Step::Simulate => panels::simulate::show(ui, state, out),
         Step::Export => panels::export_step::show(ui, state, out),
     }
 }
@@ -375,7 +376,7 @@ pub(crate) fn inspecting<'a>(state: &FrameState<'a>) -> Option<Inspecting<'a>> {
                 .map(Inspecting::Tool)
         }
         Step::Operations => app.editing().and_then(operation),
-        Step::Stock | Step::Export => None,
+        Step::Stock | Step::Simulate | Step::Export => None,
     }
 }
 

@@ -20,7 +20,7 @@ step says. If a step does not work for you, that is a bug.
 
 If you have not used the app before, read
 [From SVG to G-code in the app](app.md) first. It explains the window,
-the five steps and the Tool Library, which this chapter uses without
+the six steps and the Tool Library, which this chapter uses without
 explaining again.
 
 ## What you need
