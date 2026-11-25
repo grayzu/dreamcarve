@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "check-headers"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 
 [[package]]
 name = "clap"
@@ -878,7 +878,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "dc-app"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-app",
  "dc-geometry",
@@ -895,7 +895,7 @@ dependencies = [
 
 [[package]]
 name = "dc-cam"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-geometry",
  "dc-project",
@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "dc-gcode"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-cam",
  "dc-geometry",
@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "dc-geometry"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "cavalier_contours",
  "delaunator",
@@ -930,7 +930,7 @@ dependencies = [
 
 [[package]]
 name = "dc-import"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "base64",
  "dc-geometry",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "dc-job"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "base64",
  "dc-cam",
@@ -960,7 +960,7 @@ dependencies = [
 
 [[package]]
 name = "dc-library"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-project",
  "serde",
@@ -972,7 +972,7 @@ dependencies = [
 
 [[package]]
 name = "dc-project"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "base64",
  "dc-geometry",
@@ -985,7 +985,7 @@ dependencies = [
 
 [[package]]
 name = "dc-text"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-geometry",
  "kurbo",
@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "doc-figures"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-geometry",
 ]
@@ -1083,7 +1083,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "dreamcarve"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "clap",
  "dc-app",
@@ -1100,7 +1100,7 @@ dependencies = [
 
 [[package]]
 name = "dreamcarve-app"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "arboard",
  "clap",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "dreamcarve-shell"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-job",
  "dc-library",
@@ -1563,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "gcode-conformance"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "grbl-sim-motion"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-gcode",
  "dc-geometry",
@@ -2215,7 +2215,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "linuxcnc-sim"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-gcode",
  "dc-geometry",
@@ -3284,7 +3284,7 @@ dependencies = [
 
 [[package]]
 name = "rs274-motion"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "dc-cam",
  "dc-gcode",
@@ -3729,7 +3729,7 @@ dependencies = [
 
 [[package]]
 name = "third-party-licenses"
-version = "0.5.0-alpha.1"
+version = "0.6.0-alpha.1"
 dependencies = [
  "thiserror 2.0.21",
  "toml",
