@@ -2059,8 +2059,9 @@ fn simulated(dir: &Path, name: &str) -> Option<H> {
 /// into `docs/specs/phase-6/review/`:
 ///
 /// - `a`: the plaque finished, from Home, Top, Front and Right.
-/// - `b`: the plaque part-way: a moment inside its first operation, and
-///   the stock as the Panel and the Square recess leave it.
+/// - `b`: the plaque part-way: a moment inside its first operation, the
+///   stock as the Panel and the Square recess leave it, and the Panel's
+///   toolpath and rapids drawn over it.
 /// - `c`: Colour by operation and by depth; uncut material on the plaque
 ///   as it is (none) and with the square recess's corner relief off.
 /// - `d`: the sign's V-carving, and the inlay pair's two boards.
@@ -2120,6 +2121,29 @@ fn phase6_review() {
     h.key_press(egui::Key::CloseBracket);
     h.run();
     for _ in 0..4 {
+        h.key_press(egui::Key::CloseBracket);
+        h.run();
+    }
+
+    // The lines: the toolpath and the rapids of the operation shown,
+    // here the Panel's, with the tool at its end.
+    for _ in 0..2 {
+        h.key_press(egui::Key::OpenBracket);
+        h.run();
+    }
+    {
+        let layers = &mut h.state_mut().app_mut().prefs_mut().sim.layers;
+        layers.toolpath = true;
+        layers.rapids = true;
+    }
+    h.run();
+    shots.take(&mut h, "b4-plaque-toolpath-and-rapids");
+    {
+        let layers = &mut h.state_mut().app_mut().prefs_mut().sim.layers;
+        layers.toolpath = false;
+        layers.rapids = false;
+    }
+    for _ in 0..2 {
         h.key_press(egui::Key::CloseBracket);
         h.run();
     }

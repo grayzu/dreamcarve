@@ -590,10 +590,17 @@ impl SimView {
         let run_shown = shown.built.as_ref().and_then(|built| {
             let runs = &built.plan.runs;
             let last = runs.len().checked_sub(1)?;
-            let at = shown
-                .transport
-                .pose()
-                .map_or(if finished { last } else { 0 }, |pose| pose.run.min(last));
+            // The run being cut; at the moment between two, the one just
+            // cut, whose path lies on the stock it left.
+            let cursor = shown.transport.playback().cursor();
+            let between = cursor.mv == 0 && cursor.fraction <= 0.0;
+            let at = if finished {
+                last
+            } else if between {
+                cursor.run.saturating_sub(1).min(last)
+            } else {
+                cursor.run.min(last)
+            };
             let op = &runs.get(at)?.op;
             let first = runs.iter().position(|run| run.op == *op)?;
             let count = runs

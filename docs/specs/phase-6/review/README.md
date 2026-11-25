@@ -7,13 +7,14 @@ are written by the app, through wgpu, not drawn:
 cargo test -p dreamcarve-app --test review phase6_review -- --ignored
 ```
 
-19 scenes, each twice (`-dark-1x.png`, `-light-1x.png`), in a 1440 × 900
+20 scenes, each twice (`-dark-1x.png`, `-light-1x.png`), in a 1440 × 900
 window:
 
 | Scenes | Show |
 | --- | --- |
 | `a1` to `a4` | The plaque finished, from Home, Top, Front and Right |
 | `b1` to `b3` | The plaque part-way: inside its first operation, and as the Panel and the Square recess leave it, the rows after dimmed and the tool drawn |
+| `b4` | The Panel's toolpath and rapids as lines over the stock it left |
 | `c1`, `c2` | Colour by operation and by depth, the depth legend hung under Colour |
 | `c3` to `c5` | Uncut material: none on the plaque as committed; the four corners of its square recess with the corner relief off, listed; and the same framed from the top by a click on the line |
 | `d1`, `d2` | The sign's V-carving, from Home and from the top |
@@ -36,6 +37,11 @@ window:
   4's. `c2`.
 - **The tool** is the cutter's own shape with a darker shank, and is
   not drawn at the very start or the very end. `b1`, `b2`.
+- **The toolpath and the rapids** of the operation shown lie on the
+  stock it left: the Panel's raster passes on its floor, the ring round
+  its island, the rapids dashed above, and all of it hidden where a wall
+  stands in front. At the moment between two operations it is the one
+  just cut that is shown; the first build showed the next one's. `b4`.
 - **Uncut material** tints the four corners and the panel lists them as
   one line; a click frames them. `c4`, `c5`.
 - **The colours.** The first build drew the stock a good deal too dark:
