@@ -59,11 +59,11 @@ The editor's rows, and the field of the project file each one sets:
 | `enabled` | `false` leaves the operation out of the program, with a warning. |
 | `targets` | The ids of the instances to bore. Every circle among their outlines is a hole; any other outline is skipped with a warning, as for a [Drill](drill.md#which-outlines-are-holes). |
 | `tool` | The id of the tool to bore with: a flat end mill (`"end_mill"`). Any other cutter is an error at `check`, because a Bore cuts the wall with the side of the bit. |
-| `depth_mm` | How deep to cut, measured down from the stock top. **Required.** To cut through, use the stock's `thickness_mm` plus `through_cut_allowance_mm`. |
+| `depth_mm` | How deep to cut, measured down from the stock top. **Required.** To cut through, use the stock's `thickness_mm`: the hole then goes `through_cut_allowance_mm` further. |
 | `pitch_mm` | How far the helix goes down in each turn. `null` uses the tool's `step_down_mm`. It must be more than 0 and no more than the tool's `step_down_mm`; a larger pitch is an error at `check`. See [Pitch](#pitch). |
 | `direction` | `"climb"` (the usual) or `"conventional"`, as for [Pocket](pocket.md) and [Profile](profile.md). Climb turns counter-clockwise seen from above, conventional clockwise. |
 | `stock_to_leave_mm` | Material to leave on the wall, 0 or more: the hole comes out this much smaller all round. 0 by default. See [Finishing](#finishing). |
-| `through_cut_allowance_mm` | How far below the stock bottom the hole may go, as for [Profile](profile.md#cutting-through). 0 by default. |
+| `through_cut_allowance_mm` | How far below the stock bottom a hole cut through goes, as for [Profile](profile.md#cutting-through). 0 by default. |
 | `safe_z_mm` | The height above the stock top for moves between holes. Must be more than 0. |
 
 The tool needs a `feed_mm_min` and a `plunge_mm_min`, and, unless

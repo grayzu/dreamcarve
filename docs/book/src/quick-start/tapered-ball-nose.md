@@ -206,7 +206,7 @@ tbn-coupon.dcv:32:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set 
 tbn-coupon.dcv:33:14: tools[t1].rpm is not set (RPM) for tool `Set me`
 tbn-coupon.dcv:34:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
 tbn-coupon.dcv:50:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
-Next: edit tbn-coupon.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check tbn-coupon.dcv`.
+Next: edit tbn-coupon.dcv and replace each `null` listed above. To cut through, `depth_mm` is the stock's thickness; the cut goes `through_cut_allowance_mm` below it. Then run `dreamcarve check tbn-coupon.dcv`.
 Added `0.762 mm tip tapered ball nose` (lt2) to tbn-coupon.dcv as tool t2.
 Added `1/8 end mill` (lt3) to tbn-coupon.dcv as tool t3.
 ```
@@ -397,7 +397,7 @@ dc-tbn.dcv:32:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
 dc-tbn.dcv:33:14: tools[t1].rpm is not set (RPM) for tool `Set me`
 dc-tbn.dcv:34:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
 dc-tbn.dcv:51:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
-Next: edit dc-tbn.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check dc-tbn.dcv`.
+Next: edit dc-tbn.dcv and replace each `null` listed above. To cut through, `depth_mm` is the stock's thickness; the cut goes `through_cut_allowance_mm` below it. Then run `dreamcarve check dc-tbn.dcv`.
 Added `2.286 mm tip tapered ball nose` (lt1) to dc-tbn.dcv as tool t2.
 Added `0.762 mm tip tapered ball nose` (lt2) to dc-tbn.dcv as tool t3.
 Added `1/8 end mill` (lt3) to dc-tbn.dcv as tool t4.

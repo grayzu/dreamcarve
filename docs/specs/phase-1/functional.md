@@ -95,6 +95,19 @@ Clamps. Text. Stock from a shape (stock is rectangular).
    0: the last pass is shallower, never deeper.
 5. **Never below bottom.** A depth greater than stock thickness (plus any
    explicit through-cut allowance) fails export with an error.
+   (changed: maintainer decision 2026-11-24, after two testers found a
+   depth equal to the thickness left a skin.) A depth that reaches the
+   stock bottom is a **through cut**: a Profile, a Pocket, an Engrave, a
+   Bore or a plain Drill so set cuts to the stock bottom minus the
+   allowance, without the depth having to be typed as the thickness plus
+   the allowance; typed so, it cuts what it cut. A depth short of the
+   bottom is cut as set, and an allowance of 0 never passes the bottom.
+   What is below the bottom is taken with the last pass in the stock,
+   never a pass of its own: 12 mm stock, 4 mm per pass and an allowance
+   of 0.2 is passes at 8, 4 and −0.2, where 12.2 mm deep used to be 8,
+   4, 0 and −0.2. It is PureCutCNC's vertical overcut
+   (`engine/toolpaths/verticalOvercut.ts`), with the operation's own
+   allowance for its amount and its limit.
 6. **Safe Z.** Every rapid move in the program is at or above safe Z in
    machine coordinates. The first motion is a rapid to safe Z.
 7. **Plunge feed.** Every straight plunge (Z decreases, XY stays) carries
@@ -140,6 +153,9 @@ Clamps. Text. Stock from a shape (stock is rectangular).
 - **S1** No emitted Z is below the stock bottom minus the operation's
   explicit through-cut allowance (default 0). Checked on every program in
   tests by parsing the emitted G-code, not by trusting the generator.
+  The allowance is also how far a through cut goes (acceptance 5, as
+  changed 2026-11-24): the limit is unchanged, and a through cut goes
+  exactly to it.
 - **S2** Rapid moves occur only at or above safe Z, except a rapid
   straight down from safe Z, in Z alone, that stops in the air over the
   start of a ramp, helix or straight plunge: at or above the stock top

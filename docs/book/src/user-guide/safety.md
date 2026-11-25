@@ -28,6 +28,8 @@ never cuts on both boards.
 1. **Never below the stock bottom.** No move goes lower than the stock
    bottom, minus the operation's `through_cut_allowance_mm` (0 unless you
    set it). A depth deeper than that is refused before any toolpath is made.
+   A cut as deep as the stock is thick goes exactly that far below it
+   ([Cutting through](profile.md#cutting-through)).
    So is a stock without `thickness_mm` or an operation without
    `depth_mm`: DreamCarve has no defaults for them.
 2. **Rapids only at safe Z.** Every rapid (`G0`) move is at or above safe Z.

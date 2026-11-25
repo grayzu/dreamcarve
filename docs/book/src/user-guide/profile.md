@@ -89,10 +89,10 @@ tick box on its row in the list.
 | `targets` | The ids of the instances to cut. `init` lists every instance with a closed outline. |
 | `tool` | The id of the tool to cut with. |
 | `side` | `"outside"`, `"inside"`, or `"on_line"`; for open paths also `"left"` or `"right"`. See [Side](#side). |
-| `depth_mm` | How deep to cut, measured down from the stock top. **Required:** `init` leaves it `null`, and export refuses until you set it. To cut through, use the stock's `thickness_mm` plus `through_cut_allowance_mm`. |
+| `depth_mm` | How deep to cut, measured down from the stock top. **Required:** `init` leaves it `null`, and export refuses until you set it. To cut through, use the stock's `thickness_mm`: the cut then goes `through_cut_allowance_mm` further. |
 | `step_down_mm` | The most to cut in one pass. `null`, as `init` writes it, uses the tool's `step_down_mm`; if both are `null`, `check` reports the tool's as not set and export refuses. More than the tool's diameter is a warning. |
 | `direction` | `"climb"` or `"conventional"`. See [Direction](#direction). |
-| `through_cut_allowance_mm` | How far below the stock bottom the cut may go. 0 by default. See [Cutting through](#cutting-through). |
+| `through_cut_allowance_mm` | How far below the stock bottom a through cut goes, and the most any cut may. 0 by default. See [Cutting through](#cutting-through). |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
 | `tabs` | A tab request: tabs to place on every outline this Profile cuts, or `null` for none. The project's placed tabs, in its own `tabs` list, hold the part whatever this says: every enabled Profile that cuts a tab's outline rises over it. See [Tabs](tabs.md). |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](#machining-order). |
@@ -153,18 +153,32 @@ final pass can be shallower than a full step; it is never deeper.
 
 ## Cutting through
 
-With `through_cut_allowance_mm` at 0, `depth_mm` may be at most the stock
-thickness: the cut stops exactly at the stock bottom. Plywood often leaves a
-thin skin of fibres there. To cut slightly into the spoilboard (the
-sacrificial board under the stock), set both:
+A **Depth** as great as the stock is thick is a **through cut**. With
+**Through-cut allowance** at 0 it stops exactly at the stock bottom, and
+plywood often leaves a thin skin of fibres there. Set the allowance, and
+a through cut goes that much further, into the spoilboard (the
+sacrificial board under the stock):
 
 ```json
-"depth_mm": 12.2,
+"depth_mm": 12.0,
 "through_cut_allowance_mm": 0.2,
 ```
 
-A depth greater than the thickness plus the allowance is an error, and
-nothing is written.
+In 12 mm stock that cuts to 0.2 mm below the stock. You do not add the
+allowance to the depth yourself; a depth of 12.2 with the same allowance
+cuts the same. In the app, a line under **Depth** says where a through
+cut goes.
+
+- A cut that stops short of the stock bottom is cut as deep as it says,
+  whatever the allowance.
+- What is below the stock is taken with the last pass: 12 mm stock in
+  4 mm steps with an allowance of 0.2 is passes at 8, 4 and −0.2, not
+  a fourth pass of 0.2 mm.
+- A depth greater than the thickness plus the allowance is an error,
+  and nothing is written.
+
+The same holds for a [Pocket](pocket.md), an [Engrave](engrave.md), a
+[Bore](bore.md) and a plain [Drill](drill.md).
 
 ## Direction
 

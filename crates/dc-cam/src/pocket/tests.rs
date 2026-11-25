@@ -1213,6 +1213,24 @@ fn depth_below_bottom_is_error() {
     assert_approx_eq!(lowest, -0.5, TOL);
 }
 
+/// A Pocket as deep as the stock is thick is a through cut: it goes the
+/// allowance below the stock bottom (the maintainer's decision,
+/// 2026-11-24). One that stops in the stock is as deep as it says.
+#[test]
+fn a_pocket_as_deep_as_the_stock_goes_the_allowance_further() {
+    let p = rect_project();
+    let mut op = pocket_op(&p, CutDirection::Climb);
+    op.depth_mm = Some(THICKNESS_MM);
+    op.through_cut_allowance_mm = 0.3;
+    let (tp, _) = generate(&p, &op);
+    let lowest = tp.moves.iter().map(|m| m.to.z).fold(f64::MAX, f64::min);
+    assert_approx_eq!(lowest, -0.3, TOL);
+    op.depth_mm = Some(THICKNESS_MM - 1.0);
+    let (tp, _) = generate(&p, &op);
+    let lowest = tp.moves.iter().map(|m| m.to.z).fold(f64::MAX, f64::min);
+    assert_approx_eq!(lowest, 1.0, TOL);
+}
+
 /// Port of `testPocketLevelTransitionsPlungeVerticallyFromSafeZ`
 /// (PureCutCNC `src/engine/toolpaths/toolpaths.test.ts`, "level
 /// transitions rapid at safe Z before plunging"): the first cut of the

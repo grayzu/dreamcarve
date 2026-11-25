@@ -11725,7 +11725,9 @@ fn inch_project_summary_in_inches() {
     let out = run(&dir, &["export", dcv, "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
     let summary = stdout(&out);
-    assert!(summary.contains(", 0.5000 in deep"), "{summary}");
+    // The depth is the stock's 1/2 in with a 1/64 in allowance: a through
+    // cut, stated as deep as it is cut (2026-11-24).
+    assert!(summary.contains(", 0.5156 in deep"), "{summary}");
     assert!(!summary.contains("mm deep"), "{summary}");
 
     // A millimetre project keeps millimetres, at their decimal places.

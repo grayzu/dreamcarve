@@ -2413,9 +2413,12 @@ fn operations_screenshots() {
     let error = "operations[op3].entry.helix.angle_deg is 60, expected an angle greater than \
                  0 and at most 45 degrees";
     assert_eq!(problems(&h), [format!("error: {error}")]);
-    assert!(h.query_by_label(error).is_none(), "no line under the field");
+    // That is `check`'s line. The window calls the field by its label.
+    let shown = "Helix angle of operation `Panel` (`op3`) is 60, expected an angle greater \
+                 than 0 and at most 45 degrees";
+    assert!(h.query_by_label(shown).is_none(), "no line under the field");
     assert!(
-        h.query_by_label(&format!("error: {error}")).is_some(),
+        h.query_by_label(&format!("error: {shown}")).is_some(),
         "the error's glyph is in its field"
     );
     undo(&mut h);

@@ -1132,7 +1132,11 @@ fn table_row(
             tool.name.clone(),
             kind_label(strings, KindChoice::of(&tool.cutter)).to_owned(),
         ];
-        lines.extend(tools::unset_values(tool).into_iter().map(|(_, m)| m));
+        lines.extend(
+            tools::unset_values(tool)
+                .into_iter()
+                .map(|(_, m)| dc_app::warnings::present_for_tool(strings, tool, &m)),
+        );
         row.on_hover_text(lines.join("\n"));
     }
 }

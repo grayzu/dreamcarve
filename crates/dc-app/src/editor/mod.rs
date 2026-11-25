@@ -804,6 +804,36 @@ pub fn notes(project: &Project, strings: &Strings, op: &Operation, slot: &Slot<'
             lines.extend(seat_line(project, strings, op).map(Note::hint));
             lines
         }
+        // A depth that reaches the stock bottom is a through cut: where
+        // it goes to (the maintainer's decision, 2026-11-24).
+        (
+            FieldKind::Length,
+            Operation::Profile(_)
+            | Operation::Pocket(_)
+            | Operation::Engrave(_)
+            | Operation::Bore(_)
+            | Operation::Drill(_),
+        ) if slot.key() == "depth_mm" => {
+            let through = project.stock.thickness_mm.zip(op.depth_mm()).and_then(
+                |(thickness_mm, depth_mm)| {
+                    let cut_mm = op.cut_depth_mm(thickness_mm)?;
+                    (depth_mm >= thickness_mm - dc_geometry::EPS_MM)
+                        .then_some(cut_mm - thickness_mm)
+                },
+            );
+            match through {
+                Some(below_mm) if below_mm > dc_geometry::EPS_MM => {
+                    vec![Note::hint(strings.fmt(
+                        StrKey::EditorThroughCut,
+                        &[("below", &length_text(below_mm, units))],
+                    ))]
+                }
+                Some(_) => vec![Note::hint(
+                    strings.get(StrKey::EditorThroughCutNoAllowance).to_owned(),
+                )],
+                None => Vec::new(),
+            }
+        }
         (FieldKind::Length, Operation::Inlay(_)) if slot.key() == "male_board.thickness_mm" => {
             male_base_mm(op).map_or_else(Vec::new, |base_mm| {
                 vec![Note {

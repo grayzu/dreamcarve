@@ -174,7 +174,16 @@ fn missing_rate_is_an_error_and_blocks_export() {
         .find(|f| f.field.as_deref() == Some("tools[t2].plunge_mm_min"))
         .expect("the refusal is listed");
     assert_eq!(refusal.tier, Tier::Error);
-    assert_eq!(refusal.message, message);
+    // Listed as the app shows it: the field by its label.
+    assert_eq!(
+        refusal.message,
+        "Plunge is not set (mm/min) for tool `1/4 end mill`"
+    );
+    assert_eq!(
+        dc_app::warnings::present_for_tool(harness.app.strings(), &t2, message),
+        refusal.message,
+        "and under the tool's field"
+    );
     assert!(harness.app.validation().has_errors(), "export is disabled");
     let built = dc_job::build(harness.app.project(), ProgramSplit::ProjectDefault, DATE);
     assert!(built.programs.is_empty(), "no program is written");
@@ -1017,7 +1026,11 @@ fn tapered_ball_nose_unset_fields_show_required() {
         .find(|f| f.field.as_deref() == Some("tools[t3].cutter.tapered_ball_nose.flute_length_mm"))
         .expect("the refusal is listed");
     assert_eq!(refusal.tier, Tier::Error);
-    assert_eq!(refusal.message, message);
+    // Listed as the app shows it: the field by its label.
+    assert_eq!(
+        refusal.message,
+        "Flute length is not set (mm) for tool `0.762 mm tip tapered ball nose`"
+    );
     assert!(harness.app.validation().has_errors(), "export is disabled");
 
     // Every value unset, on a tool no operation uses: validation says
@@ -1248,7 +1261,7 @@ fn a_tools_row_carries_the_findings_that_name_it() {
     let wrong = status(&harness, "t2");
     assert_eq!(wrong.mark, RowMark::Error);
     assert!(
-        wrong.messages[0].contains("diameter_mm is 0"),
+        wrong.messages[0].contains("Diameter is 0"),
         "the error first: {:?}",
         wrong.messages
     );

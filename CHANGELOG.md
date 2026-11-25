@@ -468,6 +468,23 @@ before that; its changes are those under Unreleased.
   for **Select Together**, with ids `g1`, `g2`, …. Format 29 changed in
   place for this, since no release has written it: a project saved by
   an earlier build of this branch no longer opens.
+- **A cut as deep as the stock goes through it.** A Profile, a Pocket,
+  an Engrave, a Bore or a plain Drill whose **Depth** reaches the stock
+  bottom is a through cut, and goes the **Through-cut allowance** below
+  it. The allowance was only a limit: a depth equal to the thickness cut
+  to the bottom exactly and left a skin, and going through meant typing
+  the thickness plus the allowance. A project that does so cuts what it
+  cut. What is below the stock is taken with the last pass in it, not a
+  pass of its own: 12 mm stock in 4 mm steps, 12.2 mm deep, was passes
+  at 8, 4, 0 and −0.2 and is now 8, 4 and −0.2. In the app, a line under
+  **Depth** says where a through cut goes. An allowance of 0 still never
+  passes the stock bottom, and a cut that stops in the stock is as deep
+  as it says.
+- **The app calls a field by its label in every message.** Warnings
+  named the file's fields (`operations[op1].depth_mm is not set`,
+  `raise margin_mm`). Where the app shows a finding, they read *Depth*,
+  *Band margin*, *Feed of tool …*. `check` and the copied text keep the
+  file's names, for whoever edits the `.dcv`.
 - **A path drawn from the end of another carries it on.** Start or end
   a Line, an Arc or a Spline on the end of an open path and the two are
   one shape, which closes when its ends are brought together, so an
@@ -619,6 +636,12 @@ before that; its changes are those under Unreleased.
 
 ### Fixed
 
+- **A ramp fits wherever a ring starts on a round wall.** A round
+  pocket could warn `entry_fallback`, *no room for a ramp*, and plunge
+  instead, when the tool came to it from above: the room for the ramp
+  was looked for on one side of a start point on the wall only. The
+  plunge was at the plunge rate, so the cut was safe; it was not what
+  was asked for.
 - **Deleting every shape no longer goes back to the start screen.**
   The start screen is for a project nothing has been done to. Once
   there is a step to undo or redo the empty stock stays in view, to

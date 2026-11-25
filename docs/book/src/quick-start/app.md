@@ -215,7 +215,10 @@ deep to cut.
   spoilboard (the board under the plywood) cuts the part free.
 - **Through-cut allowance** allows that 0.2 mm. DreamCarve refuses any
   cut that goes further below the bottom of the stock than this. Set it
-  first: a depth of 12 in 11.8 mm plywood is an error without it.
+  first: a depth of 12 in 11.8 mm plywood is an error without it. It is
+  also how far a cut as deep as the stock goes below it: a **Depth** of
+  11.8, the thickness itself, would cut the same, and the line under
+  **Depth** says so.
 - **Step-down** is empty and shows `tool's: 4 mm`. Leave it: an
   operation's value overrides the tool's, and an empty one uses the
   tool's.

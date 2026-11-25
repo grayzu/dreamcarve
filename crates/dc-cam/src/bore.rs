@@ -142,7 +142,12 @@ fn bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamE
         return Err(bad_pitch("it must be at most the tool's step-down"));
     }
     let thickness_mm = context::thickness_mm(project)?;
-    let depth_mm = context::depth_mm(&op.id, op.depth_mm)?;
+    let depth_mm = context::cut_depth_mm(
+        &op.id,
+        op.depth_mm,
+        thickness_mm,
+        op.through_cut_allowance_mm,
+    )?;
     // The hole bottom, with the depth checked against the stock bottom
     // plus the allowance (S1) as for every generator.
     let bottom_z_mm = pass_z_mm(

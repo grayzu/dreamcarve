@@ -21,6 +21,13 @@ pub const MAX_PASSES: u32 = 10_000;
 /// only the final pass can be shallower than a full step. Pass Z is
 /// `thickness − d_k`.
 ///
+/// What a through cut goes below the stock bottom gets no pass of its
+/// own (the maintainer's decision, 2026-11-24): the passes are those of
+/// the depth in the stock, and the last of them goes on to `depth_mm`.
+/// Below the bottom there is spoilboard, not stock, so a whole lap for a
+/// few tenths of a millimetre of it was a lap wasted; PureCutCNC's
+/// vertical overcut lowers its final level the same way.
+///
 /// Fails with [`CamError::BelowMaterialBottom`] when `depth_mm` exceeds
 /// `thickness_mm + through_cut_allowance_mm` by more than
 /// [`dc_geometry::EPS_MM`], and with [`CamError::InvalidDepth`] or
@@ -57,11 +64,17 @@ pub fn pass_z_mm(
             limit_mm,
         });
     }
+    // The depth that is in the stock: the passes step down through that.
+    let in_stock_mm = if depth_mm > thickness_mm + EPS_MM && thickness_mm > EPS_MM {
+        thickness_mm
+    } else {
+        depth_mm
+    };
     let mut z_mm = Vec::new();
     // k · step rather than a running sum, so rounding does not accumulate.
     for k in 1..=MAX_PASSES {
-        let d_mm = (f64::from(k) * step_down_mm).min(depth_mm);
-        if depth_mm - d_mm <= EPS_MM {
+        let d_mm = (f64::from(k) * step_down_mm).min(in_stock_mm);
+        if in_stock_mm - d_mm <= EPS_MM {
             z_mm.push(thickness_mm - depth_mm);
             return Ok(z_mm);
         }
@@ -110,10 +123,33 @@ mod tests {
         );
     }
 
+    /// A through cut's depth: the stock's thickness and the allowance,
+    /// for a depth that reaches the bottom; the depth itself short of it,
+    /// at the allowance already, or past it (which the passes refuse).
+    #[test]
+    fn a_depth_that_reaches_the_bottom_is_a_through_cut() {
+        use dc_project::through_cut_depth_mm as cut;
+        assert_approx_eq!(cut(12.0, 12.0, 0.3), 12.3, TOL);
+        assert_approx_eq!(cut(12.1, 12.0, 0.3), 12.3, TOL);
+        assert_approx_eq!(cut(11.9, 12.0, 0.3), 11.9, TOL);
+        assert_approx_eq!(cut(12.0, 12.0, 0.0), 12.0, TOL);
+        assert_approx_eq!(cut(3.0, 12.0, 0.3), 3.0, TOL);
+        // At the allowance, the depth as typed, to the last bit.
+        assert_eq!(cut(12.0, 11.8, 0.2).to_bits(), 12.0_f64.to_bits());
+        // Past it: unchanged, for the passes to refuse.
+        assert_approx_eq!(cut(12.5, 12.0, 0.3), 12.5, TOL);
+        assert!(pass_z_mm(&op(), 12.0, cut(12.5, 12.0, 0.3), 4.0, 0.3).is_err());
+        let z = pass_z_mm(&op(), 12.0, cut(12.0, 12.0, 0.3), 4.0, 0.3).unwrap();
+        assert_z(&z, &[8.0, 4.0, -0.3]);
+    }
+
     #[test]
     fn through_cut_allowance_permits_exactly_that_much() {
+        // The last pass in the stock goes on through: no pass of 0.2 mm.
         let z = pass_z_mm(&op(), 12.0, 12.2, 4.0, 0.2).unwrap();
-        assert_z(&z, &[8.0, 4.0, 0.0, -0.2]);
+        assert_z(&z, &[8.0, 4.0, -0.2]);
+        let z = pass_z_mm(&op(), 12.0, 12.2, 5.0, 0.2).unwrap();
+        assert_z(&z, &[7.0, 2.0, -0.2]);
         let err = pass_z_mm(&op(), 12.0, 12.3, 4.0, 0.2).unwrap_err();
         assert!(
             matches!(err, CamError::BelowMaterialBottom { .. }),

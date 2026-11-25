@@ -678,10 +678,13 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
             .find(|(f, _)| *f == field)
             .map(|(_, problems)| problems.clone())
             .unwrap_or_default();
-        let own = line.or(row_spec
+        // The file's message for the value, its field by its label.
+        let needed = row_spec
             .required
             .as_deref()
-            .filter(|_| found.is_empty() && value.is_empty()));
+            .filter(|_| found.is_empty() && value.is_empty())
+            .map(|message| dc_app::warnings::present_for_tool(strings, tool, message));
+        let own = line.or(needed.as_deref());
         let problems = match own {
             Some(message) => Problems::said(strings, dc_job::Tier::Error, message).with(found),
             None => found,

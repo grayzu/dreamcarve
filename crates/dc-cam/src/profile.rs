@@ -248,7 +248,12 @@ fn profile_below(
     }
     let step_down_mm = context::step_down_mm(&op.id, op.step_down_mm, tool)?;
     let thickness_mm = context::thickness_mm(project)?;
-    let depth_mm = context::depth_mm(&op.id, op.depth_mm)?;
+    let depth_mm = context::cut_depth_mm(
+        &op.id,
+        op.depth_mm,
+        thickness_mm,
+        op.through_cut_allowance_mm,
+    )?;
     // A last pass, with its own depth when it sets a thickness.
     let last_pass = op.last_pass.as_ref();
     if let Some(last_pass) = last_pass {
@@ -1249,7 +1254,14 @@ fn plan_tabs(
         .stock
         .thickness_mm
         .zip(op.depth_mm)
-        .map(|(thickness_mm, depth_mm)| thickness_mm - depth_mm);
+        .map(|(thickness_mm, depth_mm)| {
+            thickness_mm
+                - dc_project::through_cut_depth_mm(
+                    depth_mm,
+                    thickness_mm,
+                    op.through_cut_allowance_mm,
+                )
+        });
     for tab in project
         .tabs
         .iter()

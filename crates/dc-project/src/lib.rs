@@ -48,7 +48,7 @@ pub use model::{
     InlayOp, LastPass, Lead, MachineOrigin, MachiningOrder, MaleBoard, Operation, OriginXy,
     OriginZ, ParkXy, PeckRetract, PhotoStrategy, PhotoVCarveOp, PlacedTab, PocketOp, ProfileOp,
     Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
-    VCarveOp, VCarveStrategy, WallPass,
+    VCarveOp, VCarveStrategy, WallPass, through_cut_depth_mm,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,

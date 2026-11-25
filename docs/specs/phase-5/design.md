@@ -1355,6 +1355,42 @@ The names here are today's.
   `the_tool_strip_groups_the_drawing_tools`,
   `editing::shift_drag_moves_level_or_upright`.
 
+### The tester's round, 2026-11-24
+
+- **A through cut** (phase 1 functional, acceptance 5, as changed).
+  `dc_project::through_cut_depth_mm(depth, thickness, allowance)` and
+  `Operation::cut_depth_mm(thickness)`; `dc_cam::context::cut_depth_mm`
+  is what Profile, Pocket, Engrave, Bore and a plain Drill read their
+  depth through, and corner relief and a tab's floor (`profile`,
+  `dc_gcode::material::tab_spines`) follow. `passes::pass_z_mm` steps
+  through the depth in the stock and lowers its last level to the
+  depth, so the stretch below the stock has no pass of its own. An
+  Inlay's cut-out already set its depth to the board's thickness plus
+  its allowance and is unchanged. `editor::notes` has a line under
+  `depth_mm` for a through cut (`EditorThroughCut`,
+  `EditorThroughCutNoAllowance`); `dc_job::summary` states the cut's
+  depth.
+- **A ramp on a round wall.** `entry::Area::line_interval` accepts an
+  interval that ends at most the origin's slack before the origin, as
+  it did one that starts that far past it: the directions `place_ramp`
+  tries cover a half circle, so the region is as often behind a start
+  point on its boundary as ahead of it.
+- **Fields by their labels** (phase 4 functional, capability 76).
+  `warnings::present` first runs `with_labels`: a scan for the file's
+  names, each resolved against `editor::fields::table(kind)`,
+  `tools::ToolField` and `project::Field` (`row_label`, `tool_label`),
+  with `About` for the operation and the tool a bare name belongs to.
+  `warnings::present_for_tool` is the same for a tool's own messages,
+  which the tool editor and the library show for a tool that may be in
+  no project.
+- Tests: `dc-cam` `passes::a_depth_that_reaches_the_bottom_is_a_through_cut`,
+  `profile::a_cut_as_deep_as_the_stock_goes_the_allowance_further` and
+  its like for Pocket, Engrave, Drill and Bore,
+  `entry::a_ramp_fits_wherever_a_ring_starts_on_a_round_wall`; `dc-app`
+  `editor::depth_says_when_the_cut_goes_through`,
+  `warnings::a_shown_message_calls_a_field_by_its_label`,
+  `every_row_of_an_operation_is_called_by_its_label`.
+
 ## Visual design
 
 Phase 4's tokens and components hold. One token is added to the

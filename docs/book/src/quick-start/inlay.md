@@ -98,7 +98,7 @@ dc.dcv:32:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
 dc.dcv:33:14: tools[t1].rpm is not set (RPM) for tool `Set me`
 dc.dcv:34:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
 dc.dcv:51:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
-Next: edit dc.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check dc.dcv`.
+Next: edit dc.dcv and replace each `null` listed above. To cut through, `depth_mm` is the stock's thickness; the cut goes `through_cut_allowance_mm` below it. Then run `dreamcarve check dc.dcv`.
 ```
 
 The project has three shapes:

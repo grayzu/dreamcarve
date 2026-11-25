@@ -3458,7 +3458,12 @@ fn photo_v_carve_fields() {
         .status(row_of(&op, "max_depth_mm"))
         .expect("the unset depth is reported under its field");
     assert_eq!(unset.tier, Tier::Error);
-    assert!(unset.message.contains("max_depth_mm"), "{}", unset.message);
+    // By its label: the app shows the file's names nowhere.
+    assert!(
+        unset.message.starts_with("Max depth is not set"),
+        "{}",
+        unset.message
+    );
     // Under the Tool row: the V-bit's cone, which the depth must fit.
     let (cone, _) = texts(&editor::notes(
         h.app.project(),
@@ -4307,4 +4312,60 @@ mod summary {
         let located = editor::Located::of(&elsewhere, &panel);
         assert!(summary::opened(&panel, &located).is_empty());
     }
+}
+
+/// The maintainer's decision of 2026-11-24: a cut as deep as the stock is
+/// thick is a through cut, and the window says so under Depth: how far
+/// below the stock it goes, or, with no allowance, that it stops at the
+/// bottom and what to set. A cut that stops in the stock has no such
+/// line. The plaque's stock is 11.8 mm.
+#[test]
+fn depth_says_when_the_cut_goes_through() {
+    let mut h = dc_app::test_support::Harness::from_project(common::plaque());
+    let strings = h.app.strings().clone();
+    let id = h
+        .app
+        .project()
+        .operations
+        .iter()
+        .find(|o| matches!(o, Operation::Profile(_)))
+        .unwrap()
+        .id()
+        .clone();
+    let under_depth = |h: &dc_app::test_support::Harness| {
+        let op = op_of(h, id.as_str());
+        texts(&editor::notes(
+            h.app.project(),
+            &strings,
+            &op,
+            &editor::Slot::of(row_of(&op, "depth_mm")),
+        ))
+        .0
+    };
+    let set = |h: &mut dc_app::test_support::Harness, key: &str, text: &str| {
+        let op = op_of(h, id.as_str());
+        let command = editor::commit_text(h.app.project(), &op, row_of(&op, key), text);
+        run_edit(h, command);
+    };
+    // As the fixture has it: 12 mm deep in 11.8 mm stock, allowance 0.2.
+    assert_eq!(
+        under_depth(&h),
+        ["Through cut: to 0.2 mm below the stock, into the spoilboard"]
+    );
+    // The stock's own thickness is enough.
+    set(&mut h, "depth_mm", "11.8");
+    assert_eq!(
+        under_depth(&h),
+        ["Through cut: to 0.2 mm below the stock, into the spoilboard"]
+    );
+    // No allowance: it stops at the bottom, and says what would take it
+    // through.
+    set(&mut h, "through_cut_allowance_mm", "0");
+    assert_eq!(
+        under_depth(&h),
+        ["Through cut: stops at the stock bottom. Set a Through-cut allowance to go past it"]
+    );
+    // Short of the bottom: an ordinary cut.
+    set(&mut h, "depth_mm", "6");
+    assert!(under_depth(&h).is_empty());
 }

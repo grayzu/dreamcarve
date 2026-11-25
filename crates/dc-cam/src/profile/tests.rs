@@ -1010,6 +1010,44 @@ fn through_cut_goes_exactly_to_the_allowance() {
     ));
 }
 
+/// The maintainer's decision of 2026-11-24: a cut as deep as the stock
+/// is thick is a through cut, and goes the through-cut allowance below
+/// the stock bottom without the depth having to say so; it left a skin
+/// before, cutting to the bottom exactly. A cut that stops in the stock
+/// is as deep as it says, and an allowance of 0 never passes the bottom.
+#[test]
+fn a_cut_as_deep_as_the_stock_goes_the_allowance_further() {
+    let p = rect_project();
+    let mut op = profile_op(&p, Side::Outside, CutDirection::Climb);
+    let lowest = |op: &ProfileOp| {
+        let (tp, _) = generate(&p, op);
+        tp.moves.iter().map(|m| m.to.z).fold(f64::MAX, f64::min)
+    };
+    op.depth_mm = Some(THICKNESS_MM);
+    op.through_cut_allowance_mm = 0.3;
+    assert_approx_eq!(lowest(&op), -0.3, TOL);
+    // The passes step down to it: the last is the through cut's floor.
+    let (tp, _) = generate(&p, &op);
+    let z: Vec<f64> = laps(&tp).iter().map(|l| l.z_mm).collect();
+    assert_approx_eq!(*z.last().unwrap(), -0.3, TOL);
+    // And no more of them: what is below the stock is taken with the last
+    // pass in it.
+    op.through_cut_allowance_mm = 0.0;
+    let (bottomed, _) = generate(&p, &op);
+    assert_eq!(z.len(), laps(&bottomed).len());
+    op.through_cut_allowance_mm = 0.3;
+    // A depth between the bottom and the allowance is a through cut too.
+    op.depth_mm = Some(THICKNESS_MM + 0.1);
+    assert_approx_eq!(lowest(&op), -0.3, TOL);
+    // Short of the bottom, it is as deep as it says.
+    op.depth_mm = Some(THICKNESS_MM - 0.5);
+    assert_approx_eq!(lowest(&op), 0.5, TOL);
+    // No allowance: to the bottom and no further.
+    op.depth_mm = Some(THICKNESS_MM);
+    op.through_cut_allowance_mm = 0.0;
+    assert_approx_eq!(lowest(&op), 0.0, TOL);
+}
+
 /// An unset thickness or depth fails generation; neither is
 /// defaulted. Validation reports both first, so this is the generator
 /// protecting itself.
@@ -1356,9 +1394,10 @@ fn star_and_its_hole_cut_in_one_operation() {
         .expect("the star is cut");
     assert!(last_hole < first_star, "the hole is cut before the star");
 
-    // The depth is the stock: the last pass is at the stock bottom.
+    // The depth is the stock's: a through cut, its last pass the
+    // allowance below the stock bottom.
     let floor_mm = tp.moves.iter().map(|m| m.to.z).fold(f64::MAX, f64::min);
-    assert_approx_eq!(floor_mm, 0.0, TOL);
+    assert_approx_eq!(floor_mm, -0.01, TOL);
     let on_last_pass = |(from, mv): &(Point3, Move)| from.z < 3.5 && mv.to.z < 3.5;
     let level = |(from, mv): &(Point3, Move)| {
         (from.z - floor_mm).abs() <= TOL && (mv.to.z - floor_mm).abs() <= TOL

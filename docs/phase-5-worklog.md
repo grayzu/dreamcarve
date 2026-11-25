@@ -471,6 +471,26 @@ Decisions taken with these, for the maintainer:
 - The start screen still comes back after *Draw from scratch* and
   Escape with nothing drawn: nothing was done to the project.
 
+### The tester's round, 2026-11-24
+
+A second pair of eyes: an agent playing a hobbyist with years on
+VCarve-class software, with the book closed, took a flat-pack table, a
+lettered inlay and a photo carve from a blank window to G-code. Its
+reviews are kept outside the repository. What came of it:
+
+| Finding | Kind | Where it stands |
+| --- | --- | --- |
+| Through-cut allowance adds no depth | Change | Done at the maintainer's word: a cut as deep as the stock is a through cut and goes the allowance below it; what is below the stock is taken with the last pass (`dc_project::through_cut_depth_mm`, `Operation::cut_depth_mm`, `passes::pass_z_mm`); a line under Depth says so |
+| Messages name the file's fields | Change | Done at the maintainer's word: `warnings::present` calls a field by its label; `present_for_tool` for a tool's own messages |
+| "No room for a ramp" on an 80 mm round pocket | Bug | Real, fixed: `entry::Area::line_interval` took the room on one side of a start point on the boundary only, so a ring that started on the upper half of a round wall plunged |
+| Rapid (G0) moves below the stock top in V-carve output | Question | By design: safety rule S2 lets a rapid straight down stop 1 mm above the lowest Z a cut of the same operation has already reached at that XY, and the safety pass checks it on the parsed program. It does not hang on pass order: it reads the moves already written |
+| The tab request switch turns off after *Place tabs* | Question | By design (ADR-0005): the request becomes placed tabs and is cleared. The button greys out |
+
+Not done, for the maintainer: a simulation (phase 6), a starter tool
+library, photo tone controls, plain help for the inlay terms, nesting
+(phase 8); Enter after X in a tool's first field commits with Y at its
+default; messages still say `null` and name `config.toml` settings.
+
 ## Slices
 
 Status is one of: todo, doing, done, owner (waits for the maintainer).

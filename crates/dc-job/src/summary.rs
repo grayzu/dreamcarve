@@ -1027,10 +1027,17 @@ pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<Strin
                     |d| format!("{} deep", describe_length(project, d)),
                 ),
             ),
-            _ => op.depth_mm().map_or_else(
-                || "? mm deep".to_owned(),
-                |d| format!("{} deep", describe_length(project, d)),
-            ),
+            // A through cut is stated as deep as it is cut, its
+            // allowance below the stock and all.
+            _ => project
+                .stock
+                .thickness_mm
+                .and_then(|thickness_mm| op.cut_depth_mm(thickness_mm))
+                .or_else(|| op.depth_mm())
+                .map_or_else(
+                    || "? mm deep".to_owned(),
+                    |d| format!("{} deep", describe_length(project, d)),
+                ),
         };
         // #648: a Photo V-Carve carves a picture, not targets, as deep as
         // its `max_depth_mm` where the picture is black.

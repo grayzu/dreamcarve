@@ -27,7 +27,7 @@ use crate::ids::{BitmapId, DefinitionId, GroupId, InstanceId, OperationId, TabId
 use crate::post_processor::PostProcessorRef;
 use crate::shape::Shape;
 use crate::units_input;
-use dc_geometry::{Point, Polyline, Transform};
+use dc_geometry::{EPS_MM, Point, Polyline, Transform};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -536,6 +536,30 @@ macro_rules! each_kind {
     };
 }
 
+/// The depth a cut set `depth_mm` deep is made to in stock `thickness_mm`
+/// thick, millimetres below the stock top (the maintainer's decision,
+/// 2026-11-24; PureCutCNC's vertical overcut). A depth that reaches the
+/// stock bottom is a **through cut**: it goes `allowance_mm`, the
+/// operation's through-cut allowance, below the bottom, so that the part
+/// comes free whatever the stock's real thickness and the Z zero are out
+/// by. A depth short of the bottom is the cut's own. So is one already at
+/// the allowance, to the last bit, and one past it, which every generator
+/// refuses (S1).
+///
+/// The allowance was a limit and nothing more: a depth equal to the
+/// thickness cut to the bottom exactly and left a skin, and going through
+/// meant typing the thickness plus the allowance. A file that does so
+/// cuts what it cut.
+#[must_use]
+pub fn through_cut_depth_mm(depth_mm: f64, thickness_mm: f64, allowance_mm: f64) -> f64 {
+    let through_mm = thickness_mm + allowance_mm;
+    if depth_mm < thickness_mm - EPS_MM || depth_mm >= through_mm - EPS_MM {
+        depth_mm
+    } else {
+        through_mm
+    }
+}
+
 impl Operation {
     /// This operation's id.
     pub fn id(&self) -> &OperationId {
@@ -650,9 +674,30 @@ impl Operation {
         }
     }
 
-    /// How far below the stock bottom the cut may go, millimetres (S1).
+    /// How far below the stock bottom a through cut goes, and the most
+    /// any cut may, millimetres (S1).
     pub fn through_cut_allowance_mm(&self) -> f64 {
         each_kind!(self, op => op.through_cut_allowance_mm)
+    }
+
+    /// The depth the operation cuts to in stock `thickness_mm` thick,
+    /// millimetres below the stock top: [`Self::depth_mm`], or for a
+    /// Profile, a Pocket, an Engrave, a Bore or a plain Drill whose depth
+    /// reaches the stock bottom, the through cut's
+    /// ([`through_cut_depth_mm`]). `None` as [`Self::depth_mm`] is.
+    #[must_use]
+    pub fn cut_depth_mm(&self, thickness_mm: f64) -> Option<f64> {
+        let depth_mm = self.depth_mm()?;
+        Some(match self {
+            Self::Profile(_)
+            | Self::Pocket(_)
+            | Self::Drill(_)
+            | Self::Bore(_)
+            | Self::Engrave(_) => {
+                through_cut_depth_mm(depth_mm, thickness_mm, self.through_cut_allowance_mm())
+            }
+            Self::VCarve(_) | Self::Inlay(_) | Self::PhotoVCarve(_) => depth_mm,
+        })
     }
 
     /// The operation's kind as the file tags it: `profile`, `pocket`,

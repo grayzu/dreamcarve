@@ -58,7 +58,7 @@ coaster.dcv:32:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
 coaster.dcv:33:14: tools[t1].rpm is not set (RPM) for tool `Set me`
 coaster.dcv:34:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
 coaster.dcv:49:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
-Next: edit coaster.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check coaster.dcv`.
+Next: edit coaster.dcv and replace each `null` listed above. To cut through, `depth_mm` is the stock's thickness; the cut goes `through_cut_allowance_mm` below it. Then run `dreamcarve check coaster.dcv`.
 ```
 
 Each `coaster.dcv:10:21:` is a file, a line and a column: here line 10,
@@ -179,10 +179,12 @@ Change those three lines to:
   often keeps a thin skin of fibres; going 0.2 mm into the spoilboard (the
   board under the plywood) cuts the part free.
 - `through_cut_allowance_mm` allows that 0.2 mm. DreamCarve refuses any cut
-  that goes further below the bottom of the stock than this.
+  that goes further below the bottom of the stock than this. It is also
+  how far a cut as deep as the stock goes below it, so a `depth_mm` of
+  11.8, the thickness itself, would cut the same.
 
 If your measurement differs, set `thickness_mm` to it and `depth_mm` to it
-plus 0.2.
+plus 0.2, or to the thickness itself.
 
 ### The bit
 

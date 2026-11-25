@@ -1701,11 +1701,19 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Option<Vec<TabSpi
         .iter()
         .find(|t| t.id == profile.tool)
         .map(|t| t.diameter_mm / 2.0)?;
-    let floor_z_mm = project
-        .stock
-        .thickness_mm
-        .zip(profile.depth_mm)
-        .map(|(thickness_mm, depth_mm)| thickness_mm - depth_mm)?;
+    let floor_z_mm =
+        project
+            .stock
+            .thickness_mm
+            .zip(profile.depth_mm)
+            .map(|(thickness_mm, depth_mm)| {
+                thickness_mm
+                    - dc_project::through_cut_depth_mm(
+                        depth_mm,
+                        thickness_mm,
+                        profile.through_cut_allowance_mm,
+                    )
+            })?;
     let mut spines = Vec::with_capacity(tabs.len());
     for tab in tabs {
         if let Some(spine) = tab_spine(project, profile, tab, radius_mm, floor_z_mm)? {

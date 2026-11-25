@@ -950,6 +950,23 @@ fn depth_beyond_bottom_needs_allowance() {
     assert_approx_eq!(drilled.holes[0].bottom_z_mm, -0.2, TOL);
 }
 
+/// A hole as deep as the stock is thick is drilled through: its bottom
+/// is the allowance below the stock bottom (the maintainer's decision,
+/// 2026-11-24). A hole that stops in the stock is as deep as it says.
+#[test]
+fn a_hole_as_deep_as_the_stock_goes_the_allowance_further() {
+    let p = circles(&[(50.0, 50.0)]);
+    let mut op = drill_op(&p);
+    op.depth_mm = Some(12.0);
+    op.through_cut_allowance_mm = 0.2;
+    let (drilled, _) = generate(&p, &op);
+    assert_approx_eq!(plunges(&drilled.toolpath)[0].to.z, -0.2, TOL);
+    assert_approx_eq!(drilled.holes[0].bottom_z_mm, -0.2, TOL);
+    op.depth_mm = Some(11.0);
+    let (drilled, _) = generate(&p, &op);
+    assert_approx_eq!(drilled.holes[0].bottom_z_mm, 1.0, TOL);
+}
+
 /// The hole records follow the drilled order, and every link between
 /// holes is a rapid at safe Z.
 #[test]

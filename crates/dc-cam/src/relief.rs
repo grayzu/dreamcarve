@@ -1245,6 +1245,10 @@ pub(crate) fn profile_notches(
     let (Some(thickness_mm), Some(depth_mm)) = (project.stock.thickness_mm, op.depth_mm) else {
         return Ok(Vec::new());
     };
+    // The notches go as deep as the cut does, a through cut's allowance
+    // and all.
+    let depth_mm =
+        dc_project::through_cut_depth_mm(depth_mm, thickness_mm, op.through_cut_allowance_mm);
     let setup = Setup {
         op: &op.id,
         relief: op.corner_relief,

@@ -70,7 +70,12 @@ fn engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>)
     check_safe_z(&op.id, op.safe_z_mm)?;
     let step_down_mm = context::step_down_mm(&op.id, op.step_down_mm, tool)?;
     let thickness_mm = context::thickness_mm(project)?;
-    let depth_mm = context::depth_mm(&op.id, op.depth_mm)?;
+    let depth_mm = context::cut_depth_mm(
+        &op.id,
+        op.depth_mm,
+        thickness_mm,
+        op.through_cut_allowance_mm,
+    )?;
     let pass_z = pass_z_mm(
         &op.id,
         thickness_mm,

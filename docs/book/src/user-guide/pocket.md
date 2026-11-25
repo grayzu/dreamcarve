@@ -93,7 +93,7 @@ The **Strategy** row in Setup chooses how the pocket is cleared; the
 | `entry` | How the bit gets down to each pass: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`. See [Entry](#entry). |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](machining-order.md#machining-order). |
-| `through_cut_allowance_mm` | How far below the stock bottom the cut may go. A pocket deeper than the stock needs it, as a through cut does. |
+| `through_cut_allowance_mm` | How far below the stock bottom a pocket as deep as the stock goes, as for [Profile](profile.md#cutting-through). |
 | `safe_z_mm` | The height above the stock top for moves between cuts. |
 
 ## How the pocket is cleared

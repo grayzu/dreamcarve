@@ -3405,7 +3405,12 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
         &date,
     );
     assert_eq!(built.findings.errors.len(), 1, "one tool lacks a feed");
-    let error = built.findings.errors[0].message.clone();
+    // As the app shows it: the field by its label.
+    let error = dc_app::warnings::present(
+        h.state().app().project(),
+        h.state().app().strings(),
+        &built.findings.errors[0].message,
+    );
     // One line says so and Export G-code is disabled; the step lists the
     // finding under the line, as the drawer does (redesign slice D4).
     assert_eq!(
@@ -7146,6 +7151,9 @@ fn required_field_shows_required_not_a_message() {
         .find(|(field, _)| *field == "feed_mm_min")
         .map(|(_, message)| message)
         .expect("the unset feed's message");
+    // Shown with the field's label, not the file's name for it.
+    let message = dc_app::warnings::present_for_tool(h.state().app().strings(), &tool, &message);
+    assert!(message.starts_with("Feed is not set"), "{message}");
     assert_required(&mut h, "Feed", &message);
     drop(h);
 
@@ -7576,7 +7584,7 @@ fn continue_goes_to_the_next_step_and_export_is_the_primary_on_export() {
         "the result goes when the project changes"
     );
     assert_eq!(
-        in_export_step_containing(&h, "feed_mm_min is not set"),
+        in_export_step_containing(&h, "Feed is not set"),
         1,
         "the blocking finding is listed"
     );
@@ -8001,7 +8009,7 @@ fn a_blank_project_shows_no_problem() {
     h.run();
     assert!(h.state().warnings_open());
     assert!(
-        h.query_all_by_label_contains("stock.thickness_mm is not set")
+        h.query_all_by_label_contains("Thickness of the stock is not set")
             .next()
             .is_some(),
         "the drawer lists check's error"
@@ -9215,6 +9223,9 @@ fn tapered_ball_nose_fields_are_required_until_typed() {
             message.contains(field.file_name()),
             "the file names it: {message}"
         );
+        // Shown with the field's label.
+        let message =
+            dc_app::warnings::present_for_tool(h.state().app().strings(), &tool(&h), &message);
         assert_required(&mut h, label, &message);
     }
     assert_eq!(

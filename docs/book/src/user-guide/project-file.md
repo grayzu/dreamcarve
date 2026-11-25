@@ -207,8 +207,8 @@ drawing's corners, so leave it at or below `flatten_tolerance_mm`.
 the size and the shapes' placement up to 0.01 mm, so the file holds
 `110.0`, not `110.0000025`. It cannot know your material, so it leaves
 `thickness_mm` as `null`, and export refuses until you set it. Set the
-operation's `depth_mm` with it: to cut through, the thickness plus the
-operation's `through_cut_allowance_mm`.
+operation's `depth_mm` with it: to cut through, the thickness, and the
+cut goes the operation's `through_cut_allowance_mm` below the stock.
 
 ## `origin`
 

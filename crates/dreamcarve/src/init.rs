@@ -262,7 +262,8 @@ fn report(project: &Project, output: &Path, text: &str) -> Result<(), Failure> {
     values_to_set(project, output, text)?;
     outln!(
         "Next: edit {} and replace each `null` listed above. To cut through, `depth_mm` is \
-         the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check {}`.",
+         the stock's thickness; the cut goes `through_cut_allowance_mm` below it. Then run \
+         `dreamcarve check {}`.",
         output.display(),
         output.display()
     )

@@ -161,6 +161,27 @@ pub(crate) fn depth_mm(op: &OperationId, set_mm: Option<f64>) -> Result<f64, Cam
     set_mm.ok_or_else(|| CamError::MissingDepth { op: op.clone() })
 }
 
+/// The depth operation `op` cuts to below the stock top, mm: its setting
+/// `set_mm`, or, when that reaches the bottom of stock `thickness_mm`
+/// thick, the through cut's, `allowance_mm` below the bottom
+/// ([`dc_project::through_cut_depth_mm`]).
+///
+/// # Errors
+///
+/// [`CamError::MissingDepth`] while it is unset.
+pub(crate) fn cut_depth_mm(
+    op: &OperationId,
+    set_mm: Option<f64>,
+    thickness_mm: f64,
+    allowance_mm: f64,
+) -> Result<f64, CamError> {
+    Ok(dc_project::through_cut_depth_mm(
+        depth_mm(op, set_mm)?,
+        thickness_mm,
+        allowance_mm,
+    ))
+}
+
 /// An operation whose checks have passed, as sequencing and the on-stock
 /// check read it. Z values are absolute project Z, mm (stock bottom at 0).
 #[derive(Debug, Clone, Copy)]

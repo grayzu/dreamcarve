@@ -416,6 +416,23 @@ fn depth_obeys_material_bottom() {
     assert_approx_eq!(lowest, -0.5, TOL);
 }
 
+/// An Engrave as deep as the stock is thick is a through cut: it goes the
+/// allowance below the stock bottom (the maintainer's decision,
+/// 2026-11-24).
+#[test]
+fn an_engrave_as_deep_as_the_stock_goes_the_allowance_further() {
+    let p = l_project();
+    let mut op = engrave_op(&p, 2.0);
+    op.depth_mm = Some(THICKNESS_MM);
+    op.through_cut_allowance_mm = 0.3;
+    let (tp, _) = generate(&p, &op);
+    let lowest = cuts(&tp)
+        .iter()
+        .map(|m| m.to.z)
+        .fold(f64::INFINITY, f64::min);
+    assert_approx_eq!(lowest, -0.3, TOL);
+}
+
 /// Port of `testDirectModeRegression` (PureCutCNC `carving.test.ts`):
 /// a 20 mm line with a 4 mm flat end mill 1 mm deep. Upstream compares
 /// an unset carve strategy with an explicit `direct`; DreamCarve has

@@ -592,6 +592,17 @@ fn depth_beyond_bottom_needs_allowance() {
         .map(|m| m.to.z)
         .fold(f64::INFINITY, f64::min);
     assert_approx_eq!(lowest, 0.0, TOL);
+    // As deep as the stock is thick, with an allowance: a through cut,
+    // the allowance below the bottom (the maintainer's decision,
+    // 2026-11-24).
+    op.through_cut_allowance_mm = 0.3;
+    let (toolpath, _) = generate(&p, &op);
+    let lowest = toolpath
+        .moves
+        .iter()
+        .map(|m| m.to.z)
+        .fold(f64::INFINITY, f64::min);
+    assert_approx_eq!(lowest, -0.3, TOL);
 }
 
 /// A Bore needs the tool's feed and plunge rate, never invented ones,

@@ -161,7 +161,15 @@ fn drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>
     // operation's depth, or a countersink's start plane and derived depth.
     let (top_z_mm, depth_mm) = match &cycle.countersink {
         Some(sink) => (thickness_mm - sink.start_depth_mm, sink.depth_mm),
-        None => (thickness_mm, context::depth_mm(&op.id, op.depth_mm)?),
+        None => (
+            thickness_mm,
+            context::cut_depth_mm(
+                &op.id,
+                op.depth_mm,
+                thickness_mm,
+                op.through_cut_allowance_mm,
+            )?,
+        ),
     };
     // The hole bottom, with the depth checked against the stock bottom
     // plus the allowance (S1) as for every generator.

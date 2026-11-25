@@ -246,7 +246,7 @@ fn located_rows_name_the_field() {
                 .app
                 .warnings()
                 .iter()
-                .find(|f| f.message == row.message)
+                .find(|f| f.message == row.shown)
                 .expect("each row is a finding");
             assert_eq!(finding.field.as_ref(), Some(field), "{}", row.line);
         }
@@ -909,4 +909,108 @@ fn moving_a_shape_apart_clears_the_overlap() {
         .run(Command::DeleteInstances(vec![dot]))
         .expect("the speck is deleted");
     assert_eq!(codes(&harness), ["shapes_overlap"]);
+}
+
+/// The maintainer's tester, 2026-11-24: messages named the file's fields
+/// (`operations[op1].depth_mm is not set`, `raise margin_mm`), which the
+/// window shows nowhere. Where the app shows a finding, a field's name
+/// reads as the label its editor has for it: the operation's own row,
+/// the tool's field, the stock's. A path that names an operation or a
+/// tool says whose it is, unless the message already does. What the app
+/// has no label for stays as written, and so does every word that is no
+/// field: an option's value, a code, a name someone chose.
+#[test]
+fn a_shown_message_calls_a_field_by_its_label() {
+    let plaque = common::plaque();
+    let strings = dc_app::Strings::english();
+    let shown = |message: &str| warnings::present(&plaque, &strings, message);
+    // A path, with the operation named after it or not at all.
+    assert_eq!(
+        shown("operations[op4].depth_mm is not set (mm) for operation `Cut out`"),
+        "Depth is not set (mm) for operation `Cut out`"
+    );
+    assert_eq!(
+        shown(
+            "operations[op1].step_over_fraction is 1.5, expected a value greater than 0 and at most 1"
+        ),
+        "Stepover of operation `Panel` (`op1`) is 1.5, expected a value greater than 0 and at most 1"
+    );
+    // A bare name is the operation's the message is about.
+    assert_eq!(
+        shown(
+            "operation `Cut out` (`op4`) has last_pass.stock_to_leave_mm 2.5 mm with tool `1/4 end mill` (6.35 mm)"
+        ),
+        "operation `Cut out` (`op4`) has Stock to leave 2.5 mm with tool `1/4 end mill` (6.35 mm)"
+    );
+    assert_eq!(
+        shown(
+            "heights.clearance_mm is 3.5 mm, below the 5 mm safe_z_mm of operation `Cut out` (`op4`)"
+        ),
+        "Clearance is 3.5 mm, below the 5 mm Safe Z of operation `Cut out` (`op4`)"
+    );
+    // A tool's, by its path or after its name; in ticks or out of them.
+    assert_eq!(
+        shown("tool `1/4 end mill` (`t2`): feed_mm_min is 25000, expected a value greater than 0"),
+        "tool `1/4 end mill` (`t2`): Feed is 25000, expected a value greater than 0"
+    );
+    assert_eq!(
+        shown("more than its 2.5 mm step-down (tools[t2].step_down_mm); set `step_down_mm`"),
+        "more than its 2.5 mm step-down (Step-down of tool `1/4 end mill` (`t2`)); set Step-down"
+    );
+    // The stock's.
+    assert_eq!(
+        shown("stock.thickness_mm is not set (mm)"),
+        "Thickness of the stock is not set (mm)"
+    );
+    // Left as written: no label for it, an option's value, a code, a
+    // command, and a name that happens to look like a field.
+    for kept in [
+        "set [estimate] rapid_mm_min in config.toml",
+        "set the operation's entry to `plunge`, or its order to `pass_first`",
+        "tab_not_crossed: remove the tab (`dreamcarve tabs clear <dcv> --tab tab1`)",
+        "operation `op9` has depth_mm 3 mm",
+        "nothing to name",
+    ] {
+        assert_eq!(shown(kept), kept, "{kept}");
+    }
+
+    // An Inlay's fields have an Inlay's labels.
+    let dc = common::load_dcv(&common::fixture("dc.dcv"));
+    let shown = |message: &str| warnings::present(&dc, &strings, message);
+    assert_eq!(
+        shown(
+            "operation `DC` (`op1`) has glue_gap_mm 4.5 mm, not below its depth_mm 4 mm; the male starts depth_mm − glue_gap_mm below the stock top. Raise `margin_mm` to at least 7.73 mm, or set male_board.thickness_mm; use a smaller depth_mm or plug_depth_mm."
+        ),
+        "operation `DC` (`op1`) has Glue gap 4.5 mm, not below its Inlay depth 4 mm; the male starts Inlay depth − Glue gap below the stock top. Raise Band margin to at least 7.73 mm, or set Board thickness; use a smaller Inlay depth or Plug depth."
+    );
+}
+
+/// Every row of every kind of operation has its label where a message
+/// names its key after the operation: none is left as the file's name,
+/// but a key several of the operation's rows end with, which could be
+/// any of them.
+#[test]
+fn every_row_of_an_operation_is_called_by_its_label() {
+    use dc_app::editor::fields;
+    let strings = dc_app::Strings::english();
+    for project in [
+        common::plaque(),
+        common::load_dcv(&common::fixture("dc.dcv")),
+    ] {
+        for op in &project.operations {
+            for row in fields::rows(op) {
+                if !row.key.contains('_') {
+                    continue;
+                }
+                let message = format!("operation `{}` has {} wrong", op.id(), row.key);
+                let shown = warnings::present(&project, &strings, &message);
+                assert!(
+                    shown.contains(strings.get(row.label)) && !shown.contains(row.key),
+                    "{}: {} -> {shown}",
+                    op.name(),
+                    row.key
+                );
+            }
+        }
+    }
 }

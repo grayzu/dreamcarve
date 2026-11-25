@@ -62,7 +62,7 @@ The editor's rows, and the field of the project file each one sets:
 | `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, `check` reports it and export refuses. |
 | `alternate_direction` | `true` cuts the passes of an open path back and forth. See [Alternating direction](#alternating-direction). Default `false`. |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](machining-order.md#machining-order). |
-| `through_cut_allowance_mm` | How far below the stock bottom the cut may go, as for [Profile](profile.md#cutting-through). Engraving rarely needs it; leave it at 0. |
+| `through_cut_allowance_mm` | How far below the stock bottom a cut as deep as the stock goes, as for [Profile](profile.md#cutting-through). Engraving rarely needs it; leave it at 0. |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
 
 ## What the program does

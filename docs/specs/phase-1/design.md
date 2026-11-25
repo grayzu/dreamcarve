@@ -438,7 +438,13 @@ Inputs: project, op. Output: toolpath in project space.
    `CamError::MissingStepDown`. Pass depths d₁..dₙ from the stock top:
    `d_k = min(k·step, depth)`, stopping when `d_k == depth`. Z of pass k is
    `thickness − d_k`. If `depth > thickness + through_cut_allowance`, return
-   `CamError::BelowMaterialBottom`.
+   `CamError::BelowMaterialBottom`. (changed 2026-11-24) `depth` is the
+   cut's depth, `dc_project::through_cut_depth_mm`: the set depth, or,
+   when that reaches the stock bottom, `thickness + through_cut_allowance`
+   (`context::cut_depth_mm`; `Operation::cut_depth_mm` for whatever
+   states a depth). The passes step through the depth that is in the
+   stock, and the last of them goes on to `depth`, so the stretch below
+   the bottom has no pass of its own.
 6. Emission per contour, per pass: rapid to (start.xy, safe Z); linear
    descent to pass Z at plunge feed; traverse the contour at feed, ending at
    the start vertex; after the final pass of a contour, rapid to safe Z.
@@ -860,7 +866,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `passes::even_division` — 12/4 → [8, 4, 0].
 - `passes::uneven_final_pass_is_shallower` — 12/5 → [7, 2, 0].
 - `passes::depth_beyond_bottom_is_error`.
-- `passes::through_cut_allowance_permits_exactly_that_much` — 12.2 with allowance 0.2 ok; 12.3 error.
+- `passes::through_cut_allowance_permits_exactly_that_much` — 12.2 with allowance 0.2 ok, passes 8, 4, −0.2; 12.3 error.
+- `passes::a_depth_that_reaches_the_bottom_is_a_through_cut`; `profile::a_cut_as_deep_as_the_stock_goes_the_allowance_further`, and its like for Pocket, Engrave, Drill and Bore (2026-11-24).
 - `profile::outside_rect_offsets_outward` — tool-centre bounds 106.35×56.35.
 - `profile::inside_rect_offsets_inward`.
 - `profile::ring_cuts_outer_outside_and_hole_inside` — two contours, outer bounds grow, hole bounds shrink.

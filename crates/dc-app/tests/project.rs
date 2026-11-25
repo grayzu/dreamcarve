@@ -305,12 +305,14 @@ fn tool_change_z_offered_only_with_g53() {
         .status(h.app.warnings())
         .expect("the height is located");
     assert_eq!(status.tier, Tier::Error);
+    // The engine's message, the field called by its label.
     assert_eq!(
         status.message,
         Problem::MachineZNeedsG53 {
             post: "generic".to_owned()
         }
         .to_string()
+        .replace("heights.tool_change_machine_z_mm", "Tool-change machine Z")
     );
     assert!(project::export_refusal(&h.app).is_some());
     type_into(&mut h, Field::ToolChangeZ, "");
@@ -529,7 +531,12 @@ fn thickness_unset_disables_export() {
     type_into(&mut h, Field::StockThickness, "");
     assert_eq!(h.app.project().stock.thickness_mm, None);
     assert_eq!(Field::StockThickness.text(h.app.project()), "");
-    let message = Problem::StockThicknessUnset.to_string();
+    // The engine names the file's field; the app, the field's label.
+    assert_eq!(
+        Problem::StockThicknessUnset.to_string(),
+        "stock.thickness_mm is not set (mm)"
+    );
+    let message = "Thickness of the stock is not set (mm)";
     let status = Field::StockThickness
         .status(h.app.warnings())
         .expect("the thickness is marked");

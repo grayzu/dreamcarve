@@ -1180,6 +1180,22 @@ folder are app preferences, kept outside the project.
     text (not the hint blue), laid out as labelled facts, one per line,
     under a sub-heading per board when there are two:
 
+    **A field is called by its label** (phase 5's tester, 2026-11-24:
+    `operations[op1].depth_mm is not set` and `raise margin_mm` meant
+    nothing to someone who had never seen the file). The engine's
+    messages are the CLI's, for whoever edits the `.dcv`. Wherever the
+    app shows one (a drawer row, the line and the glyph at a field, an
+    operation's or a tool's row, the Export step, the status bar), the
+    file's name for a field reads as the label its editor has:
+    `operations[<id>].<path>` as that operation's row's, `tools[<id>].
+    <path>` as the tool's field's, a project setting's path as its own
+    (*Thickness of the stock*), and a bare name (`glue_gap_mm`) as the
+    row of the operation, or the field of the tool, the message is
+    about. A path with an id says whose the field is where the message
+    does not. What the app has no label for stays as written (a
+    `config.toml` setting, an option's value, `null`). The row's path at
+    its right, `check`'s line and *Copy* keep the file's names.
+
     | Female board | |
     | --- | --- |
     | Deepest cut | 4.000 mm below the stock top |

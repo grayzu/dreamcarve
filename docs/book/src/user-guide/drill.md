@@ -79,9 +79,9 @@ what is missing in place of a value.
 | `tool` | The id of the tool to drill with. A twist drill (`"drill"`) or a flat end mill (`"end_mill"`); any other cutter is a warning, because its tip leaves a cone. A countersink needs a V-bit. |
 | `cycle` | `"simple"`, `{ "peck": { "peck_depth_mm": …, "retract": … } }`, or `{ "countersink": { "diameter_mm": …, "start_depth_mm": …, "start_plane_cleared_externally": … } }`. See [Cycles](#cycles) and [Countersink](#countersink). |
 | `dwell_s` | Seconds to wait at the bottom of every plunge, 0 or more. 0, the usual value, is no wait. See [Dwell](#dwell). |
-| `depth_mm` | How deep to drill, measured down from the stock top. **Required**, except for a countersink, which works out its own depth and does not use it (`null` is usual). To drill through, use the stock's `thickness_mm` plus `through_cut_allowance_mm`. |
+| `depth_mm` | How deep to drill, measured down from the stock top. **Required**, except for a countersink, which works out its own depth and does not use it (`null` is usual). To drill through, use the stock's `thickness_mm`: the hole then goes `through_cut_allowance_mm` further. |
 | `retract_mm` | How far above the stock top the bit lifts between pecks, and where it starts each hole from, 0 or more. Usually 1. See [Retract height](#retract-height). |
-| `through_cut_allowance_mm` | How far below the stock bottom the hole may go, as for [Profile](profile.md#cutting-through). 0 by default. |
+| `through_cut_allowance_mm` | How far below the stock bottom a hole drilled through goes, as for [Profile](profile.md#cutting-through). 0 by default. |
 | `safe_z_mm` | The height above the stock top for moves between holes. Must be more than 0. |
 | `allow_tool_wider_than_hole` | `false`, the default, skips a circle smaller than the bit, with a warning. `true` drills it anyway, at the bit's size. See [Holes smaller than the bit](#holes-smaller-than-the-bit). No effect on a countersink, whose bit is wider than its hole by design; `true` there warns `countersink_ignores_tool_width`. |
 

@@ -346,7 +346,8 @@ fn noun_before(text: &str) -> &str {
 }
 
 /// `message`, a finding's text, as the app shows it (capability 76: "the
-/// message with the operation and shape named"). The engine's messages
+/// message with the operation and shape named"), its fields called by
+/// their labels (`with_labels`). The engine's messages
 /// are the CLI's too, and name an operation, a tool, a shape or a
 /// picture by its id where they have no name to hand: `operation `op4`
 /// cuts off the stock`. The app shows ids nowhere else, so each id that
@@ -363,6 +364,10 @@ fn noun_before(text: &str) -> &str {
 /// engine's text, which must equal `check`'s.
 #[must_use]
 pub fn present(project: &Project, strings: &Strings, message: &str) -> String {
+    // Fields first: a path that says whose field it is leaves an id for
+    // the naming below.
+    let labelled = with_labels(&project.operations, &project.tools, strings, message);
+    let message = labelled.as_str();
     let mut out = String::with_capacity(message.len() + 16);
     let mut rest = message;
     while let Some((before, tail)) = rest.split_once('`') {
@@ -397,6 +402,250 @@ pub fn present(project: &Project, strings: &Strings, message: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// A character of a field's name or path as the file writes it:
+/// `operations[op1].last_pass.stock_to_leave_mm`.
+const fn field_char(c: char) -> bool {
+    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '[' | ']')
+}
+
+/// `message` with the file's names for fields replaced by the labels the
+/// window has for them (the maintainer's tester, 2026-11-24:
+/// `operations[op1].depth_mm is not set`, `raise margin_mm`, read by
+/// someone who has never seen the file). The engine's messages are the
+/// CLI's, written for whoever edits the `.dcv`; the app's fields have
+/// labels.
+///
+/// - `operations[<id>].<path>` is the label of that operation's row
+///   ([`crate::editor::fields`]), `tools[<id>].<path>` that of the
+///   tool's field, and a project setting's path (`stock.thickness_mm`,
+///   `heights.clearance_mm`) its own. A path with an id says whose the
+///   field is, unless the message names that operation or tool already.
+/// - A bare name (`depth_mm`, `last_pass.stock_to_leave_mm`) is a row of
+///   the operation the message is about, else a field of the tool it is
+///   about. A name several rows of the operation end with could be any
+///   of them, and is left.
+/// - Ticks round a name that gets its label go: a label is no code.
+///
+/// Everything else stays as written: a name the app has no label for (a
+/// setting of `config.toml`), an option's value, a code, a command.
+fn with_labels(
+    operations: &[dc_project::Operation],
+    tools: &[dc_project::Tool],
+    strings: &Strings,
+    message: &str,
+) -> String {
+    // Nothing the file calls a field is without one of these.
+    if !message.contains(['_', '[']) && !message.contains("stock.") && !message.contains("heights.")
+    {
+        return message.to_owned();
+    }
+    let about = About::of(operations, tools, message);
+    let chars: Vec<(usize, char)> = message.char_indices().collect();
+    let mut out = String::with_capacity(message.len() + 16);
+    let mut k = 0;
+    while let Some(&(at, c)) = chars.get(k) {
+        let after_word = k
+            .checked_sub(1)
+            .and_then(|before| chars.get(before))
+            .is_some_and(|(_, before)| before.is_alphanumeric() || *before == '_');
+        if !(c.is_ascii_lowercase() && !after_word) {
+            out.push(c);
+            k += 1;
+            continue;
+        }
+        let run = chars
+            .get(k..)
+            .unwrap_or_default()
+            .iter()
+            .take_while(|(_, c)| field_char(*c))
+            .count();
+        let end = chars.get(k + run).map_or(message.len(), |(at, _)| *at);
+        let whole = message.get(at..end).unwrap_or_default();
+        // A sentence's stop is no part of the name.
+        let name = whole.trim_end_matches('.');
+        match about.label(strings, message, name) {
+            Some(label) => {
+                let ticked = out.ends_with('`')
+                    && message
+                        .get(at + name.len()..)
+                        .is_some_and(|rest| rest.starts_with('`'));
+                if ticked {
+                    out.pop();
+                }
+                out.push_str(&label);
+                // On from the end of the name, past its closing tick.
+                k += name.chars().count() + usize::from(ticked);
+            }
+            None => {
+                out.push_str(whole);
+                k += run;
+            }
+        }
+    }
+    out
+}
+
+/// What a message is about, for a field it names without saying whose:
+/// the operation and the tool it names first, by id or by name.
+struct About<'a> {
+    operations: &'a [dc_project::Operation],
+    tools: &'a [dc_project::Tool],
+    operation: Option<&'a dc_project::Operation>,
+    tool: Option<&'a dc_project::Tool>,
+}
+
+impl<'a> About<'a> {
+    fn of(
+        operations: &'a [dc_project::Operation],
+        tools: &'a [dc_project::Tool],
+        message: &str,
+    ) -> Self {
+        let first = |spellings: &[String]| spellings.iter().filter_map(|s| message.find(s)).min();
+        let operation = operations
+            .iter()
+            .filter_map(|op| {
+                first(&[
+                    format!("`{}`", op.id()),
+                    format!("operations[{}]", op.id()),
+                    format!("operation `{}`", op.name()),
+                ])
+                .map(|at| (at, op))
+            })
+            .min_by_key(|(at, _)| *at)
+            .map(|(_, op)| op);
+        let tool = tools
+            .iter()
+            .filter_map(|tool| {
+                first(&[
+                    format!("`{}`", tool.id),
+                    format!("tools[{}]", tool.id),
+                    format!("tool `{}`", tool.name),
+                ])
+                .map(|at| (at, tool))
+            })
+            .min_by_key(|(at, _)| *at)
+            .map(|(_, tool)| tool);
+        Self {
+            operations,
+            tools,
+            operation,
+            tool,
+        }
+    }
+
+    /// The label `name` gets in `message`, with whose it is where the
+    /// message does not say; `None` for what is no field the app labels.
+    fn label(&self, strings: &Strings, message: &str, name: &str) -> Option<String> {
+        if let Some(rest) = name.strip_prefix("operations[") {
+            let (id, path) = rest.split_once("].")?;
+            let op = self.operations.iter().find(|o| o.id().as_str() == id)?;
+            let label = strings.get(row_label(op, path)?);
+            let named = message.contains(&format!("`{id}`"))
+                || message.contains(&format!("operation `{}`", op.name()));
+            return Some(if named {
+                label.to_owned()
+            } else {
+                strings.fmt(
+                    StrKey::AppWarningsFieldOfOperation,
+                    &[("field", label), ("id", id)],
+                )
+            });
+        }
+        if let Some(rest) = name.strip_prefix("tools[") {
+            let (id, path) = rest.split_once("].")?;
+            let tool = self.tools.iter().find(|t| t.id.as_str() == id)?;
+            let label = strings.get(tool_label(path)?);
+            let named = message.contains(&format!("`{id}`"))
+                || message.contains(&format!("tool `{}`", tool.name));
+            return Some(if named {
+                label.to_owned()
+            } else {
+                strings.fmt(
+                    StrKey::AppWarningsFieldOfTool,
+                    &[("field", label), ("id", id)],
+                )
+            });
+        }
+        if let Some(field) = crate::project::Field::ALL
+            .into_iter()
+            .find(|field| field.path() == name)
+        {
+            let label = strings.get(field.label());
+            return Some(if name.starts_with("stock.") {
+                strings.fmt(StrKey::AppWarningsFieldOfStock, &[("field", label)])
+            } else {
+                label.to_owned()
+            });
+        }
+        // A bare name: no word of a message has an underscore but a
+        // field's, an option's value or a code.
+        if !name.contains('_') {
+            return None;
+        }
+        self.operation
+            .and_then(|op| row_label(op, name))
+            .or_else(|| self.tool.and_then(|_| tool_label(name)))
+            .map(|label| strings.get(label).to_owned())
+    }
+}
+
+/// The label of the row of `op`'s kind that `path` names: the row whose
+/// key is `path` or the longest that holds it (`clearing[1].tool` is the
+/// clearing list's); else the one row whose key ends with `.path`, a
+/// name a message gives without its group (`diameter_mm` of a Drill's
+/// `cycle.countersink.diameter_mm`). `None` when no row or several do.
+fn row_label(op: &dc_project::Operation, path: &str) -> Option<StrKey> {
+    let rows = crate::editor::fields::table(crate::operations::Kind::of(op));
+    let holding = rows
+        .iter()
+        .filter(|row| {
+            path.strip_prefix(row.key)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '[']))
+        })
+        .max_by_key(|row| row.key.len());
+    if let Some(row) = holding {
+        return Some(row.label);
+    }
+    let mut ending = rows
+        .iter()
+        .filter(|row| {
+            row.key
+                .strip_suffix(path)
+                .is_some_and(|before| before.ends_with('.'))
+        })
+        .map(|row| row.label);
+    let label = ending.next()?;
+    ending.all(|other| other == label).then_some(label)
+}
+
+/// The label of the tool's field `path` names: by its name in the file,
+/// with or without the cutter it is under
+/// (`cutter.v_bit.included_angle_deg`, `tip_diameter_mm`).
+fn tool_label(path: &str) -> Option<StrKey> {
+    crate::tools::ToolField::ALL
+        .into_iter()
+        .find(|field| {
+            let file = field.file_name();
+            file == path
+                || path
+                    .strip_suffix(file)
+                    .is_some_and(|before| before.ends_with('.'))
+                || file
+                    .strip_suffix(path)
+                    .is_some_and(|before| before.ends_with('.'))
+        })
+        .map(crate::tools::ToolField::label)
+}
+
+/// `message`, one of `tool`'s own (a value it still needs: `tools[t2].
+/// plunge_mm_min is not set (mm/min) for tool …`), as the app shows it
+/// under the tool's field and in the library: the field by its label
+/// ([`present`], for a tool that may be in no project).
+#[must_use]
+pub fn present_for_tool(strings: &Strings, tool: &dc_project::Tool, message: &str) -> String {
+    with_labels(&[], std::slice::from_ref(tool), strings, message)
 }
 
 /// `findings`' errors then warnings, as `check` lists them, each with
