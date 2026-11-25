@@ -77,8 +77,9 @@ fn third_party_licenses_cover_lockfile() {
 }
 
 /// Each `dist build` archive for the host target, the command line program's
-/// and the app's, carries the license files at its root: LICENSE (dist's auto-include), NOTICE and THIRD-PARTY-LICENSES (both
-/// from `include` in dist-workspace.toml).
+/// and the app's, carries the license files at its root: LICENSE (dist's
+/// auto-include), NOTICE, THIRD-PARTY-LICENSES and FONT-LICENSES (from
+/// `include` in dist-workspace.toml).
 #[test]
 #[ignore = "needs cargo-about and dist, and runs a release build; CI runs it with --ignored"]
 fn release_archive_contains_third_party_licenses() {

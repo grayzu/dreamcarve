@@ -34,7 +34,11 @@ pub const SHIPPED_PACKAGES: [&str; 2] = ["dreamcarve", "dreamcarve-app"];
 pub const GENERATED_FROM: &str = "dreamcarve-app";
 
 /// Files every release archive must carry at its root.
-pub const ARCHIVE_FILES: [&str; 3] = ["LICENSE", "NOTICE", LICENSES_FILE];
+pub const ARCHIVE_FILES: [&str; 4] = ["LICENSE", "NOTICE", LICENSES_FILE, FONT_LICENSES_FILE];
+
+/// The licence texts of the fonts and icons the programs bundle, at the
+/// workspace root and in every release archive.
+pub const FONT_LICENSES_FILE: &str = "FONT-LICENSES";
 
 /// Separator line between license sections in the generated file (`about.hbs`).
 pub const SECTION_RULE: &str =
@@ -525,6 +529,7 @@ clap_derive v4.6.7 (proc-macro) (*)
             "dreamcarve-x86_64-unknown-linux-gnu/LICENSE",
             "dreamcarve-x86_64-unknown-linux-gnu/docs/NOTICE",
             "dreamcarve-x86_64-unknown-linux-gnu/THIRD-PARTY-LICENSES",
+            "dreamcarve-x86_64-unknown-linux-gnu/FONT-LICENSES",
         ]
         .map(String::from)
         .to_vec();
@@ -542,6 +547,7 @@ clap_derive v4.6.7 (proc-macro) (*)
             "LICENSE",
             "NOTICE",
             "THIRD-PARTY-LICENSES",
+            "FONT-LICENSES",
         ]
         .map(String::from)
         .to_vec();

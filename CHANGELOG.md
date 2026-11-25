@@ -118,6 +118,11 @@ before that; its changes are those under Unreleased.
   installer scripts, and `THIRD-PARTY-LICENSES` covers the app's crates.
   The programs are not signed; the Installing chapter says how to get
   past the first launch check for a copy downloaded by hand.
+- **The font licences are in the releases.** From `v0.5.0-alpha.1`
+  every release archive carries `FONT-LICENSES`, the licence text of
+  each font and icon set the programs bundle (the interface's Inter,
+  JetBrains Mono and Lucide icons, and the Text tool's fonts), as the
+  Open Font License asks.
 - **The DreamCarve app.** DreamCarve now has a desktop app,
   `dreamcarve-app`: one window that takes a drawing or a picture to
   G-code without the command line. It works on the same `.dcv` project
