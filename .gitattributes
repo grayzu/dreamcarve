@@ -17,3 +17,8 @@ tests/fixtures/fusion/*.json text eol=lf
 *.tools binary
 # The setup sheet the renderer must write byte for byte (#625).
 crates/dc-job/tests/fixtures/** text eol=lf
+# What `dreamcarve simulate` prints for each committed project, compared
+# with its output line for line (phase 6); the pictures beside them are
+# binary.
+tests/fixtures/simulate/*.txt text eol=lf
+tests/fixtures/simulate/*.png binary

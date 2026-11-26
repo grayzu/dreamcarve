@@ -3043,6 +3043,85 @@ fn a_v28_project_exports_the_same_programs() {
     }
 }
 
+/// How far a number in a project loaded from a fixture may be from the
+/// one the test builds, relatively: a few units in the last place of an
+/// `f64`.
+const ROUNDING: f64 = 1e-12;
+
+/// Asserts that `loaded`, read from a committed fixture, is `built`, the
+/// project the test makes, but for rounding in the last digits of a
+/// number. A drawing's gear and its other parametric shapes are generated
+/// with the platform's `sin`, `cos` and `atan2`, which may round the last
+/// bit differently from the macOS build that wrote the fixture (they did
+/// on Linux and Windows, by about 1e-15 mm); every other difference fails.
+fn assert_same_but_for_rounding(loaded: &crate::Project, built: &crate::Project) {
+    fn compare(path: &str, a: &Value, b: &Value, out: &mut Vec<String>) {
+        match (a, b) {
+            (Value::Number(x), Value::Number(y)) => {
+                let (x, y) = (x.as_f64().unwrap(), y.as_f64().unwrap());
+                if (x - y).abs() > ROUNDING * x.abs().max(y.abs()).max(1.0) {
+                    out.push(format!("{path}: {x} against {y}"));
+                }
+            }
+            (Value::Array(xs), Value::Array(ys)) if xs.len() == ys.len() => {
+                for (k, (x, y)) in xs.iter().zip(ys).enumerate() {
+                    compare(&format!("{path}[{k}]"), x, y, out);
+                }
+            }
+            (Value::Object(xs), Value::Object(ys)) if xs.keys().eq(ys.keys()) => {
+                for (key, x) in xs {
+                    compare(&format!("{path}.{key}"), x, &ys[key], out);
+                }
+            }
+            _ if a == b => {}
+            _ => out.push(format!("{path}: {a} against {b}")),
+        }
+    }
+    let mut differences = Vec::new();
+    compare(
+        "project",
+        &serde_json::to_value(loaded).unwrap(),
+        &serde_json::to_value(built).unwrap(),
+        &mut differences,
+    );
+    assert!(
+        differences.is_empty(),
+        "the projects differ by more than rounding:\n{}",
+        differences.join("\n")
+    );
+}
+
+/// The comparison the fixture tests use lets the last digits of a number
+/// differ and nothing else: a vertex nudged by 1e-15 mm is the same
+/// project, one moved by a micron or a renamed shape is not.
+#[test]
+fn rounding_is_all_the_fixture_tests_forgive() {
+    use crate::test_support::drawing_project;
+    let built = drawing_project();
+    let nudge = |by: f64| {
+        let mut project = built.clone();
+        let definition = project
+            .definitions
+            .values_mut()
+            .find(|d| !d.profiles.is_empty())
+            .unwrap();
+        let profile = &definition.profiles[0];
+        let mut vertices = profile.vertices().to_vec();
+        vertices[0].y += by;
+        definition.profiles[0] = dc_geometry::Polyline::new(vertices, profile.is_closed());
+        project
+    };
+    assert_same_but_for_rounding(&nudge(1e-15), &built);
+    for differs in [nudge(1e-3), {
+        let mut renamed = built.clone();
+        renamed.name.push('!');
+        renamed
+    }] {
+        let caught = std::panic::catch_unwind(|| assert_same_but_for_rounding(&differs, &built));
+        assert!(caught.is_err(), "a real difference is caught");
+    }
+}
+
 /// The version 29 fixtures, written by the build that had format 29 for
 /// its own, load as the projects they were and save as version 30 files
 /// with nothing else changed: neither holds an Engrave, the one kind
@@ -3057,7 +3136,7 @@ fn version_29_fixtures_load() {
         let text = std::str::from_utf8(fixture).unwrap();
         assert!(text.contains("\"version\": 29,"), "a version 29 file");
         let loaded = load(fixture).unwrap();
-        assert_eq!(loaded.project, project);
+        assert_same_but_for_rounding(&loaded.project, &project);
         assert_eq!(loaded.problems, vec![]);
         assert_eq!(loaded.notes, vec![]);
         assert_eq!(
@@ -3171,7 +3250,7 @@ fn version_30_fixtures_load() {
         let text = std::str::from_utf8(fixture).unwrap();
         assert!(text.contains("\"version\": 30,"), "a version 30 file");
         let loaded = load(fixture).unwrap();
-        assert_eq!(loaded.project, project);
+        assert_same_but_for_rounding(&loaded.project, &project);
         assert_eq!(loaded.problems, vec![]);
         assert_eq!(loaded.notes, vec![]);
         assert_eq!(
@@ -3319,7 +3398,7 @@ fn version_31_fixtures_load() {
         let text = std::str::from_utf8(fixture).unwrap();
         assert!(text.contains("\"version\": 31,"), "a version 31 file");
         let loaded = load(fixture).unwrap();
-        assert_eq!(loaded.project, project);
+        assert_same_but_for_rounding(&loaded.project, &project);
         assert_eq!(loaded.problems, vec![]);
         assert_eq!(crate::save(&loaded.project).unwrap(), text);
     }
