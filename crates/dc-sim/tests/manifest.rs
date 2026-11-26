@@ -117,7 +117,10 @@ fn only_the_test_heightfield_names_the_simulation() {
     let mut found = Vec::new();
     walk(&src, &mut found);
     assert_eq!(found, vec![src.join("heightfield.rs")]);
-    let lib = std::fs::read_to_string(src.join("lib.rs")).expect("dc-cam's lib.rs");
+    // A Windows checkout may carry CRLF line endings.
+    let lib = std::fs::read_to_string(src.join("lib.rs"))
+        .expect("dc-cam's lib.rs")
+        .replace("\r\n", "\n");
     assert!(
         lib.contains("#[cfg(any(test, feature = \"test-support\"))]\nmod heightfield;"),
         "dc-cam's heightfield module must stay gated to tests"
