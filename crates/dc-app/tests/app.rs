@@ -288,3 +288,89 @@ fn new_from_picture_equals_init() {
     assert!(harness.app.new_from_picture(&colour).is_err());
     assert_eq!(harness.app.project(), &kept);
 }
+
+/// GRBL at version 1 with Manual spindle control and a changed extension:
+/// a machine chosen for new projects some versions ago.
+fn manual_grbl_v1() -> dc_project::PostProcessorRef {
+    let mut machine = dc_project::bundled_definitions()
+        .unwrap()
+        .iter()
+        .find(|d| d.id == "grbl" && d.version == 1)
+        .expect("GRBL v1 is bundled")
+        .default_ref();
+    machine.spindle_control = dc_project::SpindleControl::Manual;
+    machine.file_extension = "gcode".to_owned();
+    machine
+}
+
+/// Capability 51a: until a machine is chosen, a new project is on
+/// grblHAL at its latest version with its defaults; once one is, it is
+/// on that controller at its latest version with the chosen settings; a
+/// machine that no longer resolves (a newer DreamCarve's `gui.toml`) is
+/// grblHAL again, never a refusal to make a project.
+#[test]
+fn new_projects_start_on_the_chosen_machine() {
+    use dc_project::SpindleControl;
+
+    let grblhal = dc_project::latest_definition("grblhal")
+        .unwrap()
+        .default_ref();
+    let mut prefs = Prefs::default();
+    assert_eq!(prefs.new_project_post().unwrap(), grblhal);
+    assert_eq!(App::new_project().unwrap().post_processor, grblhal);
+    assert!(!prefs.is_new_project_machine(&grblhal), "none is chosen");
+
+    prefs.machine = Some(manual_grbl_v1());
+    let post = prefs.new_project_post().unwrap();
+    let latest = dc_project::latest_definition("grbl").unwrap();
+    assert_eq!(post.id, "grbl");
+    assert_eq!(
+        post.definition_version, latest.version,
+        "the latest version"
+    );
+    assert!(latest.version > 1);
+    assert_eq!(post.spindle_control, SpindleControl::Manual);
+    assert_eq!(post.file_extension, "gcode");
+    assert_eq!(App::new_project_on(post.clone()).post_processor, post);
+    assert!(
+        prefs.is_new_project_machine(&post),
+        "the same machine at another version is the one chosen"
+    );
+    let mut automatic = post.clone();
+    automatic.spindle_control = SpindleControl::Automatic;
+    assert!(!prefs.is_new_project_machine(&automatic));
+    assert!(!prefs.is_new_project_machine(&grblhal));
+
+    let mut gone = manual_grbl_v1();
+    gone.id = "nonesuch".to_owned();
+    prefs.machine = Some(gone);
+    assert_eq!(prefs.new_project_post().unwrap(), grblhal);
+}
+
+/// Capability 51a: *New from drawing* and *New from picture* start on the
+/// machine chosen for new projects, as *New* does.
+#[test]
+fn new_from_a_file_starts_on_the_chosen_machine() {
+    use dc_app::import::{DrawingFormat, DrawingImport, PictureImport, Purpose};
+    use dc_import::ImageFormat;
+
+    let prefs = Prefs {
+        machine: Some(manual_grbl_v1()),
+        ..Prefs::default()
+    };
+    let expected = prefs.new_project_post().unwrap();
+    let mut app = App::new(App::new_project().unwrap(), Strings::default(), prefs);
+
+    let svg = read(&common::repo_root().join("fixtures/coaster.svg"));
+    let sheet = DrawingImport::open(DrawingFormat::Svg, "coaster.svg", svg, Purpose::New);
+    app.new_from_drawing(&sheet)
+        .expect("a project from the coaster");
+    assert_eq!(app.project().post_processor, expected);
+
+    let png = read(&common::fixture("photo/gradient.png"));
+    let mut sheet = PictureImport::open(ImageFormat::Png, "gradient.png", &png, Purpose::New);
+    sheet.set_width_mm(100.0);
+    app.new_from_picture(&sheet)
+        .expect("a project from the gradient");
+    assert_eq!(app.project().post_processor, expected);
+}

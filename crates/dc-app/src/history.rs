@@ -95,6 +95,11 @@ impl LabelledHistory {
     pub fn undo_labels(&self) -> impl Iterator<Item = &str> {
         self.undo_labels.iter().map(String::as_str)
     }
+
+    /// Names every snapshot `name` ([`History::rename`]); the labels stay.
+    pub fn rename(&mut self, name: &str) {
+        self.history.rename(name);
+    }
 }
 
 #[cfg(test)]

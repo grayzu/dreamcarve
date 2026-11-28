@@ -92,12 +92,50 @@ impl History {
     pub fn can_redo(&self) -> bool {
         !self.future.is_empty()
     }
+
+    /// Gives every snapshot, past, current and future, the name `name`:
+    /// the name follows the file the project is saved to, which is no
+    /// step of the history, so no undo or redo brings back the old one.
+    pub fn rename(&mut self, name: &str) {
+        for project in self
+            .past
+            .iter_mut()
+            .chain(std::iter::once(&mut self.current))
+            .chain(self.future.iter_mut())
+        {
+            name.clone_into(&mut project.name);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::sample_project;
+
+    /// A rename reaches every snapshot, so undoing and redoing past it
+    /// keeps the new name, and changes nothing else.
+    #[test]
+    fn rename_reaches_every_snapshot() {
+        let first = sample_project();
+        let mut second = first.clone();
+        second.stock.width_mm += 10.0;
+        let mut third = second.clone();
+        third.stock.width_mm += 10.0;
+        let mut history = History::new(first);
+        history.push(second);
+        history.push(third);
+        history.undo();
+        history.rename("cabinet-door");
+        assert_eq!(history.current().name, "cabinet-door");
+        let width = history.current().stock.width_mm;
+        history.undo();
+        assert_eq!(history.current().name, "cabinet-door");
+        history.redo();
+        history.redo();
+        assert_eq!(history.current().name, "cabinet-door");
+        assert!((history.current().stock.width_mm - width - 10.0).abs() < 1e-9);
+    }
 
     fn named(name: &str) -> Project {
         Project {

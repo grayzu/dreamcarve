@@ -190,8 +190,10 @@ pub(super) fn centre_on_stock(
 }
 
 /// `FitStockToShapes`: the stock `init` would size round the visible
-/// shapes with `margin_mm`, every instance shifted alike so the shapes
-/// keep their places relative to each other (capability 61).
+/// shapes with `margin_mm`, every instance and every picture shifted
+/// alike so the shapes keep their places relative to each other and to
+/// the pictures they were drawn over (capability 61): a trace stays on
+/// its photo, and a Photo V-Carve stays where it was beside the shapes.
 pub(super) fn fit_stock(project: &Project, margin_mm: f64) -> Result<Project, CommandError> {
     if !margin_mm.is_finite() || margin_mm < 0.0 {
         return Err(CommandError::InvalidValue {
@@ -212,6 +214,11 @@ pub(super) fn fit_stock(project: &Project, margin_mm: f64) -> Result<Project, Co
     let fit = dc_job::project_from::fit_stock(bounds(project, &visible)?, margin_mm);
     let all: Vec<InstanceId> = project.instances.iter().map(|i| i.id.clone()).collect();
     let mut next = shift_all(project, &all, fit.shift);
+    for bitmap in &mut next.bitmaps {
+        let moved = fit.shift.apply(Point::new(bitmap.x_mm, bitmap.y_mm));
+        bitmap.x_mm = moved.x;
+        bitmap.y_mm = moved.y;
+    }
     next.stock.width_mm = fit.width_mm;
     next.stock.height_mm = fit.height_mm;
     Ok(next)

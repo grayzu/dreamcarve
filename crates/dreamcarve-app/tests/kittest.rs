@@ -95,14 +95,18 @@ fn opens_plaque_renders_and_exports() {
         assert!(colours.len() > 50, "a real frame, not a blank one");
     }
 
-    // Save As to a new path: byte-identical to the CLI's serializer.
+    // Save As to a new path: byte-identical to the CLI's serializer, but
+    // for the name, which follows the file (capability 51).
     let copy = dir.join("plaque-copy.dcv");
     dialogs.answer(&copy);
     shift_command_key(&harness, egui::Key::S);
     harness.run();
     assert_eq!(dialogs.asked(), ["save_project plaque.dcv"]);
     let written = std::fs::read_to_string(&copy).expect("Save As wrote the file");
-    assert_eq!(written, saved_form(&plaque));
+    assert_eq!(
+        written,
+        saved_form(&plaque).replacen("\"name\": \"plaque\"", "\"name\": \"plaque-copy\"", 1)
+    );
     assert_eq!(harness.state().app().source(), Some(copy.as_path()));
     assert!(!harness.state().app().is_dirty());
 
@@ -9220,7 +9224,17 @@ fn save_on_untitled_asks_where_and_cancel_cancels_all() {
         // Answered, Save writes there and then goes ahead.
         let path = dir.join(format!("{ask:?}.dcv"));
         dialogs.answer(&path);
-        let unsaved = h.state().app().serialize().expect("the project saves");
+        // As it will be written: named after its file (capability 51).
+        let unsaved = h
+            .state()
+            .app()
+            .serialize()
+            .expect("the project saves")
+            .replacen(
+                "\"name\": \"untitled\"",
+                &format!("\"name\": \"{ask:?}\""),
+                1,
+            );
         ask.press(&mut h);
         click_in_sheet(&mut h, "Save");
         let written = std::fs::read_to_string(&path).expect("the file is written");

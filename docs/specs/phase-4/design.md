@@ -420,6 +420,14 @@ or an export folder, or a section's header, the step panel's toggle or a
 panel's width dragged. The recent files, the window's place and the
 sections and panels the app opens by itself never replace such a file.
 
+One preference reaches a project: `[machine]`, the post-processor
+reference *Use for new projects* keeps (functional 51a), written as a
+project writes its own. `Prefs::new_project_post` gives a new project
+that controller at its latest version through `dc_project::switch_post`,
+or grblHAL's defaults when none is kept or it does not resolve. The table
+is read apart from the rest of the file, so one that does not read is
+dropped with a note and the other preferences still apply.
+
 ## Architecture
 
 ### The shell (`dreamcarve-app`)

@@ -1394,7 +1394,10 @@ fn line_art_chapter_runs() {
         ),
         ("\"boundary\": [ \"i9\" ],", "sets the boundary"),
         ("hairline", "says why the oval is drawn afterwards"),
-        ("svg_stroke_only_path", "explains the oval's one warning"),
+        (
+            "closed outline",
+            "says the oval imports as a closed outline",
+        ),
         ("Trace Bitmap", "says how to trace a picture"),
         (
             "preparing-artwork.md",

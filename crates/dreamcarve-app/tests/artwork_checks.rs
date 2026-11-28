@@ -180,15 +180,14 @@ fn a_clean_drawings_sheet_says_nothing_of_image_prep() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// The quick start's first minute, with the checks in it: *New from
-/// drawing…* on the coaster, a circle drawn as a hairline with no fill.
-/// The sheet lists the one check `init` prints for it
-/// (`svg_stroke_only_path`) and the line about `image-prep`; *Create
-/// project* makes the project all the same, and it opens on Stock with
-/// Design complete, as it did: the check is advice about a shape that
-/// was imported whole, kept as a note, and marks nothing.
+/// The quick start's first minute: *New from drawing…* on the coaster, a
+/// circle drawn as a hairline with no fill. It closes, so it is imported
+/// whole as a closed outline, and the sheet lists no check and no line
+/// about `image-prep` (the testers of 0.6.0-alpha.1 were told such a
+/// drawing could not be carved, and it could). *Create project* makes
+/// the project, with no note, and it opens on Stock with Design complete.
 #[test]
-fn the_coasters_outline_is_noted_and_the_project_still_opens_on_stock() {
+fn the_coasters_outline_is_not_a_check_and_the_project_opens_on_stock() {
     let dir = scratch("artwork-checks-coaster");
     let dialogs = QueuedDialogs::default();
     let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
@@ -197,14 +196,14 @@ fn the_coasters_outline_is_noted_and_the_project_still_opens_on_stock() {
         .click();
     h.run();
     let sheet = h.get_by_role(Role::Dialog);
-    assert!(sheet.query_by_label("svg_stroke_only_path").is_some());
-    assert!(sheet.query_by_label(ADVICE).is_some());
+    assert!(sheet.query_by_label("svg_stroke_only_path").is_none());
+    assert!(sheet.query_by_label(ADVICE).is_none());
     sheet.get_by_label("Create project").click();
     h.run();
     assert!(h.query_by_role(Role::Dialog).is_none(), "the sheet closed");
     let app = h.state().app();
     assert_eq!(app.project().instances.len(), 1);
-    assert_eq!(app.notes().len(), 1, "{:?}", app.notes());
+    assert!(app.notes().is_empty(), "{:?}", app.notes());
     assert!(app.artwork_checks().is_empty());
     assert_eq!(h.state().step_states().of(Step::Design), State::Complete);
     assert_eq!(h.state().step(), Step::Stock);

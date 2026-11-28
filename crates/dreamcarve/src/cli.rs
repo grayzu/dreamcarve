@@ -284,8 +284,9 @@ pub struct InitArgs {
     #[arg(long, value_name = "ID", default_value = "grblhal")]
     pub post: String,
     /// Display units of the project; G-code is written in these units
-    /// [default: mm]. For a DXF, also the units the drawing is in: required
-    /// when the file declares none ($INSUNITS), overriding it when it does.
+    /// [default: a DXF's own ($INSUNITS: inch for imperial, mm for metric),
+    /// else mm]. For a DXF, also the units the drawing is in: required when
+    /// the file declares none, overriding it when it does.
     #[arg(long, value_enum)]
     pub units: Option<UnitsArg>,
     /// DXF only: join open segments whose ends are within this distance,

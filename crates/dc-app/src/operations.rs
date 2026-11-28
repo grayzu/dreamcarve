@@ -598,15 +598,18 @@ pub fn cuts_nothing(app: &App, id: &OperationId) -> bool {
     if !enabled || generation.is_regenerating(id) || !generation.is_current(id) {
         return false;
     }
+    // A generator that refused the operation leaves no runs, and an
+    // empty list is no proof the tool cuts nothing: the error says why.
     generation.result(id).is_some_and(|result| {
-        result.runs.iter().all(|run| {
-            run.holes.as_ref().is_none_or(Vec::is_empty)
-                && !run
-                    .toolpath
-                    .moves
-                    .iter()
-                    .any(|step| step.feed_mm_min.is_some())
-        })
+        !result.findings.has_errors()
+            && result.runs.iter().all(|run| {
+                run.holes.as_ref().is_none_or(Vec::is_empty)
+                    && !run
+                        .toolpath
+                        .moves
+                        .iter()
+                        .any(|step| step.feed_mm_min.is_some())
+            })
     })
 }
 

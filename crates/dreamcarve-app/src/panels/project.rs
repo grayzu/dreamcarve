@@ -698,9 +698,32 @@ fn post(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Action>)
             field_row(ui, cx, Field::DecimalsMm, true, None, out);
             field_row(ui, cx, Field::DecimalsInch, true, None, out);
             canned_cycles(ui, cx, out);
+            new_projects(ui, state, cx, out);
         },
     );
     out.extend(toggled);
+}
+
+/// *Use for new projects* (capability 51a): makes the project's
+/// controller and settings what *New*, *New from drawing* and *New from
+/// picture* start with. Once they are, a note says so in its place.
+fn new_projects(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Action>) {
+    if state
+        .app
+        .prefs()
+        .is_new_project_machine(&cx.project.post_processor)
+    {
+        row::hint(ui, cx.strings.get(StrKey::ProjectPostNewProjectsSet));
+        return;
+    }
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+        let label = cx.strings.get(StrKey::ProjectPostNewProjects);
+        let spec = ButtonSpec::new(Kind::Secondary, label)
+            .tooltip(cx.strings.get(StrKey::ProjectPostNewProjectsHelp));
+        if button(ui, spec).clicked() {
+            out.push(Action::UseForNewProjects);
+        }
+    });
 }
 
 /// The Controller list: the six bundled definitions at their latest

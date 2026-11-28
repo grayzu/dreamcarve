@@ -230,6 +230,10 @@ decimals_inch_help = "How many decimal places the program writes for an inch: a 
 canned = "Canned drill cycles"
 canned_help = "Write Drill operations as the controller's canned cycles."
 no_canned = "Not offered: {name} has no canned cycles."
+# Capability 51a: the machine a new project starts with.
+new_projects = "Use for new projects"
+new_projects_help = "New, New from drawing and New from picture will start with this controller and these settings, spindle control and programs included. Projects already made keep their own."
+new_projects_set = "New projects start with this controller and these settings."
 
 # The app's window (slice 3, #532): title, menus, header, panels, status
 # bar, the empty state, the unsaved-changes sheet, file dialogs, and the
@@ -470,6 +474,7 @@ opened_notes = "Opened {name}: {count} {count|change|changes} from upgrading the
 saved = "Saved {name}"
 open_failed = "Cannot open {name}: {reason}"
 save_failed = "Cannot save {name}: {reason}"
+save_exists = "Not saved: “{name}” already exists. To replace it, choose it by name in Save As."
 imported = "Imported {count} {count|shape|shapes} from {name}"
 import_failed = "Cannot import {name}: {reason}"
 not_a_drawing = "{name} is not an SVG or DXF drawing"
@@ -1590,6 +1595,7 @@ setup_sheet_title = "Save the setup sheet"
 setup_sheet_filter = "Web page"
 setup_sheet_saved = "Saved the setup sheet to {path}"
 setup_sheet_failed = "The setup sheet was not saved: {reason}"
+setup_sheet_exists = "The setup sheet was not saved: “{name}” already exists. To replace it, choose it by name."
 
 # The setup sheet's labels (functional spec, capability 77b): the page
 # `dc_job::setup_sheet::render` writes. Its other text is the CLI's: the

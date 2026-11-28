@@ -35,8 +35,8 @@ use crate::config;
 use crate::image::{import_picture, picture_format, picture_name, picture_size, placement_failure};
 use crate::output::{errln, outln};
 use dc_import::{
-    DxfImportOptions, ImportError, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM, SvgImportOptions,
-    import_dxf, import_svg,
+    DxfImportOptions, DxfUnits, ImportError, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM,
+    SvgImportOptions, import_dxf, import_svg,
 };
 use dc_job::JobError;
 use dc_job::checks;
@@ -120,7 +120,17 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     }
 
     let name = project_name(&args.drawing);
-    let display_units = args.units.unwrap_or(UnitsArg::Mm).into();
+    // `--units` when given; else a DXF's own, from `$INSUNITS`, so a
+    // drawing made in inches is a project in inches; else millimetres.
+    let declared = match &import {
+        Drawing::Dxf(dxf) => dxf.units.map(DxfUnits::display_units),
+        Drawing::Svg(_) => None,
+    };
+    let display_units = args
+        .units
+        .map(Into::into)
+        .or(declared)
+        .unwrap_or(dc_project::Units::Mm);
     let project =
         project_from::drawing(&name, import, post, display_units, true).map_err(|e| match e {
             JobError::NoShapes => Failure::error(format!(

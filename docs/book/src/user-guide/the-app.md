@@ -221,11 +221,11 @@ The **File** menu makes, opens and saves projects.
 
 | Command | Does |
 | --- | --- |
-| **New** | An empty project: a 100 × 100 mm stock with no thickness, no tools, no operations |
-| **New Project from Drawing…** | A new project round an SVG or DXF drawing, the stock sized to it |
+| **New** | An empty project: a 100 × 100 mm stock with no thickness, no tools, no operations, on the machine new projects start with ([Post-processors](post-processors.md#the-machine-new-projects-start-with)) |
+| **New Project from Drawing…** | A new project round an SVG or DXF drawing, the stock sized to it, in the drawing's units: a DXF made in inches is a project in inches |
 | **New Project from Picture…** | A new project round a PNG or JPEG picture, with a Photo V-Carve of it |
 | **Open…**, **Open Recent** | Opens a `.dcv` project. An older file is upgraded as it is read, and the Warnings drawer lists what changed |
-| **Save**, **Save As…** | Writes the project. The first Save asks where |
+| **Save**, **Save As…** | Writes the project. The first Save asks where. A name typed without `.dcv` gets it, and the project takes the file's name, which its programs and setup sheet then show |
 | **Add Drawing to Project…**, **Add Picture to Project…** | Adds to the open project and leaves its stock alone |
 | **Export G-code…** | Opens the Export step |
 

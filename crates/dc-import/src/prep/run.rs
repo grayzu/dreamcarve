@@ -229,7 +229,7 @@ pub fn prepare(
     }
     // The checks `init` also makes.
     warnings.extend(separate_holes(&shapes, tolerance_mm));
-    warnings.extend(stroke_only(&walked.painted, &shapes));
+    warnings.extend(stroke_only(&walked.painted, &shapes, None));
     warnings.extend(hidden(&walked.hidden));
     warnings.extend(walked.not_convertible.iter().map(|u| {
         ImportWarning::SvgObjectNotConvertible {

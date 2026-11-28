@@ -129,7 +129,6 @@ dreamcarve init compass-art-inlay.svg -o compass.dcv
 
 ```text
 Imported 9 shape(s) from compass-art-inlay.svg: page units mm, 1 user unit = 1.0000 mm.
-warning: svg_stroke_only_path: 1 path(s) have a stroke and no fill; the first is `oval`, stroked 0.200 mm wide. Only its centreline is imported, an open path no Inlay or V-Carve can cut; turn strokes into shapes; `dreamcarve image-prep` would fix this
 Wrote compass.dcv: stock 116.00 × 104.00 mm, post-processor grblhal, 9 shape(s) targeted by Profile.
 Values to set; export refuses until every one is set:
 compass.dcv:10:21: stock.thickness_mm is not set (mm)
@@ -143,11 +142,9 @@ Next: edit compass.dcv and replace each `null` listed above. To cut through, `de
 
 The prepared drawing has none of the problems the [import
 checks](../user-guide/preparing-artwork.md#the-checks-init-prints) look for,
-except the one you just drew: the oval is a line with no fill, so `init`
-says `svg_stroke_only_path` (its message calls the line an open path; the
-oval is closed). For a boundary that is expected and harmless: the Inlay
-uses the oval's outline, and the outline is exactly what `init` imported.
-Ignore the warning for this shape.
+and the oval you drew adds none. It is a line with no fill, but it closes,
+so `init` imports it as a closed outline, which is exactly what the
+Inlay's boundary needs.
 
 The project has nine shapes, in the order of the file:
 

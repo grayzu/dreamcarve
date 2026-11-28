@@ -26,7 +26,9 @@ In the app the post-processor is the **Post-processor** group of the
 controller the project uses and the programs' extension: `grblHAL v4
 (latest) · .nc`. Click the header to open it.
 
-A project made in the app starts with grblHAL, as `init` starts one.
+A project made in the app starts with grblHAL, as `init` starts one,
+until you choose the machine new projects start with
+([The machine new projects start with](#the-machine-new-projects-start-with)).
 
 | Row | What it sets | In the project file |
 | --- | --- | --- |
@@ -65,7 +67,7 @@ version. Your settings are kept by the rule `export --post` follows
   it. Rest the pointer on the triangle to read what was reset, in the
   words `export --post` prints.
 
-![The Export step after switching a project set to One program for all tools from grblHAL to LinuxCNC: in the Post-processor group, Controller LinuxCNC v2 (latest) outlined in amber with a warning triangle inside it, the pointer on the triangle and its tooltip reading "warning", then "Reset tool_change_mode "m6" → "separate_programs": post-processor linuxcnc has no M6 tool change.", File extension ngc, Spindle control Automatic, Spin-up dwell 3 s, Decimals 3 and 4, and a Canned drill cycles tick box; under the groups, Programs is back at One program per tool](figures/app/post-processor-switched.png)
+![The Export step after switching a project set to One program for all tools from grblHAL to LinuxCNC: in the Post-processor group, Controller LinuxCNC v2 (latest) outlined in amber with a warning triangle inside it, the pointer on the triangle and its tooltip reading "warning", then "Reset tool_change_mode "m6" → "separate_programs": post-processor linuxcnc has no M6 tool change.", File extension ngc, Spindle control Automatic, Spin-up dwell 3 s, Decimals 3 and 4, a Canned drill cycles tick box and the button Use for new projects; under the groups, Programs is back at One program per tool](figures/app/post-processor-switched.png)
 
 Here the file extension went from `nc` to LinuxCNC's `ngc`, because `nc`
 was grblHAL's default, and **Programs** was reset to **One program per
@@ -84,6 +86,23 @@ mark inside it, whose tooltip gives the version the project uses and
 the latest. Choose the
 controller again to move to the latest
 ([Versions](#versions) says what changed in each).
+
+### The machine new projects start with
+
+Set up one project for your machine (its **Controller**, **Spindle
+control**, **Programs** and the rest) and press **Use for new projects**
+at the foot of the group. From then on **New**, **New from drawing…** and
+**New from picture…** start on that controller, at its latest version,
+with those settings, and the button's place says *New projects start
+with this controller and these settings.* Press it again on another
+project to change what new projects start with.
+
+It matters most for a router you switch on by hand: a new project left
+on grblHAL's **Automatic** spindle control has no stop for you to switch
+it on. Projects already made keep their own settings, and the examples
+open as they were shipped. The choice is kept in `gui.toml`
+([Configuration](configuration.md#the-apps-preferences)), not in any
+project.
 
 The **Heights** group, under this one, holds the heights the
 post-processor writes: the clearance height, the tool-change height,

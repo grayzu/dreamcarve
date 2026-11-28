@@ -10,6 +10,13 @@ before that; its changes are those under Unreleased.
 
 ### Added
 
+- **The machine new projects start with.** The Export step's
+  Post-processor group has **Use for new projects**: it keeps the
+  project's controller and settings (spindle control, programs and the
+  rest), and New, New from drawing and New from picture start with them,
+  at the controller's latest version. Until it is pressed a new project
+  starts on grblHAL with Automatic spindle control, as before; a router
+  switched on by hand needs Manual, which has the program stop for it.
 - **Simulation: the cut in 3D (phase 6).** The app has a sixth step,
   **Simulate**, between Operations and Export. It cuts every enabled
   operation's toolpath into a block of the stock's size, with the shape
@@ -688,6 +695,34 @@ before that; its changes are those under Unreleased.
   refuse once its centre was rounded to the written places.
 
 ### Fixed
+
+- **Fit to shapes moves the pictures too.** It moved the shapes and left
+  every picture where it was, so a trace no longer sat on its photo and
+  a Photo V-Carve moved against the shapes cut beside it.
+- **An operation an error stops is no longer said to cut nothing.** Its
+  row and the editor said *This operation cuts nothing with this tool*,
+  in amber, over the error that really stopped it.
+- **A stroked outline that closes raises no import warning.** A
+  drawing's outlines drawn as lines with no fill, as Inkscape draws them,
+  were reported as `svg_stroke_only_path`, *an open path no Inlay or
+  V-Carve can cut*, though they are imported closed and cut as drawn; a
+  hairline outline could also raise `feature_below_size`. Only a stroked
+  path left open is reported now, and the coaster of the quick start
+  lists no check.
+- **A DXF made in inches makes a project in inches.** New from drawing
+  and `dreamcarve init` made every DXF a millimetre project, so a
+  thickness typed as 0.75 was 0.75 mm. A project now takes the units the
+  drawing is in, unless others are chosen.
+- **A project is named after its file.** Its name stayed as it was made
+  (*untitled*, or the drawing's name), so the programs' headers and the
+  setup sheet said `Project: untitled` after the project was saved as
+  `millers-sign.dcv`. Saving now names it after the file.
+- **Save adds the extension.** A project saved under a name typed
+  without `.dcv`, or a setup sheet without `.html`, was written without
+  it where the save dialog adds none (Linux; on Windows, a different
+  extension typed was kept). The extension is added, and a name so
+  completed that names an existing file is refused rather than replaced
+  unseen.
 
 - **A ramp fits wherever a ring starts on a round wall.** A round
   pocket could warn `entry_fallback`, *no room for a ramp*, and plunge

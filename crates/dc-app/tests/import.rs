@@ -989,21 +989,22 @@ fn importing_keeps_the_checks_as_findings() {
 }
 
 /// Capability 55, acceptance 106: the quick start's coaster is a circle
-/// drawn as a hairline with no fill, as most drawings for a cut-out are,
-/// and `init` says so (`svg_stroke_only_path`). The sheet lists it and
-/// the import keeps it as a note, but it is advice about a shape that was
-/// imported whole, so it is not among what the import left out and the
-/// Design step is complete: the first project a new user makes is not
-/// marked as needing attention. What the messy drawing's import did
-/// leave out (its text, its image, its clipped group) marks the step, as
-/// the importer's warnings about them did.
+/// drawn as a hairline with no fill, as most drawings for a cut-out are.
+/// It closes, so it is imported whole as a closed outline, which every
+/// operation can cut, and nothing is said of it (the testers of
+/// 0.6.0-alpha.1: `svg_stroke_only_path` told them such a drawing could
+/// not be carved, and it could). The sheet lists no check, the project
+/// has no note, and the Design step is complete: the first project a new
+/// user makes is not marked as needing attention. What the messy
+/// drawing's import did leave out (its text, its image, its clipped
+/// group) marks the step, as the importer's warnings about them did.
 #[test]
-fn an_outline_drawn_as_a_stroke_is_noted_and_marks_nothing() {
+fn an_outline_drawn_as_a_stroke_is_not_noted_and_marks_nothing() {
     use dc_app::steps::{self, Session, State, Step};
 
     let bytes = read(&common::repo_root().join("fixtures/coaster.svg"));
     let coaster = DrawingImport::open(DrawingFormat::Svg, "coaster.svg", bytes, Purpose::New);
-    assert_eq!(check_codes(coaster.checks()), ["svg_stroke_only_path"]);
+    assert_eq!(check_codes(coaster.checks()), Vec::<&str>::new());
     assert!(coaster.warnings().is_empty());
     assert_eq!(coaster.left_out(), 0, "the circle was imported whole");
 
@@ -1013,11 +1014,7 @@ fn an_outline_drawn_as_a_stroke_is_noted_and_marks_nothing() {
         .new_from_drawing(&coaster)
         .expect("the project is made");
     let notes = harness.app.notes();
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(
-        notes[0].starts_with("coaster.svg: svg_stroke_only_path: 1 path(s) have a stroke"),
-        "{notes:?}"
-    );
+    assert!(notes.is_empty(), "{notes:?}");
     assert!(harness.app.artwork_checks().is_empty());
     let session = Session {
         import_warnings: coaster.left_out(),

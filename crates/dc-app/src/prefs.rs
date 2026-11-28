@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use dc_project::{Measured, TabShape, Units};
+use dc_project::{Measured, PostProcessorRef, TabShape, Units};
 
 use crate::snap::SnapSettings;
 use crate::tool::{CornerStyle, Drawing};
@@ -75,6 +75,12 @@ pub struct Prefs {
     /// The Simulate step's display and quality, as last set (phase 6,
     /// capability 124).
     pub sim: crate::sim::SimPrefs,
+    /// The controller and output settings a new project starts with, once
+    /// the user has chosen them (phase 4, capability 51a); `None` is
+    /// grblHAL at its latest version with its own defaults. The one
+    /// preference that reaches a project, and only a new one: what is
+    /// already open or saved never follows it.
+    pub machine: Option<PostProcessorRef>,
 }
 
 /// What the Text tool remembers between texts: the font, the height,
@@ -299,7 +305,43 @@ impl Prefs {
         self.recent.insert(0, path);
         self.recent.truncate(Self::MAX_RECENT);
     }
+
+    /// The post-processor reference a new project gets (capability 51a):
+    /// the chosen machine at the latest version of its definition, with
+    /// the settings that version can use ([`dc_project::switch_post`]),
+    /// or, when none is chosen or it no longer resolves (a `gui.toml` a
+    /// newer DreamCarve wrote), grblHAL at its latest with its defaults.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::CommandError::PostProcessor`] if the bundled grblHAL
+    /// definition cannot be read, which no release ships.
+    pub fn new_project_post(&self) -> Result<PostProcessorRef, crate::CommandError> {
+        if let Some(machine) = &self.machine
+            && let Ok((post, _)) = dc_project::switch_post(machine, &machine.id)
+        {
+            return Ok(post);
+        }
+        Ok(dc_project::latest_definition(DEFAULT_POST_ID)?.default_ref())
+    }
+
+    /// Whether `post` is the machine new projects start with: the same
+    /// controller and settings, whatever version of its definition each
+    /// names (a new project takes the latest).
+    #[must_use]
+    pub fn is_new_project_machine(&self, post: &PostProcessorRef) -> bool {
+        self.machine.as_ref().is_some_and(|machine| {
+            PostProcessorRef {
+                definition_version: post.definition_version,
+                ..machine.clone()
+            } == *post
+        })
+    }
 }
+
+/// The bundled post-processor a new project names until the user chooses
+/// another (capability 51).
+pub const DEFAULT_POST_ID: &str = "grblhal";
 
 /// The app's appearance. Dark until the user chooses (the redesign,
 /// `docs/specs/phase-4/redesign.md`, principle 5: dark first).

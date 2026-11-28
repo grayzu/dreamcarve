@@ -1164,3 +1164,51 @@ fn a_bitmap_rows_menu_adds_a_photo_v_carve_on_it() {
     assert_eq!(photo.name, "Photo V-Carve 1", "op1 is `Photo V-Carve`");
     assert_eq!(photo.tool.as_str(), "t1", "init's V-bit");
 }
+
+/// Capability 61, from the testers of 0.6.0-alpha.1: *Fit to shapes*
+/// moves the pictures with the shapes, so a trace stays on its photo and
+/// a Photo V-Carve keeps its place beside the shapes. Locked or not, a
+/// picture moves as far as the shapes do, and its size is kept.
+#[test]
+fn fit_to_shapes_moves_the_pictures_with_the_shapes() {
+    let mut harness = Harness::open(&common::plaque_bytes()).expect("the plaque opens");
+    harness
+        .app
+        .import_picture(&sheet("gradient.png", 40.0, Purpose::Import))
+        .expect("the gradient imports");
+    let project = harness.app.project().clone();
+    let id = project.bitmaps[0].id.clone();
+    harness
+        .run(Command::SetBitmapFlags {
+            ids: vec![id],
+            visible: None,
+            locked: Some(true),
+        })
+        .expect("locks");
+    let all: Vec<dc_project::InstanceId> = project.instances.iter().map(|i| i.id.clone()).collect();
+    let shapes_at = |p: &dc_project::Project| {
+        dc_app::properties::placement(p, &all)
+            .expect("a box")
+            .bounds
+            .min
+    };
+    let before = harness.app.project().clone();
+    harness
+        .run(Command::FitStockToShapes { margin_mm: 40.0 })
+        .expect("fits");
+    let after = harness.app.project();
+    let (from, to) = (shapes_at(&before), shapes_at(after));
+    let (dx, dy) = (to.x - from.x, to.y - from.y);
+    assert!(dx.abs() > 1.0 || dy.abs() > 1.0, "the shapes moved");
+    let (was, is) = (&before.bitmaps[0], &after.bitmaps[0]);
+    assert!(
+        (is.x_mm - was.x_mm - dx).abs() < 1e-9 && (is.y_mm - was.y_mm - dy).abs() < 1e-9,
+        "the picture moved as the shapes did: ({}, {}) → ({}, {}), shapes by ({dx}, {dy})",
+        was.x_mm,
+        was.y_mm,
+        is.x_mm,
+        is.y_mm
+    );
+    assert_eq!((is.width_mm, is.height_mm), (was.width_mm, was.height_mm));
+    assert!(is.locked, "and stays locked");
+}

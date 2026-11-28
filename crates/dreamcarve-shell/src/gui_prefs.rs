@@ -8,7 +8,9 @@
 //! theme, the Tool Library's display units, the sizes the user dragged
 //! a sheet or a table's columns to, the snapping and drawing-tool
 //! settings, and what the Simulate step shows. View state, never project state: nothing here changes a program
-//! or reaches the `.dcv`.
+//! or reaches the `.dcv`, but for `[machine]`, the controller a new
+//! project starts with (phase 4, capability 51a), which reaches only a
+//! project not yet made.
 //!
 //! Read at start and written on change and on exit. A missing file is the
 //! defaults. Unlike `config.toml`, a file that does not parse, or has a key
@@ -71,6 +73,12 @@ pub struct GuiPrefs {
     /// What the Simulate step shows and how finely (phase 6, capability
     /// 124).
     pub simulation: Simulation,
+    /// The controller and output settings a new project starts with, once
+    /// chosen (phase 4, capability 51a), as a project stores its
+    /// post-processor reference. Read on its own: one that does not parse
+    /// is dropped with a note, and the rest of the file still applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine: Option<dc_project::PostProcessorRef>,
 }
 
 /// What the Simulate step remembers between sessions: its quality and
@@ -454,7 +462,7 @@ pub fn load(paths: &Paths) -> Loaded {
 #[must_use]
 pub fn parse(text: &str, path: &Path) -> Loaded {
     let mut notes = Vec::new();
-    let table: toml::Table = match toml::from_str(text) {
+    let mut table: toml::Table = match toml::from_str(text) {
         Ok(table) => table,
         Err(e) => return Loaded::unread(describe_error(text, path, &e)),
     };
@@ -466,8 +474,22 @@ pub fn parse(text: &str, path: &Path) -> Loaded {
             path.display()
         ));
     }
+    // The machine is a project's post-processor reference, whose keys
+    // are all required: one that does not read is dropped alone.
+    let machine = table.remove("machine").and_then(|value| {
+        value
+            .try_into::<dc_project::PostProcessorRef>()
+            .map_err(|e| {
+                notes.push(format!(
+                    "{}: `[machine]` ignored: {}",
+                    path.display(),
+                    e.message()
+                ));
+            })
+            .ok()
+    });
     let (prefs, unread) = match table.try_into::<GuiPrefs>() {
-        Ok(prefs) => (prefs, None),
+        Ok(prefs) => (GuiPrefs { machine, ..prefs }, None),
         Err(e) => {
             let why = describe_error(text, path, &e);
             notes.push(why.clone());
@@ -513,6 +535,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "drawing",
         "text",
         "simulation",
+        "machine",
     ];
     const WINDOW: &[&str] = &["x", "y", "width", "height", "maximized"];
     const PANELS: &[&str] = &[
@@ -726,6 +749,12 @@ mod tests {
                 uncut_mm: 0.5,
                 speed: Some(100),
             },
+            machine: Some({
+                let mut post = dc_project::PostProcessorRef::latest("grbl").unwrap();
+                post.spindle_control = dc_project::SpindleControl::Manual;
+                post.file_extension = "gcode".to_owned();
+                post
+            }),
         };
         save(&paths, &prefs).unwrap();
         let loaded = load(&paths);
@@ -734,6 +763,30 @@ mod tests {
         // And the text itself reads back to the same record.
         assert_eq!(parse(&to_toml(&prefs), &paths.gui_prefs_file).prefs, prefs);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Capability 51a: a `[machine]` that does not read (a key missing, a
+    /// value of the wrong kind) is dropped with a note naming it, and the
+    /// rest of the file still applies; a file without one has no machine.
+    #[test]
+    fn a_machine_that_does_not_read_is_dropped_alone() {
+        let path = Path::new("/somewhere/gui.toml");
+        let loaded = parse(
+            "theme = \"light\"\n\n[machine]\nid = \"grbl\"\nspindle_control = \"sideways\"\n",
+            path,
+        );
+        assert_eq!(loaded.prefs.theme, Theme::Light);
+        assert_eq!(loaded.prefs.machine, None);
+        assert!(loaded.unread.is_none(), "{:?}", loaded.unread);
+        assert_eq!(loaded.notes.len(), 1, "{:?}", loaded.notes);
+        assert!(
+            loaded.notes[0].starts_with("/somewhere/gui.toml: `[machine]` ignored"),
+            "{:?}",
+            loaded.notes
+        );
+        let loaded = parse("theme = \"light\"\n", path);
+        assert_eq!(loaded.prefs.machine, None);
+        assert!(!to_toml(&loaded.prefs).contains("machine"));
     }
 
     /// Phase 6 (capability 124): a file from before the Simulate step has

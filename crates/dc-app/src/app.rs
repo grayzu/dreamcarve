@@ -30,8 +30,6 @@ use crate::selection::{ClickMode, Selection, pictures_clicked};
 use crate::strings::{StrKey, Strings};
 use crate::view::{ColourMode, View, Visibility};
 
-/// The bundled post-processor a new project names (capability 51).
-const DEFAULT_POST_ID: &str = "grblhal";
 /// A new project's stock, mm, square (capability 51).
 const DEFAULT_STOCK_MM: f64 = 100.0;
 /// A new project's name, before it is saved.
@@ -176,8 +174,15 @@ impl App {
     /// [`CommandError::PostProcessor`] if the bundled grblHAL definition
     /// cannot be read, which no release ships.
     pub fn new_project() -> Result<Project, CommandError> {
-        let post_processor = dc_project::latest_definition(DEFAULT_POST_ID)?.default_ref();
-        Ok(Project {
+        Ok(Self::new_project_on(Prefs::default().new_project_post()?))
+    }
+
+    /// The project *New* makes on `post_processor`, the machine the user
+    /// chose for new projects ([`Prefs::new_project_post`], capability
+    /// 51a); otherwise as [`App::new_project`].
+    #[must_use]
+    pub fn new_project_on(post_processor: dc_project::PostProcessorRef) -> Project {
+        Project {
             version: CURRENT_VERSION,
             name: UNTITLED.to_owned(),
             display_units: Units::Mm,
@@ -201,7 +206,7 @@ impl App {
             bitmaps: Vec::new(),
             post_processor,
             definitions: BTreeMap::new(),
-        })
+        }
     }
 
     /// Opens the project in `bytes`, read from `path` when there is one:
@@ -296,8 +301,10 @@ impl App {
     /// Replaces the project with a new one round the drawing `sheet`
     /// shows, as *New from drawing…* does (functional spec, capability 51
     /// and open question 1): what `dreamcarve init` builds, named by the
-    /// file's stem, on grblHAL at its latest version in millimetres, with
-    /// the stock and the shapes only (no placeholder tool, no Profile).
+    /// file's stem, on the machine chosen for new projects
+    /// ([`Prefs::new_project_post`]) in the drawing's units (a DXF made in
+    /// inches is a project in inches), with the stock and the
+    /// shapes only (no placeholder tool, no Profile).
     /// The history is cleared and the project has no file yet, as after
     /// *New*; the importer's warnings become its notes.
     ///
@@ -310,12 +317,23 @@ impl App {
         let drawing = sheet.drawing().ok_or_else(|| CommandError::NotImportable {
             reason: sheet.blocked().unwrap_or_default(),
         })?;
-        let post_processor = dc_project::latest_definition(DEFAULT_POST_ID)?.default_ref();
+        let post_processor = self.prefs.new_project_post()?;
+        // The units the drawing is in, as `init` takes them: those chosen
+        // in the sheet, else a DXF's own, so a drawing made in inches is a
+        // project in inches; else millimetres.
+        let units = sheet
+            .units()
+            .or_else(|| {
+                sheet
+                    .declared_units()
+                    .map(dc_import::DxfUnits::display_units)
+            })
+            .unwrap_or(Units::Mm);
         let project = dc_job::project_from::drawing(
             sheet.stem(),
             drawing.clone(),
             post_processor,
-            Units::Mm,
+            units,
             false,
         )?;
         self.reset(project);
@@ -348,7 +366,7 @@ impl App {
     /// Replaces the project with a new one round the picture `sheet`
     /// shows, as *New from picture…* does (functional spec, capability
     /// 51): what `dreamcarve init` builds for a picture, named by the
-    /// file's stem, on grblHAL at its latest version in millimetres: the
+    /// file's stem, on the machine chosen for new projects in millimetres: the
     /// stock sized round the picture with `init`'s margin, the bitmap, the
     /// 60° V-bit and one Photo V-Carve with `init`'s defaults. The history
     /// is cleared and the project has no file yet, as after *New*; what
@@ -365,7 +383,7 @@ impl App {
         };
         let pixels = sheet.pixels().ok_or_else(not_importable)?;
         let size = sheet.size().ok_or_else(not_importable)?;
-        let post_processor = dc_project::latest_definition(DEFAULT_POST_ID)?.default_ref();
+        let post_processor = self.prefs.new_project_post()?;
         let project =
             dc_job::project_from::picture(sheet.stem(), pixels, size, post_processor, Units::Mm)?;
         self.reset(project);
@@ -451,6 +469,22 @@ impl App {
     /// [`CommandError::Save`] when the project cannot be serialized.
     pub fn serialize(&self) -> Result<String, CommandError> {
         Ok(dc_project::save(self.project())?)
+    }
+
+    /// Names the project `name`, the stem of the file it is about to be
+    /// saved to, before [`App::serialize`]: a project's name follows its
+    /// file, so the program headers and the setup sheet say what the file
+    /// is called, as the window title does (the testers of 0.6.0-alpha.1
+    /// found `Project: untitled` in programs saved as `millers-sign`).
+    /// Every snapshot takes the name, so undo never brings the old one
+    /// back, and it is no undo step. Nothing happens when the project
+    /// already has that name.
+    pub fn name_after_file(&mut self, name: &str) {
+        if name.is_empty() || self.project().name == name {
+            return;
+        }
+        self.history.rename(name);
+        self.snapshot_changed();
     }
 
     /// Records that the shell wrote `bytes` to `path` (or to the source
