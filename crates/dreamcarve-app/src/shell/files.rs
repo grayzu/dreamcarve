@@ -79,6 +79,25 @@ pub fn stem(path: &Path) -> String {
     )
 }
 
+/// `path` ending in `.extension` (any case): as it is when it does, and
+/// with `.extension` added to its whole name when it does not, so `door`
+/// becomes `door.dcv` and `door.html` becomes `door.html.dcv`, never a
+/// project written over a page. The save dialogs of Linux add no
+/// extension, and Windows' keeps one the user typed; macOS's adds it.
+#[must_use]
+pub fn with_extension(path: &Path, extension: &str) -> PathBuf {
+    if path
+        .extension()
+        .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case(extension))
+    {
+        return path.to_path_buf();
+    }
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".");
+    name.push(extension);
+    path.with_file_name(name)
+}
+
 /// The drawing in `bytes`, read as `format` with the importer's default
 /// options, for the bundled coaster example; a user's drawing goes
 /// through the Import drawing sheet.
@@ -250,6 +269,7 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
                     .and_then(dc_app::sim::Speed::of_multiple),
             }
         },
+        machine: file.machine.clone(),
     }
 }
 
@@ -360,12 +380,39 @@ pub fn prefs_to_file(prefs: &Prefs) -> GuiPrefs {
             uncut_mm: prefs.sim.uncut_mm(),
             speed: prefs.sim.speed.map(dc_app::sim::Speed::multiple),
         },
+        machine: prefs.machine.clone(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A name without the extension gets it added; one with it, in any
+    /// case, is kept; one with another gets it added after, so no project
+    /// is written under a page's name.
+    #[test]
+    fn with_extension_adds_what_is_missing() {
+        let p = |s: &str| PathBuf::from(s);
+        assert_eq!(with_extension(&p("/jobs/door"), "dcv"), p("/jobs/door.dcv"));
+        assert_eq!(
+            with_extension(&p("/jobs/door.dcv"), "dcv"),
+            p("/jobs/door.dcv")
+        );
+        assert_eq!(
+            with_extension(&p("/jobs/door.DCV"), "dcv"),
+            p("/jobs/door.DCV")
+        );
+        assert_eq!(
+            with_extension(&p("/jobs/door.html"), "dcv"),
+            p("/jobs/door.html.dcv")
+        );
+        assert_eq!(
+            with_extension(&p("/jobs/door-setup"), "html"),
+            p("/jobs/door-setup.html")
+        );
+        assert_eq!(with_extension(&p("v1.2"), "dcv"), p("v1.2.dcv"));
+    }
 
     /// Every preference survives the trip to `gui.toml`'s record and back.
     #[test]
@@ -400,6 +447,9 @@ mod tests {
         prefs.snap.radius_px = 20.0;
         prefs.grid_spacing_mm = Some(6.35);
         prefs.drawing_tool = dc_app::Drawing::Slot;
+        let mut machine = dc_project::PostProcessorRef::latest("grbl").unwrap();
+        machine.spindle_control = dc_project::SpindleControl::Manual;
+        prefs.machine = Some(machine);
         prefs.drawing = dc_app::prefs::DrawingPrefs {
             corners: dc_app::tool::CornerStyle::Chamfered,
             corner_mm: Some(6.35),

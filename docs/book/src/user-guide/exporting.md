@@ -98,15 +98,16 @@ them before you export.
 Three groups hold the settings that shape the program. Each is closed
 until you open it, with its values on its header.
 
-![The Post-processor group open: Controller grblHAL v4 (latest), File extension nc, Spindle control Automatic, Spin-up dwell 3 s, Decimals for mm and inch, and Canned drill cycles, not offered on grblHAL](figures/app/export-post-processor.png)
+![The Post-processor group open: Controller grblHAL v4 (latest), File extension nc, Spindle control Automatic, Spin-up dwell 3 s, Decimals for mm and inch, Canned drill cycles, not offered on grblHAL, and the button Use for new projects](figures/app/export-post-processor.png)
 
 - **Post-processor**: the **Controller** your machine runs, and how the
   program is written for it: the file extension, whether the program
   switches the spindle or pauses for you to switch a router, and how long
   to wait for the spindle to reach speed. A setting a controller does not have is not offered, with the
   reason. Switching controller keeps the settings the new one can use and
-  says which it reset. [Post-processors](post-processors.md) explains
-  every setting and each controller.
+  says which it reset. **Use for new projects** makes these the settings
+  every new project starts with. [Post-processors](post-processors.md)
+  explains every setting and each controller.
 - **Heights**: the clearance height, the tool-change height and the park
   point ([Stock, origin and heights](stock-and-origin.md#the-heights)).
 - **Tolerances**: **Flatten**, how far a flattened curve may stray from

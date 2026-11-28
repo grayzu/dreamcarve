@@ -259,12 +259,28 @@ folder are app preferences, kept outside the project.
     *New Project from Drawing* adds the shapes and the stock only: no
     placeholder tool and no Profile (open question 1, decided 2026-11-02),
     since the empty Operations and Tools lists say what to do next (79) and
-    a tool with unset feeds is a trap the library picker avoids. *Open* reads any `.dcv` the CLI
+    a tool with unset feeds is a trap the library picker avoids. Its
+    display units are the drawing's, as `init`'s are: those chosen in the
+    sheet, else a DXF's `$INSUNITS` (inches, feet and miles give an inch
+    project; millimetres, centimetres and metres a millimetre one), else
+    millimetres (amended 2026-11-27, after the testers of 0.6.0-alpha.1:
+    an inch DXF made a millimetre project, and a thickness typed as 0.75
+    was 0.75 mm). *Open* reads any `.dcv` the CLI
     reads, migrates it, and lists migration notes and validation
     warnings in the Warnings drawer. *Save* and *Save As…* write through the
     same serializer as the CLI, so a project opened and saved unchanged is
     byte-identical. *Save As…* is the standard save-a-copy: it writes the
-    project under a new name and the window then edits that file. *Recent*
+    project under a new name and the window then edits that file. A save
+    names the project after its file, in every undo snapshot and as no
+    undo step, so the programs' headers and the setup sheet say what the
+    file is called, as the window title does; a project saved unchanged
+    under its own name is still byte-identical. A file name without
+    `.dcv` gets it (a setup sheet's `.html`), added after any other
+    extension, and a name so completed that names an existing file,
+    which the dialog was not asked about, is refused with a message
+    rather than replaced (amended 2026-11-27, after the testers of
+    0.6.0-alpha.1: programs saved as `millers-sign` said `Project:
+    untitled`, and Linux's save dialog adds no extension). *Recent*
     lists the last ten files. Closing the window, quitting, *Open* and
     *New* (any of the three kinds) with unsaved changes show the
     unsaved-changes sheet: *Save changes to "plaque"?*, with **Save**,
@@ -273,6 +289,23 @@ folder are app preferences, kept outside the project.
     autosave in this phase (out of scope). The window title shows the
     project name and the unsaved marker (50). A `.dcv` dropped on the
     window, or passed on the command line, opens.
+
+51a. **The machine a new project starts with** (added 2026-11-27, after
+    the testers of 0.6.0-alpha.1: all three re-chose their controller
+    for every project, and a router switched by hand, left on Automatic,
+    has no stop to switch it on). The Export step's Post-processor
+    section has **Use for new projects**: it keeps the project's
+    controller and its settings (spindle control, programs, extension,
+    dwell, decimals, canned cycles) in `gui.toml`, and *New*, *New
+    Project from Drawing…* and *New Project from Picture…* start on that
+    controller at its latest version, with the settings it can use (as a
+    switch of controller keeps them, 62). Once the project's controller
+    and settings are the ones kept, a note says so in the button's
+    place. Until one is kept, a new project is on grblHAL at its latest
+    version with its defaults, as 51 says; one that no longer resolves
+    (a `gui.toml` a newer DreamCarve wrote) is the same. It is the one
+    preference that reaches a project, and only a new one: projects
+    already made keep their own, and the examples are as shipped.
 52. **Undo and redo** (Edit menu, Ctrl/⌘ Z and Shift+Ctrl/⌘ Z) walk the
     snapshot history. Every change to the project is a named command and
     one undo step: *Move “Oval”*, *Set depth of “Outside cut”* (the name
@@ -380,9 +413,10 @@ folder are app preferences, kept outside the project.
     importer's own about text, images, clips and masks. A note of
     `svg_hole_as_separate_path`, `svg_stroke_only_path` or
     `svg_hidden_object` is advice about shapes imported whole, or about
-    a layer the drawing itself hides, and marks nothing: the quick start's coaster, an outline drawn as a hairline
-    as most cut-outs are, has the second, and its new project opens on
-    Stock with Design complete. One import is one undo step. The sheet resizes as the Tool
+    a layer the drawing itself hides, and marks nothing. The quick start's coaster, an outline drawn as a hairline
+    as most cut-outs are, closes, so it has none of them (phase 3, 49a,
+    corrected 2026-11-27), and its new project opens on Stock with
+    Design complete. One import is one undo step. The sheet resizes as the Tool
     Library does (64; maintainer's smoke test, 2026-11-20): by its edges
     and the grip at its bottom right corner, down to 440 × 320 and up to
     the window's size less a margin, staying centred, each side it was
@@ -1809,9 +1843,9 @@ slices carry them.
     inside the sheet while the list scrolls; under the list one line
     names `dreamcarve image-prep` and links to *Preparing artwork*; a
     clean drawing's sheet has neither. *New from drawing* on
-    `fixtures/coaster.svg` lists `svg_stroke_only_path`, and the project
-    it makes opens on Stock with Design complete and the check as a
-    note. The sheet on
+    `fixtures/coaster.svg`, a closed hairline, lists no check, and the
+    project it makes opens on Stock with Design complete and no note
+    (corrected 2026-11-27: it listed `svg_stroke_only_path`). The sheet on
     `tests/fixtures/prep/tool-tray.dxf` lists `shapes_overlap` and
     `feature_below_size`, and with the *pockets* layer unticked no
     overlap. Imported, the project's Warnings drawer lists those two as

@@ -74,7 +74,7 @@ to do about it:
 | --- | --- | --- |
 | `shapes_overlap` | Outlines of different paths cross. The message names the first pair and where they meet, and counts the pairs. | Unite the shapes (Path → Union in Inkscape) or move them apart; or `image-prep`, which merges paths that cross. An outline that crosses itself is already an error ([Shapes, holes, and islands](shapes-and-holes.md#11-a-shape-must-not-cross-itself)); this warns earlier, at `init`, before an operation exists. |
 | `svg_hole_as_separate_path` | A filled path lies wholly inside another filled path. The message names both. They are two shapes in the project; the inner is a hole only in an operation that targets both, as [Shapes, holes, and islands](shapes-and-holes.md) says of every nested outline, and a Pocket of the outer path alone would cut across it. An unfilled frame drawn round a design is not reported. | Make each one path with a hole (Path → Combine in Inkscape), or `image-prep`, which does. |
-| `svg_stroke_only_path` | A path has a stroke and no fill. `init` imports its centre line, an open path that no Inlay or V-Carve can cut. The message gives the stroke's width. | Path → Stroke to Path, or `image-prep`, which turns every stroke into the area it covers, with its own width, caps and joins. |
+| `svg_stroke_only_path` | A path has a stroke and no fill, and does not close. `init` imports its centre line, an open path that no Inlay or V-Carve can cut. The message gives the stroke's width. A stroked outline that closes is imported as a closed shape and is not listed. | Path → Stroke to Path, or `image-prep`, which turns every stroke into the area it covers, with its own width, caps and joins. |
 | `svg_hidden_object` | An object is not drawn. One in a `display:none` layer is left out, and the warning says so. One with `visibility:hidden`, zero opacity, or neither fill nor stroke is imported, since `init` imports geometry whatever its paint, and would be cut; it has a warning of its own. | Show the layer if it should be cut. Delete the others, or `image-prep`, which skips them. |
 | `svg_object_not_convertible` | Live text, an image, a clip path or a mask. Text and images are skipped; shapes inside a clip path or mask are imported whole. | Convert text to paths (Path → Object to Path); trace pictures first ([Tracing a picture](#tracing-a-picture-in-inkscape)); apply clips and masks in the drawing program (Object → Clip → Release, then cut the shapes). `image-prep` skips these too, and counts them. |
 | `feature_below_size` | Pieces or holes narrower, at their widest, than the default `--min-detail` ([below](#the-two-thresholds)) of the design's height. The message counts them and gives the smallest. | Nothing is cut wrongly, but a speck that small is never worth carving, and traced art is full of them. `image-prep` drops them. |
@@ -108,10 +108,11 @@ word. This is the sheet on `messy.svg`, scrolled to the end of its list:
 A check never stops the import: the sheet's button stays on, and the
 drawing is added as it is. A clean drawing lists nothing.
 
-Not every check needs a fix. A drawing for a cut-out is usually thin
-outlines with no fill, and each outline is a `svg_stroke_only_path`: a
-Profile cuts along the line, so it is right as it is. The checks matter
-where a V-Carve or an Inlay will carve the drawing as areas.
+Not every drawing needs a fix. A drawing for a cut-out is usually thin
+outlines with no fill: an outline that closes is imported as a closed
+shape, which every operation can cut, and no check is listed for it. The
+checks matter where a V-Carve or an Inlay will carve the drawing as
+areas.
 
 **The app does not clean a drawing.** It has no `image-prep` of its own,
 with no clean-up and no options to set. When a check fires, the line
@@ -369,10 +370,9 @@ boundary, and draw the boundary into the **prepared** file:
 3. `init` the prepared file; the boundary is the shape with that id.
 4. List it as the Inlay's `boundary`.
 
-`init` warns `svg_stroke_only_path` for the boundary, because a line with no
-fill is a stroke. That is expected here: the Inlay uses the shape's outline,
-and the outline is what `init` imports. [From line
-art](../quick-start/line-art.md) does exactly this.
+The boundary is a line with no fill, but it closes, so `init` imports it
+as a closed outline, which is what the Inlay uses, and lists no check for
+it. [From line art](../quick-start/line-art.md) does exactly this.
 
 ## The two thresholds
 

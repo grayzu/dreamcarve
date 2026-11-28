@@ -223,6 +223,18 @@ impl DxfUnits {
             Self::Metres => 1000.0,
         }
     }
+
+    /// The display units a project made from a drawing in these units
+    /// takes when none are chosen: inches for the imperial units, and
+    /// millimetres for the metric ones. A drawing made in inches is
+    /// measured in inches, and its thickness and depths are typed so.
+    #[must_use]
+    pub const fn display_units(self) -> dc_project::Units {
+        match self {
+            Self::Inches | Self::Feet | Self::Miles => dc_project::Units::Inch,
+            Self::Millimetres | Self::Centimetres | Self::Metres => dc_project::Units::Mm,
+        }
+    }
 }
 
 impl std::fmt::Display for DxfUnits {

@@ -549,6 +549,10 @@ pub(crate) enum Action {
     /// The snap grid's spacing, mm, or `None` for the automatic one
     /// (View ▸ Grid ▸ Spacing; capability 82a).
     SetGridSpacing(Option<f64>),
+    /// The Post-processor section's *Use for new projects* (capability
+    /// 51a): the project's controller and settings become what a new
+    /// project starts with.
+    UseForNewProjects,
 }
 
 /// Where a paste puts its shapes (capability 98).
@@ -771,7 +775,8 @@ impl Shell {
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             viewport::renderer::install(render_state);
         }
-        let mut app = App::new(App::new_project()?, Strings::english(), prefs);
+        let first = App::new_project_on(prefs.new_project_post()?);
+        let mut app = App::new(first, Strings::english(), prefs);
         // The fonts the user has added (capability 91). One that cannot
         // be read is passed by: the bundled fonts are always there.
         if let Some(paths) = options.config.as_ref() {
@@ -1077,8 +1082,9 @@ impl Shell {
                 self.close_allowed = true;
                 ctx.send_viewport_cmd(ViewportCommand::Close);
             }
-            Pending::New => match App::new_project() {
-                Ok(project) => {
+            Pending::New => match self.app.prefs().new_project_post() {
+                Ok(post) => {
+                    let project = App::new_project_on(post);
                     self.app.reset(project);
                     self.import_warnings = 0;
                     self.viewport.fit_on_next_frame();
@@ -1257,13 +1263,25 @@ impl Shell {
                     files::file_name,
                 );
                 let title = self.strings().get(StrKey::AppDialogSaveTitle).to_owned();
-                match self.dialogs.save_project(&title, &file_name) {
-                    Some(path) => path,
-                    None => return false,
+                let Some(asked) = self.dialogs.save_project(&title, &file_name) else {
+                    return false;
+                };
+                // A project is a `.dcv`. A file the dialog was not asked
+                // about is never replaced unseen.
+                let path = files::with_extension(&asked, "dcv");
+                if path != asked && path.exists() {
+                    self.message = Some(self.strings().fmt(
+                        StrKey::AppMessageSaveExists,
+                        &[("name", &files::file_name(&path))],
+                    ));
+                    return false;
                 }
+                path
             }
         };
         let name = files::file_name(&path);
+        // The project is named after its file (capability 51).
+        self.app.name_after_file(&files::stem(&path));
         let written = self
             .app
             .serialize()
@@ -1882,6 +1900,10 @@ impl Shell {
                 }
             }
             Action::SetGridSpacing(spacing) => self.app.prefs_mut().grid_spacing_mm = spacing,
+            Action::UseForNewProjects => {
+                let post = self.app.project().post_processor.clone();
+                self.app.prefs_mut().machine = Some(post);
+            }
             Action::OpenLibrary => {
                 self.library = Some(panels::library::Sheet::open(
                     self.config.as_ref(),
@@ -2140,12 +2162,23 @@ impl Shell {
         };
         let strings = self.strings().clone();
         let title = strings.get(StrKey::ExportSetupSheetTitle);
-        let Some(path) = self
+        let Some(asked) = self
             .dialogs
             .save_setup_sheet(title, &setup.dir, &setup.file_name)
         else {
             return;
         };
+        // A setup sheet is an `.html` page, which a double-click opens in
+        // a browser; a file the dialog was not asked about is never
+        // replaced unseen.
+        let path = files::with_extension(&asked, "html");
+        if path != asked && path.exists() {
+            self.message = Some(strings.fmt(
+                StrKey::ExportSetupSheetExists,
+                &[("name", &files::file_name(&path))],
+            ));
+            return;
+        }
         let written = StagedFile::write(&path, setup.html.as_bytes())
             .and_then(|staged| commit_all(vec![staged]));
         self.message = Some(match written {

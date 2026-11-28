@@ -8265,9 +8265,10 @@ const COMPASS_OVAL: &str = r##"  <ellipse id="oval" cx="48" cy="42" rx="48" ry="
 /// checks). The preparation is checked against the stand-in
 /// `compass-regions.svg` (#605): eight pockets, a 2.5 mm narrowest ridge,
 /// and the pockets reaching 32.5 mm from the centre. `init` on the prepared
-/// drawing prints no 49a warning; with the oval it prints one, the oval's
-/// bare stroke (`svg_stroke_only_path`), which is expected: the boundary
-/// needs only its outline.
+/// drawing prints no 49a warning, and with the oval none either: the
+/// oval is a bare stroke that closes, imported as the closed outline the
+/// boundary needs (the testers of 0.6.0-alpha.1: `svg_stroke_only_path`
+/// used to call such a line an open path).
 ///
 /// The spec's 61k is this compass with its oval (decided in #601: its
 /// first text named `ring-cross.svg` and a circular boundary); the compass
@@ -8337,14 +8338,11 @@ fn line_art_to_inlay_end_to_end() {
         "eight pockets and the oval: {}",
         stdout(&out)
     );
-    let codes = warning_codes(&stderr(&out));
     assert_eq!(
-        codes,
-        ["svg_stroke_only_path"],
-        "only the oval's bare stroke: {}",
-        stderr(&out)
+        stderr(&out),
+        "",
+        "the oval closes, so it is no stroke-only path"
     );
-    assert!(stderr(&out).contains("`oval`"), "{}", stderr(&out));
 
     finish_compass_inlay(&dir);
 }

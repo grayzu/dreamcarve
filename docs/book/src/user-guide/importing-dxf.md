@@ -136,9 +136,15 @@ error: cannot import part.dxf: DXF declares no usable units ($INSUNITS is unitle
 Run it again with the units the drawing was made in. `--units` also
 overrides a file that does say, for the drawing that was saved with the
 wrong setting, and it sets the project's display units, which the G-code is
-written in, as it does for an SVG. A DXF in inches imported with `--units
-inch` makes a project whose programs are in inches; edit `display_units`
-in the project file to change that.
+written in, as it does for an SVG.
+
+Without `--units`, the project takes the drawing's own units: a DXF made in
+inches (or feet) is a project in inches, whose thickness and depths you
+type in inches and whose programs are written in inches; one in
+millimetres, centimetres or metres is a project in millimetres. The app's
+**New from drawing…** does the same, and its Units choice sets them as
+`--units` does. Change the units afterwards on the Stock step, or with
+`display_units` in the project file.
 
 `init` prints what it decided:
 
@@ -239,8 +245,8 @@ or without them:
 - outlines of different paths that cross (`shapes_overlap`);
 - a filled path wholly inside another, a hole drawn as a separate path
   (`svg_hole_as_separate_path`);
-- a stroke with no fill, imported as a bare centre line
-  (`svg_stroke_only_path`);
+- a stroke with no fill that does not close, imported as a bare centre
+  line (`svg_stroke_only_path`);
 - objects that are not drawn: a hidden layer's, which are left out, and
   those hidden another way, which would be cut anyway
   (`svg_hidden_object`);

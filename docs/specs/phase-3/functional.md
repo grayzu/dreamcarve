@@ -576,10 +576,18 @@ designed here.
     the outer path alone would cut across it. The warning names both paths
     and says `image-prep` makes them one path with a hole. (An unfilled
     frame drawn round a design is not reported.)
-    - `svg_stroke_only_path`: a path has a stroke and no fill. `init`
-    imports its centreline, an open path no Inlay or V-Carve can cut; the
-    warning gives the stroke's width and says that `image-prep` turns
-    strokes into shapes.
+    - `svg_stroke_only_path`: a path has a stroke and no fill, and a
+    subpath of it is open. `init` imports its centreline, an open path no
+    Inlay or V-Carve can cut; the warning gives the stroke's width and
+    says that `image-prep` turns strokes into shapes. A stroke-only path
+    whose subpaths all close is imported as closed outlines, which every
+    operation can cut, and is not reported; the size check measures the
+    area inside such an outline, not its stroke (corrected 2026-11-27,
+    after the testers of 0.6.0-alpha.1: the first wording reported every
+    stroke-only path and called it open, so a cut-out or an Inlay drawn
+    as hairlines, which cut as drawn, was said not to; `image-prep`'s
+    report still counts every one, since it turns every stroke into an
+    area).
     - `svg_hidden_object`: an object that is not drawn. One hidden by
     `visibility:hidden`, zero opacity, or neither fill nor stroke is
     imported, as `init` imports geometry whatever its paint, and would be

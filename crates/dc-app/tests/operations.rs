@@ -632,3 +632,57 @@ fn an_operation_that_cuts_nothing_says_so() {
     harness.generate();
     assert!(!row(&harness, "Square recess").cuts_nothing);
 }
+
+/// From the testers of 0.6.0-alpha.1 (phase 5 design, "cuts nothing"): an
+/// operation that an error stops while it is generated is marked with
+/// the error, never as cutting nothing with its tool. The sign's
+/// Background V-Carve without its flat depth and clearing would carve
+/// deeper than its V-bit's cone (the Countersinks that start on its
+/// floor switched off): generation refuses it, its result has
+/// no runs, and an empty list of runs is no proof that the tool cuts
+/// nothing.
+#[test]
+fn an_operation_an_error_stops_is_not_said_to_cut_nothing() {
+    let bytes = std::fs::read(common::fixture("sign.dcv")).unwrap();
+    let mut harness = Harness::open(&bytes).expect("the sign opens");
+    let id = OperationId::new("op2");
+    let Some(Operation::VCarve(carve)) = harness
+        .app
+        .project()
+        .operations
+        .iter()
+        .find(|op| *op.id() == id)
+        .cloned()
+    else {
+        panic!("the sign's Background is a V-Carve");
+    };
+    let mut carve = carve.clone();
+    carve.flat_depth_mm = None;
+    carve.clearing.clear();
+    harness
+        .run(Command::UpdateOperation(Operation::VCarve(carve)))
+        .expect("the Background takes it");
+    // The Countersinks start on the Background's flat floor: switched
+    // off, so validation passes and the Background is generated.
+    harness
+        .run(Command::SetOperationEnabled {
+            id: OperationId::new("op5"),
+            enabled: false,
+        })
+        .expect("switched off");
+    harness.generate();
+    let result = harness.app.generation().result(&id).expect("generated");
+    assert!(result.findings.has_errors(), "generation refused it");
+    assert!(result.runs.is_empty());
+    let row = operations::rows(&harness.app)
+        .into_iter()
+        .find(|row| row.id == id)
+        .unwrap();
+    assert_eq!(row.status, Status::Error);
+    assert!(!row.cuts_nothing, "{:?}", row.messages);
+    assert!(!operations::cuts_nothing(&harness.app, &id));
+    assert_ne!(
+        row.messages.first().map(String::as_str),
+        Some("This operation cuts nothing with this tool.")
+    );
+}

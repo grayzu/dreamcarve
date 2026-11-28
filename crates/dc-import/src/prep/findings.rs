@@ -20,8 +20,8 @@ use super::walk::{HiddenReason, PaintedPath, walk};
 use crate::svg::{self, SvgImportOptions};
 use crate::{ImportError, ImportWarning};
 use dc_geometry::{
-    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Rect, Region, area_mm2, intersection, merge_fills,
-    resolve_fill, union,
+    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, FillRule, Rect, Region, area_mm2, intersection,
+    merge_fills, resolve_fill, union,
     width::{hole_is_narrower_than, is_narrower_than},
 };
 use std::collections::BTreeMap;
@@ -69,7 +69,7 @@ pub fn findings(
         .collect();
     out.extend(overlap(&named, tolerance_mm));
     out.extend(separate_holes(&shapes, tolerance_mm));
-    out.extend(stroke_only(&walked.painted, &shapes));
+    out.extend(stroke_only(&walked.painted, &shapes, Some(tolerance_mm)));
     out.extend(hidden(&walked.hidden));
     out.extend(
         walked
@@ -83,10 +83,22 @@ pub fn findings(
     );
 
     // The ink: fills nested as `init` reads them, strokes united on top.
+    // A stroke-only path that closes is imported as its outline, so it is
+    // the area inside the outline that is measured, not its stroke: a
+    // hairline round a heart is no speck.
     let height_mm = painted_height_mm(&walked.painted);
     if height_mm.is_finite() && height_mm > 0.0 {
-        let fills: Vec<Vec<Region>> = shapes.iter().map(|s| s.filled.clone()).collect();
-        let strokes: Vec<Region> = shapes.iter().flat_map(|s| s.stroked.clone()).collect();
+        let mut fills: Vec<Vec<Region>> = Vec::new();
+        let mut strokes: Vec<Region> = Vec::new();
+        for (path, shape) in walked.painted.iter().zip(&shapes) {
+            if path.fill.is_none() && closed_outline(path, tolerance_mm) {
+                let profiles = svg::build_profiles(&path.geometry, tolerance_mm);
+                fills.push(resolve_fill(&profiles, FillRule::NonZero, tolerance_mm));
+            } else {
+                fills.push(shape.filled.clone());
+                strokes.extend(shape.stroked.iter().cloned());
+            }
+        }
         if let Ok(nested) = merge_fills(fills, tolerance_mm) {
             let ink = union(&nested, &strokes, tolerance_mm);
             out.extend(below_size(&ink, height_mm, tolerance_mm));
@@ -320,17 +332,35 @@ pub(super) fn separate_holes(shapes: &[Shape], tolerance_mm: f64) -> Option<Impo
 }
 
 /// `svg_stroke_only_path`: painted with a stroke and no visible fill.
-pub(super) fn stroke_only(painted: &[PaintedPath], shapes: &[Shape]) -> Option<ImportWarning> {
-    let mut found = painted
-        .iter()
-        .zip(shapes)
-        .filter(|(path, shape)| path.stroke.is_some() && shape.filled.is_empty());
+/// With `open_only`, the importer's tolerance, a path whose subpaths all
+/// close is passed by: `init` imports it as the closed outline its stroke
+/// follows, which every operation can cut (the testers of 0.6.0-alpha.1:
+/// an Inkscape outline is stroked, and the inlay cut it). `image-prep`
+/// counts every one, since it turns every stroke into an area.
+pub(super) fn stroke_only(
+    painted: &[PaintedPath],
+    shapes: &[Shape],
+    open_only: Option<f64>,
+) -> Option<ImportWarning> {
+    let mut found = painted.iter().zip(shapes).filter(|(path, shape)| {
+        path.stroke.is_some()
+            && shape.filled.is_empty()
+            && open_only.is_none_or(|tolerance_mm| !closed_outline(path, tolerance_mm))
+    });
     let (first, _) = found.next()?;
     Some(ImportWarning::SvgStrokeOnlyPath {
         count: 1 + found.count(),
         first: first.name.clone(),
         width_mm: first.stroke.as_ref()?.width_mm,
     })
+}
+
+/// Whether `path` has curves and every subpath of it closes: the importer
+/// then takes it as closed outlines (`svg::build_profiles`), filled or
+/// not.
+fn closed_outline(path: &PaintedPath, tolerance_mm: f64) -> bool {
+    let profiles = svg::build_profiles(&path.geometry, tolerance_mm);
+    !profiles.is_empty() && profiles.iter().all(dc_geometry::Polyline::is_closed)
 }
 
 /// `svg_hidden_object`, at most twice: once for the shapes in
@@ -548,6 +578,35 @@ mod tests {
                 if (width_mm - 2.0).abs() < 1e-3)
             ),
             "{scaled:?}"
+        );
+    }
+
+    /// The testers of 0.6.0-alpha.1: a coaster drawn as hairline strokes
+    /// (a circle, and a heart closed with `Z`) imports as two closed
+    /// outlines, which the inlay cut. Neither is reported as stroke-only,
+    /// and the hairlines are not specks: the size check measures the
+    /// areas inside the outlines. An open stroke beside them still is.
+    #[test]
+    fn a_closed_stroke_only_outline_is_not_reported() {
+        const HEART: &str = r##"<circle cx="50" cy="50" r="47.5" fill="none" stroke="#000" stroke-width="0.1"/>
+            <path id="heart" d="M 50 74 C 46 70 25 58 25 41 C 25 31 33 25 40 25 C 45 25 48.5 28 50 32 C 51.5 28 55 25 60 25 C 67 25 75 31 75 41 C 75 58 54 70 50 74 Z" fill="none" stroke="#000" stroke-width="0.1"/>"##;
+        let found = check(&drawing(HEART));
+        assert!(
+            !codes(&found).contains(&"svg_stroke_only_path"),
+            "{found:?}"
+        );
+        assert!(!codes(&found).contains(&"feature_below_size"), "{found:?}");
+
+        let open = format!(
+            r##"{HEART}<path id="swash" d="M10,90 L90,90" fill="none" stroke="#000" stroke-width="1"/>"##
+        );
+        let found = check(&drawing(&open));
+        assert!(
+            found.iter().any(
+                |w| matches!(w, ImportWarning::SvgStrokeOnlyPath { count: 1, first, .. }
+                if first == "swash")
+            ),
+            "only the open path: {found:?}"
         );
     }
 

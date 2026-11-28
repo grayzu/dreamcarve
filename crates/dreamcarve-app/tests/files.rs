@@ -189,3 +189,129 @@ fn a_damaged_gui_toml_is_said_once_and_kept_until_a_preference_changes() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 51a: the Export step's Post-processor section offers *Use
+/// for new projects*. Pressed on a project set to GRBL with Manual
+/// spindle control, it keeps that machine in `gui.toml`, says so in its
+/// place, and File ▸ New starts on GRBL with Manual spindle control,
+/// where it started on grblHAL with Automatic before.
+#[test]
+fn use_for_new_projects_is_what_new_starts_with() {
+    use dc_project::SpindleControl;
+
+    let dir = scratch("new-projects-machine");
+    let config = dir.join("config");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
+    common::settle(&mut h);
+    let project = h.state().app().project().clone();
+    assert_eq!(project.post_processor.id, "grblhal");
+    let switch = dc_app::project::switch_post(&project, "grbl").unwrap();
+    h.state_mut().app_mut().run(switch).unwrap();
+    let project = h.state().app().project().clone();
+    let manual = dc_app::project::set_spindle_control(&project, SpindleControl::Manual).unwrap();
+    h.state_mut().app_mut().run(manual).unwrap();
+    h.run();
+
+    common::go_to(&mut h, "Export");
+    common::settle(&mut h);
+    h.get_by_role_and_label(Role::Button, "Post-processor")
+        .click();
+    h.run();
+    let set = "New projects start with this controller and these settings.";
+    assert!(h.query_by_label(set).is_none(), "none chosen yet");
+    h.get_by_role_and_label(Role::Button, "Use for new projects")
+        .click();
+    h.run();
+    h.run();
+    assert!(h.query_by_label(set).is_some(), "the note in its place");
+    assert!(h.query_by_label("Use for new projects").is_none());
+    let machine = h.state().app().prefs().machine.clone().expect("chosen");
+    assert_eq!(machine.id, "grbl");
+    assert_eq!(machine.spindle_control, SpindleControl::Manual);
+    let saved = gui_prefs::load(&Paths::in_dir(config.clone())).prefs;
+    assert_eq!(saved.machine, Some(machine), "gui.toml keeps it");
+
+    // Undone, the plaque is back on grblHAL and clean, so New asks
+    // nothing; the machine chosen stays.
+    let _ = h.state_mut().app_mut().undo();
+    let _ = h.state_mut().app_mut().undo();
+    assert!(!h.state().app().is_dirty());
+    command_key(&h, egui::Key::N);
+    h.run();
+    common::settle(&mut h);
+    let post = &h.state().app().project().post_processor;
+    assert_eq!(post.id, "grbl", "New starts on GRBL");
+    assert_eq!(post.spindle_control, SpindleControl::Manual);
+    assert_eq!(h.state().app().source(), None, "a new project");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 51, from the testers of 0.6.0-alpha.1: a project is named
+/// after the file it is saved to, so its programs' headers and its setup
+/// sheet say what the file is called, as the window title does. Saved
+/// as `cabinet-door` (typed without its extension, as Linux's dialog
+/// returns it), the plaque is written to `cabinet-door.dcv`, its name
+/// in the file and in the app is `cabinet-door`, the save adds no undo
+/// step and the project is clean. Undoing an earlier edit keeps the
+/// name. A typed `door.html` is written as `door.html.dcv`, never over a
+/// page; and a name whose `.dcv` already exists, which the dialog was
+/// not asked about, is refused rather than replaced unseen.
+#[test]
+fn save_as_names_the_project_and_adds_the_extension() {
+    let dir = scratch("save-as-names");
+    let config = dir.join("config");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
+    common::settle(&mut h);
+    assert_eq!(h.state().app().project().name, "plaque");
+    let project = h.state().app().project().clone();
+    let wider = dc_app::Command::SetStock(dc_project::Stock {
+        width_mm: project.stock.width_mm + 10.0,
+        ..project.stock
+    });
+    h.state_mut().app_mut().run(wider).unwrap();
+    let steps = h.state().app().history().undo_labels().count();
+
+    dialogs.answer(&dir.join("cabinet-door"));
+    common::shift_command_key(&h, egui::Key::S);
+    h.run();
+    let saved = dir.join("cabinet-door.dcv");
+    assert!(saved.exists(), "{:?}", h.state().message());
+    assert!(!dir.join("cabinet-door").exists());
+    assert_eq!(h.state().app().source(), Some(saved.as_path()));
+    assert_eq!(h.state().app().project().name, "cabinet-door");
+    let text = std::fs::read_to_string(&saved).unwrap();
+    assert!(text.contains("\"name\": \"cabinet-door\""), "{text}");
+    assert_eq!(h.state().app().history().undo_labels().count(), steps);
+    assert!(!h.state().app().is_dirty());
+    let _ = h.state_mut().app_mut().undo();
+    assert_eq!(h.state().app().project().name, "cabinet-door");
+
+    dialogs.answer(&dir.join("door.html"));
+    common::shift_command_key(&h, egui::Key::S);
+    h.run();
+    assert!(dir.join("door.html.dcv").exists());
+    assert!(!dir.join("door.html").exists());
+    assert_eq!(h.state().app().project().name, "door.html");
+
+    let before = std::fs::read(&saved).unwrap();
+    dialogs.answer(&dir.join("cabinet-door"));
+    common::shift_command_key(&h, egui::Key::S);
+    h.run();
+    assert_eq!(
+        h.state().message(),
+        Some(
+            "Not saved: “cabinet-door.dcv” already exists. To replace it, choose it by name in \
+             Save As."
+        )
+    );
+    assert_eq!(std::fs::read(&saved).unwrap(), before, "left as it was");
+    assert_eq!(
+        h.state().app().source(),
+        Some(dir.join("door.html.dcv").as_path())
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
